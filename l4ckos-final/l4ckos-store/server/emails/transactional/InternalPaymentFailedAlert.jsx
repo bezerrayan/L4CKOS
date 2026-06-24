@@ -1,19 +1,25 @@
-import { Text } from "@react-email/components";
+import { EmailInfoRow } from "../components/EmailInfoRow.jsx";
 import { EmailLayout } from "../components/EmailLayout.jsx";
 import { EmailPanel } from "../components/EmailPanel.jsx";
+import { EmailStatusBadge } from "../components/EmailStatusBadge.jsx";
+import { EmailText } from "../components/EmailText.jsx";
 
 export function InternalPaymentFailedAlert({ customerName, customerEmail, orderNumber, total, failureReason }) {
   return (
     <EmailLayout
-      preview={`Falha de pagamento no pedido #${orderNumber}`}
-      title="Falha de pagamento"
-      subtitle={`Pedido #${orderNumber}`}
+      preview={`Falha de pagamento no pedido #${orderNumber || "-"}`}
+      title="Falha de pagamento."
+      subtitle={`Pedido #${orderNumber || "-"}`}
+      footerNote="Mensagem automática destinada à equipe operacional da L4CKOS."
     >
-      <Text>O provedor retornou uma falha de pagamento que pode exigir acompanhamento.</Text>
+      <EmailStatusBadge tone="danger">Atenção operacional</EmailStatusBadge>
+      <EmailText>O provedor retornou uma falha de pagamento que pode exigir acompanhamento.</EmailText>
+
       <EmailPanel title="Contexto do pedido">
-        <Text style={{ margin: "0 0 8px" }}>Cliente: {customerName || "Cliente"} ({customerEmail || "sem email"})</Text>
-        <Text style={{ margin: "0 0 8px" }}>Total previsto: {total}</Text>
-        <Text style={{ margin: 0 }}>Motivo: {failureReason || "Nao informado pelo provedor"}</Text>
+        <EmailInfoRow label="Cliente" value={customerName || "Cliente não informado"} />
+        <EmailInfoRow label="E-mail" value={customerEmail || "Não informado"} />
+        <EmailInfoRow label="Total previsto" value={total || "-"} />
+        <EmailInfoRow label="Motivo" value={failureReason || "Não informado pelo provedor"} />
       </EmailPanel>
     </EmailLayout>
   );

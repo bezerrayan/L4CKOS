@@ -6,44 +6,66 @@ export function EmailFooter({ note, unsubscribeUrl, isMarketing = false }) {
   const websiteUrl = String(process.env.EMAIL_SIGNATURE_WEBSITE || "https://l4ckos.com.br").trim();
   const instagramUrl = String(process.env.EMAIL_SIGNATURE_INSTAGRAM_URL || "https://instagram.com/l4ckosstore").trim();
   const instagramLabel = String(process.env.EMAIL_SIGNATURE_INSTAGRAM_LABEL || "@l4ckosstore").trim();
-  const websiteLabel = websiteUrl.replace("https://", "").replace("http://", "");
+  const privacyUrl = String(
+    process.env.EMAIL_SIGNATURE_PRIVACY_URL || `${websiteUrl.replace(/\/$/, "")}/politica-de-privacidade`,
+  ).trim();
+  const websiteLabel = websiteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const currentYear = new Date().getFullYear();
+  const defaultNote = isMarketing
+    ? "Você recebeu este e-mail porque optou por receber novidades da L4CKOS."
+    : "Esta é uma mensagem automática sobre sua conta, pedido ou solicitação na L4CKOS.";
 
   return (
-    <table role="presentation" cellPadding="0" cellSpacing="0" border="0" width="100%" bgcolor="#090909" style={styles.table}>
+    <table
+      role="presentation"
+      cellPadding="0"
+      cellSpacing="0"
+      border="0"
+      width="100%"
+      bgcolor="#090909"
+      className="email-footer"
+      style={styles.table}
+    >
       <tbody>
         <tr>
-          <td bgcolor="#090909" style={styles.cell}>
-            <Text style={styles.note}>{note || "L4CKOS. Comunicação automatizada da operação."}</Text>
-            <table role="presentation" cellPadding="0" cellSpacing="0" width="100%" bgcolor="#101010" style={styles.infoTable}>
+          <td bgcolor="#090909" className="email-footer-cell" style={styles.cell}>
+            <table role="presentation" cellPadding="0" cellSpacing="0" border="0" width="100%" style={styles.brandTable}>
               <tbody>
                 <tr>
-                  <td style={styles.logoCol}>
-                    {logoUrl ? <Img src={logoUrl} alt="L4CKOS" width="76" style={styles.logo} /> : <div style={styles.fallback}>L4K</div>}
-                  </td>
-                  <td style={styles.infoCol}>
+                  {logoUrl ? (
+                    <td valign="middle" width="48" className="email-footer-logo-cell" style={styles.logoCell}>
+                      <Img src={logoUrl} alt="L4CKOS" width="38" height="38" style={styles.logo} />
+                    </td>
+                  ) : null}
+                  <td valign="middle">
                     <Text style={styles.brand}>L4CKOS</Text>
-                    <Text style={styles.links}>
-                      <Link href={websiteUrl} style={styles.link}>{websiteLabel}</Link>
-                      {" • "}
-                      <Link href={instagramUrl} style={styles.link}>{instagramLabel}</Link>
-                      {" • "}
-                      <Link href={`mailto:${contactEmail}`} style={styles.link}>{contactEmail}</Link>
-                    </Text>
-                    <Text style={styles.unsubscribe}>
-                      {isMarketing
-                        ? "Este email faz parte da comunicação de marketing da L4CKOS."
-                        : "Emails transacionais mantêm você atualizado sobre conta, pedido e operação da L4CKOS."}
-                      {isMarketing && unsubscribeUrl ? (
-                        <>
-                          {" "}
-                          <Link href={unsubscribeUrl} style={styles.unsubscribeLink}>Descadastrar</Link>
-                        </>
-                      ) : null}
-                    </Text>
+                    <Text style={styles.slogan}>Built for Adventure.</Text>
                   </td>
                 </tr>
               </tbody>
             </table>
+
+            <Text style={styles.links}>
+              <Link href={websiteUrl} style={styles.link}>{websiteLabel}</Link>
+              <span style={styles.separator}> · </span>
+              <Link href={instagramUrl} style={styles.link}>{instagramLabel}</Link>
+              <span style={styles.separator}> · </span>
+              <Link href={`mailto:${contactEmail}`} style={styles.link}>{contactEmail}</Link>
+            </Text>
+
+            <Text style={styles.legal}>{note || defaultNote}</Text>
+
+            <Text style={styles.actions}>
+              <Link href={privacyUrl} style={styles.mutedLink}>Política de privacidade</Link>
+              {isMarketing && unsubscribeUrl ? (
+                <>
+                  <span style={styles.separator}> · </span>
+                  <Link href={unsubscribeUrl} style={styles.unsubscribeLink}>Cancelar inscrição</Link>
+                </>
+              ) : null}
+            </Text>
+
+            <Text style={styles.copyright}>© {currentYear} L4CKOS.</Text>
           </td>
         </tr>
       </tbody>
@@ -56,81 +78,82 @@ const styles = {
     width: "100%",
     borderCollapse: "collapse",
     backgroundColor: "#090909",
+    backgroundImage: "linear-gradient(#090909, #090909)",
   },
   cell: {
-    padding: "0 28px 28px",
+    padding: "24px 32px 28px",
     backgroundColor: "#090909",
-    borderTop: "1px solid #1f1f1f",
+    backgroundImage: "linear-gradient(#090909, #090909)",
+    borderTop: "1px solid #202020",
   },
-  note: {
-    margin: "20px 0 16px",
-    color: "#8d8d8d",
-    fontSize: "10px",
-    lineHeight: "16px",
-    fontWeight: "700",
-    letterSpacing: "2px",
-    textTransform: "uppercase",
-  },
-  infoTable: {
+  brandTable: {
     width: "100%",
     borderCollapse: "collapse",
-    backgroundColor: "#101010",
-    border: "1px solid #1f1f1f",
   },
-  logoCol: {
-    width: "96px",
-    verticalAlign: "top",
-    padding: "18px 0 18px 18px",
+  logoCell: {
+    width: "48px",
+    paddingRight: "10px",
   },
   logo: {
     display: "block",
-    width: "76px",
-    height: "76px",
+    width: "38px",
+    height: "38px",
     objectFit: "cover",
-    border: "1px solid #2a2a2a",
-    backgroundColor: "#111113",
-  },
-  fallback: {
-    width: "76px",
-    height: "76px",
-    lineHeight: "76px",
-    textAlign: "center",
-    border: "1px solid #2a2a2a",
-    backgroundColor: "#111113",
-    color: "#ff314d",
-    fontSize: "22px",
-    fontWeight: "700",
-  },
-  infoCol: {
-    padding: "18px 18px 18px 8px",
-    verticalAlign: "top",
+    border: "1px solid #292929",
+    backgroundColor: "#111111",
   },
   brand: {
-    margin: "0",
-    color: "#f0ede8",
-    fontSize: "34px",
-    lineHeight: "36px",
-    fontWeight: "700",
-    letterSpacing: "-0.6px",
+    margin: 0,
+    color: "#f4f1ec",
+    fontSize: "18px",
+    lineHeight: "22px",
+    fontWeight: "800",
+    letterSpacing: "0.2px",
+  },
+  slogan: {
+    margin: "2px 0 0",
+    color: "#8d8984",
+    fontSize: "11px",
+    lineHeight: "16px",
+    fontStyle: "italic",
   },
   links: {
-    margin: "10px 0 0",
-    color: "#c6c6c6",
-    fontSize: "14px",
-    lineHeight: "27px",
+    margin: "16px 0 0",
+    color: "#bcb7b1",
+    fontSize: "12px",
+    lineHeight: "21px",
   },
   link: {
-    color: "#c6c6c6",
+    color: "#bcb7b1",
     textDecoration: "none",
   },
-  unsubscribe: {
-    margin: "10px 0 0",
-    color: "#8d8d8d",
-    fontSize: "11px",
-    lineHeight: "20px",
+  legal: {
+    margin: "14px 0 0",
+    color: "#77736f",
+    fontSize: "10px",
+    lineHeight: "17px",
+  },
+  actions: {
+    margin: "7px 0 0",
+    color: "#77736f",
+    fontSize: "10px",
+    lineHeight: "17px",
+  },
+  mutedLink: {
+    color: "#8d8984",
+    textDecoration: "underline",
   },
   unsubscribeLink: {
-    color: "#d5152f",
+    color: "#d84a5e",
     textDecoration: "underline",
+  },
+  separator: {
+    color: "#595959",
+  },
+  copyright: {
+    margin: "7px 0 0",
+    color: "#595959",
+    fontSize: "9px",
+    lineHeight: "14px",
   },
 };

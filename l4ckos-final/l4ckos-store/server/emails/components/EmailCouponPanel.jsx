@@ -7,8 +7,9 @@ export function EmailCouponPanel({ code, description }) {
 
   return (
     <>
-      <EmailSectionTitle>Seu incentivo L4CKOS</EmailSectionTitle>
+      <EmailSectionTitle>Seu benefício</EmailSectionTitle>
       <EmailPanel>
+        <Text style={styles.label}>Código</Text>
         <Text style={styles.code}>{code}</Text>
         {description ? <Text style={styles.description}>{description}</Text> : null}
       </EmailPanel>
@@ -17,18 +18,28 @@ export function EmailCouponPanel({ code, description }) {
 }
 
 const styles = {
-  code: {
+  label: {
     margin: "0 0 6px",
-    color: "#f5f1e8",
-    fontSize: "22px",
+    color: "#77736f",
+    fontSize: "9px",
+    lineHeight: "12px",
     fontWeight: "800",
-    letterSpacing: "0.12em",
+    letterSpacing: "1.5px",
+    textTransform: "uppercase",
+  },
+  code: {
+    margin: "0",
+    color: "#f4f1ec",
+    fontSize: "24px",
+    lineHeight: "30px",
+    fontWeight: "800",
+    letterSpacing: "2.8px",
     textTransform: "uppercase",
   },
   description: {
-    margin: 0,
-    color: "#9ca3af",
+    margin: "10px 0 0",
+    color: "#99948e",
     fontSize: "13px",
-    lineHeight: "1.6",
+    lineHeight: "21px",
   },
 };

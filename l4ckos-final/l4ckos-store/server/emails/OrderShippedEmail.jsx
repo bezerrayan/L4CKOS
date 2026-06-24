@@ -1,21 +1,23 @@
-import { Text } from "@react-email/components";
 import { EmailButton } from "./components/EmailButton.jsx";
-import { EmailInfoRow } from "./components/EmailInfoRow.jsx";
 import { EmailLayout } from "./components/EmailLayout.jsx";
+import { EmailOrderSummary } from "./components/EmailOrderSummary.jsx";
+import { EmailText } from "./components/EmailText.jsx";
 
 export function OrderShippedEmail({ customerName, orderNumber, trackingCode, trackingUrl }) {
-  const safeName = String(customerName || "Cliente");
+  const greeting = customerName ? `Olá, ${customerName}.` : "Olá.";
   const safeOrder = String(orderNumber || "-");
-  const safeTrackingCode = String(trackingCode || "-");
-  const safeTrackingUrl = String(trackingUrl || "");
 
   return (
-    <EmailLayout preview={`Seu pedido foi enviado #${safeOrder}`} title="Seu pedido foi enviado" subtitle={`Pedido #${safeOrder}`}>
-      <Text>Olá, {safeName}.</Text>
-      <Text>Seu pedido foi despachado e ja esta em rota de entrega.</Text>
-      <EmailInfoRow label="Número do pedido" value={`#${safeOrder}`} />
-      <EmailInfoRow label="Código de rastreio" value={safeTrackingCode} />
-      {safeTrackingUrl ? <EmailButton href={safeTrackingUrl}>Rastrear pedido</EmailButton> : null}
+    <EmailLayout
+      preview={`Pedido #${safeOrder} enviado`}
+      title="Pedido enviado."
+      subtitle={`Pedido #${safeOrder}`}
+      footerNote="Você recebeu este e-mail porque possui um pedido na L4CKOS."
+    >
+      <EmailText variant="lead">{greeting}</EmailText>
+      <EmailText>Seu pedido foi despachado e está a caminho do endereço informado.</EmailText>
+      <EmailOrderSummary orderNumber={safeOrder} statusLabel={`Rastreio: ${trackingCode || "-"}`} />
+      <EmailButton href={trackingUrl}>Rastrear pedido</EmailButton>
     </EmailLayout>
   );
 }

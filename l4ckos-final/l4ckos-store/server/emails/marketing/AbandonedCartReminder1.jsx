@@ -1,21 +1,28 @@
-import { Text } from "@react-email/components";
 import { EmailButton } from "../components/EmailButton.jsx";
 import { EmailLayout } from "../components/EmailLayout.jsx";
 import { EmailProductGrid } from "../components/EmailProductGrid.jsx";
+import { EmailStatusBadge } from "../components/EmailStatusBadge.jsx";
+import { EmailText } from "../components/EmailText.jsx";
 
 export function AbandonedCartReminder1({ name, cartUrl, products = [], unsubscribeUrl }) {
+  const greeting = name ? `Olá, ${name}.` : "Olá.";
+
   return (
     <EmailLayout
-      preview="Seu carrinho ainda esta te esperando"
-      title="Seu carrinho ficou para tras"
-      subtitle="Os itens continuam reservados por pouco tempo"
+      preview="Sua seleção continua no carrinho"
+      title="Sua seleção continua aqui."
+      subtitle="Carrinho L4CKOS"
       unsubscribeUrl={unsubscribeUrl}
       isMarketing
     >
-      <Text>Ola, {name || "cliente"}.</Text>
-      <Text>Voce deixou uma selecao pronta no carrinho. Se ainda fizer sentido, retome a compra antes da proxima virada de estoque.</Text>
-      <EmailProductGrid title="Itens lembrados" products={products} />
-      {cartUrl ? <EmailButton href={cartUrl}>Voltar para o carrinho</EmailButton> : null}
+      <EmailStatusBadge tone="neutral">Carrinho salvo</EmailStatusBadge>
+      <EmailText variant="lead">{greeting}</EmailText>
+      <EmailText>
+        Você deixou alguns itens no carrinho. Caso ainda queira concluir a compra, sua seleção continua disponível por
+        enquanto.
+      </EmailText>
+      <EmailProductGrid title="Itens no carrinho" products={products} />
+      <EmailButton href={cartUrl}>Voltar ao carrinho</EmailButton>
     </EmailLayout>
   );
 }

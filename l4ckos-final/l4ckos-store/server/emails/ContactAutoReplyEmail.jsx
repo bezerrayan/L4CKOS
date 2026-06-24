@@ -1,22 +1,24 @@
-import { Text } from "@react-email/components";
 import { EmailLayout } from "./components/EmailLayout.jsx";
+import { EmailText } from "./components/EmailText.jsx";
 
 export function ContactAutoReplyEmail({ name }) {
-  const safeName = String(name || "Cliente");
+  const greeting = name ? `Olá, ${name}.` : "Olá.";
 
   return (
     <EmailLayout
-      preview="Recebemos sua mensagem - L4CKOS"
-      title="Recebemos sua mensagem"
-      subtitle="Obrigado por entrar em contato com a L4CKOS"
-      footerNote="Este é um e-mail automático. Nossa equipe responderá em breve."
+      preview="Recebemos sua mensagem"
+      title="Mensagem recebida."
+      subtitle="Atendimento L4CKOS"
+      footerNote="Esta é uma confirmação automática de recebimento. Nossa equipe responderá pelo mesmo endereço de e-mail."
     >
-      <Text>Olá, {safeName}.</Text>
-      <Text>Obrigado pelo seu contato. Sua mensagem foi recebida com sucesso e já está com o nosso time.</Text>
-      <Text>Em breve, você receberá um retorno da equipe L4CKOS.</Text>
-      <Text style={{ color: "#6d6d6d", fontSize: "12px" }}>
-        Por segurança, não compartilhe senhas, códigos ou dados sensíveis por e-mail.
-      </Text>
+      <EmailText variant="lead">{greeting}</EmailText>
+      <EmailText>
+        Obrigado pelo contato. Sua mensagem foi recebida e já está com a equipe da L4CKOS.
+      </EmailText>
+      <EmailText>Assim que houver uma atualização, responderemos por este mesmo e-mail.</EmailText>
+      <EmailText variant="small">
+        Por segurança, não envie senhas, códigos de autenticação ou dados bancários por e-mail.
+      </EmailText>
     </EmailLayout>
   );
 }

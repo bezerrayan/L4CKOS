@@ -8,18 +8,21 @@ export function EmailOrderSummary({ orderNumber, total, statusLabel, shippingLab
       <EmailSectionTitle>Resumo do pedido</EmailSectionTitle>
       <EmailPanel>
         <Row>
-          <Column>
+          <Column style={total ? styles.leftColumn : styles.fullColumn}>
             <Text style={styles.label}>Pedido</Text>
             <Text style={styles.value}>#{orderNumber || "-"}</Text>
           </Column>
-          <Column>
-            <Text style={styles.label}>Total</Text>
-            <Text style={styles.value}>{total || "-"}</Text>
-          </Column>
+          {total ? (
+            <Column style={styles.rightColumn}>
+              <Text style={styles.label}>Total</Text>
+              <Text style={styles.value}>{total}</Text>
+            </Column>
+          ) : null}
         </Row>
+
         {statusLabel || shippingLabel ? (
-          <Row>
-            <Column>
+          <Row style={styles.metaRow}>
+            <Column style={styles.leftColumn}>
               {statusLabel ? (
                 <>
                   <Text style={styles.label}>Status</Text>
@@ -27,7 +30,7 @@ export function EmailOrderSummary({ orderNumber, total, statusLabel, shippingLab
                 </>
               ) : null}
             </Column>
-            <Column>
+            <Column style={styles.rightColumn}>
               {shippingLabel ? (
                 <>
                   <Text style={styles.label}>Entrega</Text>
@@ -37,53 +40,103 @@ export function EmailOrderSummary({ orderNumber, total, statusLabel, shippingLab
             </Column>
           </Row>
         ) : null}
-        {items.length
-          ? items.slice(0, 4).map((item, index) => (
-              <Row key={`${item.name}-${index}`}>
-                <Column>
-                  <Text style={styles.itemName}>{item.name}</Text>
-                  <Text style={styles.itemMeta}>Quantidade: {item.quantity}</Text>
-                </Column>
-                <Column align="right">
-                  <Text style={styles.secondary}>{item.price || ""}</Text>
-                </Column>
-              </Row>
-            ))
-          : null}
+
+        {Array.isArray(items) && items.length ? (
+          <table role="presentation" cellPadding="0" cellSpacing="0" border="0" width="100%" style={styles.itemsTable}>
+            <tbody>
+              {items.slice(0, 4).map((item, index) => (
+                <tr key={`${item?.name || item?.title || "item"}-${index}`}>
+                  <td style={styles.itemCell}>
+                    <Text style={styles.itemName}>{item?.name || item?.title || `Item ${index + 1}`}</Text>
+                    <Text style={styles.itemMeta}>Quantidade: {item?.quantity || item?.qty || 1}</Text>
+                  </td>
+                  <td align="right" style={styles.priceCell}>
+                    <Text style={styles.price}>{item?.price || item?.unitPrice || ""}</Text>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
       </EmailPanel>
     </>
   );
 }
 
 const styles = {
+  fullColumn: {
+    width: "100%",
+    verticalAlign: "top",
+  },
+  leftColumn: {
+    width: "50%",
+    paddingRight: "10px",
+    verticalAlign: "top",
+  },
+  rightColumn: {
+    width: "50%",
+    paddingLeft: "10px",
+    verticalAlign: "top",
+  },
+  metaRow: {
+    borderTop: "1px solid #272727",
+  },
   label: {
     margin: "0 0 4px",
-    color: "#8f8f8f",
-    fontSize: "11px",
+    color: "#77736f",
+    fontSize: "9px",
+    lineHeight: "12px",
+    fontWeight: "800",
+    letterSpacing: "1.4px",
     textTransform: "uppercase",
-    letterSpacing: "0.18em",
   },
   value: {
     margin: "0 0 14px",
-    color: "#ffffff",
-    fontSize: "20px",
+    color: "#f4f1ec",
+    fontSize: "19px",
+    lineHeight: "24px",
     fontWeight: "800",
   },
   secondary: {
     margin: "0 0 10px",
-    color: "#c8c8c8",
+    color: "#c5c0ba",
     fontSize: "13px",
-    lineHeight: "1.7",
+    lineHeight: "20px",
+  },
+  itemsTable: {
+    width: "100%",
+    marginTop: "8px",
+    borderCollapse: "collapse",
+    borderTop: "1px solid #272727",
+  },
+  itemCell: {
+    padding: "12px 10px 10px 0",
+    borderBottom: "1px solid #222222",
+  },
+  priceCell: {
+    width: "110px",
+    padding: "12px 0 10px 10px",
+    borderBottom: "1px solid #222222",
+    verticalAlign: "top",
   },
   itemName: {
-    margin: "0 0 2px",
-    color: "#ffffff",
-    fontSize: "14px",
+    margin: 0,
+    color: "#f4f1ec",
+    fontSize: "13px",
+    lineHeight: "19px",
     fontWeight: "700",
   },
   itemMeta: {
-    margin: "0 0 10px",
-    color: "#8f8f8f",
+    margin: "3px 0 0",
+    color: "#77736f",
+    fontSize: "10px",
+    lineHeight: "16px",
+  },
+  price: {
+    margin: 0,
+    color: "#c5c0ba",
     fontSize: "12px",
+    lineHeight: "18px",
+    fontWeight: "700",
   },
 };

@@ -1,9 +1,11 @@
 import { Button, Section } from "@react-email/components";
 
 export function EmailButton({ href, children }) {
+  if (!href) return null;
+
   return (
-    <Section style={{ margin: "18px 0" }}>
-      <Button href={href} style={styles.btn}>
+    <Section className="email-button-wrap" style={styles.wrap}>
+      <Button href={href} className="email-button" style={styles.button}>
         {children}
       </Button>
     </Section>
@@ -11,15 +13,23 @@ export function EmailButton({ href, children }) {
 }
 
 const styles = {
-  btn: {
-    backgroundColor: "#d7142e",
-    color: "#ffffff",
-    textDecoration: "none",
-    padding: "16px 28px",
-    fontSize: "14px",
-    fontWeight: "800",
-    letterSpacing: "0.02em",
-    border: "1px solid #ff3e57",
+  wrap: {
+    margin: "22px 0 2px",
+  },
+  button: {
     display: "inline-block",
+    boxSizing: "border-box",
+    minHeight: "48px",
+    padding: "15px 24px",
+    backgroundColor: "#d5152f",
+    color: "#ffffff",
+    border: "1px solid #d5152f",
+    borderRadius: "3px",
+    textDecoration: "none",
+    textAlign: "center",
+    fontSize: "13px",
+    lineHeight: "18px",
+    fontWeight: "800",
+    letterSpacing: "0.3px",
   },
 };

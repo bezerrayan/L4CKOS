@@ -1,61 +1,29 @@
-import { Section, Text } from "@react-email/components";
 import { EmailButton } from "./components/EmailButton.jsx";
-import { EmailInfoRow } from "./components/EmailInfoRow.jsx";
 import { EmailLayout } from "./components/EmailLayout.jsx";
-import { renderOrderItems } from "./helpers/renderOrderItems.jsx";
+import { EmailOrderSummary } from "./components/EmailOrderSummary.jsx";
+import { EmailText } from "./components/EmailText.jsx";
 
-export function OrderReceivedEmail({ customerName, orderNumber, items, total }) {
-  const safeName = String(customerName || "Cliente");
+export function OrderReceivedEmail({ customerName, orderNumber, items = [], total }) {
+  const greeting = customerName ? `Olá, ${customerName}.` : "Olá.";
   const safeOrder = String(orderNumber || "-");
-  const safeTotal = String(total || "-");
   const appBase = String(process.env.APP_BASE_URL || "https://l4ckos.com.br").replace(/\/$/, "");
 
   return (
     <EmailLayout
-      preview={`Recebemos seu pedido #${safeOrder}`}
-      title="Pedido recebido com sucesso"
+      preview={`Recebemos o pedido #${safeOrder}`}
+      title="Pedido recebido."
       subtitle={`Pedido #${safeOrder}`}
+      footerNote="Você recebeu este e-mail porque realizou um pedido na L4CKOS."
     >
-      <Text>Olá, {safeName}.</Text>
-      <Text>Recebemos seu pedido e ja estamos iniciando a preparacao.</Text>
-
-      <EmailInfoRow label="Número do pedido" value={`#${safeOrder}`} />
-      <EmailInfoRow label="Total" value={safeTotal} />
-
-      <Section style={styles.tableWrap}>
-        <table style={styles.table} cellPadding="0" cellSpacing="0" width="100%">
-          <thead>
-            <tr>
-              <th style={{ ...styles.th, textAlign: "left" }}>Item</th>
-              <th style={{ ...styles.th, textAlign: "center" }}>Qtd</th>
-              <th style={{ ...styles.th, textAlign: "right" }}>Valor</th>
-            </tr>
-          </thead>
-          <tbody>{renderOrderItems(items)}</tbody>
-        </table>
-      </Section>
-
+      <EmailText variant="lead">{greeting}</EmailText>
+      <EmailText>Recebemos seu pedido e reservamos os itens selecionados.</EmailText>
+      <EmailOrderSummary
+        orderNumber={safeOrder}
+        total={String(total || "-")}
+        statusLabel="Pedido recebido"
+        items={items}
+      />
       <EmailButton href={`${appBase}/conta/pedidos`}>Acompanhar pedido</EmailButton>
     </EmailLayout>
   );
 }
-
-const styles = {
-  tableWrap: {
-    marginTop: "12px",
-    border: "1px solid #4b1a21",
-    backgroundColor: "#101013",
-    borderRadius: "18px",
-    padding: "16px 18px",
-  },
-  table: { width: "100%", borderCollapse: "collapse" },
-  th: {
-    fontSize: "12px",
-    color: "#ff6477",
-    borderBottom: "1px solid #24171a",
-    paddingBottom: "10px",
-    fontWeight: "700",
-    letterSpacing: "0.14em",
-    textTransform: "uppercase",
-  },
-};

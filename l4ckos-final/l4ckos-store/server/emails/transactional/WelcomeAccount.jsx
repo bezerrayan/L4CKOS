@@ -1,15 +1,25 @@
-import { Text } from "@react-email/components";
 import { EmailButton } from "../components/EmailButton.jsx";
 import { EmailLayout } from "../components/EmailLayout.jsx";
 import { EmailStatusBadge } from "../components/EmailStatusBadge.jsx";
+import { EmailText } from "../components/EmailText.jsx";
 
 export function WelcomeAccount({ name, appUrl }) {
+  const greeting = name ? `Olá, ${name}.` : "Olá.";
+
   return (
-    <EmailLayout preview="Sua conta L4CKOS foi criada" title="Bem-vindo a L4CKOS" subtitle="Sua conta ja esta pronta">
-      <EmailStatusBadge tone="success">CONTA ATIVA</EmailStatusBadge>
-      <Text>Ola, {name || "cliente"}.</Text>
-      <Text>Sua conta foi criada com sucesso. Agora voce pode acompanhar pedidos, salvar favoritos, revisar enderecos e operar tudo com mais agilidade.</Text>
-      {appUrl ? <EmailButton href={appUrl}>Entrar na conta</EmailButton> : null}
+    <EmailLayout
+      preview="Sua conta L4CKOS está pronta"
+      title="Bem-vindo à L4CKOS."
+      subtitle="Sua conta está pronta"
+      footerNote="Você recebeu este e-mail porque uma conta foi criada na L4CKOS com este endereço."
+    >
+      <EmailStatusBadge tone="success">Conta ativa</EmailStatusBadge>
+      <EmailText variant="lead">{greeting}</EmailText>
+      <EmailText>
+        Sua conta foi criada com sucesso. Agora você pode acompanhar pedidos, salvar favoritos, revisar endereços e
+        acessar sua experiência L4CKOS em um só lugar.
+      </EmailText>
+      <EmailButton href={appUrl}>Acessar minha conta</EmailButton>
     </EmailLayout>
   );
 }
