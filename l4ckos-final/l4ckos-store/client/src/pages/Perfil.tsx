@@ -503,7 +503,7 @@ export default function Perfil() {
               <input
                 value={phone}
                 onChange={(event) => setPhone(event.target.value)}
-                placeholder="(61) 99803-0913"
+                placeholder="Opcional"
                 style={styles.input as CSSProperties}
               />
           </div>

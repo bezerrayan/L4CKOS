@@ -4,6 +4,7 @@ import Footer from "./components/Footer";
 import Header from "./components/Header";
 import { useUser } from "./contexts/UserContext";
 import { useIsMobile } from "./hooks/useIsMobile";
+import { siteMode } from "./config/site";
 
 const Home = lazy(() => import("./pages/Home"));
 const Produtos = lazy(() => import("./pages/Produtos"));
@@ -89,13 +90,9 @@ function AppRoutes() {
   const isMobile = useIsMobile(980);
   const location = useLocation();
   const { user, isAuthenticated, isLoading } = useUser();
-  const comingSoonRaw = String(import.meta.env.VITE_COMING_SOON ?? "false")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
-  const comingSoonEnabled = comingSoonRaw === "true";
+  const comingSoonEnabled = siteMode === "coming-soon";
   const isAdmin = isAuthenticated && user?.role === "admin";
-  const comingSoonAllowedRoutes = new Set(["/login", "/entrar", "/cadastro", "/esqueci-senha", "/redefinir-senha"]);
+  const comingSoonAllowedRoutes = new Set(["/em-breve", "/login", "/entrar", "/cadastro", "/esqueci-senha", "/redefinir-senha", "/gestao", "/admin"]);
   const isAllowedDuringComingSoon = comingSoonAllowedRoutes.has(location.pathname);
 
   if (comingSoonEnabled && !isAllowedDuringComingSoon) {
@@ -120,6 +117,7 @@ function AppRoutes() {
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/em-breve" element={<ComingSoon />} />
             <Route path="/produtos" element={<Produtos />} />
             <Route path="/categorias/:categorySlug" element={<Produtos />} />
             <Route path="/produto/:id" element={<ProductDetail />} />

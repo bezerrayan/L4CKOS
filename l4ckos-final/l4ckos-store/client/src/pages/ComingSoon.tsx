@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Instagram, Mail, MessageCircle } from "lucide-react";
 import { apiUrl } from "../const";
+import { contactChannels, getWhatsAppUrl } from "../config/site";
 import { csrfFetch } from "../lib/csrf";
 import logoMarkDark from "../images/l4k-mark-dark-transparent.png";
 
@@ -24,6 +25,7 @@ export default function ComingSoon() {
   const [splashOut, setSplashOut] = useState(false);
   const [introDone, setIntroDone] = useState(false);
   const currentYear = new Date().getFullYear();
+  const whatsappUrl = getWhatsAppUrl();
 
   useEffect(() => {
     const startOut = window.setTimeout(() => setSplashOut(true), 900);
@@ -160,15 +162,17 @@ export default function ComingSoon() {
             </p>
 
             <div className="l4-coming-v2-socials" aria-label="Contatos L4CKOS">
-              <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4CKOS">
+              <a href={contactChannels.instagramUrl} target="_blank" rel="noreferrer" aria-label="Instagram L4CKOS">
                 <Instagram size={15} aria-hidden="true" />
                 <span>Instagram</span>
               </a>
-              <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" aria-label="WhatsApp L4CKOS">
-                <MessageCircle size={15} aria-hidden="true" />
-                <span>WhatsApp</span>
-              </a>
-              <a href="mailto:contato@l4ckos.com.br" aria-label="Email L4CKOS">
+              {whatsappUrl ? (
+                <a href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="WhatsApp L4CKOS">
+                  <MessageCircle size={15} aria-hidden="true" />
+                  <span>WhatsApp</span>
+                </a>
+              ) : null}
+              <a href={`mailto:${contactChannels.email}`} aria-label="Email L4CKOS">
                 <Mail size={15} aria-hidden="true" />
                 <span>E-mail</span>
               </a>

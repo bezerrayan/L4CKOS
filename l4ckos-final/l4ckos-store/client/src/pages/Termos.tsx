@@ -4,6 +4,7 @@
 
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
+import { contactChannels } from "../config/site";
 
 export default function Termos() {
   useEffect(() => {
@@ -169,13 +170,10 @@ export default function Termos() {
           </p>
           <div style={styles.contactBox as CSSProperties}>
             <p>
-              <strong>E-mail:</strong> contato@l4ckos.com.br
+              <strong>E-mail:</strong> {contactChannels.email}
             </p>
             <p>
-              <strong>WhatsApp:</strong> +55 (61) 99803-0913
-            </p>
-            <p>
-              <strong>Atendimento:</strong> online, com cobertura em todo o Brasil
+              <strong>Atendimento:</strong> {contactChannels.responseTime}
             </p>
           </div>
         </section>

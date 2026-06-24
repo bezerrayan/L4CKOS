@@ -1,5 +1,26 @@
 # Sempre Alerta - Loja Escoteira
 
+> Nota atual: este projeto hoje atende a L4CKOS, marca brasileira independente com e-commerce React/Vite + Express/tRPC. Parte deste README ainda é legado e pode ser revisada em uma etapa de documentação.
+
+## Configuração L4CKOS
+
+### Modo do site
+
+Use `VITE_SITE_MODE` no ambiente do frontend:
+
+- `VITE_SITE_MODE=store`: abre a loja normalmente.
+- `VITE_SITE_MODE=coming-soon`: mostra a página Coming Soon para visitantes públicos.
+
+A rota `/em-breve` continua disponível para visualizar a página Coming Soon mesmo em modo `store`.
+
+Para manter compatibilidade, `VITE_COMING_SOON=true` ainda ativa o modo Coming Soon quando `VITE_SITE_MODE` não estiver definido. Em produção, alterar essas variáveis normalmente exige novo build/deploy do frontend.
+
+### Canais oficiais
+
+Os canais públicos da L4CKOS ficam centralizados em `client/src/config/site.ts`.
+
+O WhatsApp fica oculto enquanto `whatsappNumber` estiver vazio. Quando houver número oficial, configure esse campo uma única vez para exibir o canal automaticamente nas áreas públicas que usam a configuração.
+
 Um site de e-commerce completo e responsivo para venda de materiais escoteiros, desenvolvido com HTML, CSS e JavaScript puros.
 
 ## 📋 Descrição

@@ -215,7 +215,7 @@ export default function ProductDetail() {
     if (!selectedColor || !selectedSize) {
       setShowSelectionWarning(true);
       showToast({
-        message: "Selecione cor e tamanho antes de adicionar ao carrinho",
+        message: "Selecione cor e tamanho antes de adicionar à sacola",
         duration: 3500,
       });
       return;
@@ -226,8 +226,8 @@ export default function ProductDetail() {
       tamanho: selectedSize,
     });
     showToast({
-      message: `${product.name} adicionado ao carrinho (${quantity}x).`,
-      actionLabel: "Ver carrinho",
+      message: `${product.name} adicionado à sacola (${quantity}x).`,
+      actionLabel: "Ver sacola",
       action: () => navigate("/carrinho"),
       duration: 4500,
     });
@@ -497,13 +497,13 @@ export default function ProductDetail() {
                 btn.style.boxShadow = "0 4px 12px rgba(26,26,26,0.2)";
               }}
             >
-              {product.stock > 0 ? "Adicionar ao carrinho" : "Indisponível"}
+              {product.stock > 0 ? "Adicionar à sacola" : "Indisponível"}
             </button>
           </div>
 
           {showSelectionWarning && !canAddToCart && (
             <p style={styles.selectionWarning as CSSProperties}>
-              Selecione {missingSelections.join(" e ")} antes de adicionar ao carrinho.
+              Selecione {missingSelections.join(" e ")} antes de adicionar à sacola.
             </p>
           )}
 

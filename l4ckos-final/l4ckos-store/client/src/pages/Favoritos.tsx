@@ -1,5 +1,7 @@
 ﻿import { Link } from "react-router-dom";
 import type { CSSProperties } from "react";
+import { Heart } from "lucide-react";
+import EmptyState from "../components/EmptyState";
 import ProductCard from "../components/ProductCard";
 import { useFavorites } from "../contexts/FavoritesContext";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -16,22 +18,19 @@ export default function Favoritos() {
         </h1>
         <p style={{ ...styles.pageSubtitle, fontSize: isMobile ? 15 : styles.pageSubtitle.fontSize } as CSSProperties}>
           {favorites.length === 0
-            ? "Você ainda não tem produtos favoritos"
-            : `Você tem ${favorites.length} produto${favorites.length !== 1 ? "s" : ""} salvo${favorites.length !== 1 ? "s" : ""}`}
+            ? "Guarde peças para encontrar depois."
+            : `Você tem ${favorites.length} peça${favorites.length !== 1 ? "s" : ""} salva${favorites.length !== 1 ? "s" : ""}`}
         </p>
       </div>
 
       {favorites.length === 0 ? (
-        <div style={{ ...styles.emptyState, padding: isMobile ? 36 : styles.emptyState.padding } as CSSProperties}>
-          <div style={styles.emptyIcon as CSSProperties}>F</div>
-          <h2 style={styles.emptyTitle as CSSProperties}>Nenhum favorito ainda</h2>
-          <p style={styles.emptyText as CSSProperties}>
-            Explore nossos produtos e adicione seus favoritos para acessá-los rapidamente
-          </p>
-          <Link to="/produtos" style={styles.emptyButton as CSSProperties}>
-            Explorar Produtos
-          </Link>
-        </div>
+        <EmptyState
+          icon={Heart}
+          title="NENHUMA PEÇA SALVA"
+          text="Use o coração nos produtos para guardar suas peças favoritas e encontrá-las rapidamente depois."
+          action={{ label: "EXPLORAR PRODUTOS", to: "/produtos" }}
+          style={{ padding: isMobile ? 36 : undefined }}
+        />
       ) : (
         <>
           <div

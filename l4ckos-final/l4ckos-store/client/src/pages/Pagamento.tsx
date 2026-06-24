@@ -441,7 +441,7 @@ export default function Pagamento() {
           {paymentData
             ? `Pedido #${paymentData.orderId} em acompanhamento`
             : cart.items.length === 0
-            ? "Seu carrinho está vazio."
+            ? "Sua sacola está vazia."
             : `${cart.items.length} item${cart.items.length !== 1 ? "s" : ""} para finalizar`}
         </p>
       </div>
@@ -958,7 +958,7 @@ export default function Pagamento() {
               ) : null}
 
               <Link to="/carrinho" style={styles.continueShopping}>
-                Voltar ao Carrinho
+                Voltar à sacola
               </Link>
             </div>
 
@@ -1022,7 +1022,7 @@ export default function Pagamento() {
               <circle cx="19" cy="20" r="1"></circle>
             </svg>
           </div>
-          <h2 style={styles.emptyTitle}>Seu carrinho está vazio</h2>
+          <h2 style={styles.emptyTitle}>Sua sacola está vazia</h2>
           <p style={styles.emptyText}>
             Adicione alguns produtos para começar suas compras.
           </p>

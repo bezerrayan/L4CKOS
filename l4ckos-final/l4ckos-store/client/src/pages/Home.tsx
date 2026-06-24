@@ -85,8 +85,8 @@ export default function Home() {
   );
 
   useEffect(() => {
-    document.title = "L4CKOS — Drop 01";
-    const description = "Conheça a L4CKOS e explore o Drop 01: peças que unem identidade urbana, movimento e espírito de aventura.";
+    document.title = "L4CKOS — Loja oficial";
+    const description = "Conheça a L4CKOS: marca brasileira independente que une identidade urbana, movimento e espírito de aventura.";
     let meta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
     if (!meta) {
       meta = document.createElement("meta");
@@ -131,7 +131,7 @@ export default function Home() {
     <div className="l4-home">
       <div className="l4-home-announce">
         <span className="l4-home-announce-track">
-          DROP 01 DISPONÍVEL — BUILT FOR ADVENTURE — IDENTIDADE EM MOVIMENTO — DROP 01 DISPONÍVEL — BUILT FOR ADVENTURE — IDENTIDADE EM MOVIMENTO
+          LOJA OFICIAL — BUILT FOR ADVENTURE — IDENTIDADE EM MOVIMENTO — L4CKOS — BUILT FOR ADVENTURE — IDENTIDADE EM MOVIMENTO
         </span>
       </div>
 
@@ -139,7 +139,7 @@ export default function Home() {
         <div className="l4-home-hero-grid" />
         <div className="l4-home-hero-bg" />
         <div className="l4-home-hero-content">
-          <div className="l4-home-tag">DROP 01 — DISPONÍVEL AGORA</div>
+          <div className="l4-home-tag">L4CKOS — LOJA OFICIAL</div>
           <h1 className="l4-home-title">
             <span>BUILT FOR</span>
             <br />
@@ -150,17 +150,17 @@ export default function Home() {
           </p>
           <div className="l4-home-hero-cta">
             <Link to="/produtos" className="l4-btn-primary">
-              EXPLORAR DROP 01
+              EXPLORAR PRODUTOS
             </Link>
             <Link to="/sobre" className="l4-btn-outline">
               CONHECER A L4CKOS
             </Link>
           </div>
         </div>
-        <section className="l4-home-drop-banner" aria-label="Drop 01">
+        <section className="l4-home-drop-banner" aria-label="Coleção atual">
           <div className="l4-home-drop-copy">
-            <span>DROP 01</span>
-            <h2>A PRIMEIRA COLEÇÃO L4CKOS</h2>
+            <span>COLEÇÃO ATUAL</span>
+            <h2>PEÇAS PARA IDENTIDADE EM MOVIMENTO</h2>
             <p>Identidade urbana, movimento e espírito de aventura em cada peça.</p>
             <Link to="/produtos" className="l4-home-drop-link">VER COLEÇÃO</Link>
           </div>
@@ -187,12 +187,12 @@ export default function Home() {
         <div className="l4-home-marquee-track">
           <span>OUTDOOR</span>
           <span>L4CKOS</span>
-          <span>DROP 01</span>
+          <span>L4CKOS</span>
           <span>IDENTIDADE URBANA</span>
           <span>BUILT FOR ADVENTURE</span>
           <span>OUTDOOR</span>
           <span>L4CKOS</span>
-          <span>DROP 01</span>
+          <span>L4CKOS</span>
           <span>IDENTIDADE URBANA</span>
           <span>BUILT FOR ADVENTURE</span>
         </div>
@@ -202,9 +202,9 @@ export default function Home() {
         <div className="l4-home-section-header">
           <div>
             <div className="l4-home-section-tag">COLEÇÃO ATUAL</div>
-            <h2 className="l4-home-section-title">EXPLORE O DROP 01</h2>
+            <h2 className="l4-home-section-title">EXPLORE OS PRODUTOS</h2>
             <p className="l4-home-section-copy">
-              As primeiras peças da L4CKOS. Uma coleção construída para unir identidade urbana, movimento e espírito de aventura.
+              Peças da L4CKOS construídas para unir identidade urbana, movimento e espírito de aventura.
             </p>
           </div>
           <Link className="l4-home-view-all" to="/produtos">

@@ -3,10 +3,12 @@
  */
 
 import { useState, useEffect } from "react";
+import { Clock, Mail, MessageCircle } from "lucide-react";
 import { useToast } from "../contexts/ToastContext";
 import type { CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { apiUrl } from "../const";
+import { contactChannels, getWhatsAppUrl } from "../config/site";
 import { csrfFetch } from "../lib/csrf";
 import { getApiErrorDisplay } from "../utils/apiError";
 
@@ -17,11 +19,12 @@ function isValidEmail(email: string) {
 export default function Contato() {
   const isMobile = useIsMobile();
   const { showToast } = useToast();
+  const whatsappUrl = getWhatsAppUrl();
   const [formData, setFormData] = useState({
     nome: "",
     email: "",
     telefone: "",
-    assunto: "duvida",
+    assunto: "produto",
     mensagem: "",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -95,7 +98,7 @@ export default function Contato() {
         nome: "",
         email: "",
         telefone: "",
-        assunto: "duvida",
+        assunto: "produto",
         mensagem: "",
       });
     } catch (error) {
@@ -139,40 +142,31 @@ export default function Contato() {
           <h2 style={styles.sectionTitle}>Canais de Atendimento</h2>
 
           <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>@</div>
+            <div style={styles.infoIcon as CSSProperties}><Mail size={20} aria-hidden="true" /></div>
             <div>
               <h3 style={styles.infoTitle}>E-mail</h3>
-              <p style={styles.infoText}>contato@l4ckos.com.br</p>
+              <p style={styles.infoText}>{contactChannels.email}</p>
               <p style={styles.infoCaption}>Canal oficial para dúvidas, suporte e pós-venda.</p>
             </div>
           </div>
 
-          <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>W</div>
-            <div>
-              <h3 style={styles.infoTitle}>WhatsApp</h3>
-              <p style={styles.infoText}>+55 (61) 99803-0913</p>
-              <p style={styles.infoCaption}>Atendimento direto para orientações e acompanhamento.</p>
+          {whatsappUrl ? (
+            <div style={styles.infoCard as CSSProperties}>
+              <div style={styles.infoIcon as CSSProperties}><MessageCircle size={20} aria-hidden="true" /></div>
+              <div>
+                <h3 style={styles.infoTitle}>WhatsApp</h3>
+                <p style={styles.infoText}>Canal oficial L4CKOS</p>
+                <p style={styles.infoCaption}>Atendimento direto para orientações e acompanhamento.</p>
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>◷</div>
+            <div style={styles.infoIcon as CSSProperties}><Clock size={20} aria-hidden="true" /></div>
             <div>
               <h3 style={styles.infoTitle}>Prazo de resposta</h3>
               <p style={styles.infoText}>Atendimento em dias úteis</p>
-              <p style={styles.infoCaption}>Buscamos responder em até 1 dia útil.</p>
-            </div>
-          </div>
-
-          <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>◎</div>
-            <div>
-              <h3 style={styles.infoTitle}>Cobertura</h3>
-              <p style={styles.infoText}>Atendimento online em todo o Brasil</p>
-              <p style={styles.infoCaption}>
-                Para agilizar o suporte, informe o número do pedido quando aplicável.
-              </p>
+              <p style={styles.infoCaption}>{contactChannels.responseTime}</p>
             </div>
           </div>
         </div>
@@ -182,7 +176,7 @@ export default function Contato() {
 
           <form onSubmit={handleSubmit} style={styles.form as CSSProperties}>
             {formError ? (
-              <div style={styles.formAlert as CSSProperties}>
+              <div style={styles.formAlert as CSSProperties} role="alert" aria-live="polite">
                 <strong style={styles.formAlertTitle as CSSProperties}>{formError.message}</strong>
                 {formError.details.length > 0 ? (
                   <ul style={styles.formAlertList as CSSProperties}>
@@ -235,7 +229,7 @@ export default function Contato() {
                 name="telefone"
                 value={formData.telefone}
                 onChange={handleChange}
-                placeholder="(61) 99803-0913"
+                placeholder="Opcional"
                 style={styles.input as CSSProperties}
                 disabled={isSubmitting}
               />
@@ -253,12 +247,11 @@ export default function Contato() {
                 style={styles.input as CSSProperties}
                 disabled={isSubmitting}
               >
-                <option value="duvida">Dúvida sobre produtos</option>
-                <option value="pedido">Dúvida sobre pedido</option>
-                <option value="entrega">Dúvida sobre entrega</option>
-                <option value="devolucao">Trocas e devoluções</option>
-                <option value="sugestao">Sugestão</option>
-                <option value="reclamacao">Reclamação</option>
+                <option value="produto">Dúvida sobre produto</option>
+                <option value="pedido_pagamento">Pedido e pagamento</option>
+                <option value="entrega_rastreamento">Entrega e rastreamento</option>
+                <option value="troca_devolucao">Troca ou devolução</option>
+                <option value="parcerias">Parcerias</option>
                 <option value="outro">Outro assunto</option>
               </select>
             </div>
@@ -439,7 +432,7 @@ const styles: Record<string, CSSProperties> = {
   },
   submitButton: {
     padding: "14px 32px",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    background: "#e8002a",
     color: "white",
     border: "none",
     borderRadius: 8,

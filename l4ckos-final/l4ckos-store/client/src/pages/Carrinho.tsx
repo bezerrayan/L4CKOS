@@ -1,4 +1,6 @@
 ﻿import { Link } from "react-router-dom";
+import { ShoppingBag } from "lucide-react";
+import EmptyState from "../components/EmptyState";
 import { useCart } from "../contexts/CartContext";
 import { formatPrice } from "../lib/utils";
 import type { CSSProperties } from "react";
@@ -35,20 +37,21 @@ export default function Carrinho() {
   return (
     <div style={{ paddingBottom: isMobile ? 104 : 0 }}>
       <div style={styles.header}>
-        <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Seu Carrinho</h1>
+        <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Sua Sacola</h1>
         <p style={styles.subtitle}>
           {cart.items.length === 0
-            ? "Seu carrinho está vazio"
-            : `${cart.items.length} item${cart.items.length > 1 ? "ns" : ""} no carrinho`}
+            ? "Sua sacola está vazia"
+            : `${cart.itemCount} item${cart.itemCount > 1 ? "s" : ""} na sacola`}
         </p>
       </div>
 
       {cart.items.length === 0 ? (
-        <div style={styles.emptyState}>
-          <h2 style={styles.emptyTitle}>Seu carrinho está vazio</h2>
-          <p style={styles.emptyText}>Adicione produtos para continuar.</p>
-          <Link to="/produtos" style={styles.emptyButton}>Explorar Produtos</Link>
-        </div>
+        <EmptyState
+          icon={ShoppingBag}
+          title="SUA SACOLA ESTÁ VAZIA"
+          text="Explore nossos produtos e encontre uma peça para acompanhar o seu caminho."
+          action={{ label: "EXPLORAR PRODUTOS", to: "/produtos" }}
+        />
       ) : (
         <div style={{ ...styles.layout, gridTemplateColumns: isMobile ? "1fr" : "1fr 340px" }}>
           <div style={styles.itemsList}>
@@ -129,11 +132,11 @@ export default function Carrinho() {
 
           {!isMobile ? (
             <aside style={styles.summaryDesktop}>
-              <h2 style={styles.summaryTitle}>Resumo do Pedido</h2>
+              <h2 style={styles.summaryTitle}>Resumo da compra</h2>
               <div style={styles.summaryRow}><span>Itens</span><strong>{cart.itemCount}</strong></div>
               <div style={styles.summaryRow}><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p style={styles.summaryHint}>Frete, cupom e pagamento na próxima etapa.</p>
-              <Link to="/checkout" style={styles.checkoutButton}>Ir para Pagamento</Link>
+              <Link to="/checkout" style={styles.checkoutButton}>Finalizar compra</Link>
               <Link to="/produtos" style={styles.continueLink}>Continuar comprando</Link>
             </aside>
           ) : null}
@@ -146,7 +149,7 @@ export default function Carrinho() {
             <p style={styles.mobileCheckoutLabel}>Subtotal</p>
             <p style={styles.mobileCheckoutValue}>{formatPrice(cart.total)}</p>
           </div>
-          <Link to="/checkout" style={styles.mobileCheckoutButton}>Ir para Pagamento</Link>
+          <Link to="/checkout" style={styles.mobileCheckoutButton}>Finalizar compra</Link>
         </div>
       ) : null}
     </div>

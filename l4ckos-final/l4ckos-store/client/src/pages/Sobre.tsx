@@ -191,7 +191,7 @@ export default function Sobre() {
           </p>
           <p style={styles.closingCall}>Vista o caminho. Viva a aventura.</p>
           <Link to="/produtos" style={styles.ctaButton}>
-            Conhecer o Drop 01
+            Conhecer os produtos
           </Link>
         </div>
       </section>

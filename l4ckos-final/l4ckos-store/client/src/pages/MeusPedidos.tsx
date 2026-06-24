@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 import type { CSSProperties } from "react";
+import { PackageSearch } from "lucide-react";
+import EmptyState from "../components/EmptyState";
 import { useUser } from "../contexts/UserContext";
 import { useOrders } from "../hooks/useOrders";
 
@@ -80,7 +82,12 @@ export default function MeusPedidos() {
       {ordersQuery.isError ? <p style={styles.error}>Não foi possível carregar seus pedidos agora.</p> : null}
 
       {!ordersQuery.isLoading && !ordersQuery.isError && orders.length === 0 ? (
-        <p style={styles.muted}>Você ainda não possui pedidos concluídos na sua conta.</p>
+        <EmptyState
+          icon={PackageSearch}
+          title="VOCÊ AINDA NÃO TEM PEDIDOS"
+          text="Quando realizar uma compra, poderá acompanhar as atualizações por aqui."
+          action={{ label: "EXPLORAR PRODUTOS", to: "/produtos" }}
+        />
       ) : null}
 
       <div style={styles.list}>

@@ -5,11 +5,13 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { CSSProperties } from "react";
+import { PackageOpen, SearchX } from "lucide-react";
 import ProductCard from "../components/ProductCard";
+import EmptyState from "../components/EmptyState";
 import type { Product } from "../types/product";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { trpc } from "../lib/trpc";
-import { PRODUCT_CATEGORIES, getCategoryLabel, getCategoryMeta, normalizeCategoryValue } from "../lib/productCategories";
+import { getCategoryLabel, normalizeCategoryValue } from "../lib/productCategories";
 import { resolveCatalogImageUrl } from "../lib/images";
 import camisaFallback from "../images/camisa.png";
 
@@ -29,10 +31,7 @@ export default function Produtos() {
   const [searchTerm, setSearchTerm] = useState("");
   const selectedCategory = normalizeCategoryValue(categorySlug);
 
-  const productsQuery = trpc.products.list.useQuery({
-    search: searchTerm.trim() || undefined,
-    limit: 200,
-  });
+  const productsQuery = trpc.products.list.useQuery({ limit: 200 });
 
   const produtosBrutos: Product[] = useMemo(
     () =>
@@ -48,29 +47,38 @@ export default function Produtos() {
     [productsQuery.data],
   );
 
-  const produtos = useMemo(
-    () =>
-      selectedCategory
-        ? produtosBrutos.filter(item => normalizeCategoryValue(item.category) === selectedCategory)
-        : produtosBrutos,
-    [produtosBrutos, selectedCategory],
-  );
-
   const availableCategories = useMemo(() => {
-    const categoryMap = new Map<string, string>();
-    for (const category of PRODUCT_CATEGORIES) {
-      categoryMap.set(category.value, category.label);
-    }
+    const categoryMap = new Map<string, { label: string; count: number }>();
     for (const product of produtosBrutos) {
       const normalized = normalizeCategoryValue(product.category);
-      if (!normalized || categoryMap.has(normalized)) continue;
-      categoryMap.set(normalized, getCategoryLabel(product.category));
+      if (!normalized) continue;
+      const current = categoryMap.get(normalized);
+      categoryMap.set(normalized, {
+        label: current?.label || getCategoryLabel(product.category),
+        count: (current?.count || 0) + 1,
+      });
     }
-    return Array.from(categoryMap.entries()).map(([value, label]) => ({ value, label }));
+    return Array.from(categoryMap.entries()).map(([value, meta]) => ({ value, label: meta.label, count: meta.count }));
   }, [produtosBrutos]);
 
+  const produtos = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return produtosBrutos.filter(item => {
+      const matchesCategory = selectedCategory ? normalizeCategoryValue(item.category) === selectedCategory : true;
+      if (!matchesCategory) return false;
+      if (!normalizedSearch) return true;
+      const haystack = [item.name, item.description, getCategoryLabel(item.category), item.category]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [produtosBrutos, searchTerm, selectedCategory]);
+
   const activeCategoryLabel = selectedCategory ? getCategoryLabel(selectedCategory) : "";
-  const activeCategoryMeta = getCategoryMeta(selectedCategory);
+  const hasCatalog = produtosBrutos.length > 0;
+  const showFilters = availableCategories.length > 1;
+  const showSearch = hasCatalog;
 
   return (
     <div>
@@ -82,11 +90,11 @@ export default function Produtos() {
         }}
       >
         <div>
-          <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Nosso catálogo</h1>
+          <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Produtos</h1>
           <p style={{ ...styles.subtitle, fontSize: isMobile ? 15 : styles.subtitle.fontSize }}>
             {activeCategoryLabel
-              ? `Você está vendo a categoria ${activeCategoryLabel}. Explore os itens relacionados e filtre com mais rapidez.`
-              : "Explore a vitrine da L4CKOS e encontre produtos selecionados para rotina urbana, aventura premium e uso diário."}
+              ? `Você está vendo produtos em ${activeCategoryLabel}.`
+              : "Explore as peças disponíveis da L4CKOS, criadas para identidade urbana, movimento e espírito de aventura."}
           </p>
         </div>
       </div>
@@ -94,53 +102,58 @@ export default function Produtos() {
       {activeCategoryLabel ? (
         <section style={styles.categoryHero}>
           <div style={styles.categoryHeroTag}>Categoria selecionada</div>
-          <h2 style={styles.categoryHeroTitle}>{activeCategoryMeta?.headline || activeCategoryLabel}</h2>
+          <h2 style={styles.categoryHeroTitle}>{activeCategoryLabel}</h2>
           <p style={styles.categoryHeroText}>
-            {activeCategoryMeta?.description || `Veja os produtos publicados em ${activeCategoryLabel} e encontre opções relacionadas a essa linha.`}
+            Veja as peças publicadas nesta categoria. As opções exibidas são atualizadas conforme o catálogo real.
           </p>
         </section>
       ) : null}
 
-      <div style={{ ...styles.categoryBar, gap: isMobile ? 8 : styles.categoryBar.gap }}>
-        <button
-          type="button"
-          style={{
-            ...styles.categoryChip,
-            ...(!selectedCategory ? styles.categoryChipActive : {}),
-          }}
-          onClick={() => navigate("/produtos")}
-        >
-          Todas
-        </button>
-        {availableCategories.map(category => (
+      {showFilters ? (
+        <div style={{ ...styles.categoryBar, gap: isMobile ? 8 : styles.categoryBar.gap }}>
           <button
-            key={category.value}
             type="button"
             style={{
               ...styles.categoryChip,
-              ...(selectedCategory === category.value ? styles.categoryChipActive : {}),
+              ...(!selectedCategory ? styles.categoryChipActive : {}),
             }}
-            onClick={() => navigate(`/categorias/${category.value}`)}
+            onClick={() => navigate("/produtos")}
           >
-            {category.label}
+            Todos
           </button>
-        ))}
-      </div>
+          {availableCategories.map(category => (
+            <button
+              key={category.value}
+              type="button"
+              style={{
+                ...styles.categoryChip,
+                ...(selectedCategory === category.value ? styles.categoryChipActive : {}),
+              }}
+              onClick={() => navigate(`/categorias/${category.value}`)}
+            >
+              {category.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
-      <div style={{ ...styles.searchContainer, marginBottom: isMobile ? 30 : styles.searchContainer.marginBottom }}>
-        <input
-          type="text"
-          placeholder="Buscar por produto, categoria ou palavra-chave..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={styles.searchInput as CSSProperties}
-        />
-        {searchTerm && (
-          <button onClick={() => setSearchTerm("")} style={styles.clearButton as CSSProperties}>
-            ×
-          </button>
-        )}
-      </div>
+      {showSearch ? (
+        <div style={{ ...styles.searchContainer, marginBottom: isMobile ? 30 : styles.searchContainer.marginBottom }}>
+          <input
+            type="search"
+            placeholder="Buscar por produto ou categoria..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={styles.searchInput as CSSProperties}
+            aria-label="Buscar produtos"
+          />
+          {searchTerm ? (
+            <button onClick={() => setSearchTerm("")} style={styles.clearButton as CSSProperties} aria-label="Limpar busca">
+              ×
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {productsQuery.isLoading ? <p style={styles.resultInfo}>Carregando produtos...</p> : null}
       {productsQuery.isError ? <p style={styles.resultInfo}>Não foi possível carregar os produtos agora.</p> : null}
@@ -176,28 +189,21 @@ export default function Produtos() {
             ))}
           </div>
         </div>
+      ) : !productsQuery.isLoading && !hasCatalog ? (
+        <EmptyState
+          icon={PackageOpen}
+          title="NOVAS PEÇAS EM PREPARAÇÃO"
+          text="O catálogo da L4CKOS está sendo preparado. Acompanhe os canais oficiais para conhecer os próximos lançamentos."
+          action={{ label: "ENTRAR NA LISTA", to: "/em-breve" }}
+        />
       ) : !productsQuery.isLoading ? (
-        <div style={{ ...styles.emptyState, padding: isMobile ? "40px 16px" : styles.emptyState.padding }}>
-          <div style={styles.emptyIcon}>×</div>
-          <h2 style={styles.emptyTitle}>Nenhum produto encontrado</h2>
-          <p style={styles.emptyText}>
-            {searchTerm
-              ? `Não encontramos produtos para "${searchTerm}".`
-              : activeCategoryLabel
-                ? `Ainda não há itens publicados em ${activeCategoryLabel}.`
-                : "Nenhum produto foi encontrado no momento."}
-          </p>
-          <div style={styles.emptyActions}>
-            <button onClick={() => setSearchTerm("")} style={styles.emptyButton as CSSProperties}>
-              Limpar busca
-            </button>
-            {selectedCategory ? (
-              <button onClick={() => navigate("/produtos")} style={styles.emptyButtonSecondary as CSSProperties}>
-                Ver todas as categorias
-              </button>
-            ) : null}
-          </div>
-        </div>
+        <EmptyState
+          icon={SearchX}
+          title="NENHUM PRODUTO ENCONTRADO"
+          text="Não encontramos peças correspondentes à sua busca."
+          action={{ label: "LIMPAR FILTROS", onClick: () => setSearchTerm("") }}
+          secondaryAction={{ label: "VER TODOS OS PRODUTOS", to: "/produtos" }}
+        />
       ) : null}
     </div>
   );

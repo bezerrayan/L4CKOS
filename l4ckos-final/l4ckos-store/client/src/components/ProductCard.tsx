@@ -1,6 +1,8 @@
 ﻿import { useNavigate, useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
+import { Heart } from "lucide-react";
 import type { Product } from "../types/product";
+import { useFavorites } from "../contexts/FavoritesContext";
 import { getCategoryLabel } from "../lib/productCategories";
 import { retryImageWithVersion } from "../lib/images";
 import camisaFallback from "../images/camisa.png";
@@ -12,6 +14,8 @@ type Props = {
 export default function ProductCard({ product }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
+  const favorited = isFavorited(product.id);
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
@@ -21,7 +25,7 @@ export default function ProductCard({ product }: Props) {
     if ((product.stock ?? 0) <= 0) return { text: "INDISPONÍVEL", color: "#5b1d1d" };
     if ((product.stock ?? 0) <= 3) return { text: "ESTOQUE REDUZIDO", color: "#6b3e0b" };
     if (product.category?.trim()) return { text: getCategoryLabel(product.category).toUpperCase(), color: "#4a5568" };
-    return { text: "DESTAQUE", color: "#555555" };
+    return null;
   };
 
   const badge = getBadgeInfo();
@@ -58,7 +62,24 @@ export default function ProductCard({ product }: Props) {
             retryImageWithVersion(event, product.image, camisaFallback, product.id);
           }}
         />
-        <div style={{ ...styles.badge, background: badge.color } as CSSProperties}>{badge.text}</div>
+        {badge ? <div style={{ ...styles.badge, background: badge.color } as CSSProperties}>{badge.text}</div> : null}
+        <button
+          type="button"
+          style={{ ...styles.favoriteButton, ...(favorited ? styles.favoriteButtonActive : {}) } as CSSProperties}
+          aria-label={favorited ? `Remover ${product.name} dos favoritos` : `Adicionar ${product.name} aos favoritos`}
+          aria-pressed={favorited}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (favorited) {
+              removeFromFavorites(product.id);
+            } else {
+              addToFavorites(product);
+            }
+          }}
+        >
+          <Heart size={17} fill={favorited ? "currentColor" : "none"} aria-hidden="true" />
+          <span style={styles.favoriteText as CSSProperties}>{favorited ? "Salvo" : "Salvar"}</span>
+        </button>
         <div style={styles.designOverlay as CSSProperties}>
           <div style={styles.overlayContent as CSSProperties}>
             {(product.stock ?? 0) > 0 ? "Clique para ver detalhes" : "Indisponível no momento"}
@@ -176,7 +197,7 @@ const styles = {
   button: {
     width: "100%",
     padding: "12px",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #343434 100%)",
+    background: "#e8002a",
     color: "white",
     border: "none",
     borderRadius: 8,
@@ -185,5 +206,31 @@ const styles = {
     transition: "all 0.3s ease",
     fontSize: 14,
     letterSpacing: "0.3px",
+  },
+  favoriteButton: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    minHeight: 34,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    border: "1px solid rgba(255,255,255,0.26)",
+    background: "rgba(8,8,8,0.72)",
+    color: "#f0ede8",
+    padding: "7px 10px",
+    borderRadius: 999,
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.4px",
+  },
+  favoriteButtonActive: {
+    color: "#fff",
+    background: "#e8002a",
+    borderColor: "#e8002a",
+  },
+  favoriteText: {
+    lineHeight: 1,
   },
 };

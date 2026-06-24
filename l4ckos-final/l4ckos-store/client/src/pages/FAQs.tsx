@@ -2,6 +2,7 @@
 import { Link } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { contactChannels, getWhatsAppUrl } from "../config/site";
 
 interface FAQ {
   id: number;
@@ -11,7 +12,7 @@ interface FAQ {
 }
 
 const FAQS: FAQ[] = [
-  { id: 1, categoria: "Pedidos", pergunta: "Como faço um pedido?", resposta: "Navegue pela loja, adicione os produtos ao carrinho e conclua a compra no checkout." },
+  { id: 1, categoria: "Pedidos", pergunta: "Como faço um pedido?", resposta: "Navegue pela loja, adicione os produtos à sacola e conclua a compra no checkout." },
   { id: 2, categoria: "Pedidos", pergunta: "Qual é o prazo de entrega?", resposta: "O prazo varia conforme o CEP, a transportadora e a modalidade escolhida no fechamento do pedido." },
   { id: 3, categoria: "Pedidos", pergunta: "Existe valor mínimo para compra?", resposta: "Não há valor mínimo para comprar no site." },
   { id: 4, categoria: "Pagamento", pergunta: "Quais formas de pagamento são aceitas?", resposta: "Aceitamos PIX, boleto e cartão, conforme as opções exibidas no checkout." },
@@ -29,6 +30,7 @@ export default function FAQs() {
   const isMobile = useIsMobile();
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("Todos");
   const [faqAberta, setFaqAberta] = useState<number | null>(null);
+  const whatsappUrl = getWhatsAppUrl();
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -97,16 +99,18 @@ export default function FAQs() {
             <Link to="/contato" style={styles.sidebarButton as CSSProperties}>Ir para contato</Link>
           </div>
 
-          <div style={styles.sidebarCard as CSSProperties}>
-            <h3 style={styles.sidebarTitle as CSSProperties}>WhatsApp</h3>
-            <p style={styles.sidebarText as CSSProperties}>Atendimento em dias úteis, com retorno rápido para dúvidas e pós-venda.</p>
-            <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" style={styles.sidebarButton as CSSProperties}>Abrir WhatsApp</a>
-          </div>
+          {whatsappUrl ? (
+            <div style={styles.sidebarCard as CSSProperties}>
+              <h3 style={styles.sidebarTitle as CSSProperties}>WhatsApp</h3>
+              <p style={styles.sidebarText as CSSProperties}>Atendimento em dias úteis para dúvidas e pós-venda.</p>
+              <a href={whatsappUrl} target="_blank" rel="noreferrer" style={styles.sidebarButton as CSSProperties}>Abrir WhatsApp</a>
+            </div>
+          ) : null}
 
           <div style={styles.sidebarCard as CSSProperties}>
             <h3 style={styles.sidebarTitle as CSSProperties}>E-mail de atendimento</h3>
-            <p style={styles.sidebarText as CSSProperties}>contato@l4ckos.com.br</p>
-            <p style={styles.sidebarSubtext as CSSProperties}>Buscamos responder em até 1 dia útil.</p>
+            <p style={styles.sidebarText as CSSProperties}>{contactChannels.email}</p>
+            <p style={styles.sidebarSubtext as CSSProperties}>{contactChannels.responseTime}</p>
           </div>
         </div>
       </div>

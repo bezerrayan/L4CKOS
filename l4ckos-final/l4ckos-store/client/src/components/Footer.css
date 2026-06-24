@@ -9,7 +9,7 @@
   max-width: 1400px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  grid-template-columns: 1.5fr repeat(4, minmax(120px, 1fr));
   gap: 24px;
   padding-bottom: 32px;
   border-bottom: 1px solid #252525;
@@ -122,5 +122,11 @@
   .l4-footer-socials a {
     font-size: 10px;
     padding: 7px 10px;
+  }
+}
+
+@media (max-width: 560px) {
+  .l4-footer-grid {
+    grid-template-columns: 1fr;
   }
 }
