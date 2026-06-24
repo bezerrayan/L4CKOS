@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { apiUrl } from "../../const";
+import { csrfFetch } from "../../lib/csrf";
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
@@ -22,7 +23,7 @@ export default function WaitlistForm() {
 
     try {
       setLoading(true);
-      const response = await fetch(apiUrl("/api/waitlist"), {
+      const response = await csrfFetch(apiUrl("/api/waitlist"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: normalizedEmail }),

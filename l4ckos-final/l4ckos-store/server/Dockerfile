@@ -1,7 +1,7 @@
 FROM node:22-alpine AS base
 
-LABEL org.opencontainers.image.title="loja-escoteira-backend"
-LABEL org.opencontainers.image.description="Backend Node.js da Loja Escoteira"
+LABEL org.opencontainers.image.title="l4ckos-backend"
+LABEL org.opencontainers.image.description="Backend Node.js da L4CKOS"
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"

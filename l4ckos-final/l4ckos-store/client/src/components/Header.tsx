@@ -60,7 +60,7 @@ export default function Header() {
 
         <Link to="/" className="l4-header-brand" onClick={() => setMenuOpen(false)}>
           <img src={logoMainDark} alt="L4CKOS" />
-          <span>LOJA ESCOTEIRA</span>
+          <span>L4CKOS</span>
         </Link>
 
         <Link
@@ -114,7 +114,7 @@ export default function Header() {
                 Olá, {displayName}
               </Link>
               {user?.role === "admin" ? (
-                <Link to="/admin" className="l4-header-chip admin" onClick={() => setMenuOpen(false)}>
+                <Link to="/gestao" className="l4-header-chip admin" onClick={() => setMenuOpen(false)}>
                   Admin
                 </Link>
               ) : null}
@@ -130,7 +130,7 @@ export default function Header() {
             </div>
           ) : (
             <div className="l4-header-auth">
-              <Link to="/login" className="l4-header-chip" onClick={() => setMenuOpen(false)}>
+              <Link to="/entrar" className="l4-header-chip" onClick={() => setMenuOpen(false)}>
                 Entrar
               </Link>
               <Link to="/cadastro" className="l4-header-chip white" onClick={() => setMenuOpen(false)}>

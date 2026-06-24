@@ -12,6 +12,7 @@ import { useCreateAsaasCharge } from "../hooks/useOrders";
 import { useUser } from "../contexts/UserContext";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
 
@@ -238,7 +239,7 @@ export default function Pagamento() {
     }
 
     try {
-      const response = await fetch(apiUrl("/api/shipping/quote"), {
+      const response = await csrfFetch(apiUrl("/api/shipping/quote"), {
         method: "POST",
         credentials: "include",
         headers: {
@@ -475,7 +476,7 @@ export default function Pagamento() {
 
                       <div style={styles.mobileInfoCol}>
                         <h3 style={styles.mobileItemName}>{item.product.name}</h3>
-                        <p style={styles.mobileItemSub}>Materiais Escoteiros</p>
+                        <p style={styles.mobileItemSub}>Produtos L4CKOS</p>
                         {item.selectedOptions && (
                           <p style={styles.mobileItemSub}>{formatSelectedOptions(item.selectedOptions)}</p>
                         )}
@@ -548,7 +549,7 @@ export default function Pagamento() {
 
                       <div style={styles.itemDetails}>
                         <h3 style={styles.itemName}>{item.product.name}</h3>
-                        <p style={styles.itemCategory}>Materiais Escoteiros</p>
+                        <p style={styles.itemCategory}>Produtos L4CKOS</p>
                         {item.selectedOptions && (
                           <p style={styles.itemOptions}>{formatSelectedOptions(item.selectedOptions)}</p>
                         )}

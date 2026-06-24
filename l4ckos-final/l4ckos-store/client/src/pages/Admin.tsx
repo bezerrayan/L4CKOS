@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { CSSProperties, ReactNode } from "react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import { useUser } from "../contexts/UserContext";
 import { useToast } from "../contexts/ToastContext";
 import { PRODUCT_CATEGORIES, getCategoryLabel, normalizeCategoryValue } from "../lib/productCategories";
@@ -333,7 +334,7 @@ export default function Admin() {
         const formData = new FormData();
         formData.append("file", file);
 
-        const response = await fetch(apiUrl("/api/upload"), {
+        const response = await csrfFetch(apiUrl("/api/upload"), {
           method: "POST",
           body: formData,
           credentials: "include",

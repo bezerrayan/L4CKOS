@@ -2,7 +2,7 @@ import { Box, Cog, PenLine } from "lucide-react";
 
 const teaserItems = [
   { label: "Equipamentos exclusivos", Icon: Cog },
-  { label: "Acessorios escoteiros", Icon: PenLine },
+  { label: "Acessorios premium", Icon: PenLine },
   { label: "Lancamentos limitados", Icon: Box },
 ];
 
@@ -27,7 +27,7 @@ export default function PreviewSection() {
       </div>
 
       <p className="text-center font-sans text-[15px] text-zinc-600">Revelaremos tudo no lancamento.</p>
-      <p className="text-center font-sans text-sm text-zinc-500 sm:text-base">&copy; 2024 L4ckos. Todos os direitos reservados.</p>
+      <p className="text-center font-sans text-sm text-zinc-500 sm:text-base">&copy; 2024 L4CKOS. Todos os direitos reservados.</p>
     </section>
   );
 }

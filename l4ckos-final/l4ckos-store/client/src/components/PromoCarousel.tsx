@@ -21,7 +21,7 @@ const PROMOS_FALLBACK: Promo[] = [
   {
     id: 1,
     badge: "PROMOCAO",
-    title: "Desconto em camisas escoteiras",
+    title: "Desconto em peças de aventura",
     description: "Ate 30% OFF em modelos dry fit, regatas e oversized.",
     ctaLabel: "Aproveitar oferta",
     linkUrl: "/produtos",

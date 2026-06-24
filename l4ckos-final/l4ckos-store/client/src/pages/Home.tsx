@@ -33,7 +33,7 @@ const trustHighlights = [
   },
   {
     title: "Curadoria focada",
-    text: "A vitrine prioriza itens com perfil outdoor, escoteiro e de uso real para quem quer comprar com propósito.",
+    text: "A vitrine prioriza itens com perfil urbano, outdoor e de uso real para quem quer comprar com propósito.",
   },
   {
     title: "Atendimento direto",
@@ -97,7 +97,7 @@ export default function Home() {
             <span className="accent">LOJA</span>
           </h1>
           <p className="l4-home-subtitle">
-            Peças e equipamentos selecionados para quem vive trilha, campo, rotina escoteira e movimento outdoor com identidade.
+            Peças e equipamentos selecionados para quem vive trilha, campo, rotina urbana e movimento outdoor com identidade.
           </p>
           <div className="l4-home-hero-cta">
             <Link to="/produtos" className="l4-btn-primary">

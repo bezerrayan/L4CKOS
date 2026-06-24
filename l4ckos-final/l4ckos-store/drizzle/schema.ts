@@ -256,6 +256,23 @@ export const passwordResetTokens = mysqlTable("passwordResetTokens", {
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type InsertPasswordResetToken = typeof passwordResetTokens.$inferInsert;
 
+export const asaasWebhookEvents = mysqlTable("asaasWebhookEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  eventId: varchar("eventId", { length: 191 }).notNull().unique(),
+  eventType: varchar("eventType", { length: 80 }).notNull(),
+  paymentId: varchar("paymentId", { length: 120 }),
+  checkoutId: varchar("checkoutId", { length: 120 }),
+  orderId: int("orderId"),
+  payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+  status: mysqlEnum("status", ["processing", "processed", "failed"]).default("processing").notNull(),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AsaasWebhookEvent = typeof asaasWebhookEvents.$inferSelect;
+export type InsertAsaasWebhookEvent = typeof asaasWebhookEvents.$inferInsert;
+
 // Imagens de Produtos (para múltiplas imagens por produto)
 export const productImages = mysqlTable("productImages", {
   id: int("id").autoincrement().primaryKey(),

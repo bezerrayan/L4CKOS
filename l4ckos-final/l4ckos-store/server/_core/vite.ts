@@ -15,6 +15,38 @@ if (typeof crypto.hash !== "function") {
 
 const CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+const CLIENT_ROUTES = [
+  /^\/$/,
+  /^\/produtos\/?$/,
+  /^\/categorias\/[^/]+\/?$/,
+  /^\/produto\/[^/]+\/?$/,
+  /^\/favoritos\/?$/,
+  /^\/carrinho\/?$/,
+  /^\/checkout\/?$/,
+  /^\/login\/?$/,
+  /^\/entrar\/?$/,
+  /^\/cadastro\/?$/,
+  /^\/esqueci-senha\/?$/,
+  /^\/redefinir-senha\/?$/,
+  /^\/perfil\/?$/,
+  /^\/meus-pedidos\/?$/,
+  /^\/meus-pedidos\/[^/]+\/?$/,
+  /^\/acompanhar-pedido\/?$/,
+  /^\/gestao\/?$/,
+  /^\/admin\/?$/,
+  /^\/sobre\/?$/,
+  /^\/contato\/?$/,
+  /^\/faqs\/?$/,
+  /^\/trocas-e-devolucoes\/?$/,
+  /^\/termos\/?$/,
+  /^\/privacidade\/?$/,
+];
+
+export function isKnownClientRoute(originalUrl: string) {
+  const pathname = (originalUrl || "/").split("?")[0] || "/";
+  return CLIENT_ROUTES.some(route => route.test(pathname));
+}
+
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
     middlewareMode: true,
@@ -33,6 +65,18 @@ export async function setupVite(app: Express, server: Server) {
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
+    if (req.path.startsWith("/api/") || req.path === "/api" || req.path.startsWith("/webhook/")) {
+      res.status(404).type("application/json").json({
+        error: "ROUTE_NOT_FOUND",
+        message: "Route not found",
+      });
+      return;
+    }
+
+    if (!isKnownClientRoute(url)) {
+      res.status(404);
+    }
+
     try {
       const clientTemplate = path.resolve(
         CORE_DIR,
@@ -48,7 +92,7 @@ export async function setupVite(app: Express, server: Server) {
         `src="/src/main.tsx?v=${nanoid()}"`
       );
       const page = await vite.transformIndexHtml(url, template);
-      res.status(200).set({ "Content-Type": "text/html" }).end(page);
+      res.set({ "Content-Type": "text/html" }).end(page);
     } catch (e) {
       vite.ssrFixStacktrace(e as Error);
       next(e);
@@ -119,6 +163,10 @@ export function serveStatic(app: Express) {
     if (hasFileExtension) {
       res.status(404).end();
       return;
+    }
+
+    if (!isKnownClientRoute(requestPath)) {
+      res.status(404);
     }
 
     res.setHeader("Cache-Control", "no-cache");

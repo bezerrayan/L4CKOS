@@ -7,6 +7,7 @@ import { useToast } from "../contexts/ToastContext";
 import type { CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import { getApiErrorDisplay } from "../utils/apiError";
 
 function isValidEmail(email: string) {
@@ -64,7 +65,7 @@ export default function Contato() {
     setFormError(null);
 
     try {
-      const response = await fetch(apiUrl("/api/contact"), {
+      const response = await csrfFetch(apiUrl("/api/contact"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

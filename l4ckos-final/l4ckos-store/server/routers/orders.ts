@@ -24,12 +24,12 @@ import { securityLog } from "../_core/security";
 const checkoutItemSchema = z.object({
   productId: z.number().int().positive(),
   quantity: z.number().int().positive().max(99),
-});
+}).strict();
 
 const shippingSelectionSchema = z.object({
   cep: z.string().trim().regex(/^\d{8}$/),
   optionId: z.string().trim().min(1).max(120),
-});
+}).strict();
 
 const shippingAddressSchema = z.object({
   recipient: z.string().trim().min(3).max(255),
@@ -40,7 +40,7 @@ const shippingAddressSchema = z.object({
   neighborhood: z.string().trim().min(2).max(255),
   city: z.string().trim().min(2).max(255),
   state: z.string().trim().min(2).max(100),
-});
+}).strict();
 
 const shippingAddressEditableSchema = z.object({
   recipient: z.string().trim().min(3).max(255),
@@ -48,7 +48,7 @@ const shippingAddressEditableSchema = z.object({
   number: z.string().trim().min(1).max(30),
   complement: z.string().trim().max(255).optional(),
   neighborhood: z.string().trim().min(2).max(255),
-});
+}).strict();
 
 async function resolveOrderPricing(input: {
   items: Array<{ productId: number; quantity: number }>;
@@ -124,7 +124,7 @@ async function resolveOrderPricing(input: {
     finalTotalCents: Math.max(0, grossTotalCents - discountCents),
     appliedCouponId,
     shippingOption,
-    description: `${description || "Pedido Loja Escoteira"} | Frete: ${shippingOption.label}`,
+    description: `${description || "Pedido L4CKOS"} | Frete: ${shippingOption.label}`,
   };
 }
 
@@ -255,7 +255,7 @@ export const ordersRouter = router({
     .input(
       z.object({
         totalPrice: z.number().positive(),
-      }),
+      }).strict(),
     )
     .mutation(async () => {
       throw new TRPCError({
@@ -270,7 +270,7 @@ export const ordersRouter = router({
         code: z.string().trim().min(2).max(64),
         items: z.array(checkoutItemSchema).min(1),
         shipping: shippingSelectionSchema,
-      }),
+      }).strict(),
     )
     .mutation(async ({ input }) => {
       const pricing = await resolveOrderPricing({
@@ -310,9 +310,9 @@ export const ordersRouter = router({
             .transform(value => value.replace(/\D/g, ""))
             .refine(value => value.length === 11 || value.length === 14, "Invalid CPF/CNPJ"),
           email: z.string().email().optional(),
-        }),
+        }).strict(),
         couponCode: z.string().trim().min(2).max(64).optional(),
-      }),
+      }).strict(),
     )
     .mutation(async ({ input, ctx }) => {
       let orderId = 0;

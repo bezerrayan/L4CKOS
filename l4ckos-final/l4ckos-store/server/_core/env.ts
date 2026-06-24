@@ -29,6 +29,8 @@ function readSessionTtlMs() {
 
 export const ENV = {
   appId: readString("VITE_APP_ID") || readString("APP_ID") || "loja-escoteira",
+  jwtIssuer: readString("JWT_ISSUER", "l4ckos"),
+  jwtAudience: readString("JWT_AUDIENCE", "l4ckos-web"),
   cookieSecret: readString("JWT_SECRET"),
   databaseUrl: readString("DATABASE_URL"),
   frontendUrl: readString("FRONTEND_URL"),
@@ -44,6 +46,7 @@ export const ENV = {
   sessionTtlMs: readSessionTtlMs(),
   forgeApiUrl: readString("BUILT_IN_FORGE_API_URL"),
   forgeApiKey: readString("BUILT_IN_FORGE_API_KEY"),
+  trustProxyMode: readString("TRUST_PROXY_MODE", "railway"),
 };
 
 export function isEmailAllowedForProductionLocalAuth(email: string) {

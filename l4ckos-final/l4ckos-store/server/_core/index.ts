@@ -6,14 +6,18 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import helmet from "helmet";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { validateEnvOnStartup } from "./env";
+import { ENV, validateEnvOnStartup } from "./env";
 import { securityLog } from "./security";
+import { getAllowedMethodsForApiPath, methodNotAllowed, sendApiError, sendApiRouteNotFound } from "./httpApi";
+import { getAllowedOrigins, isAllowedOrigin } from "./corsPolicy";
+import { configureTrustProxy, createRateLimiter } from "./rateLimit";
+import { CSRF_COOKIE_NAME, createCsrfToken, csrfMiddleware } from "./csrf";
+import { getSessionCookieOptions } from "./cookies";
 import uploadRouter from "../routers/upload";
 import paymentRoutes from "../routes/paymentRoutes";
 import webhookRoutes from "../routes/webhookRoutes";
@@ -190,38 +194,15 @@ async function startServer() {
   const isProduction = process.env.NODE_ENV === "production";
   app.disable("x-powered-by");
 
-  // Render/Reverse proxies set X-Forwarded-* headers.
-  // express-rate-limit requires trust proxy enabled to resolve client IP safely.
-  if (isProduction) {
-    app.set("trust proxy", 1);
-  }
+  configureTrustProxy(app, isProduction);
 
-  const allowedOrigins = (process.env.CORS_ORIGINS || "")
-    .split(",")
-    .map(item => item.trim())
-    .filter(Boolean);
-
-  if (!isProduction && allowedOrigins.length === 0) {
-    allowedOrigins.push("http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:5173");
-  }
+  const allowedOrigins = getAllowedOrigins({
+    isProduction,
+    configuredOrigins: process.env.CORS_ORIGINS,
+  });
 
   function isAllowed(origin?: string) {
-    if (!origin) return true; // healthcheck / server-to-server
-
-    try {
-      const url = new URL(origin);
-
-      if (!isProduction && (url.hostname === "localhost" || url.hostname === "127.0.0.1")) {
-        return true;
-      }
-
-      return allowedOrigins.some(allowed => {
-        const allowedUrl = new URL(allowed);
-        return url.host === allowedUrl.host; // ignora protocolo, barra final e porta padrÃ£o
-      });
-    } catch {
-      return false;
-    }
+    return isAllowedOrigin(origin, { isProduction, allowedOrigins });
   }
   const hasGoogleClientId = Boolean(process.env.GOOGLE_CLIENT_ID?.trim());
   const hasGoogleClientSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim());
@@ -239,27 +220,29 @@ async function startServer() {
     });
   });
 
+  app.get("/api", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
+  app.all("/api", methodNotAllowed(["GET"]));
+
+  app.get("/api/csrf", (req, res) => {
+    const token = createCsrfToken();
+    res.cookie(CSRF_COOKIE_NAME, token, {
+      ...getSessionCookieOptions(req),
+      httpOnly: false,
+      maxAge: ENV.sessionTtlMs,
+    });
+    res.setHeader("Cache-Control", "no-store, private");
+    res.status(200).json({ csrfToken: token });
+  });
+
   app.use(
     helmet({
       referrerPolicy: { policy: "strict-origin-when-cross-origin" },
       frameguard: { action: "deny" },
       noSniff: true,
       crossOriginEmbedderPolicy: false,
-      contentSecurityPolicy: isProduction
-        ? {
-            useDefaults: true,
-            directives: {
-              defaultSrc: ["'self'"],
-              imgSrc: ["'self'", "data:", "blob:", "https:"],
-              styleSrc: ["'self'", "'unsafe-inline'", "https:"],
-              scriptSrc: ["'self'", "'unsafe-inline'", "https://accounts.google.com"],
-              connectSrc: ["'self'", "https:", "wss:"],
-              frameAncestors: ["'none'"],
-              objectSrc: ["'none'"],
-              baseUri: ["'self'"],
-            },
-          }
-        : false,
+      contentSecurityPolicy: false,
       hsts: isProduction
         ? {
             maxAge: 15552000,
@@ -275,29 +258,33 @@ async function startServer() {
     cors({
       origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
         if (isAllowed(origin)) return callback(null, true);
-        console.error("CORS BLOCKED:", origin);
+        securityLog("warn", "cors.origin_blocked", { origin: origin || "missing" });
         return callback(new Error("Origin not allowed by CORS"));
       },
       credentials: true,
     }),
   );
 
+  app.use("/api", (err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof Error && err.message === "Origin not allowed by CORS") {
+      sendApiError(res, 403, "CORS_ORIGIN_DENIED", "Origin not allowed by CORS");
+      return;
+    }
+    next(err);
+  });
+
   app.use(
     "/api",
-    rateLimit({
+    createRateLimiter({
       windowMs: 15 * 60 * 1000,
       max: isProduction ? 300 : 1200,
-      standardHeaders: true,
-      legacyHeaders: false,
     }),
   );
 
   // Tighter limit for authentication endpoints to reduce brute force attempts.
-  const authLimiter = rateLimit({
+  const authLimiter = createRateLimiter({
     windowMs: 15 * 60 * 1000,
     max: isProduction ? 20 : 80,
-    standardHeaders: true,
-    legacyHeaders: false,
     skipSuccessfulRequests: true,
     message: { error: "Too many authentication attempts. Try again later." },
   });
@@ -307,22 +294,18 @@ async function startServer() {
   app.use("/api/trpc/auth.requestPasswordReset", authLimiter);
   app.use("/api/trpc/auth.resetPassword", authLimiter);
 
-  const publicWriteLimiter = rateLimit({
+  const publicWriteLimiter = createRateLimiter({
     windowMs: 10 * 60 * 1000,
     max: isProduction ? 20 : 80,
-    standardHeaders: true,
-    legacyHeaders: false,
     message: { error: "Too many requests. Try again later." },
   });
   app.use("/api/contact", publicWriteLimiter);
   app.use("/api/waitlist", publicWriteLimiter);
 
   // Additional protection for admin-only API routes.
-  const adminApiLimiter = rateLimit({
+  const adminApiLimiter = createRateLimiter({
     windowMs: 10 * 60 * 1000,
     max: isProduction ? 120 : 400,
-    standardHeaders: true,
-    legacyHeaders: false,
     message: { error: "Too many admin requests. Try again later." },
   });
   app.use("/api/trpc/admin", adminApiLimiter);
@@ -333,9 +316,26 @@ async function startServer() {
 
   app.use((req, res, next) => {
     if (req.path.startsWith("/api/") || req.path.startsWith("/webhook/")) {
-      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Cache-Control", "no-store, private");
     }
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    if (isProduction) {
+      res.setHeader(
+        "Content-Security-Policy-Report-Only",
+        [
+          "default-src 'self'",
+          "base-uri 'self'",
+          "object-src 'none'",
+          "frame-ancestors 'none'",
+          "img-src 'self' data: blob: https:",
+          "font-src 'self' https://fonts.gstatic.com",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "script-src 'self' https://accounts.google.com",
+          "connect-src 'self' https://l4ckos.com.br https://www.l4ckos.com.br https://api.l4ckos.com.br https://accounts.google.com",
+          "form-action 'self'",
+        ].join("; "),
+      );
+    }
     next();
   });
 
@@ -356,7 +356,7 @@ async function startServer() {
       return;
     }
 
-    res.status(415).json({ error: "Unsupported content type" });
+    sendApiError(res, 415, "UNSUPPORTED_CONTENT_TYPE", "Unsupported content type");
   });
 
   app.use((req, res, next) => {
@@ -386,8 +386,27 @@ async function startServer() {
       return;
     }
 
-    res.status(403).json({ error: "CSRF origin check failed" });
+    const referer = req.headers.referer;
+    if (!origin && typeof referer === "string") {
+      try {
+        if (isAllowed(new URL(referer).origin)) {
+          next();
+          return;
+        }
+      } catch {
+        // fall through to the shared rejection path
+      }
+    }
+
+    securityLog("warn", "csrf.origin_check_failed", {
+      requestIp: req.ip || "unknown",
+      path: req.path,
+      origin: origin || "missing",
+    });
+    sendApiError(res, 403, "CSRF_ORIGIN_DENIED", "CSRF origin check failed");
   });
+
+  app.use(csrfMiddleware);
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   app.get("/api/cep/:cep", async (req, res) => {
@@ -487,6 +506,30 @@ async function startServer() {
       createContext,
     })
   );
+
+  app.use("/api", (req, res) => {
+    const allowedMethods = getAllowedMethodsForApiPath(req.path === "/" ? "/api" : `/api${req.path}`);
+    if (allowedMethods && !allowedMethods.includes(req.method)) {
+      methodNotAllowed(allowedMethods)(req, res);
+      return;
+    }
+
+    sendApiRouteNotFound(res);
+  });
+
+  app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!req.path.startsWith("/api/")) {
+      next(err);
+      return;
+    }
+
+    securityLog("error", "api.unhandled_error", {
+      path: req.path,
+      requestIp: req.ip || "unknown",
+      reason: err instanceof Error ? err.message : "unknown",
+    });
+    sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "Internal server error");
+  });
   // development mode uses Vite, production mode uses static files
   if (!isProduction) {
     await setupVite(app, server);

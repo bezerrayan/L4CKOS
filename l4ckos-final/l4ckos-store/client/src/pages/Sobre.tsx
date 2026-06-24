@@ -14,9 +14,9 @@ export default function Sobre() {
   return (
     <div style={styles.container as CSSProperties}>
       <div style={{ ...styles.hero, padding: isMobile ? "42px 14px" : styles.hero.padding, marginBottom: isMobile ? 34 : styles.hero.marginBottom } as CSSProperties}>
-        <h1 style={{ ...styles.title, fontSize: isMobile ? 34 : styles.title.fontSize }}>Sobre a L4ckos</h1>
+        <h1 style={{ ...styles.title, fontSize: isMobile ? 34 : styles.title.fontSize }}>Sobre a L4CKOS</h1>
         <p style={{ ...styles.subtitle, fontSize: isMobile ? 16 : styles.subtitle.fontSize }}>
-          Sua parceira de confiança no movimento escoteiro
+          Marca urbana, aventureira, moderna e premium
         </p>
       </div>
 
@@ -34,8 +34,8 @@ export default function Sobre() {
           <p style={styles.text}>
             A L4CKOS nasceu com a proposta de construir uma identidade forte,
             memorável e autêntica. A marca foi pensada para reunir estilo,
-            utilidade e presença em produtos ligados à aventura, ao cotidiano e ao
-            movimento escoteiro.
+            utilidade e presença em produtos ligados à aventura, ao cotidiano urbano
+            e a coleções com propósito.
           </p>
         </div>
         <div style={styles.sectionImage as CSSProperties}>
@@ -67,7 +67,7 @@ export default function Sobre() {
 
       <section style={{ ...styles.ctaSection, padding: isMobile ? "34px 14px" : styles.ctaSection.padding } as CSSProperties}>
         <h2 style={{ ...styles.ctaTitle, fontSize: isMobile ? 28 : styles.ctaTitle.fontSize }}>Pronto para sua próxima aventura?</h2>
-        <p style={styles.ctaText}>Explore nossa coleção de produtos para o movimento escoteiro e o estilo outdoor.</p>
+        <p style={styles.ctaText}>Explore peças e equipamentos para rotina urbana, aventura e estilo outdoor.</p>
         <Link to="/produtos" style={styles.ctaButton as CSSProperties}>
           Ver produtos agora
         </Link>

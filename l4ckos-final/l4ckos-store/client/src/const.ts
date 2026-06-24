@@ -55,12 +55,12 @@ export function apiUrl(pathname: string) {
   return new URL(pathname, API_URL).toString();
 }
 
-export const getLoginUrl = () => {
+export const getLoginUrl = (nextPath?: string) => {
   if (typeof window === "undefined") return "/login";
 
   try {
     const url = new URL("/api/oauth/login", API_URL);
-    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const returnTo = nextPath || `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (returnTo && returnTo.startsWith("/") && returnTo !== "/login") {
       url.searchParams.set("returnTo", returnTo);
     }

@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { Instagram, Mail, MessageCircle } from "lucide-react";
 import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import logoMarkDark from "../images/l4k-mark-dark-transparent.png";
 
 type Countdown = { days: string; hours: string; minutes: string; seconds: string };
@@ -81,7 +82,7 @@ export default function ComingSoon() {
 
     setLoading(true);
     try {
-      const response = await fetch(apiUrl("/api/waitlist"), {
+      const response = await csrfFetch(apiUrl("/api/waitlist"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: normalizedEmail }),
@@ -236,15 +237,15 @@ export default function ComingSoon() {
             (c) 2026 <em>L4CKOS</em>
           </div>
           <div className="socials">
-            <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
+            <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4CKOS">
               <Instagram size={14} />
               <span>Instagram</span>
             </a>
-            <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" aria-label="WhatsApp L4ckos">
+            <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" aria-label="WhatsApp L4CKOS">
               <MessageCircle size={14} />
               <span>WhatsApp</span>
             </a>
-            <a href="mailto:contato@l4ckos.com.br" aria-label="Email L4ckos">
+            <a href="mailto:contato@l4ckos.com.br" aria-label="Email L4CKOS">
               <Mail size={14} />
               <span>E-mail</span>
             </a>

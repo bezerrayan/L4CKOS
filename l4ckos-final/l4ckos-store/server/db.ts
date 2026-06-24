@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { createHash } from "node:crypto";
 import {
   InsertUser,
   users,
@@ -23,10 +24,12 @@ import {
   waitlistEmails,
   emailUnsubscribes,
   passwordResetTokens,
+  asaasWebhookEvents,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
+const inMemoryAsaasWebhookEvents = new Set<string>();
 
 type OrderShippingSnapshotInput = {
   recipient: string;
@@ -125,6 +128,84 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+function hashWebhookPayload(payload: unknown) {
+  return createHash("sha256").update(JSON.stringify(payload ?? null), "utf8").digest("hex");
+}
+
+function isDuplicateKeyError(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : "";
+  return code === "ER_DUP_ENTRY" || code === "SQLITE_CONSTRAINT_UNIQUE";
+}
+
+export function resetInMemoryAsaasWebhookEventsForTests() {
+  inMemoryAsaasWebhookEvents.clear();
+}
+
+export async function runAsaasWebhookOnce<T>(
+  input: {
+    eventId: string;
+    eventType: string;
+    paymentId?: string | null;
+    checkoutId?: string | null;
+    orderId?: number | null;
+    payload: unknown;
+  },
+  handler: () => Promise<T>,
+): Promise<{ duplicate: boolean; result?: T }> {
+  const eventId = input.eventId.trim();
+  if (!eventId) throw new Error("Asaas webhook event_id is required");
+
+  const db = await getDb();
+  if (!db) {
+    if (ENV.isProduction) {
+      throw new Error("Persistent webhook idempotency unavailable");
+    }
+
+    if (inMemoryAsaasWebhookEvents.has(eventId)) {
+      return { duplicate: true };
+    }
+    inMemoryAsaasWebhookEvents.add(eventId);
+    const result = await handler();
+    return { duplicate: false, result };
+  }
+
+  const payloadHash = hashWebhookPayload(input.payload);
+
+  try {
+    await db.insert(asaasWebhookEvents).values({
+      eventId,
+      eventType: input.eventType,
+      paymentId: input.paymentId ?? null,
+      checkoutId: input.checkoutId ?? null,
+      orderId: input.orderId ?? null,
+      payloadHash,
+      status: "processing",
+    });
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return { duplicate: true };
+    }
+    throw error;
+  }
+
+  try {
+    const result = await handler();
+    await db
+      .update(asaasWebhookEvents)
+      .set({ status: "processed", processedAt: new Date() })
+      .where(eq(asaasWebhookEvents.eventId, eventId));
+    return { duplicate: false, result };
+  } catch (error) {
+    await db
+      .update(asaasWebhookEvents)
+      .set({ status: "failed" })
+      .where(eq(asaasWebhookEvents.eventId, eventId));
+    throw error;
+  }
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {

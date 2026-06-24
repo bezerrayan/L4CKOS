@@ -1,9 +1,8 @@
-import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
-import { initTRPC, TRPCError } from "@trpc/server";
+import { initTRPC } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
-import { ENV } from "./env";
 import { getPublicAppError } from "./appErrors";
+import { requireAuth, requireRole } from "./authz";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -26,38 +25,27 @@ export const publicProcedure = t.procedure;
 
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
-
-  if (!ctx.user) {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
-  }
+  const user = requireAuth(ctx.user);
 
   return next({
     ctx: {
       ...ctx,
-      user: ctx.user,
+      user,
     },
   });
 });
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
-function isAllowedAdminEmail(email?: string | null) {
-  const normalized = String(email ?? "").trim().toLowerCase();
-  return Boolean(normalized) && ENV.adminEmails.includes(normalized);
-}
-
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
-
-    if (!ctx.user || ctx.user.role !== 'admin' || !isAllowedAdminEmail(ctx.user.email)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
-    }
+    const user = requireRole(ctx.user, "admin");
 
     return next({
       ctx: {
         ...ctx,
-        user: ctx.user,
+        user,
       },
     });
   }),

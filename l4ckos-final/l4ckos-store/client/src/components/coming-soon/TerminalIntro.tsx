@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const LINES = [
-  "> Inicializando sistema L4ckos...",
+  "> Inicializando sistema L4CKOS...",
   "> Carregando modulos...",
   "> Preparando lancamento...",
 ];

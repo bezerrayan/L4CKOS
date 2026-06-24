@@ -216,6 +216,7 @@ export function registerOAuthRoutes(app: Express) {
         sub?: string;
         name?: string;
         email?: string;
+        email_verified?: boolean;
       };
 
       const openId = userInfo.sub;
@@ -227,10 +228,11 @@ export function registerOAuthRoutes(app: Express) {
 
       callbackStage = "upsert_user";
       const normalizedEmail = String(userInfo.email ?? "").trim().toLowerCase();
-      const googleRole =
-        openId === ENV.ownerOpenId || (normalizedEmail && ENV.adminEmails.includes(normalizedEmail))
-          ? "admin"
-          : "user";
+      const googleRole = getGoogleRoleForUserInfo({
+        openId,
+        email: normalizedEmail,
+        emailVerified: userInfo.email_verified === true,
+      });
       const existingUser = await db.getUserByOpenId(openId);
 
       await db.upsertUser({
@@ -297,4 +299,11 @@ export function registerOAuthRoutes(app: Express) {
       });
     }
   });
+}
+
+export function getGoogleRoleForUserInfo(input: { openId: string; email?: string | null; emailVerified: boolean }) {
+  const normalizedEmail = String(input.email ?? "").trim().toLowerCase();
+  if (input.openId === ENV.ownerOpenId) return "admin";
+  if (input.emailVerified && normalizedEmail && ENV.adminEmails.includes(normalizedEmail)) return "admin";
+  return "user";
 }

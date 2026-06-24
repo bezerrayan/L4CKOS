@@ -86,7 +86,7 @@ export default function Produtos() {
           <p style={{ ...styles.subtitle, fontSize: isMobile ? 15 : styles.subtitle.fontSize }}>
             {activeCategoryLabel
               ? `Você está vendo a categoria ${activeCategoryLabel}. Explore os itens relacionados e filtre com mais rapidez.`
-              : "Explore a vitrine da L4CKOS e encontre produtos selecionados para rotina outdoor, escotismo e uso diário."}
+              : "Explore a vitrine da L4CKOS e encontre produtos selecionados para rotina urbana, aventura premium e uso diário."}
           </p>
         </div>
       </div>

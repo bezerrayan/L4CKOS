@@ -12,18 +12,18 @@ export default function Footer() {
         <div>
           <img src={logoMainDark} alt="L4CKOS" className="l4-footer-logo" />
           <p className="l4-footer-text">
-            Seleção de peças e equipamentos para trilha, campo e rotina escoteira, com comunicação direta e foco no que realmente importa para o cliente.
+            Seleção de peças e equipamentos para trilha, campo e rotina urbana, com comunicação direta e foco no que realmente importa para o cliente.
           </p>
           <div className="l4-footer-socials" aria-label="Redes sociais">
-            <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
+            <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4CKOS">
               <Instagram size={14} />
               <span>Instagram</span>
             </a>
-            <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" aria-label="WhatsApp L4ckos">
+            <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" aria-label="WhatsApp L4CKOS">
               <MessageCircle size={14} />
               <span>WhatsApp</span>
             </a>
-            <a href="mailto:contato@l4ckos.com.br" aria-label="E-mail L4ckos">
+            <a href="mailto:contato@l4ckos.com.br" aria-label="E-mail L4CKOS">
               <Mail size={14} />
               <span>E-mail</span>
             </a>
@@ -61,7 +61,7 @@ export default function Footer() {
       </div>
 
       <div className="l4-footer-bottom">
-        <span>© {year} L4ckos. Todos os direitos reservados.</span>
+        <span>© {year} L4CKOS. Todos os direitos reservados.</span>
         <span>PIX • Cartão • Checkout com cálculo de frete</span>
       </div>
     </footer>
