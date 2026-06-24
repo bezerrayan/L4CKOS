@@ -16,6 +16,14 @@ type ProductItem = {
   category?: string | null;
 };
 
+type TrustHighlight = {
+  number: string;
+  title: string;
+  text: string;
+  linkTo?: string;
+  linkLabel?: string;
+};
+
 const productBgClasses = [
   "l4-home-prod-img-1",
   "l4-home-prod-img-2",
@@ -27,7 +35,7 @@ const productBgClasses = [
   "l4-home-prod-img-8",
 ];
 
-const trustHighlights = [
+const trustHighlights: TrustHighlight[] = [
   {
     number: "01",
     title: "Compra sem surpresa",
@@ -42,6 +50,8 @@ const trustHighlights = [
     number: "03",
     title: "Atendimento oficial",
     text: "Dúvidas e acompanhamento por canais identificados da L4CKOS.",
+    linkTo: "/acompanhar-pedido",
+    linkLabel: "ACOMPANHAR PEDIDO",
   },
 ];
 
@@ -260,6 +270,11 @@ export default function Home() {
               <div className="l4-home-testimonial-quote">{item.number}</div>
               <strong className="l4-home-trust-title">{item.title}</strong>
               <p>{item.text}</p>
+              {item.linkTo && item.linkLabel ? (
+                <Link className="l4-home-trust-link" to={item.linkTo}>
+                  {item.linkLabel}
+                </Link>
+              ) : null}
             </article>
           ))}
         </div>

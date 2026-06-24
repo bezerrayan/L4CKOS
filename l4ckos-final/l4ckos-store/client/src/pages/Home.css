@@ -890,6 +890,22 @@
   letter-spacing: 0.2px;
 }
 
+.l4-home-trust-link {
+  display: inline-flex;
+  margin-top: 18px;
+  color: var(--red);
+  font-family: "Space Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.l4-home-trust-link:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 4px;
+}
+
 .l4-home-testimonial-author {
   display: flex;
   gap: 10px;
