@@ -98,6 +98,24 @@ export default function Header() {
         </nav>
 
         <div className="l4-header-actions">
+          <Link
+            to="/favoritos"
+            className={`l4-header-icon-btn ${location.pathname === "/favoritos" ? "active" : ""}`}
+            aria-label={favoriteCount > 0 ? `Favoritos, ${favoriteCount} peça${favoriteCount > 1 ? "s" : ""} salva${favoriteCount > 1 ? "s" : ""}` : "Favoritos"}
+          >
+            <Heart size={18} aria-hidden="true" />
+            {favoriteCount > 0 ? <span className="l4-header-count">{favoriteCount}</span> : null}
+          </Link>
+
+          <Link
+            to="/carrinho"
+            className={`l4-header-icon-btn ${location.pathname === "/carrinho" ? "active" : ""}`}
+            aria-label={bagCount > 0 ? `Sacola, ${bagCount} item${bagCount > 1 ? "s" : ""}` : "Sacola vazia"}
+          >
+            <ShoppingBag size={18} aria-hidden="true" />
+            {bagCount > 0 ? <span className="l4-header-count">{bagCount}</span> : null}
+          </Link>
+
           <div className="l4-header-account" ref={accountRef}>
             <button
               className={`l4-header-icon-btn ${location.pathname === "/perfil" || location.pathname === "/entrar" ? "active" : ""}`}
@@ -138,24 +156,6 @@ export default function Header() {
               </div>
             ) : null}
           </div>
-
-          <Link
-            to="/favoritos"
-            className={`l4-header-icon-btn ${location.pathname === "/favoritos" ? "active" : ""}`}
-            aria-label={favoriteCount > 0 ? `Favoritos, ${favoriteCount} peça${favoriteCount > 1 ? "s" : ""} salva${favoriteCount > 1 ? "s" : ""}` : "Favoritos"}
-          >
-            <Heart size={18} aria-hidden="true" />
-            {favoriteCount > 0 ? <span className="l4-header-count">{favoriteCount}</span> : null}
-          </Link>
-
-          <Link
-            to="/carrinho"
-            className={`l4-header-icon-btn ${location.pathname === "/carrinho" ? "active" : ""}`}
-            aria-label={bagCount > 0 ? `Sacola, ${bagCount} item${bagCount > 1 ? "s" : ""}` : "Sacola vazia"}
-          >
-            <ShoppingBag size={18} aria-hidden="true" />
-            {bagCount > 0 ? <span className="l4-header-count">{bagCount}</span> : null}
-          </Link>
         </div>
       </div>
     </header>
