@@ -435,25 +435,33 @@
 }
 
 .l4-home-section {
-  padding: 84px 64px;
+  padding: 64px 64px;
 }
 
 .l4-home-products-wrap {
   background: #0d0d0d;
 }
 
+.l4-home-products-wrap .l4-home-section-header,
+.l4-home-products-wrap .l4-home-products-grid,
+.l4-home-products-wrap .l4-home-empty {
+  width: min(100%, 1180px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .l4-home-section-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 36px;
+  gap: 28px;
+  margin-bottom: 28px;
 }
 
 .l4-home-section-title {
   font-family: "Bebas Neue", sans-serif;
   letter-spacing: 2px;
-  font-size: clamp(36px, 5vw, 62px);
+  font-size: clamp(34px, 4vw, 52px);
   line-height: 1;
   margin-top: 12px;
 }
@@ -548,7 +556,7 @@
 
 .l4-home-products-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
 }
 
@@ -571,7 +579,8 @@
 }
 
 .l4-home-product-img {
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 4 / 5;
+  max-height: 340px;
   position: relative;
   overflow: hidden;
   background: #222;
