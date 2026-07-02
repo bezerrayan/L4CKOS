@@ -57,7 +57,7 @@ const emptyPromoForm = {
   mobileImageUrl: "",
   imageAlt: "",
   linkUrl: "",
-  discountText: "30%",
+  discountText: "",
   discountLabel: "OFF",
   bgStyle: "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)",
   sortOrder: "0",
@@ -1870,8 +1870,8 @@ export default function Admin() {
             </div>
             <input style={styles.input} placeholder="Texto alternativo da imagem" value={newPromo.imageAlt} onChange={e => setNewPromo(prev => ({ ...prev, imageAlt: e.target.value }))} />
             <input style={styles.input} placeholder="Link do banner (ex: /produtos)" value={newPromo.linkUrl} onChange={e => setNewPromo(prev => ({ ...prev, linkUrl: e.target.value }))} />
-            <input style={styles.input} placeholder="Desconto (ex: 30%)" value={newPromo.discountText} onChange={e => setNewPromo(prev => ({ ...prev, discountText: e.target.value }))} />
-            <input style={styles.input} placeholder="Label desconto" value={newPromo.discountLabel} onChange={e => setNewPromo(prev => ({ ...prev, discountLabel: e.target.value }))} />
+            <input style={styles.input} placeholder="Desconto opcional (ex: 30%)" value={newPromo.discountText} onChange={e => setNewPromo(prev => ({ ...prev, discountText: e.target.value }))} />
+            <input style={styles.input} placeholder="Label desconto opcional" value={newPromo.discountLabel} onChange={e => setNewPromo(prev => ({ ...prev, discountLabel: e.target.value }))} />
             <input style={styles.input} placeholder="Background CSS" value={newPromo.bgStyle} onChange={e => setNewPromo(prev => ({ ...prev, bgStyle: e.target.value }))} />
             <input style={styles.input} placeholder="Ordem" value={newPromo.sortOrder} onChange={e => setNewPromo(prev => ({ ...prev, sortOrder: e.target.value }))} />
           </div>
@@ -1910,10 +1910,12 @@ export default function Admin() {
               <span style={styles.promoPreviewDescription}>
                 {newPromo.description.trim() || "A descrição aparece logo abaixo do título no carrossel da home."}
               </span>
-              <div style={styles.promoPreviewMetaRow}>
-                <span style={styles.promoPreviewDiscount}>{newPromo.discountText.trim() || "30%"}</span>
-                <span style={styles.promoPreviewDiscountLabel}>{newPromo.discountLabel.trim() || "OFF"}</span>
-              </div>
+              {newPromo.discountText.trim() ? (
+                <div style={styles.promoPreviewMetaRow}>
+                  <span style={styles.promoPreviewDiscount}>{newPromo.discountText.trim()}</span>
+                  <span style={styles.promoPreviewDiscountLabel}>{newPromo.discountLabel.trim() || "OFF"}</span>
+                </div>
+              ) : null}
               <div style={styles.promoPreviewFooter}>
                 <span style={styles.promoPreviewCta}>{newPromo.ctaLabel.trim() || "Aproveitar oferta"}</span>
                 <span style={styles.promoPreviewLink}>{newPromo.linkUrl.trim() || "/produtos"}</span>
@@ -1932,8 +1934,8 @@ export default function Admin() {
               style={styles.primaryBtn}
               onClick={() => {
                 const sortOrder = Number(newPromo.sortOrder || "0");
-                if (!newPromo.title.trim() || !newPromo.description.trim() || !newPromo.discountText.trim()) {
-                  showToast({ message: "Preencha título, descrição e desconto", duration: 2400 });
+                if (!newPromo.title.trim() || !newPromo.description.trim()) {
+                  showToast({ message: "Preencha título e descrição", duration: 2400 });
                   return;
                 }
 

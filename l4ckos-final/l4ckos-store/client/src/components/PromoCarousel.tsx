@@ -67,7 +67,7 @@ export default function PromoCarousel() {
       mobileImageUrl: resolvePromoImageUrl(item.mobileImageUrl),
       imageAlt: String(item.imageAlt ?? "").trim() || String(item.title ?? "").trim() || "Banner promocional",
       linkUrl: String(item.linkUrl ?? "").trim() || "/produtos",
-      discount: String(item.discountText ?? "").trim() || "30%",
+      discount: String(item.discountText ?? "").trim(),
       discountLabel: String(item.discountLabel ?? "").trim() || "OFF",
       color: String(item.bgStyle ?? "").trim() || "linear-gradient(135deg, #151515 0%, #2a0a12 100%)",
     }));
@@ -152,10 +152,12 @@ export default function PromoCarousel() {
                 {promo.ctaLabel}
               </a>
             </div>
-            <div className="l4-home-hero-carousel-discount">
-              <strong>{promo.discount}</strong>
-              <span>{promo.discountLabel}</span>
-            </div>
+            {promo.discount ? (
+              <div className="l4-home-hero-carousel-discount">
+                <strong>{promo.discount}</strong>
+                <span>{promo.discountLabel}</span>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
