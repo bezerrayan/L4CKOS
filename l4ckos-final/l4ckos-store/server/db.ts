@@ -400,26 +400,115 @@ export async function getOrderByAsaasCheckoutId(asaasCheckoutId: string) {
 }
 
 // Produtos
-export async function getProducts() {
-  const db = await getDb();
-  if (!db) return [];
-  const productRows = await db.select().from(products);
-  const imageRows = await db.select().from(productImages);
+function normalizeProductRow(row: any): typeof products.$inferSelect {
+  return {
+    ...row,
+    id: Number(row.id),
+    price: Number(row.price ?? 0),
+    stock: Number(row.stock ?? 0),
+    description: row.description ?? null,
+    fullDescription: row.fullDescription ?? null,
+    optionColors: row.optionColors ?? null,
+    optionSizes: row.optionSizes ?? null,
+    sizeType: row.sizeType ?? "alpha",
+    imageUrl: row.imageUrl ?? null,
+    imageThumbnailUrl: row.imageThumbnailUrl ?? null,
+    imageDetailUrl: row.imageDetailUrl ?? null,
+    imageBannerUrl: row.imageBannerUrl ?? null,
+  };
+}
 
-  const firstImageByProduct = new Map<number, {
-    imageUrl: string;
-    imageThumbnailUrl: string | null;
-    imageDetailUrl: string | null;
-    imageBannerUrl: string | null;
-  }>();
+function normalizeProductImageRow(row: any) {
+  return {
+    ...row,
+    id: Number(row.id),
+    productId: Number(row.productId),
+    imageUrl: row.imageUrl ?? null,
+    imageThumbnailUrl: row.imageThumbnailUrl ?? null,
+    imageDetailUrl: row.imageDetailUrl ?? null,
+    imageBannerUrl: row.imageBannerUrl ?? null,
+    color: row.color ?? null,
+    alt: row.alt ?? null,
+    order: Number(row.order ?? 0),
+  };
+}
+
+function normalizeProductVariantRow(row: any) {
+  return {
+    ...row,
+    id: Number(row.id),
+    productId: Number(row.productId),
+    price: row.price === null || row.price === undefined ? null : Number(row.price),
+    stock: Number(row.stock ?? 0),
+  };
+}
+
+async function selectProductRows(db: Awaited<ReturnType<typeof getDb>>, options?: { id?: number; ids?: number[] }) {
+  if (!db) return [];
+
+  if (options?.id) {
+    const rows = extractExecutedRows(await db.execute(sql`select * from products where id = ${options.id} limit 1`));
+    return rows.map(normalizeProductRow);
+  }
+
+  if (options?.ids) {
+    const ids = Array.from(new Set(options.ids.filter(id => Number.isInteger(id) && id > 0)));
+    if (ids.length === 0) return [];
+    const rows = extractExecutedRows(
+      await db.execute(sql`select * from products where id in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`),
+    );
+    return rows.map(normalizeProductRow);
+  }
+
+  const rows = extractExecutedRows(await db.execute(sql`select * from products order by id desc`));
+  return rows.map(normalizeProductRow);
+}
+
+async function selectProductImageRows(db: Awaited<ReturnType<typeof getDb>>, productIds?: number[]) {
+  if (!db) return [];
+  try {
+    if (productIds) {
+      const ids = Array.from(new Set(productIds.filter(id => Number.isInteger(id) && id > 0)));
+      if (ids.length === 0) return [];
+      const rows = extractExecutedRows(
+        await db.execute(sql`select * from productImages where productId in (${sql.join(ids.map(id => sql`${id}`), sql`, `)}) order by \`order\` asc`),
+      );
+      return rows.map(normalizeProductImageRow);
+    }
+
+    const rows = extractExecutedRows(await db.execute(sql`select * from productImages order by \`order\` asc`));
+    return rows.map(normalizeProductImageRow);
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error)) return [];
+    throw error;
+  }
+}
+
+async function selectProductVariantRows(db: Awaited<ReturnType<typeof getDb>>, productIds?: number[]) {
+  if (!db) return [];
+  try {
+    if (productIds) {
+      const ids = Array.from(new Set(productIds.filter(id => Number.isInteger(id) && id > 0)));
+      if (ids.length === 0) return [];
+      const rows = extractExecutedRows(
+        await db.execute(sql`select * from productVariants where productId in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`),
+      );
+      return rows.map(normalizeProductVariantRow);
+    }
+
+    const rows = extractExecutedRows(await db.execute(sql`select * from productVariants`));
+    return rows.map(normalizeProductVariantRow);
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error)) return [];
+    throw error;
+  }
+}
+
+function mergeProductRowsWithImages(productRows: Array<typeof products.$inferSelect>, imageRows: Array<ReturnType<typeof normalizeProductImageRow>>) {
+  const firstImageByProduct = new Map<number, ReturnType<typeof normalizeProductImageRow>>();
   for (const item of imageRows) {
     if (!item.imageUrl || firstImageByProduct.has(item.productId)) continue;
-    firstImageByProduct.set(item.productId, {
-      imageUrl: item.imageUrl,
-      imageThumbnailUrl: item.imageThumbnailUrl ?? null,
-      imageDetailUrl: item.imageDetailUrl ?? null,
-      imageBannerUrl: item.imageBannerUrl ?? null,
-    });
+    firstImageByProduct.set(item.productId, item);
   }
 
   return productRows.map(product => {
@@ -434,10 +523,18 @@ export async function getProducts() {
   });
 }
 
+export async function getProducts() {
+  const db = await getDb();
+  if (!db) return [];
+  const productRows = await selectProductRows(db);
+  const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
+  return mergeProductRowsWithImages(productRows, imageRows);
+}
+
 export async function getProductById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  const result = await selectProductRows(db, { id });
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -448,26 +545,18 @@ export async function getProductsByIds(ids: number[]) {
   const uniqueIds = Array.from(new Set(ids.filter(id => Number.isInteger(id) && id > 0)));
   if (uniqueIds.length === 0) return [];
 
-  return await db.select().from(products).where(inArray(products.id, uniqueIds));
+  return await selectProductRows(db, { ids: uniqueIds });
 }
 
 export async function getProductByIdWithDetails(id: number) {
   const db = await getDb();
   if (!db) return undefined;
 
-  const productRows = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  const productRows = await selectProductRows(db, { id });
   if (productRows.length === 0) return undefined;
 
-  const imageRows = await db
-    .select()
-    .from(productImages)
-    .where(eq(productImages.productId, id))
-    .orderBy(productImages.order);
-
-  const variantRows = await db
-    .select()
-    .from(productVariants)
-    .where(eq(productVariants.productId, id));
+  const imageRows = await selectProductImageRows(db, [id]);
+  const variantRows = await selectProductVariantRows(db, [id]);
 
   return {
     ...productRows[0],
@@ -1634,38 +1723,9 @@ export async function replaceProductVariants(
 export async function getProductsAdmin() {
   const db = await getDb();
   if (!db) return [];
-  let productRows: Array<typeof products.$inferSelect>;
-  try {
-    productRows = await db.select().from(products).orderBy(desc(products.id));
-  } catch (error) {
-    if (!isLegacyProductColumnError(error)) throw error;
-    const legacyRows = await db
-      .select({
-        id: products.id,
-        name: products.name,
-        description: products.description,
-        fullDescription: products.fullDescription,
-        category: products.category,
-        price: products.price,
-        imageUrl: products.imageUrl,
-        stock: products.stock,
-        createdAt: products.createdAt,
-        updatedAt: products.updatedAt,
-      })
-      .from(products)
-      .orderBy(desc(products.id));
-    productRows = legacyRows.map(product => ({
-      ...product,
-      optionColors: null,
-      optionSizes: null,
-      sizeType: "alpha" as const,
-      imageThumbnailUrl: null,
-      imageDetailUrl: null,
-      imageBannerUrl: null,
-    }));
-  }
-  const imageRows = await safeOptionalSelect("productImages", () => db.select().from(productImages));
-  const variantRows = await safeOptionalSelect("productVariants", () => db.select().from(productVariants));
+  const productRows = await selectProductRows(db);
+  const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
+  const variantRows = await selectProductVariantRows(db, productRows.map(product => product.id));
 
   const imagesMap = new Map<number, typeof imageRows>();
   for (const item of imageRows) {
