@@ -259,7 +259,9 @@ export function AdminSettingsUI({ onSelectSection, runtimeStatus, runtimeStatusL
             <button key={item.section} type="button" style={styles.shortcutCard} onClick={() => onSelectSection(item.section)}>
               <span style={styles.shortcutTop}>
                 <strong style={styles.shortcutTitle}>{item.title}</strong>
-                <AdminStatusBadge style={item.status === "Critico" ? badgeTones.warning : badgeTones.success}>{item.status}</AdminStatusBadge>
+                <AdminStatusBadge style={{ ...(item.status === "Critico" ? badgeTones.warning : badgeTones.success), ...styles.inlineBadge }}>
+                  {item.status}
+                </AdminStatusBadge>
               </span>
               <span style={styles.shortcutDescription}>{item.description}</span>
             </button>
@@ -410,8 +412,9 @@ const badgeTones: Record<string, CSSProperties> = {
 const styles: Record<string, CSSProperties> = {
   alertGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
     gap: 12,
+    minWidth: 0,
   },
   sectionBlock: {
     display: "grid",
@@ -421,6 +424,7 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(255,255,255,0.075)",
     background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.006)), #090909",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.035)",
+    minWidth: 0,
   },
   sectionHeader: {
     display: "flex",
@@ -428,6 +432,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: 12,
     flexWrap: "wrap",
+    minWidth: 0,
   },
   sectionTitle: {
     margin: 0,
@@ -444,8 +449,9 @@ const styles: Record<string, CSSProperties> = {
   },
   infoGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
     gap: 12,
+    minWidth: 0,
   },
   infoCard: {
     display: "grid",
@@ -455,6 +461,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 14,
     border: "1px solid rgba(255,255,255,0.075)",
     background: "linear-gradient(180deg, rgba(255,255,255,0.026), rgba(255,255,255,0.008)), #0d0d0d",
+    minWidth: 0,
   },
   integrationCard: {
     display: "grid",
@@ -464,6 +471,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 14,
     border: "1px solid rgba(245,158,11,0.18)",
     background: "linear-gradient(180deg, rgba(245,158,11,0.055), rgba(255,255,255,0.008)), #0d0d0d",
+    minWidth: 0,
   },
   cardLabel: {
     color: "#9ca3af",
@@ -474,24 +482,28 @@ const styles: Record<string, CSSProperties> = {
   },
   cardValue: {
     color: "#f8f4ec",
-    fontSize: 18,
+    fontSize: "clamp(15px, 2.1vw, 18px)",
     lineHeight: 1.25,
     overflowWrap: "anywhere",
+    wordBreak: "break-word",
   },
   integrationStatus: {
     color: "#f8f4ec",
     fontSize: 15,
     lineHeight: 1.35,
+    overflowWrap: "anywhere",
   },
   cardMeta: {
     color: "#9ca3af",
     fontSize: 12,
     lineHeight: 1.55,
+    overflowWrap: "anywhere",
   },
   shortcutGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
     gap: 12,
+    minWidth: 0,
   },
   shortcutCard: {
     display: "grid",
@@ -504,26 +516,33 @@ const styles: Record<string, CSSProperties> = {
     background: "linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.008)), #101010",
     color: "#f8f4ec",
     cursor: "pointer",
+    minWidth: 0,
   },
   shortcutTop: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 10,
+    flexWrap: "wrap",
+    minWidth: 0,
   },
   shortcutTitle: {
     fontSize: 16,
     lineHeight: 1.25,
+    minWidth: 0,
+    overflowWrap: "anywhere",
   },
   shortcutDescription: {
     color: "#9ca3af",
     fontSize: 13,
     lineHeight: 1.55,
+    overflowWrap: "anywhere",
   },
   twoColumnGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
     gap: 14,
+    minWidth: 0,
   },
   list: {
     margin: 0,
@@ -536,5 +555,14 @@ const styles: Record<string, CSSProperties> = {
     color: "#d1d5db",
     fontSize: 13,
     lineHeight: 1.55,
+    overflowWrap: "anywhere",
+  },
+  inlineBadge: {
+    maxWidth: "100%",
+    whiteSpace: "normal",
+    textAlign: "center",
+    lineHeight: 1.25,
+    paddingTop: 7,
+    paddingBottom: 7,
   },
 };

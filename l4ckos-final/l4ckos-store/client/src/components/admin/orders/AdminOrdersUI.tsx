@@ -310,6 +310,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 18,
     border: "1px solid #252525",
     background: "#0d0d0d",
+    minWidth: 0,
+    overflow: "hidden",
   },
   detailHeader: {
     display: "flex",
@@ -317,6 +319,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: 12,
     flexWrap: "wrap",
+    minWidth: 0,
   },
   detailEyebrow: {
     display: "block",
@@ -334,8 +337,9 @@ const styles: Record<string, CSSProperties> = {
   },
   detailGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 118px), 1fr))",
     gap: 10,
+    minWidth: 0,
   },
   detailInfo: {
     display: "grid",
@@ -344,6 +348,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     border: "1px solid rgba(255,255,255,0.075)",
     background: "#090909",
+    minWidth: 0,
   },
   detailInfoLabel: {
     color: "#8b949e",
@@ -354,6 +359,9 @@ const styles: Record<string, CSSProperties> = {
     color: "#f0ede8",
     fontSize: 13,
     lineHeight: 1.35,
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    minWidth: 0,
   },
   detailSection: {
     display: "grid",
@@ -371,6 +379,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     border: "1px solid #202020",
     background: "#121212",
+    minWidth: 0,
   },
   addressHeader: {
     display: "flex",
@@ -378,11 +387,13 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: 12,
     flexWrap: "wrap",
+    minWidth: 0,
   },
   addressHint: {
     color: "#8b949e",
     fontSize: 11,
     lineHeight: 1.4,
+    overflowWrap: "anywhere",
   },
   addressLines: {
     display: "grid",
@@ -399,15 +410,18 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     border: "1px solid #202020",
     background: "#121212",
+    minWidth: 0,
   },
   itemName: {
     color: "#f0ede8",
     fontSize: 13,
     fontWeight: 700,
+    overflowWrap: "anywhere",
   },
   secondaryText: {
     color: "#9ca3af",
     fontSize: 11,
     lineHeight: 1.35,
+    overflowWrap: "anywhere",
   },
 };

@@ -242,7 +242,7 @@ export function AdminDashboard({
           <div style={styles.statusSummaryGrid}>
             {orderStatusSummary.map(item => (
               <div key={item.status} style={styles.statusSummaryCard}>
-                <AdminStatusBadge style={getOrderStatusTone(item.status)}>{item.label}</AdminStatusBadge>
+                <AdminStatusBadge style={{ ...getOrderStatusTone(item.status), ...styles.statusSummaryBadge }}>{item.label}</AdminStatusBadge>
                 <strong style={styles.statusSummaryValue}>{item.count}</strong>
               </div>
             ))}
@@ -442,6 +442,16 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     border: "1px solid rgba(255,255,255,0.065)",
     background: "#090909",
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  statusSummaryBadge: {
+    maxWidth: "100%",
+    whiteSpace: "normal",
+    lineHeight: 1.25,
+    textAlign: "center",
+    paddingTop: 7,
+    paddingBottom: 7,
   },
   statusSummaryValue: {
     color: "#f8f4ec",
