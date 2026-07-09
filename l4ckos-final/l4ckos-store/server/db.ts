@@ -561,7 +561,12 @@ function isMissingDatabaseObjectError(error: unknown) {
 
 function isLegacyProductColumnError(error: unknown) {
   const message = getDatabaseErrorMessage(error);
-  return /unknown column/i.test(message) && /(image(Thumbnail|Detail|Banner)Url|optionColors|optionSizes|sizeType)/i.test(message);
+  return /unknown column/i.test(message) && /(description|fullDescription|imageUrl|image(Thumbnail|Detail|Banner)Url|optionColors|optionSizes|sizeType|stock)/i.test(message);
+}
+
+function getUnknownColumnName(error: unknown) {
+  const message = getDatabaseErrorMessage(error);
+  return message.match(/unknown column ['"`]?([^'"`\s]+)['"`]?/i)?.[1] ?? null;
 }
 
 function stripOptionalProductFields(product: Partial<InsertProduct>) {
@@ -569,6 +574,7 @@ function stripOptionalProductFields(product: Partial<InsertProduct>) {
     imageThumbnailUrl,
     imageDetailUrl,
     imageBannerUrl,
+    fullDescription,
     optionColors,
     optionSizes,
     sizeType,
@@ -577,6 +583,7 @@ function stripOptionalProductFields(product: Partial<InsertProduct>) {
     imageThumbnailUrl?: string | null;
     imageDetailUrl?: string | null;
     imageBannerUrl?: string | null;
+    fullDescription?: string | null;
     optionColors?: string | null;
     optionSizes?: string | null;
     sizeType?: string | null;
@@ -584,28 +591,66 @@ function stripOptionalProductFields(product: Partial<InsertProduct>) {
   return legacyProduct;
 }
 
+async function insertProductWithLegacyFallback(db: Awaited<ReturnType<typeof getDb>>, product: InsertProduct) {
+  if (!db) throw new Error("Database not available");
+  let payload = { ...product } as Record<string, unknown>;
+  const removedColumns = new Set<string>();
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      return await db.insert(products).values(payload as InsertProduct);
+    } catch (error) {
+      const unknownColumn = getUnknownColumnName(error);
+      if (!unknownColumn || removedColumns.has(unknownColumn) || !(unknownColumn in payload)) {
+        if (!isLegacyProductColumnError(error)) throw error;
+        payload = stripOptionalProductFields(payload as Partial<InsertProduct>) as Record<string, unknown>;
+        continue;
+      }
+      delete payload[unknownColumn];
+      removedColumns.add(unknownColumn);
+    }
+  }
+
+  return await db.insert(products).values(payload as InsertProduct);
+}
+
+async function updateProductWithLegacyFallback(
+  db: Awaited<ReturnType<typeof getDb>>,
+  id: number,
+  product: Partial<InsertProduct>,
+) {
+  if (!db) throw new Error("Database not available");
+  let payload = { ...product } as Record<string, unknown>;
+  const removedColumns = new Set<string>();
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      return await db.update(products).set(payload as Partial<InsertProduct>).where(eq(products.id, id));
+    } catch (error) {
+      const unknownColumn = getUnknownColumnName(error);
+      if (!unknownColumn || removedColumns.has(unknownColumn) || !(unknownColumn in payload)) {
+        if (!isLegacyProductColumnError(error)) throw error;
+        payload = stripOptionalProductFields(payload as Partial<InsertProduct>) as Record<string, unknown>;
+        continue;
+      }
+      delete payload[unknownColumn];
+      removedColumns.add(unknownColumn);
+    }
+  }
+
+  return await db.update(products).set(payload as Partial<InsertProduct>).where(eq(products.id, id));
+}
+
 export async function createProduct(product: InsertProduct) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  try {
-    return await db.insert(products).values(product);
-  } catch (error) {
-    if (!isLegacyProductColumnError(error)) throw error;
-    const legacyProduct = stripOptionalProductFields(product) as InsertProduct;
-    return await db.insert(products).values(legacyProduct);
-  }
+  return await insertProductWithLegacyFallback(db, product);
 }
 
 export async function updateProduct(id: number, product: Partial<InsertProduct>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  try {
-    return await db.update(products).set(product).where(eq(products.id, id));
-  } catch (error) {
-    if (!isLegacyProductColumnError(error)) throw error;
-    const legacyProduct = stripOptionalProductFields(product);
-    return await db.update(products).set(legacyProduct).where(eq(products.id, id));
-  }
+  return await updateProductWithLegacyFallback(db, id, product);
 }
 
 export async function deleteProduct(id: number) {

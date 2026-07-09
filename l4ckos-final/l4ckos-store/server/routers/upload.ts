@@ -179,15 +179,45 @@ router.post("/", requireAdminUser, async (req, res) => {
             storagePut(`uploads/${variantFiles.banner}`, variantBuffers.banner, "image/webp"),
           ]);
           securityLog("info", "upload.saved_remote", { userId: user.id, requestIp: req.ip || "unknown", fileName: filename });
-          res.json({
-            success: true,
-            url: detailUrl,
+          let responseUrls = {
             originalUrl,
             thumbnailUrl,
             detailUrl,
             bannerUrl,
+            storage: "remote" as const,
+          };
+
+          try {
+            const [localOriginalPath, localThumbnailPath, localDetailPath, localBannerPath] = await Promise.all([
+              saveLocally(filename, buffer),
+              saveLocally(variantFiles.thumbnail, variantBuffers.thumbnail),
+              saveLocally(variantFiles.detail, variantBuffers.detail),
+              saveLocally(variantFiles.banner, variantBuffers.banner),
+            ]);
+            responseUrls = {
+              originalUrl: buildAbsoluteUploadUrl(req, localOriginalPath),
+              thumbnailUrl: buildAbsoluteUploadUrl(req, localThumbnailPath),
+              detailUrl: buildAbsoluteUploadUrl(req, localDetailPath),
+              bannerUrl: buildAbsoluteUploadUrl(req, localBannerPath),
+              storage: "remote" as const,
+            };
+          } catch (localMirrorError) {
+            securityLog("warn", "upload.local_mirror_unavailable", {
+              userId: user.id,
+              requestIp: req.ip || "unknown",
+              reason: localMirrorError instanceof Error ? localMirrorError.message : "unknown",
+            });
+          }
+
+          res.json({
+            success: true,
+            url: responseUrls.detailUrl,
+            originalUrl: responseUrls.originalUrl,
+            thumbnailUrl: responseUrls.thumbnailUrl,
+            detailUrl: responseUrls.detailUrl,
+            bannerUrl: responseUrls.bannerUrl,
             filename,
-            storage: "remote",
+            storage: responseUrls.storage,
           });
           return;
         } catch (storageError) {

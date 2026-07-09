@@ -64,6 +64,7 @@ const orderStatusSchema = z.enum([
   "cancelled",
 ]);
 const backupFileNameSchema = z.string().trim().regex(/^[A-Za-z0-9._-]+\.json$/);
+const productImageUrlSchema = z.string().trim().max(500, "A URL da imagem deve ter no máximo 500 caracteres.");
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -267,20 +268,20 @@ export const adminRouter = router({
         price: z.number().positive(),
         description: z.string().optional(),
         fullDescription: z.string().optional(),
-        imageUrl: z.string().optional(),
-        imageThumbnailUrl: z.string().optional(),
-        imageDetailUrl: z.string().optional(),
-        imageBannerUrl: z.string().optional(),
+        imageUrl: productImageUrlSchema.optional(),
+        imageThumbnailUrl: productImageUrlSchema.optional(),
+        imageDetailUrl: productImageUrlSchema.optional(),
+        imageBannerUrl: productImageUrlSchema.optional(),
         optionColors: z.array(z.string().min(1).max(60)).optional().default([]),
         optionSizes: z.array(z.string().min(1).max(60)).optional().default([]),
         sizeType: z.enum(["alpha", "numeric", "custom"]).optional().default("alpha"),
         stock: z.number().int().min(0).default(0),
         images: z.array(
           z.object({
-            imageUrl: z.string().url(),
-            imageThumbnailUrl: z.string().url().nullable().optional(),
-            imageDetailUrl: z.string().url().nullable().optional(),
-            imageBannerUrl: z.string().url().nullable().optional(),
+            imageUrl: productImageUrlSchema.url(),
+            imageThumbnailUrl: productImageUrlSchema.url().nullable().optional(),
+            imageDetailUrl: productImageUrlSchema.url().nullable().optional(),
+            imageBannerUrl: productImageUrlSchema.url().nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
           }),
         ).optional().default([]),
@@ -339,20 +340,20 @@ export const adminRouter = router({
         price: z.number().positive().optional(),
         description: z.string().optional(),
         fullDescription: z.string().optional(),
-        imageUrl: z.string().optional(),
-        imageThumbnailUrl: z.string().optional(),
-        imageDetailUrl: z.string().optional(),
-        imageBannerUrl: z.string().optional(),
+        imageUrl: productImageUrlSchema.optional(),
+        imageThumbnailUrl: productImageUrlSchema.optional(),
+        imageDetailUrl: productImageUrlSchema.optional(),
+        imageBannerUrl: productImageUrlSchema.optional(),
         optionColors: z.array(z.string().min(1).max(60)).optional(),
         optionSizes: z.array(z.string().min(1).max(60)).optional(),
         sizeType: z.enum(["alpha", "numeric", "custom"]).optional(),
         stock: z.number().int().min(0).optional(),
         images: z.array(
           z.object({
-            imageUrl: z.string().url(),
-            imageThumbnailUrl: z.string().url().nullable().optional(),
-            imageDetailUrl: z.string().url().nullable().optional(),
-            imageBannerUrl: z.string().url().nullable().optional(),
+            imageUrl: productImageUrlSchema.url(),
+            imageThumbnailUrl: productImageUrlSchema.url().nullable().optional(),
+            imageDetailUrl: productImageUrlSchema.url().nullable().optional(),
+            imageBannerUrl: productImageUrlSchema.url().nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
           }),
         ).optional(),
