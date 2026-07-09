@@ -69,6 +69,7 @@ export default function Header() {
     },
     { to: "/sobre", label: "Sobre", active: location.pathname === "/sobre" },
     { to: "/contato", label: "Contato", active: location.pathname === "/contato" },
+    { to: "/acompanhar-pedido", label: "Acompanhar pedido", active: location.pathname === "/acompanhar-pedido" },
   ];
 
   return (
