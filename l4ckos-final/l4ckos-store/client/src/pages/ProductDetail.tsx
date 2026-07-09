@@ -22,6 +22,7 @@ const COLOR_HEX_BY_NAME: Record<string, string> = {
   preto: "#1a1a1a",
   branco: "#ffffff",
   azul: "#1e40af",
+  "azul-marinho": "#07112f",
   vermelho: "#dc2626",
   verde: "#15803d",
   cinza: "#6b7280",
@@ -380,26 +381,47 @@ export default function ProductDetail() {
             <h3 style={styles.sectionTitle as CSSProperties}>Cores disponíveis</h3>
             <div style={styles.colorGrid as CSSProperties}>
               {colorOptions.map((color) => (
-                <button
-                  key={color.name}
-                  onClick={() => setSelectedColor(color.name)}
-                  style={{
-                    ...styles.colorOption,
-                    background: color.hex,
-                    border: selectedColor === color.name
-                      ? "3px solid #1a1a1a"
-                      : "2px solid #e0e0e0",
-                  } as CSSProperties}
-                  title={color.name}
-                >
-                  {selectedColor === color.name && (
-                    <span style={styles.colorCheckmark as CSSProperties}>✓</span>
-                  )}
-                </button>
+                (() => {
+                  const isSelected = selectedColor === color.name;
+                  const isLightColor = ["#ffffff", "#fff", "#f5f5f5", "#d1d5db"].includes(color.hex.toLowerCase());
+                  return (
+                    <button
+                      key={color.name}
+                      type="button"
+                      onClick={() => setSelectedColor(color.name)}
+                      aria-pressed={isSelected}
+                      aria-label={`Selecionar cor ${color.name}`}
+                      style={{
+                        ...styles.colorOption,
+                        background: color.hex,
+                        border: isSelected
+                          ? "3px solid #e8002a"
+                          : "2px solid #4b5563",
+                        boxShadow: isSelected
+                          ? "0 0 0 4px rgba(232, 0, 42, 0.28), 0 0 0 7px rgba(240, 237, 232, 0.16)"
+                          : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
+                        transform: isSelected ? "translateY(-2px) scale(1.04)" : "none",
+                      } as CSSProperties}
+                      title={color.name}
+                    >
+                      {isSelected && (
+                        <span
+                          style={{
+                            ...styles.colorCheckmark,
+                            color: isLightColor ? "#080808" : "#ffffff",
+                            textShadow: isLightColor ? "0 1px 0 rgba(255,255,255,0.55)" : "0 1px 5px rgba(0,0,0,0.85)",
+                          } as CSSProperties}
+                        >
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  );
+                })()
               ))}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
-              Selecionado: <strong>{selectedColor || "Nenhuma cor"}</strong>
+              Selecionado: <strong style={selectedColor ? styles.selectedValue : undefined}>{selectedColor || "Nenhuma cor"}</strong>
             </p>
           </div>
 
@@ -415,11 +437,18 @@ export default function ProductDetail() {
               {sizeOptions.map((size) => (
                 <button
                   key={size}
+                  type="button"
                   onClick={() => setSelectedSize(size)}
+                  aria-pressed={selectedSize === size}
                   style={{
                     ...styles.sizeOption,
-                    background: selectedSize === size ? "#1a1a1a" : "white",
-                    color: selectedSize === size ? "white" : "#1a1a1a",
+                    background: selectedSize === size ? "#e8002a" : "#111111",
+                    color: selectedSize === size ? "#ffffff" : "#f0ede8",
+                    border: selectedSize === size ? "2px solid #ff4966" : styles.sizeOption.border,
+                    boxShadow: selectedSize === size
+                      ? "0 0 0 4px rgba(232, 0, 42, 0.22), inset 0 -2px 0 rgba(0,0,0,0.22)"
+                      : "none",
+                    transform: selectedSize === size ? "translateY(-2px)" : "none",
                   } as CSSProperties}
                 >
                   {size}
@@ -427,7 +456,7 @@ export default function ProductDetail() {
               ))}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
-              Selecionado: <strong>{selectedSize || "Nenhum tamanho"}</strong>
+              Selecionado: <strong style={selectedSize ? styles.selectedValue : undefined}>{selectedSize || "Nenhum tamanho"}</strong>
             </p>
           </div>
 
@@ -718,20 +747,22 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
   },
   colorOption: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: 8,
     cursor: "pointer",
-    transition: "all 0.2s ease",
+    transition: "border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    flex: "0 0 auto",
   },
   colorCheckmark: {
     color: "#ffffff",
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
     textShadow: "0 0 4px rgba(0,0,0,0.5)",
+    lineHeight: 1,
   },
   sizeGrid: {
     display: "grid",
@@ -741,17 +772,26 @@ const styles: Record<string, CSSProperties> = {
   },
   sizeOption: {
     padding: 12,
-    border: "2px solid #e0e0e0",
+    minHeight: 48,
+    border: "2px solid #333333",
     borderRadius: 8,
     cursor: "pointer",
-    fontWeight: 700,
-    fontSize: 13,
-    transition: "all 0.2s ease",
+    fontWeight: 900,
+    fontSize: 14,
+    transition: "border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease",
   },
   selectedLabel: {
     fontSize: 13,
-    color: "#9ca3af",
+    color: "#c8c1ba",
     margin: 0,
+  },
+  selectedValue: {
+    color: "#ffffff",
+    background: "rgba(232, 0, 42, 0.18)",
+    border: "1px solid rgba(232, 0, 42, 0.42)",
+    borderRadius: 6,
+    padding: "3px 7px",
+    marginLeft: 4,
   },
   quantityControl: {
     display: "flex",
