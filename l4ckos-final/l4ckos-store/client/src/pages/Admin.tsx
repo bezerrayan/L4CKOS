@@ -67,6 +67,14 @@ import {
   PromotionsSummaryCards,
   PromotionStatusBadge,
 } from "../components/admin/promotions/AdminPromotionsUI";
+import {
+  AdminCriticalAlert,
+  AuditLogTable,
+  BackupFileList,
+  BackupInfoCard,
+  ReportsExportCard,
+  SystemMetricCards,
+} from "../components/admin/system/AdminSystemUI";
 
 type Section =
   | "overview"
@@ -2750,29 +2758,40 @@ export default function Admin() {
           title="Relatórios"
           description="Exporte o consolidado de vendas por período para análise externa ou conferência operacional."
         >
-          <div style={styles.inlineRow}>
-            <input type="datetime-local" style={styles.input} value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
-            <input type="datetime-local" style={styles.input} value={reportTo} onChange={e => setReportTo(e.target.value)} />
-            <button
-              style={styles.primaryBtn}
-              onClick={async () => {
-                const fromIso = reportFrom ? new Date(reportFrom).toISOString() : new Date(Date.now() - 7 * 86400000).toISOString();
-                const toIso = reportTo ? new Date(reportTo).toISOString() : new Date().toISOString();
-                const data = await reportQuery.refetch({ throwOnError: true });
-                const csvPayload = data.data ?? (await utils.admin.reportsSalesCsv.fetch({ from: fromIso, to: toIso }));
-                const blob = new Blob([csvPayload.csv], { type: "text/csv;charset=utf-8;" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = csvPayload.fileName;
-                a.click();
-                URL.revokeObjectURL(url);
-                showToast({ message: "CSV exportado", duration: 2200 });
-              }}
-            >
-              Exportar CSV
-            </button>
-          </div>
+          <AdminCriticalAlert
+            tone="info"
+            title="Exportações podem conter dados operacionais sensíveis"
+            description="Baixe e compartilhe arquivos CSV apenas em canais internos e com pessoas autorizadas."
+          />
+          <ReportsExportCard
+            title="Vendas por período"
+            description="Exporta o consolidado de vendas no intervalo selecionado, preservando o formato CSV já usado pela operação."
+            aside={<AdminSummaryPill>Formato: CSV</AdminSummaryPill>}
+          >
+            <div style={styles.inlineRow}>
+              <input type="datetime-local" style={styles.input} value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
+              <input type="datetime-local" style={styles.input} value={reportTo} onChange={e => setReportTo(e.target.value)} />
+              <button
+                style={styles.primaryBtn}
+                onClick={async () => {
+                  const fromIso = reportFrom ? new Date(reportFrom).toISOString() : new Date(Date.now() - 7 * 86400000).toISOString();
+                  const toIso = reportTo ? new Date(reportTo).toISOString() : new Date().toISOString();
+                  const data = await reportQuery.refetch({ throwOnError: true });
+                  const csvPayload = data.data ?? (await utils.admin.reportsSalesCsv.fetch({ from: fromIso, to: toIso }));
+                  const blob = new Blob([csvPayload.csv], { type: "text/csv;charset=utf-8;" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = csvPayload.fileName;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  showToast({ message: "CSV exportado", duration: 2200 });
+                }}
+              >
+                {reportQuery.isFetching ? "Exportando..." : "Exportar CSV"}
+              </button>
+            </div>
+          </ReportsExportCard>
         </AdminSurface>
       )}
 
@@ -2781,6 +2800,18 @@ export default function Admin() {
           title="Logs de auditoria"
           description="Últimos registros administrativos para rastreabilidade, conferência e apoio à investigação."
         >
+          <AdminCriticalAlert
+            tone="info"
+            title="Auditoria registra ações administrativas"
+            description="Use estes logs para conferência operacional. Metadados são exibidos de forma resumida para evitar exposição desnecessária."
+          />
+          <SystemMetricCards
+            cards={[
+              { label: "Logs carregados", value: (auditQuery.data ?? []).length },
+              { label: "Ações críticas", value: (auditQuery.data ?? []).filter(log => String(log.action ?? "").includes("delete") || String(log.action ?? "").includes("restore")).length, tone: "warning" },
+              { label: "Backups registrados", value: (auditQuery.data ?? []).filter(log => String(log.entity ?? "") === "backup").length },
+            ]}
+          />
           {auditQuery.isLoading ? (
             <AdminLoadingState>Carregando auditoria...</AdminLoadingState>
           ) : !(auditQuery.data ?? []).length ? (
@@ -2789,23 +2820,7 @@ export default function Admin() {
               description="Os registros administrativos aparecerão aqui conforme ações forem executadas no painel."
             />
           ) : (
-            <AdminTableWrapper>
-              <table style={styles.table}>
-                <thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>ID</th><th>Meta</th></tr></thead>
-                <tbody>
-                  {(auditQuery.data ?? []).map(log => (
-                    <tr key={log.id}>
-                      <td>{new Date(log.createdAt).toLocaleString("pt-BR")}</td>
-                      <td>{log.actorUserId}</td>
-                      <td>{log.action}</td>
-                      <td>{log.entity}</td>
-                      <td>{log.entityId || "-"}</td>
-                      <td>{log.metadata ? JSON.stringify(log.metadata).slice(0, 100) : "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </AdminTableWrapper>
+            <AuditLogTable logs={auditQuery.data ?? []} />
           )}
         </AdminSurface>
       )}
@@ -2815,22 +2830,54 @@ export default function Admin() {
           title="Backup e restauração"
           description="Use esta área com cautela. A restauração substitui dados atuais e deve ser feita apenas em casos controlados."
         >
-          <div style={styles.inlineRow}>
-            <button style={styles.primaryBtn} onClick={() => backupManualMutation.mutate()}>Backup manual</button>
-            <input style={styles.input} placeholder="arquivo-backup.json" value={restoreFileName} onChange={e => setRestoreFileName(e.target.value)} />
-            <button
-              style={styles.dangerBtn}
-              onClick={() => {
-                if (!restoreFileName.trim()) {
-                  showToast({ message: "Informe o nome do arquivo de backup", duration: 2300 });
-                  return;
-                }
-                if (!confirmAdminAction(`Restaurar o backup "${restoreFileName.trim()}"? Isso substitui dados atuais e deve ser feito apenas com certeza.`)) return;
-                backupRestoreMutation.mutate({ fileName: restoreFileName.trim(), confirmation: "RESTORE" });
-              }}
+          <AdminCriticalAlert
+            tone="danger"
+            title="Restaurar backup pode sobrescrever dados atuais"
+            description="Use esta ação apenas com certeza. A confirmação obrigatória foi mantida e o payload de restauração continua igual."
+          />
+          <SystemMetricCards
+            cards={[
+              { label: "Backups disponíveis", value: (backupsQuery.data ?? []).length },
+              { label: "Ação crítica", value: "Restore", tone: "danger" },
+              { label: "Confirmação", value: "Obrigatória", tone: "warning" },
+            ]}
+          />
+          <div style={{ ...styles.systemSplitGrid, ...(isCompactAdmin ? styles.systemSplitGridCompact : {}) }}>
+            <BackupInfoCard
+              title="Criar backup manual"
+              description="Gera um arquivo JSON com os dados atuais usando o fluxo existente do admin."
             >
-              Restaurar
-            </button>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => backupManualMutation.mutate()}
+                disabled={backupManualMutation.isPending}
+              >
+                {backupManualMutation.isPending ? "Criando backup..." : "Backup manual"}
+              </button>
+            </BackupInfoCard>
+            <BackupInfoCard
+              title="Restaurar backup"
+              description="Informe exatamente o nome do arquivo disponível. A restauração substitui dados atuais."
+              tone="danger"
+            >
+              <div style={styles.inlineRow}>
+                <input style={styles.input} placeholder="arquivo-backup.json" value={restoreFileName} onChange={e => setRestoreFileName(e.target.value)} />
+                <button
+                  style={styles.dangerBtn}
+                  onClick={() => {
+                    if (!restoreFileName.trim()) {
+                      showToast({ message: "Informe o nome do arquivo de backup", duration: 2300 });
+                      return;
+                    }
+                    if (!confirmAdminAction(`Restaurar o backup "${restoreFileName.trim()}"? Isso substitui dados atuais e deve ser feito apenas com certeza.`)) return;
+                    backupRestoreMutation.mutate({ fileName: restoreFileName.trim(), confirmation: "RESTORE" });
+                  }}
+                  disabled={backupRestoreMutation.isPending}
+                >
+                  {backupRestoreMutation.isPending ? "Restaurando..." : "Restaurar"}
+                </button>
+              </div>
+            </BackupInfoCard>
           </div>
           {backupsQuery.isLoading ? (
             <AdminLoadingState>Carregando backups...</AdminLoadingState>
@@ -2840,16 +2887,7 @@ export default function Admin() {
               description="Crie um backup manual para que ele apareça listado aqui."
             />
           ) : (
-            <AdminTableWrapper>
-              <table style={styles.table}>
-                <thead><tr><th>Arquivos disponíveis</th></tr></thead>
-                <tbody>
-                  {(backupsQuery.data ?? []).map(file => (
-                    <tr key={file}><td>{file}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </AdminTableWrapper>
+            <BackupFileList files={backupsQuery.data ?? []} />
           )}
         </AdminSurface>
       )}
@@ -3072,6 +3110,15 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 7,
     textAlign: "left",
+  },
+  systemSplitGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gap: 16,
+    alignItems: "stretch",
+  },
+  systemSplitGridCompact: {
+    gridTemplateColumns: "1fr",
   },
   productAdminActions: {
     display: "flex",
