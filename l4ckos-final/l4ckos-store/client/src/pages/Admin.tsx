@@ -75,6 +75,7 @@ import {
   ReportsExportCard,
   SystemMetricCards,
 } from "../components/admin/system/AdminSystemUI";
+import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 
 type Section =
   | "overview"
@@ -85,7 +86,8 @@ type Section =
   | "coupons"
   | "reports"
   | "audit"
-  | "backup";
+  | "backup"
+  | "settings";
 
 const orderStatuses = ["pending", "paid", "processing", "shipped", "delivered", "cancelled"] as const;
 const productColorSuggestions = ["preto", "branco", "verde", "azul-marinho", "cinza", "caqui"] as const;
@@ -1058,6 +1060,7 @@ export default function Admin() {
           { key: "reports", label: "Relatórios" },
           { key: "audit", label: "Auditoria" },
           { key: "backup", label: "Backup" },
+          { key: "settings", label: "Configurações" },
         ].map(tab => (
           <button
             key={tab.key}
@@ -2885,6 +2888,10 @@ export default function Admin() {
             <BackupFileList files={backupsQuery.data ?? []} />
           )}
         </AdminSurface>
+      )}
+
+      {section === "settings" && (
+        <AdminSettingsUI onSelectSection={nextSection => setSection(nextSection)} />
       )}
     </div>
   );
