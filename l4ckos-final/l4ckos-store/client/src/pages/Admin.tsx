@@ -28,6 +28,14 @@ import {
   ProductsSummaryCards,
   type ProductListFilter,
 } from "../components/admin/products/AdminProductsUI";
+import {
+  OrderDetailPanel,
+  OrderOperationalAlerts,
+  OrdersFilters,
+  OrdersSummaryCards,
+  OrderStatusBadge,
+  type OrderListFilter,
+} from "../components/admin/orders/AdminOrdersUI";
 
 type Section =
   | "overview"
@@ -348,6 +356,7 @@ export default function Admin() {
   const [productSearch, setProductSearch] = useState("");
   const [productFilter, setProductFilter] = useState<ProductListFilter>("all");
   const [orderSearch, setOrderSearch] = useState("");
+  const [orderQuickFilter, setOrderQuickFilter] = useState<OrderListFilter>("all");
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
   const [restoreFileName, setRestoreFileName] = useState("");
@@ -673,7 +682,7 @@ export default function Admin() {
       return true;
     });
   }, [productFilter, searchedProducts]);
-  const orders = useMemo(() => {
+  const searchedOrders = useMemo(() => {
     const normalizedSearch = orderSearch.trim().toLowerCase();
     return [...(ordersQuery.data ?? [])]
       .filter(row => {
@@ -688,6 +697,73 @@ export default function Admin() {
       })
       .sort((a, b) => b.id - a.id);
   }, [orderSearch, ordersQuery.data]);
+  const ordersSummary = useMemo(() => {
+    const rows = ordersQuery.data ?? [];
+    const withoutTracking = rows.filter(row => ["paid", "processing", "shipped"].includes(String(row.status ?? "")) && !row.trackingCode).length;
+    return {
+      total: rows.length,
+      pending: rows.filter(row => row.status === "pending").length,
+      paid: rows.filter(row => row.status === "paid").length,
+      processing: rows.filter(row => row.status === "processing").length,
+      shipped: rows.filter(row => row.status === "shipped").length,
+      delivered: rows.filter(row => row.status === "delivered").length,
+      cancelled: rows.filter(row => row.status === "cancelled").length,
+      withoutTracking,
+      revenueCents: rows.reduce((sum, row) => sum + Number(row.totalPrice ?? 0), 0),
+    };
+  }, [ordersQuery.data]);
+  const orderFilterOptions = useMemo(
+    () => [
+      { key: "all" as const, label: "Todos", count: searchedOrders.length },
+      { key: "pending" as const, label: "Pendentes", count: searchedOrders.filter(row => row.status === "pending").length },
+      { key: "paid" as const, label: "Pagos", count: searchedOrders.filter(row => row.status === "paid").length },
+      { key: "processing" as const, label: "Separação", count: searchedOrders.filter(row => row.status === "processing").length },
+      { key: "shipped" as const, label: "Enviados", count: searchedOrders.filter(row => row.status === "shipped").length },
+      { key: "delivered" as const, label: "Entregues", count: searchedOrders.filter(row => row.status === "delivered").length },
+      { key: "cancelled" as const, label: "Cancelados", count: searchedOrders.filter(row => row.status === "cancelled").length },
+      {
+        key: "withoutTracking" as const,
+        label: "Sem rastreio",
+        count: searchedOrders.filter(row => ["paid", "processing", "shipped"].includes(String(row.status ?? "")) && !row.trackingCode).length,
+      },
+    ],
+    [searchedOrders],
+  );
+  const orders = useMemo(() => {
+    return searchedOrders.filter(row => {
+      if (orderQuickFilter === "withoutTracking") return ["paid", "processing", "shipped"].includes(String(row.status ?? "")) && !row.trackingCode;
+      if (orderQuickFilter === "all") return true;
+      return row.status === orderQuickFilter;
+    });
+  }, [orderQuickFilter, searchedOrders]);
+  const orderOperationalAlerts = useMemo(() => {
+    const rows = ordersQuery.data ?? [];
+    const paidWithoutTracking = rows.filter(row => row.status === "paid" && !row.trackingCode).length;
+    const shippedWithoutTracking = rows.filter(row => row.status === "shipped" && !row.trackingCode).length;
+    const oldPending = rows.filter(row => {
+      if (row.status !== "pending" || !row.createdAt) return false;
+      return Date.now() - new Date(row.createdAt).getTime() > 48 * 60 * 60 * 1000;
+    }).length;
+    const recentCancelled = rows.filter(row => {
+      if (row.status !== "cancelled" || !row.createdAt) return false;
+      return Date.now() - new Date(row.createdAt).getTime() <= 7 * 24 * 60 * 60 * 1000;
+    }).length;
+
+    return [
+      ...(paidWithoutTracking > 0
+        ? [{ title: `${paidWithoutTracking} pedido(s) pago(s) sem rastreio`, description: "Revise pedidos pagos aguardando envio ou código de rastreio.", tone: "warning" as const }]
+        : []),
+      ...(shippedWithoutTracking > 0
+        ? [{ title: `${shippedWithoutTracking} pedido(s) enviado(s) sem rastreio`, description: "Pedidos enviados deveriam ter rastreio conferido no painel.", tone: "danger" as const }]
+        : []),
+      ...(oldPending > 0
+        ? [{ title: `${oldPending} pedido(s) pendente(s) há mais de 48h`, description: "Acompanhe para evitar pedidos esquecidos no fluxo.", tone: "warning" as const }]
+        : []),
+      ...(recentCancelled > 0
+        ? [{ title: `${recentCancelled} cancelamento(s) recente(s)`, description: "Pedidos cancelados nos últimos 7 dias aparecem aqui para conferência.", tone: "neutral" as const }]
+        : []),
+    ];
+  }, [ordersQuery.data]);
   const selectedOrder = useMemo(
     () => orders.find(order => order.id === selectedOrderId) ?? orders[0] ?? null,
     [orders, selectedOrderId],
@@ -1757,12 +1833,13 @@ export default function Admin() {
             </div>
           }
         >
+          <OrdersSummaryCards summary={ordersSummary} />
           <div style={styles.inlineRow}>
-            <AdminSummaryPill>Resultados: {orders.length}</AdminSummaryPill>
-            <AdminSummaryPill>Pendentes: {orders.filter(row => row.status === "pending").length}</AdminSummaryPill>
-            <AdminSummaryPill>Pagos: {orders.filter(row => row.status === "paid").length}</AdminSummaryPill>
-            <AdminSummaryPill>Em separação: {orders.filter(row => row.status === "processing").length}</AdminSummaryPill>
+            <AdminSummaryPill>Exibindo: {orders.length}</AdminSummaryPill>
+            <AdminSummaryPill>Busca: {searchedOrders.length}</AdminSummaryPill>
           </div>
+          <OrdersFilters value={orderQuickFilter} onChange={setOrderQuickFilter} options={orderFilterOptions} />
+          <OrderOperationalAlerts alerts={orderOperationalAlerts} />
           {ordersQuery.isLoading ? (
             <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
           ) : orders.length === 0 ? (
@@ -1803,9 +1880,11 @@ export default function Admin() {
                           <div style={styles.orderPrimaryText}>{formatPrice(Number(row.totalPrice) / 100)}</div>
                         </td>
                         <td>
-                          <AdminStatusBadge style={getOrderStatusTone(String(row.status))}>
-                            {getOrderStatusLabel(String(row.status))}
-                          </AdminStatusBadge>
+                          <OrderStatusBadge
+                            status={String(row.status)}
+                            label={getOrderStatusLabel(String(row.status))}
+                            tone={getOrderStatusTone(String(row.status))}
+                          />
                         </td>
                         <td>
                           <div style={styles.orderPrimaryText}>{row.trackingCode || "Pendente"}</div>
@@ -1852,59 +1931,12 @@ export default function Admin() {
                 </table>
               </AdminTableWrapper>
 
-              {selectedOrder ? (
-                <aside style={styles.orderDetailPanel}>
-                  <div style={styles.orderDetailHeader}>
-                    <strong style={styles.orderDetailTitle}>Pedido #{selectedOrder.id}</strong>
-                    <AdminStatusBadge style={getOrderStatusTone(String(selectedOrder.status))}>
-                      {getOrderStatusLabel(String(selectedOrder.status))}
-                    </AdminStatusBadge>
-                  </div>
-                  <div style={styles.orderDetailMeta}>
-                    <span>Cliente: {selectedOrder.customerName || selectedOrder.customerEmail || `#${selectedOrder.userId}`}</span>
-                    <span>Total: {formatPrice(Number(selectedOrder.totalPrice) / 100)}</span>
-                    <span>Criado em {new Date(selectedOrder.createdAt).toLocaleString("pt-BR")}</span>
-                    <span>Rastreio: {selectedOrder.trackingCode || "Ainda não informado"}</span>
-                  </div>
-                  <div style={styles.orderDetailItems}>
-                    <strong style={styles.orderDetailSubtitle}>Entrega</strong>
-                    {selectedOrder.shippingAddress ? (
-                      <div style={styles.orderAddressCard}>
-                        <div style={styles.orderAddressHeader}>
-                          <span style={styles.orderDetailItemName}>
-                            {selectedOrder.shippingAddress.recipient || "Destinatário não informado"}
-                          </span>
-                          <span style={styles.orderAddressHint}>
-                            {selectedOrder.shippingAddress.source === "profile"
-                              ? "Endereço padrão atual do cliente"
-                              : "Endereço salvo no pedido"}
-                          </span>
-                        </div>
-                        <div style={styles.orderAddressLines}>
-                          {formatAdminAddressLine(selectedOrder.shippingAddress).map(line => (
-                            <span key={`${selectedOrder.id}-${line}`} style={styles.orderSecondaryText}>{line}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <span style={styles.orderSecondaryText}>Nenhum endereço disponível para este pedido.</span>
-                    )}
-                  </div>
-                  <div style={styles.orderDetailItems}>
-                    <strong style={styles.orderDetailSubtitle}>Itens reservados</strong>
-                    {(selectedOrder.items ?? []).length === 0 ? (
-                      <span style={styles.orderSecondaryText}>Este pedido ainda não possui itens detalhados na reserva.</span>
-                    ) : (
-                      (selectedOrder.items ?? []).map((item, index) => (
-                        <div key={`${selectedOrder.id}-${item.productId}-${index}`} style={styles.orderDetailItemRow}>
-                          <span style={styles.orderDetailItemName}>{item.productName || `Produto #${item.productId}`}</span>
-                          <span style={styles.orderSecondaryText}>Quantidade: {item.quantity}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </aside>
-              ) : null}
+              <OrderDetailPanel
+                order={selectedOrder}
+                statusLabel={getOrderStatusLabel}
+                statusTone={getOrderStatusTone}
+                addressLines={formatAdminAddressLine}
+              />
             </div>
           )}
         </AdminSurface>
@@ -3088,79 +3120,6 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: "minmax(0, 1fr) 320px",
     gap: 16,
     alignItems: "start",
-  },
-  orderDetailPanel: {
-    position: "sticky",
-    top: 16,
-    display: "grid",
-    gap: 14,
-    padding: "18px 16px",
-    borderRadius: 18,
-    border: "1px solid #252525",
-    background: "#0d0d0d",
-  },
-  orderDetailHeader: {
-    display: "grid",
-    gap: 10,
-    justifyItems: "start",
-  },
-  orderDetailTitle: {
-    color: "#f8f4ec",
-    fontSize: 20,
-    lineHeight: 1.1,
-  },
-  orderDetailMeta: {
-    display: "grid",
-    gap: 8,
-    color: "#9ca3af",
-    fontSize: 13,
-    lineHeight: 1.6,
-  },
-  orderDetailItems: {
-    display: "grid",
-    gap: 10,
-    paddingTop: 4,
-  },
-  orderDetailSubtitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-  },
-  orderDetailItemRow: {
-    display: "grid",
-    gap: 4,
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #202020",
-    background: "#121212",
-  },
-  orderAddressCard: {
-    display: "grid",
-    gap: 8,
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid #202020",
-    background: "#121212",
-  },
-  orderAddressHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  orderAddressHint: {
-    color: "#8b949e",
-    fontSize: 11,
-    lineHeight: 1.4,
-  },
-  orderAddressLines: {
-    display: "grid",
-    gap: 4,
-  },
-  orderDetailItemName: {
-    color: "#f0ede8",
-    fontSize: 13,
-    fontWeight: 700,
   },
   orderPrimaryText: {
     color: "#f0ede8",
