@@ -14,6 +14,7 @@ type ProductItem = {
   name: string;
   priceCents: number;
   imageUrl: string;
+  imageThumbnailUrl?: string;
   category?: string | null;
 };
 
@@ -79,7 +80,8 @@ export default function Home() {
         id: item.id,
         name: item.name,
         priceCents: Number(item.price ?? 0),
-        imageUrl: resolveProductImageUrl(item.imageUrl),
+        imageUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
+        imageThumbnailUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
         category: item.category,
       })),
     [productsQuery.data],
@@ -207,7 +209,7 @@ export default function Home() {
               <div className={`l4-home-product-img ${productBgClasses[idx % productBgClasses.length]}`}>
                 {product.imageUrl ? (
                   <img
-                    src={product.imageUrl}
+                    src={product.imageThumbnailUrl || product.imageUrl}
                     alt={product.name}
                     loading={idx < 4 ? "eager" : "lazy"}
                     decoding="async"

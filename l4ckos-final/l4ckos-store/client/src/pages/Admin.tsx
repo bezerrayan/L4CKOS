@@ -39,6 +39,9 @@ const emptyProductForm = {
   price: "",
   stock: "0",
   imageUrl: "",
+  imageThumbnailUrl: "",
+  imageDetailUrl: "",
+  imageBannerUrl: "",
   imagesCsv: "",
   galleryColor: "",
   colorsCsv: "",
@@ -46,6 +49,22 @@ const emptyProductForm = {
   sizeType: "alpha",
   variantsCsv: "",
   description: "",
+};
+
+type UploadedImage = {
+  url: string;
+  originalUrl?: string | null;
+  thumbnailUrl?: string | null;
+  detailUrl?: string | null;
+  bannerUrl?: string | null;
+};
+
+type ProductImageEntry = {
+  imageUrl: string;
+  imageThumbnailUrl?: string | null;
+  imageDetailUrl?: string | null;
+  imageBannerUrl?: string | null;
+  color?: string | null;
 };
 
 const emptyPromoForm = {
@@ -114,38 +133,64 @@ function joinCsvUrls(currentValue: string, urls: string[]) {
   return Array.from(new Set(merged)).join(", ");
 }
 
-function formatImageCsvEntry(imageUrl: string, color?: string | null) {
+function formatImageCsvEntry(entry: string | ProductImageEntry, color?: string | null) {
+  const imageUrl = typeof entry === "string" ? entry : entry.imageUrl;
   const normalizedUrl = normalizeAdminImageValue(imageUrl);
   const normalizedColor = String(color ?? "").trim();
-  return normalizedColor ? `${normalizedUrl}|${normalizedColor}` : normalizedUrl;
+  const normalizedThumbnail = typeof entry === "string" ? "" : normalizeAdminImageValue(entry.imageThumbnailUrl);
+  const normalizedDetail = typeof entry === "string" ? "" : normalizeAdminImageValue(entry.imageDetailUrl);
+  const normalizedBanner = typeof entry === "string" ? "" : normalizeAdminImageValue(entry.imageBannerUrl);
+  const parts = [normalizedUrl, normalizedColor, normalizedThumbnail, normalizedDetail, normalizedBanner];
+
+  while (parts.length > 1 && !parts[parts.length - 1]) {
+    parts.pop();
+  }
+
+  return parts.join("|");
 }
 
-function parseImageCsvEntries(raw: string) {
+function parseImageCsvEntries(raw: string): ProductImageEntry[] {
   return raw
     .split(",")
     .map(item => item.trim())
     .filter(Boolean)
     .map(item => {
-      const [imageUrlRaw, colorRaw] = item.split("|").map(part => part?.trim() ?? "");
+      const [imageUrlRaw, colorRaw, thumbnailRaw, detailRaw, bannerRaw] = item.split("|").map(part => part?.trim() ?? "");
       const imageUrl = normalizeAdminImageValue(imageUrlRaw);
       return {
         imageUrl,
+        imageThumbnailUrl: normalizeAdminImageValue(thumbnailRaw) || null,
+        imageDetailUrl: normalizeAdminImageValue(detailRaw) || null,
+        imageBannerUrl: normalizeAdminImageValue(bannerRaw) || null,
         color: colorRaw || null,
       };
     })
     .filter(item => item.imageUrl);
 }
 
-function joinImageCsvEntries(currentValue: string, urls: string[], color?: string | null) {
-  const current = parseImageCsvEntries(currentValue).map(item => formatImageCsvEntry(item.imageUrl, item.color));
-  const incoming = urls.map(url => formatImageCsvEntry(url, color));
+function toProductImageEntry(upload: UploadedImage, color?: string | null): ProductImageEntry {
+  return {
+    imageUrl: normalizeAdminImageValue(upload.detailUrl || upload.url),
+    imageThumbnailUrl: normalizeAdminImageValue(upload.thumbnailUrl) || null,
+    imageDetailUrl: normalizeAdminImageValue(upload.detailUrl || upload.url) || null,
+    imageBannerUrl: normalizeAdminImageValue(upload.bannerUrl) || null,
+    color: color || null,
+  };
+}
+
+function joinImageCsvEntries(currentValue: string, uploads: UploadedImage[], color?: string | null) {
+  const current = parseImageCsvEntries(currentValue).map(item => formatImageCsvEntry(item, item.color));
+  const incoming = uploads.map(upload => {
+    const entry = toProductImageEntry(upload, color);
+    return formatImageCsvEntry(entry, entry.color);
+  });
   return Array.from(new Set([...current, ...incoming])).join(", ");
 }
 
 function removeImageCsvEntry(currentValue: string, targetUrl: string) {
   return parseImageCsvEntries(currentValue)
     .filter(item => item.imageUrl !== targetUrl)
-    .map(item => formatImageCsvEntry(item.imageUrl, item.color))
+    .map(item => formatImageCsvEntry(item, item.color))
     .join(", ");
 }
 
@@ -167,7 +212,10 @@ function moveImageCsvEntryToCover(currentValue: string, targetUrl: string, curre
 
   return {
     imageUrl: targetUrl,
-    imagesCsv: nextEntries.map(item => formatImageCsvEntry(item.imageUrl, item.color)).join(", "),
+    imageThumbnailUrl: picked.imageThumbnailUrl || "",
+    imageDetailUrl: picked.imageDetailUrl || targetUrl,
+    imageBannerUrl: picked.imageBannerUrl || "",
+    imagesCsv: nextEntries.map(item => formatImageCsvEntry(item, item.color)).join(", "),
   };
 }
 
@@ -328,7 +376,7 @@ export default function Admin() {
     setUploadingField(target);
 
     try {
-      const uploadedUrls: string[] = [];
+      const uploadedImages: UploadedImage[] = [];
 
       for (const file of allowedFiles) {
         const formData = new FormData();
@@ -345,16 +393,22 @@ export default function Admin() {
           throw new Error(payload?.error || "Falha ao enviar imagem");
         }
 
-        uploadedUrls.push(payload.url);
+        uploadedImages.push({
+          url: String(payload.url),
+          originalUrl: payload.originalUrl ? String(payload.originalUrl) : null,
+          thumbnailUrl: payload.thumbnailUrl ? String(payload.thumbnailUrl) : null,
+          detailUrl: payload.detailUrl ? String(payload.detailUrl) : null,
+          bannerUrl: payload.bannerUrl ? String(payload.bannerUrl) : null,
+        });
         if (mode === "single") break;
       }
 
       showToast({
-        message: uploadedUrls.length > 1 ? "Imagens enviadas com sucesso" : "Imagem enviada com sucesso",
+        message: uploadedImages.length > 1 ? "Imagens enviadas com sucesso" : "Imagem enviada com sucesso",
         duration: 2200,
       });
 
-      return uploadedUrls;
+      return uploadedImages;
     } catch (error: any) {
       showToast({ message: error?.message || "Não foi possível enviar a imagem", duration: 2800 });
       return [];
@@ -903,7 +957,13 @@ export default function Admin() {
                 onChange={async e => {
                   const urls = await uploadAdminImages(e.target.files, "single", "create-main");
                   if (urls[0]) {
-                    setNewProduct(prev => ({ ...prev, imageUrl: urls[0] }));
+                    setNewProduct(prev => ({
+                      ...prev,
+                      imageUrl: urls[0].detailUrl || urls[0].url,
+                      imageThumbnailUrl: urls[0].thumbnailUrl || "",
+                      imageDetailUrl: urls[0].detailUrl || urls[0].url,
+                      imageBannerUrl: urls[0].bannerUrl || "",
+                    }));
                   }
                   e.currentTarget.value = "";
                 }}
@@ -1061,6 +1121,9 @@ export default function Admin() {
                 price,
                 stock: Number.isFinite(stock) && stock >= 0 ? stock : 0,
                 imageUrl: normalizeAdminImageValue(newProduct.imageUrl) || undefined,
+                imageThumbnailUrl: normalizeAdminImageValue(newProduct.imageThumbnailUrl) || undefined,
+                imageDetailUrl: normalizeAdminImageValue(newProduct.imageDetailUrl) || undefined,
+                imageBannerUrl: normalizeAdminImageValue(newProduct.imageBannerUrl) || undefined,
                 optionColors,
                 optionSizes,
                   sizeType: newProduct.sizeType as "alpha" | "numeric" | "custom",
@@ -1124,12 +1187,26 @@ export default function Admin() {
                   price: centsToMoneyInput(selected.price),
                   stock: String(selected.stock ?? 0),
                   imageUrl: normalizeAdminImageValue(selected.imageUrl),
+                  imageThumbnailUrl: normalizeAdminImageValue((selected as any).imageThumbnailUrl),
+                  imageDetailUrl: normalizeAdminImageValue((selected as any).imageDetailUrl),
+                  imageBannerUrl: normalizeAdminImageValue((selected as any).imageBannerUrl),
                   galleryColor: "",
                   colorsCsv: selectedColors.join(", "),
                   sizesCsv: selectedSizes.join(", "),
                   sizeType: selected.sizeType ?? "alpha",
                   imagesCsv: (selected.images ?? [])
-                    .map(item => formatImageCsvEntry(typeof item === "string" ? item : item?.imageUrl ?? "", typeof item === "string" ? null : item?.color ?? null))
+                    .map(item => formatImageCsvEntry(
+                      typeof item === "string"
+                        ? item
+                        : {
+                            imageUrl: item?.imageUrl ?? "",
+                            imageThumbnailUrl: (item as any)?.imageThumbnailUrl ?? null,
+                            imageDetailUrl: (item as any)?.imageDetailUrl ?? null,
+                            imageBannerUrl: (item as any)?.imageBannerUrl ?? null,
+                            color: item?.color ?? null,
+                          },
+                      typeof item === "string" ? null : item?.color ?? null,
+                    ))
                     .filter(Boolean)
                     .join(", "),
                   variantsCsv: (selected.variants ?? [])
@@ -1217,7 +1294,13 @@ export default function Admin() {
                     onChange={async e => {
                       const urls = await uploadAdminImages(e.target.files, "single", "edit-main");
                       if (urls[0]) {
-                        setEditProduct(prev => ({ ...prev, imageUrl: urls[0] }));
+                        setEditProduct(prev => ({
+                          ...prev,
+                          imageUrl: urls[0].detailUrl || urls[0].url,
+                          imageThumbnailUrl: urls[0].thumbnailUrl || "",
+                          imageDetailUrl: urls[0].detailUrl || urls[0].url,
+                          imageBannerUrl: urls[0].bannerUrl || "",
+                        }));
                       }
                       e.currentTarget.value = "";
                     }}
@@ -1378,6 +1461,9 @@ export default function Admin() {
                       price,
                       stock: Number.isFinite(stock) && stock >= 0 ? stock : 0,
                       imageUrl: normalizeAdminImageValue(editProduct.imageUrl) || undefined,
+                      imageThumbnailUrl: normalizeAdminImageValue(editProduct.imageThumbnailUrl) || undefined,
+                      imageDetailUrl: normalizeAdminImageValue(editProduct.imageDetailUrl) || undefined,
+                      imageBannerUrl: normalizeAdminImageValue(editProduct.imageBannerUrl) || undefined,
                       optionColors,
                       optionSizes,
                       sizeType: editProduct.sizeType as "alpha" | "numeric" | "custom",
@@ -1537,6 +1623,9 @@ export default function Admin() {
                             price: centsToMoneyInput(row.price),
                             stock: String(row.stock ?? 0),
                             imageUrl: normalizeAdminImageValue(row.imageUrl),
+                            imageThumbnailUrl: normalizeAdminImageValue((row as any).imageThumbnailUrl),
+                            imageDetailUrl: normalizeAdminImageValue((row as any).imageDetailUrl),
+                            imageBannerUrl: normalizeAdminImageValue((row as any).imageBannerUrl),
                             galleryColor: "",
                             colorsCsv: rowColors.join(", "),
                             sizesCsv: rowSizes.join(", "),
@@ -1544,7 +1633,15 @@ export default function Admin() {
                             imagesCsv: (row.images ?? [])
                               .map(item =>
                                 formatImageCsvEntry(
-                                  typeof item === "string" ? item : item?.imageUrl ?? "",
+                                  typeof item === "string"
+                                    ? item
+                                    : {
+                                        imageUrl: item?.imageUrl ?? "",
+                                        imageThumbnailUrl: (item as any)?.imageThumbnailUrl ?? null,
+                                        imageDetailUrl: (item as any)?.imageDetailUrl ?? null,
+                                        imageBannerUrl: (item as any)?.imageBannerUrl ?? null,
+                                        color: item?.color ?? null,
+                                      },
                                   typeof item === "string" ? null : item?.color ?? null,
                                 ),
                               )
@@ -1797,7 +1894,7 @@ export default function Admin() {
                   if (urls[0]) {
                     setNewPromo(prev => ({
                       ...prev,
-                      imageUrl: urls[0],
+                      imageUrl: urls[0].bannerUrl || urls[0].url,
                       imageAlt: prev.imageAlt.trim() || prev.title.trim() || "Banner promocional",
                     }));
                   }
@@ -1855,7 +1952,7 @@ export default function Admin() {
                 onChange={async e => {
                   const urls = await uploadAdminImages(e.target.files, "single", "promo-image-mobile");
                   if (urls[0]) {
-                    setNewPromo(prev => ({ ...prev, mobileImageUrl: urls[0] }));
+                    setNewPromo(prev => ({ ...prev, mobileImageUrl: urls[0].bannerUrl || urls[0].url }));
                   }
                   e.currentTarget.value = "";
                 }}

@@ -94,7 +94,10 @@ export default function ProductDetail() {
         name: productQuery.data.name,
         description: productQuery.data.description || "",
         price: normalizePrice(Number(productQuery.data.price)),
-        image: resolveProductImageUrl(productQuery.data.imageUrl),
+        image: resolveProductImageUrl((productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
+        imageThumbnail: resolveProductImageUrl((productQuery.data as any).imageThumbnailUrl || productQuery.data.imageUrl),
+        imageDetail: resolveProductImageUrl((productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
+        imageBanner: resolveProductImageUrl((productQuery.data as any).imageBannerUrl || productQuery.data.imageUrl),
         category: productQuery.data.category,
         stock: Number(productQuery.data.stock ?? 0),
         optionColors: parseJsonList((productQuery.data as any).optionColors),
@@ -103,7 +106,8 @@ export default function ProductDetail() {
         images:
           Array.isArray((productQuery.data as any).images) && (productQuery.data as any).images.length > 0
             ? ((productQuery.data as any).images as Array<any>).map((img) => ({
-                imageUrl: resolveProductImageUrl(typeof img === "string" ? img : img?.imageUrl),
+                imageUrl: resolveProductImageUrl(typeof img === "string" ? img : img?.imageDetailUrl || img?.imageUrl),
+                imageThumbnailUrl: resolveProductImageUrl(typeof img === "string" ? img : img?.imageThumbnailUrl || img?.imageUrl),
                 color: typeof img === "string" ? null : String(img?.color ?? "").trim() || null,
               }))
             : [],
@@ -318,7 +322,7 @@ export default function ProductDetail() {
                   } as CSSProperties}
                 >
                   <img
-                    src={image.imageUrl}
+                    src={(image as any).imageThumbnailUrl || image.imageUrl}
                     alt={`Foto ${idx + 1}`}
                     style={styles.thumbImage as CSSProperties}
                     onError={(event) => {
@@ -604,11 +608,11 @@ const styles: Record<string, CSSProperties> = {
   },
   imageContainer: {
     width: "100%",
-    background: "#f5f5f5",
+    background: "#080808",
     borderRadius: 12,
     overflow: "hidden",
     padding: 20,
-    aspectRatio: "1",
+    aspectRatio: "4 / 5",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -631,7 +635,8 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
     padding: 0,
     cursor: "pointer",
-    background: "#ffffff",
+    background: "#080808",
+    aspectRatio: "4 / 5",
   },
   thumbButtonActive: {
     border: "2px solid #1a1a1a",
@@ -639,7 +644,9 @@ const styles: Record<string, CSSProperties> = {
   thumbImage: {
     width: "100%",
     height: "100%",
-    objectFit: "cover",
+    objectFit: "contain",
+    objectPosition: "center",
+    display: "block",
   },
   rightColumn: {
     paddingTop: 12,

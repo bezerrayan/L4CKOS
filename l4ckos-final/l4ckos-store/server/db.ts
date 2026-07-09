@@ -406,16 +406,32 @@ export async function getProducts() {
   const productRows = await db.select().from(products);
   const imageRows = await db.select().from(productImages);
 
-  const firstImageByProduct = new Map<number, string>();
+  const firstImageByProduct = new Map<number, {
+    imageUrl: string;
+    imageThumbnailUrl: string | null;
+    imageDetailUrl: string | null;
+    imageBannerUrl: string | null;
+  }>();
   for (const item of imageRows) {
     if (!item.imageUrl || firstImageByProduct.has(item.productId)) continue;
-    firstImageByProduct.set(item.productId, item.imageUrl);
+    firstImageByProduct.set(item.productId, {
+      imageUrl: item.imageUrl,
+      imageThumbnailUrl: item.imageThumbnailUrl ?? null,
+      imageDetailUrl: item.imageDetailUrl ?? null,
+      imageBannerUrl: item.imageBannerUrl ?? null,
+    });
   }
 
-  return productRows.map(product => ({
-    ...product,
-    imageUrl: product.imageUrl || firstImageByProduct.get(product.id) || null,
-  }));
+  return productRows.map(product => {
+    const firstImage = firstImageByProduct.get(product.id);
+    return {
+      ...product,
+      imageUrl: product.imageUrl || firstImage?.imageUrl || null,
+      imageThumbnailUrl: product.imageThumbnailUrl || firstImage?.imageThumbnailUrl || firstImage?.imageUrl || product.imageUrl || null,
+      imageDetailUrl: product.imageDetailUrl || firstImage?.imageDetailUrl || firstImage?.imageUrl || product.imageUrl || null,
+      imageBannerUrl: product.imageBannerUrl || firstImage?.imageBannerUrl || firstImage?.imageUrl || product.imageUrl || null,
+    };
+  });
 }
 
 export async function getProductById(id: number) {
@@ -456,8 +472,14 @@ export async function getProductByIdWithDetails(id: number) {
   return {
     ...productRows[0],
     imageUrl: productRows[0].imageUrl || imageRows[0]?.imageUrl || null,
+    imageThumbnailUrl: productRows[0].imageThumbnailUrl || imageRows[0]?.imageThumbnailUrl || imageRows[0]?.imageUrl || productRows[0].imageUrl || null,
+    imageDetailUrl: productRows[0].imageDetailUrl || imageRows[0]?.imageDetailUrl || imageRows[0]?.imageUrl || productRows[0].imageUrl || null,
+    imageBannerUrl: productRows[0].imageBannerUrl || imageRows[0]?.imageBannerUrl || imageRows[0]?.imageUrl || productRows[0].imageUrl || null,
     images: imageRows.map(item => ({
       imageUrl: item.imageUrl,
+      imageThumbnailUrl: item.imageThumbnailUrl ?? null,
+      imageDetailUrl: item.imageDetailUrl ?? null,
+      imageBannerUrl: item.imageBannerUrl ?? null,
       color: item.color ?? null,
       alt: item.alt ?? null,
       order: item.order,
@@ -1312,7 +1334,14 @@ export async function setOrderAdminData(
 
 export async function replaceProductImages(
   productId: number,
-  imageUrls: Array<string | { imageUrl: string; color?: string | null; alt?: string | null }>,
+  imageUrls: Array<string | {
+    imageUrl: string;
+    imageThumbnailUrl?: string | null;
+    imageDetailUrl?: string | null;
+    imageBannerUrl?: string | null;
+    color?: string | null;
+    alt?: string | null;
+  }>,
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1322,6 +1351,9 @@ export async function replaceProductImages(
       imageUrls.map((item, index) => ({
         productId,
         imageUrl: typeof item === "string" ? item : item.imageUrl,
+        imageThumbnailUrl: typeof item === "string" ? null : item.imageThumbnailUrl ?? null,
+        imageDetailUrl: typeof item === "string" ? null : item.imageDetailUrl ?? null,
+        imageBannerUrl: typeof item === "string" ? null : item.imageBannerUrl ?? null,
         color: typeof item === "string" ? null : item.color ?? null,
         alt: typeof item === "string" ? null : item.alt ?? null,
         order: index,

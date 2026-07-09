@@ -55,7 +55,7 @@ export default function ProductCard({ product }: Props) {
     >
       <div style={styles.imageContainer as CSSProperties}>
         <img
-          src={product.image}
+          src={product.imageThumbnail || product.image}
           style={styles.image as CSSProperties}
           alt={product.name}
           onError={(event) => {
@@ -132,12 +132,17 @@ const styles = {
   imageContainer: {
     position: "relative",
     overflow: "hidden",
-    background: "#161616",
+    width: "100%",
+    aspectRatio: "4 / 5",
+    background: "#080808",
+    borderRadius: 12,
   },
   image: {
     width: "100%",
-    height: 240,
-    objectFit: "cover",
+    height: "100%",
+    objectFit: "contain",
+    objectPosition: "center",
+    display: "block",
     transition: "transform 0.4s ease",
   },
   badge: {

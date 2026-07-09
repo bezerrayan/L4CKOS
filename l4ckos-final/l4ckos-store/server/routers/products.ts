@@ -109,6 +109,9 @@ export const productsRouter = router({
         description: z.string().optional(),
         fullDescription: z.string().optional(),
         imageUrl: z.string().optional(),
+        imageThumbnailUrl: z.string().optional(),
+        imageDetailUrl: z.string().optional(),
+        imageBannerUrl: z.string().optional(),
         stock: z.number().optional().default(0),
       })
     )
@@ -128,6 +131,9 @@ export const productsRouter = router({
         description: z.string().optional(),
         fullDescription: z.string().optional(),
         imageUrl: z.string().optional(),
+        imageThumbnailUrl: z.string().optional(),
+        imageDetailUrl: z.string().optional(),
+        imageBannerUrl: z.string().optional(),
         stock: z.number().optional(),
       })
     )
