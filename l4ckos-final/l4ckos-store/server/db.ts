@@ -549,17 +549,41 @@ export async function createOrUpdateProductReview(input: {
   return { updated: false, id: insertedId } as const;
 }
 
+function isMissingProductImageVariantColumnError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /unknown column/i.test(message) && /image(Thumbnail|Detail|Banner)Url/i.test(message);
+}
+
 export async function createProduct(product: InsertProduct) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(products).values(product);
-  return result;
+  try {
+    return await db.insert(products).values(product);
+  } catch (error) {
+    if (!isMissingProductImageVariantColumnError(error)) throw error;
+    const { imageThumbnailUrl, imageDetailUrl, imageBannerUrl, ...legacyProduct } = product as InsertProduct & {
+      imageThumbnailUrl?: string | null;
+      imageDetailUrl?: string | null;
+      imageBannerUrl?: string | null;
+    };
+    return await db.insert(products).values(legacyProduct);
+  }
 }
 
 export async function updateProduct(id: number, product: Partial<InsertProduct>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await db.update(products).set(product).where(eq(products.id, id));
+  try {
+    return await db.update(products).set(product).where(eq(products.id, id));
+  } catch (error) {
+    if (!isMissingProductImageVariantColumnError(error)) throw error;
+    const { imageThumbnailUrl, imageDetailUrl, imageBannerUrl, ...legacyProduct } = product as Partial<InsertProduct> & {
+      imageThumbnailUrl?: string | null;
+      imageDetailUrl?: string | null;
+      imageBannerUrl?: string | null;
+    };
+    return await db.update(products).set(legacyProduct).where(eq(products.id, id));
+  }
 }
 
 export async function deleteProduct(id: number) {
@@ -1347,18 +1371,25 @@ export async function replaceProductImages(
   if (!db) throw new Error("Database not available");
   await db.delete(productImages).where(eq(productImages.productId, productId));
   if (imageUrls.length > 0) {
-    await db.insert(productImages).values(
-      imageUrls.map((item, index) => ({
-        productId,
-        imageUrl: typeof item === "string" ? item : item.imageUrl,
-        imageThumbnailUrl: typeof item === "string" ? null : item.imageThumbnailUrl ?? null,
-        imageDetailUrl: typeof item === "string" ? null : item.imageDetailUrl ?? null,
-        imageBannerUrl: typeof item === "string" ? null : item.imageBannerUrl ?? null,
-        color: typeof item === "string" ? null : item.color ?? null,
-        alt: typeof item === "string" ? null : item.alt ?? null,
-        order: index,
-      })),
-    );
+    const nextRows = imageUrls.map((item, index) => ({
+      productId,
+      imageUrl: typeof item === "string" ? item : item.imageUrl,
+      imageThumbnailUrl: typeof item === "string" ? null : item.imageThumbnailUrl ?? null,
+      imageDetailUrl: typeof item === "string" ? null : item.imageDetailUrl ?? null,
+      imageBannerUrl: typeof item === "string" ? null : item.imageBannerUrl ?? null,
+      color: typeof item === "string" ? null : item.color ?? null,
+      alt: typeof item === "string" ? null : item.alt ?? null,
+      order: index,
+    }));
+
+    try {
+      await db.insert(productImages).values(nextRows);
+    } catch (error) {
+      if (!isMissingProductImageVariantColumnError(error)) throw error;
+      await db.insert(productImages).values(
+        nextRows.map(({ imageThumbnailUrl, imageDetailUrl, imageBannerUrl, ...legacyRow }) => legacyRow),
+      );
+    }
   }
 }
 
