@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { AdminStatusBadge } from "../AdminUI";
+import { AdminFilterPills, AdminMetricCards, AdminStatusBadge } from "../AdminUI";
 
 export type CustomerListFilter = "all" | "admins" | "customers" | "vip" | "blocked" | "active" | "recent";
 
@@ -42,28 +42,7 @@ export function CustomersSummaryCards({ summary }: { summary: CustomerSummary })
     { label: "Recentes", value: summary.recent },
   ];
 
-  return (
-    <div style={styles.summaryGrid}>
-      {cards.map(card => (
-        <div
-          key={card.label}
-          style={{
-            ...styles.summaryCard,
-            ...(card.tone === "danger"
-              ? styles.summaryCardDanger
-              : card.tone === "warning"
-                ? styles.summaryCardWarning
-                : card.tone === "success"
-                  ? styles.summaryCardSuccess
-                  : {}),
-          }}
-        >
-          <span style={styles.summaryLabel}>{card.label}</span>
-          <strong style={styles.summaryValue}>{card.value}</strong>
-        </div>
-      ))}
-    </div>
-  );
+  return <AdminMetricCards cards={cards} />;
 }
 
 export function CustomersFilters({
@@ -75,21 +54,7 @@ export function CustomersFilters({
   onChange: (value: CustomerListFilter) => void;
   options: FilterOption[];
 }) {
-  return (
-    <div style={styles.filterRow}>
-      {options.map(option => (
-        <button
-          key={option.key}
-          type="button"
-          style={{ ...styles.filterButton, ...(value === option.key ? styles.filterButtonActive : {}) }}
-          onClick={() => onChange(option.key)}
-        >
-          <span>{option.label}</span>
-          <strong>{option.count}</strong>
-        </button>
-      ))}
-    </div>
-  );
+  return <AdminFilterPills value={value} onChange={onChange} options={options} />;
 }
 
 export function CustomerProfileCell({ customer }: { customer: CustomerAdminView }) {

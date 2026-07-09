@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { AdminStatusBadge, AdminTableWrapper } from "../AdminUI";
+import { AdminMetricCards, AdminStatusBadge, AdminTableWrapper } from "../AdminUI";
 
 export type AuditLogView = {
   id: number;
@@ -64,28 +64,7 @@ export function SystemMetricCards({
 }: {
   cards: Array<{ label: string; value: string | number; tone?: "danger" | "warning" | "success" }>;
 }) {
-  return (
-    <div style={styles.summaryGrid}>
-      {cards.map(card => (
-        <div
-          key={card.label}
-          style={{
-            ...styles.summaryCard,
-            ...(card.tone === "danger"
-              ? styles.summaryCardDanger
-              : card.tone === "warning"
-                ? styles.summaryCardWarning
-                : card.tone === "success"
-                  ? styles.summaryCardSuccess
-                  : {}),
-          }}
-        >
-          <span style={styles.summaryLabel}>{card.label}</span>
-          <strong style={styles.summaryValue}>{card.value}</strong>
-        </div>
-      ))}
-    </div>
-  );
+  return <AdminMetricCards cards={cards} />;
 }
 
 export function AuditActionBadge({ action }: { action?: string | null }) {

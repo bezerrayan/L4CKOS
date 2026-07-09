@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { AdminStatusBadge } from "../AdminUI";
+import { AdminMetricCards, AdminStatusBadge } from "../AdminUI";
 
 export type PromotionSummary = {
   total: number;
@@ -20,28 +20,7 @@ export function PromotionsSummaryCards({ summary }: { summary: PromotionSummary 
     { label: "Sem imagem", value: summary.withoutImage, tone: summary.withoutImage > 0 ? "danger" : undefined },
   ];
 
-  return (
-    <div style={styles.summaryGrid}>
-      {cards.map(card => (
-        <div
-          key={card.label}
-          style={{
-            ...styles.summaryCard,
-            ...(card.tone === "danger"
-              ? styles.summaryCardDanger
-              : card.tone === "warning"
-                ? styles.summaryCardWarning
-                : card.tone === "success"
-                  ? styles.summaryCardSuccess
-                  : {}),
-          }}
-        >
-          <span style={styles.summaryLabel}>{card.label}</span>
-          <strong style={styles.summaryValue}>{card.value}</strong>
-        </div>
-      ))}
-    </div>
-  );
+  return <AdminMetricCards cards={cards} />;
 }
 
 export function PromotionStatusBadge({ active }: { active: boolean }) {

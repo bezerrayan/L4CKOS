@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { AdminEmptyState, AdminStatusBadge, AdminSurface } from "../AdminUI";
+import { AdminEmptyState, AdminFilterPills, AdminMetricCards, AdminStatusBadge, AdminSurface } from "../AdminUI";
 import { formatPrice } from "../../../lib/utils";
 
 export type OrderListFilter = "all" | "pending" | "paid" | "processing" | "shipped" | "delivered" | "cancelled" | "withoutTracking";
@@ -68,28 +68,7 @@ export function OrdersSummaryCards({ summary }: { summary: OrdersSummary }) {
     { label: "Faturamento carregado", value: formatPrice(summary.revenueCents / 100), tone: "success" },
   ];
 
-  return (
-    <div style={styles.summaryGrid}>
-      {cards.map(card => (
-        <div
-          key={card.label}
-          style={{
-            ...styles.summaryCard,
-            ...(card.tone === "danger"
-              ? styles.summaryCardDanger
-              : card.tone === "warning"
-                ? styles.summaryCardWarning
-                : card.tone === "success"
-                  ? styles.summaryCardSuccess
-                  : {}),
-          }}
-        >
-          <span style={styles.summaryLabel}>{card.label}</span>
-          <strong style={styles.summaryValue}>{card.value}</strong>
-        </div>
-      ))}
-    </div>
-  );
+  return <AdminMetricCards cards={cards} />;
 }
 
 export function OrdersFilters({
@@ -101,21 +80,7 @@ export function OrdersFilters({
   onChange: (value: OrderListFilter) => void;
   options: FilterOption[];
 }) {
-  return (
-    <div style={styles.filterRow}>
-      {options.map(option => (
-        <button
-          key={option.key}
-          type="button"
-          style={{ ...styles.filterButton, ...(value === option.key ? styles.filterButtonActive : {}) }}
-          onClick={() => onChange(option.key)}
-        >
-          <span>{option.label}</span>
-          <strong>{option.count}</strong>
-        </button>
-      ))}
-    </div>
-  );
+  return <AdminFilterPills value={value} onChange={onChange} options={options} />;
 }
 
 export function OrderStatusBadge({

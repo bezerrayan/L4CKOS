@@ -1185,15 +1185,10 @@ export default function Admin() {
       )}
 
       {section === "products" && (
-        <div style={styles.card}>
-          <div style={styles.productSectionHero}>
-            <div>
-              <h2 style={styles.sectionTitle}>Produtos</h2>
-              <p style={styles.productAdminText}>
-                Cadastre, revise estoque, organize imagens e acompanhe a saúde operacional do catálogo.
-              </p>
-            </div>
-          </div>
+        <AdminSurface
+          title="Produtos"
+          description="Cadastre, revise estoque, organize imagens e acompanhe a saúde operacional do catálogo."
+        >
           <ProductsSummaryCards summary={productSummary} />
           <div style={styles.inlineRow}>
             <input
@@ -2024,7 +2019,7 @@ export default function Admin() {
               </table>
             </AdminTableWrapper>
           )}
-        </div>
+        </AdminSurface>
       )}
 
       {section === "orders" && (
@@ -2710,7 +2705,7 @@ export default function Admin() {
                     showToast({ message: "Informe um lote válido entre 1 e 100", duration: 2400 });
                     return;
                   }
-                  if (!window.confirm("Confirma o envio para toda a lista de espera?")) return;
+                  if (!confirmAdminAction("Confirma o envio para toda a lista de espera?")) return;
 
                   setLaunchEmailResult(null);
                   waitlistLaunchSendMutation.mutate({
