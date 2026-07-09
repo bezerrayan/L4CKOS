@@ -278,10 +278,10 @@ export const adminRouter = router({
         stock: z.number().int().min(0).default(0),
         images: z.array(
           z.object({
-            imageUrl: productImageUrlSchema.url(),
-            imageThumbnailUrl: productImageUrlSchema.url().nullable().optional(),
-            imageDetailUrl: productImageUrlSchema.url().nullable().optional(),
-            imageBannerUrl: productImageUrlSchema.url().nullable().optional(),
+            imageUrl: productImageUrlSchema,
+            imageThumbnailUrl: productImageUrlSchema.nullable().optional(),
+            imageDetailUrl: productImageUrlSchema.nullable().optional(),
+            imageBannerUrl: productImageUrlSchema.nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
           }),
         ).optional().default([]),
@@ -318,8 +318,22 @@ export const adminRouter = router({
           alt?: string | null;
         }> = [...images];
         if (productData.imageUrl) allImages.unshift(productData.imageUrl);
-        await replaceProductImages(insertedId, allImages);
-        await replaceProductVariants(insertedId, variants);
+        try {
+          await replaceProductImages(insertedId, allImages);
+        } catch (error) {
+          console.warn("[admin.productCreate] optional image sync failed", {
+            productId: insertedId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+        try {
+          await replaceProductVariants(insertedId, variants);
+        } catch (error) {
+          console.warn("[admin.productCreate] optional variant sync failed", {
+            productId: insertedId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       await createAuditLog({
         actorUserId: ctx.user.id,
@@ -350,10 +364,10 @@ export const adminRouter = router({
         stock: z.number().int().min(0).optional(),
         images: z.array(
           z.object({
-            imageUrl: productImageUrlSchema.url(),
-            imageThumbnailUrl: productImageUrlSchema.url().nullable().optional(),
-            imageDetailUrl: productImageUrlSchema.url().nullable().optional(),
-            imageBannerUrl: productImageUrlSchema.url().nullable().optional(),
+            imageUrl: productImageUrlSchema,
+            imageThumbnailUrl: productImageUrlSchema.nullable().optional(),
+            imageDetailUrl: productImageUrlSchema.nullable().optional(),
+            imageBannerUrl: productImageUrlSchema.nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
           }),
         ).optional(),
@@ -382,8 +396,26 @@ export const adminRouter = router({
         ...(sizeType !== undefined ? { sizeType } : {}),
       };
       await updateProduct(id, data);
-      if (images) await replaceProductImages(id, images);
-      if (variants) await replaceProductVariants(id, variants);
+      if (images) {
+        try {
+          await replaceProductImages(id, images);
+        } catch (error) {
+          console.warn("[admin.productUpdate] optional image sync failed", {
+            productId: id,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (variants) {
+        try {
+          await replaceProductVariants(id, variants);
+        } catch (error) {
+          console.warn("[admin.productUpdate] optional variant sync failed", {
+            productId: id,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       await createAuditLog({
         actorUserId: ctx.user.id,
         action: "product.update",

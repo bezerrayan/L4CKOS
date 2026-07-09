@@ -569,6 +569,31 @@ function getUnknownColumnName(error: unknown) {
   return message.match(/unknown column ['"`]?([^'"`\s]+)['"`]?/i)?.[1] ?? null;
 }
 
+function getRecoverableProductColumnName(error: unknown) {
+  const message = getDatabaseErrorMessage(error);
+  return (
+    getUnknownColumnName(error) ||
+    message.match(/data too long for column ['"`]?([^'"`]+)['"`]?/i)?.[1] ||
+    message.match(/data truncated for column ['"`]?([^'"`]+)['"`]?/i)?.[1] ||
+    null
+  );
+}
+
+function isOptionalProductColumn(column: string | null) {
+  return Boolean(column && [
+    "description",
+    "fullDescription",
+    "imageUrl",
+    "imageThumbnailUrl",
+    "imageDetailUrl",
+    "imageBannerUrl",
+    "optionColors",
+    "optionSizes",
+    "sizeType",
+    "stock",
+  ].includes(column));
+}
+
 function stripOptionalProductFields(product: Partial<InsertProduct>) {
   const {
     imageThumbnailUrl,
@@ -600,14 +625,14 @@ async function insertProductWithLegacyFallback(db: Awaited<ReturnType<typeof get
     try {
       return await db.insert(products).values(payload as InsertProduct);
     } catch (error) {
-      const unknownColumn = getUnknownColumnName(error);
-      if (!unknownColumn || removedColumns.has(unknownColumn) || !(unknownColumn in payload)) {
+      const recoverableColumn = getRecoverableProductColumnName(error);
+      if (!recoverableColumn || removedColumns.has(recoverableColumn) || !(recoverableColumn in payload) || !isOptionalProductColumn(recoverableColumn)) {
         if (!isLegacyProductColumnError(error)) throw error;
         payload = stripOptionalProductFields(payload as Partial<InsertProduct>) as Record<string, unknown>;
         continue;
       }
-      delete payload[unknownColumn];
-      removedColumns.add(unknownColumn);
+      delete payload[recoverableColumn];
+      removedColumns.add(recoverableColumn);
     }
   }
 
@@ -627,14 +652,14 @@ async function updateProductWithLegacyFallback(
     try {
       return await db.update(products).set(payload as Partial<InsertProduct>).where(eq(products.id, id));
     } catch (error) {
-      const unknownColumn = getUnknownColumnName(error);
-      if (!unknownColumn || removedColumns.has(unknownColumn) || !(unknownColumn in payload)) {
+      const recoverableColumn = getRecoverableProductColumnName(error);
+      if (!recoverableColumn || removedColumns.has(recoverableColumn) || !(recoverableColumn in payload) || !isOptionalProductColumn(recoverableColumn)) {
         if (!isLegacyProductColumnError(error)) throw error;
         payload = stripOptionalProductFields(payload as Partial<InsertProduct>) as Record<string, unknown>;
         continue;
       }
-      delete payload[unknownColumn];
-      removedColumns.add(unknownColumn);
+      delete payload[recoverableColumn];
+      removedColumns.add(recoverableColumn);
     }
   }
 
