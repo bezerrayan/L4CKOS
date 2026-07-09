@@ -594,6 +594,78 @@ function isOptionalProductColumn(column: string | null) {
   ].includes(column));
 }
 
+type DatabaseColumnInfo = {
+  Field: string;
+  Type?: string;
+  Null?: string;
+  Default?: unknown;
+  Extra?: string;
+};
+
+async function getDatabaseTableColumns(db: Awaited<ReturnType<typeof getDb>>, tableName: string) {
+  if (!db) return [];
+  const safeTableName = tableName.replace(/`/g, "``");
+  return extractExecutedRows(await db.execute(sql.raw(`show columns from \`${safeTableName}\``))) as DatabaseColumnInfo[];
+}
+
+function normalizeProductPayloadForColumns(product: Partial<InsertProduct>, columns: DatabaseColumnInfo[]) {
+  const columnByName = new Map(columns.map(column => [column.Field, column]));
+  const payload: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(product as Record<string, unknown>)) {
+    const column = columnByName.get(key);
+    if (!column || value === undefined) continue;
+
+    const varcharLength = String(column.Type ?? "").match(/^varchar\((\d+)\)/i)?.[1];
+    if (typeof value === "string" && varcharLength) {
+      const maxLength = Number(varcharLength);
+      if (Number.isFinite(maxLength) && value.length > maxLength) {
+        if (isOptionalProductColumn(key)) continue;
+        payload[key] = value.slice(0, maxLength);
+        continue;
+      }
+    }
+
+    payload[key] = value;
+  }
+
+  return payload;
+}
+
+async function insertProductFromActualColumns(db: Awaited<ReturnType<typeof getDb>>, product: InsertProduct) {
+  if (!db) throw new Error("Database not available");
+  const columns = await getDatabaseTableColumns(db, "products");
+  const payload = normalizeProductPayloadForColumns(product, columns);
+  const writableColumns = Object.keys(payload).filter(column => column !== "id" && columns.some(item => item.Field === column));
+
+  if (!writableColumns.includes("name") || !writableColumns.includes("category") || !writableColumns.includes("price")) {
+    throw new Error("Tabela products sem colunas obrigatórias para criar produto.");
+  }
+
+  const columnSql = sql.raw(writableColumns.map(column => `\`${column.replace(/`/g, "``")}\``).join(", "));
+  const valueSql = sql.join(writableColumns.map(column => sql`${payload[column]}`), sql`, `);
+  return await db.execute(sql`insert into products (${columnSql}) values (${valueSql})`);
+}
+
+async function updateProductFromActualColumns(
+  db: Awaited<ReturnType<typeof getDb>>,
+  id: number,
+  product: Partial<InsertProduct>,
+) {
+  if (!db) throw new Error("Database not available");
+  const columns = await getDatabaseTableColumns(db, "products");
+  const payload = normalizeProductPayloadForColumns(product, columns);
+  const writableColumns = Object.keys(payload).filter(column => column !== "id" && columns.some(item => item.Field === column));
+
+  if (writableColumns.length === 0) return { success: true };
+
+  const setSql = sql.join(
+    writableColumns.map(column => sql`${sql.raw(`\`${column.replace(/`/g, "``")}\``)} = ${payload[column]}`),
+    sql`, `,
+  );
+  return await db.execute(sql`update products set ${setSql} where id = ${id}`);
+}
+
 function stripOptionalProductFields(product: Partial<InsertProduct>) {
   const {
     imageThumbnailUrl,
@@ -669,13 +741,28 @@ async function updateProductWithLegacyFallback(
 export async function createProduct(product: InsertProduct) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await insertProductWithLegacyFallback(db, product);
+  try {
+    return await insertProductFromActualColumns(db, product);
+  } catch (error) {
+    console.warn("[db.createProduct] dynamic insert failed, falling back to drizzle insert", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return await insertProductWithLegacyFallback(db, product);
+  }
 }
 
 export async function updateProduct(id: number, product: Partial<InsertProduct>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await updateProductWithLegacyFallback(db, id, product);
+  try {
+    return await updateProductFromActualColumns(db, id, product);
+  } catch (error) {
+    console.warn("[db.updateProduct] dynamic update failed, falling back to drizzle update", {
+      productId: id,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return await updateProductWithLegacyFallback(db, id, product);
+  }
 }
 
 export async function deleteProduct(id: number) {
