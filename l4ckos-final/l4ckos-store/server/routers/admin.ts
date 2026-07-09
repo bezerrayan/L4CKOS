@@ -88,6 +88,44 @@ async function getAudienceEmails(audience: "waitlist" | "allUsers" | "vipUsers" 
   return sanitizeRecipientList(filtered.map(user => String(user.email ?? "")));
 }
 
+type SafeIntegrationStatus = "configured" | "partial" | "missing" | "environment";
+type SafeIntegrationRuntime = {
+  status: SafeIntegrationStatus;
+  configuredCount: number;
+  expectedCount: number;
+};
+
+function hasEnv(name: string) {
+  return Boolean(String(process.env[name] ?? "").trim());
+}
+
+function resolveSafeIntegrationStatus(required: string[], optional: string[] = []): SafeIntegrationRuntime {
+  const requiredConfigured = required.filter(hasEnv).length;
+  const optionalConfigured = optional.filter(hasEnv).length;
+
+  if (required.length > 0 && requiredConfigured === required.length) {
+    return {
+      status: "configured" as SafeIntegrationStatus,
+      configuredCount: requiredConfigured + optionalConfigured,
+      expectedCount: required.length + optional.length,
+    };
+  }
+
+  if (requiredConfigured > 0 || optionalConfigured > 0) {
+    return {
+      status: "partial" as SafeIntegrationStatus,
+      configuredCount: requiredConfigured + optionalConfigured,
+      expectedCount: required.length + optional.length,
+    };
+  }
+
+  return {
+    status: "missing" as SafeIntegrationStatus,
+    configuredCount: 0,
+    expectedCount: required.length + optional.length,
+  };
+}
+
 export const adminRouter = router({
   dashboard: adminProcedure.query(async () => {
     const [kpis, users, products, orders] = await Promise.all([
@@ -102,6 +140,49 @@ export const adminRouter = router({
       usersCount: users.length,
       productsCount: products.length,
       ordersCount: orders.length,
+    };
+  }),
+
+  settingsStatus: adminProcedure.query(async () => {
+    const frontendUrlConfigured = Boolean(
+      String(ENV.frontendUrl || process.env.APP_URL || process.env.APP_BASE_URL || "").trim(),
+    );
+
+    return {
+      mode: "read-only" as const,
+      generatedAt: new Date().toISOString(),
+      environment: {
+        nodeEnv: process.env.NODE_ENV === "production" ? "production" : "non-production",
+        frontendUrlConfigured,
+        databaseConfigured: Boolean(ENV.databaseUrl),
+      },
+      integrations: {
+        asaas: resolveSafeIntegrationStatus(["ASAAS_API_KEY"], ["ASAAS_API_URL", "ASAAS_CHECKOUT_BASE_URL", "ASAAS_WEBHOOK_TOKEN"]),
+        melhorEnvio: resolveSafeIntegrationStatus(["MELHOR_ENVIO_TOKEN"], ["MELHOR_ENVIO_API_URL", "MELHOR_ENVIO_FROM_POSTAL_CODE"]),
+        resend: resolveSafeIntegrationStatus(["RESEND_API_KEY"], [
+          "EMAIL_FROM",
+          "EMAIL_FROM_MARKETING",
+          "EMAIL_FROM_NOREPLY",
+          "NO_REPLY_EMAIL",
+          "EMAIL_REPLY_TO",
+        ]),
+        googleOAuth: resolveSafeIntegrationStatus(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], ["GOOGLE_REDIRECT_URI"]),
+        database: {
+          status: ENV.databaseUrl ? "configured" : "missing",
+          configuredCount: ENV.databaseUrl ? 1 : 0,
+          expectedCount: 1,
+        } satisfies SafeIntegrationRuntime,
+        frontend: {
+          status: frontendUrlConfigured ? "configured" : "environment",
+          configuredCount: frontendUrlConfigured ? 1 : 0,
+          expectedCount: 1,
+        } satisfies SafeIntegrationRuntime,
+      },
+      security: {
+        secretsExposed: false,
+        editable: false,
+        source: "server-environment-presence" as const,
+      },
     };
   }),
 

@@ -522,6 +522,7 @@ export default function Admin() {
   const couponsQuery = trpc.admin.couponsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const auditQuery = trpc.admin.auditList.useQuery({ limit: 200 }, { enabled: isAuthenticated && isAdmin });
   const backupsQuery = trpc.admin.backupsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
+  const settingsStatusQuery = trpc.admin.settingsStatus.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
 
   const setRoleMutation = trpc.admin.userSetRole.useMutation({
     onSuccess: () => {
@@ -2891,7 +2892,11 @@ export default function Admin() {
       )}
 
       {section === "settings" && (
-        <AdminSettingsUI onSelectSection={nextSection => setSection(nextSection)} />
+        <AdminSettingsUI
+          onSelectSection={nextSection => setSection(nextSection)}
+          runtimeStatus={settingsStatusQuery.data}
+          runtimeStatusLoading={settingsStatusQuery.isLoading}
+        />
       )}
     </div>
   );

@@ -13,8 +13,39 @@ type SettingsShortcutTarget =
   | "audit"
   | "backup";
 
+type RuntimeIntegrationStatus = {
+  status: "configured" | "partial" | "missing" | "environment";
+  configuredCount: number;
+  expectedCount: number;
+};
+
+type AdminSettingsRuntimeStatus = {
+  mode: "read-only";
+  generatedAt: string;
+  environment: {
+    nodeEnv: string;
+    frontendUrlConfigured: boolean;
+    databaseConfigured: boolean;
+  };
+  integrations: {
+    asaas: RuntimeIntegrationStatus;
+    melhorEnvio: RuntimeIntegrationStatus;
+    resend: RuntimeIntegrationStatus;
+    googleOAuth: RuntimeIntegrationStatus;
+    database: RuntimeIntegrationStatus;
+    frontend: RuntimeIntegrationStatus;
+  };
+  security: {
+    secretsExposed: boolean;
+    editable: boolean;
+    source: string;
+  };
+};
+
 type AdminSettingsUIProps = {
   onSelectSection: (section: SettingsShortcutTarget) => void;
+  runtimeStatus?: AdminSettingsRuntimeStatus;
+  runtimeStatusLoading?: boolean;
 };
 
 const publicRows = [
@@ -92,32 +123,38 @@ const operationalShortcuts: Array<{
 
 const integrations = [
   {
+    key: "asaas" as const,
     title: "Asaas",
     description: "Pagamentos e webhooks são gerenciados por variáveis de ambiente no backend.",
     status: "Status não verificável no frontend",
   },
   {
+    key: "melhorEnvio" as const,
     title: "Melhor Envio",
     description: "Frete depende de token, URL de API e CEP de origem configurados no ambiente.",
     status: "Gerenciado por ambiente",
   },
   {
+    key: "resend" as const,
     title: "Resend",
     description: "Envio de e-mails usa provider e remetentes definidos no ambiente do servidor.",
     status: "Gerenciado por ambiente",
   },
   {
+    key: "googleOAuth" as const,
     title: "Google OAuth",
     description: "Login social depende de client ID, secret e redirect URI no ambiente.",
     status: "Gerenciado por ambiente",
   },
   {
+    key: "database" as const,
     title: "Banco de dados",
     description: "Conexão e credenciais ficam no ambiente do servidor.",
     status: "Não editável pelo admin",
   },
   {
-    title: "Dominio e URLs",
+    key: "frontend" as const,
+    title: "Domínio e URLs",
     description: "Frontend/backend usam configurações de ambiente e deploy.",
     status: "Não editável pelo admin",
   },
@@ -142,18 +179,46 @@ const roadmap = [
   "Migrar primeiro contatos, redes e textos curtos",
 ];
 
-export function AdminSettingsUI({ onSelectSection }: AdminSettingsUIProps) {
+function getRuntimeStatusLabel(status: RuntimeIntegrationStatus["status"]) {
+  switch (status) {
+    case "configured":
+      return "Configurado via ambiente";
+    case "partial":
+      return "Configuração parcial";
+    case "missing":
+      return "Pendente no ambiente";
+    default:
+      return "Gerenciado por ambiente";
+  }
+}
+
+function getRuntimeStatusTone(status: RuntimeIntegrationStatus["status"]) {
+  if (status === "configured") return badgeTones.success;
+  if (status === "partial" || status === "environment") return badgeTones.warning;
+  return badgeTones.danger;
+}
+
+function formatRuntimeMeta(item: RuntimeIntegrationStatus, description: string) {
+  return `${description} Sinais seguros configurados: ${item.configuredCount}/${item.expectedCount}. Nenhum valor sensível é exibido.`;
+}
+
+export function AdminSettingsUI({ onSelectSection, runtimeStatus, runtimeStatusLoading = false }: AdminSettingsUIProps) {
   return (
     <AdminSurface
       title="Configurações"
       description="Central informativa da loja. Esta fase organiza o que já existe, mostra limites seguros e prepara uma futura área editável sem salvar nenhuma configuração agora."
-      aside={<AdminSummaryPill>Modo read-only</AdminSummaryPill>}
+      aside={
+        <>
+          <AdminSummaryPill>Modo read-only</AdminSummaryPill>
+          <AdminSummaryPill>{runtimeStatusLoading ? "Lendo backend..." : runtimeStatus ? "Status backend ativo" : "Status frontend"}</AdminSummaryPill>
+        </>
+      }
     >
       <div style={styles.alertGrid}>
         <AdminCriticalAlert
           tone="info"
           title="Esta aba não salva configurações"
-          description="Os cards abaixo usam apenas informações públicas seguras e atalhos para áreas já existentes do admin."
+          description="Os cards abaixo usam apenas informações públicas seguras, sinais mascarados do backend e atalhos para áreas já existentes do admin."
         />
         <AdminCriticalAlert
           tone="warning"
@@ -212,14 +277,53 @@ export function AdminSettingsUI({ onSelectSection }: AdminSettingsUIProps) {
         </div>
         <div style={styles.infoGrid}>
           {integrations.map(item => (
-            <div key={item.title} style={styles.integrationCard}>
-              <span style={styles.cardLabel}>{item.title}</span>
-              <strong style={styles.integrationStatus}>{item.status}</strong>
-              <span style={styles.cardMeta}>{item.description}</span>
-            </div>
+            (() => {
+              const runtime = runtimeStatus?.integrations[item.key];
+              return (
+                <div key={item.title} style={styles.integrationCard}>
+                  <span style={styles.cardLabel}>{item.title}</span>
+                  <strong style={styles.integrationStatus}>
+                    {runtimeStatusLoading ? "Verificando status seguro..." : runtime ? getRuntimeStatusLabel(runtime.status) : item.status}
+                  </strong>
+                  <span style={styles.cardMeta}>{runtime ? formatRuntimeMeta(runtime, item.description) : item.description}</span>
+                  {runtime ? <AdminStatusBadge style={getRuntimeStatusTone(runtime.status)}>{runtime.status}</AdminStatusBadge> : null}
+                </div>
+              );
+            })()
           ))}
         </div>
       </section>
+
+      {runtimeStatus ? (
+        <section style={styles.sectionBlock}>
+          <div style={styles.sectionHeader}>
+            <div>
+              <h3 style={styles.sectionTitle}>Leitura segura do backend</h3>
+              <p style={styles.sectionDescription}>Resumo operacional calculado no servidor sem retornar valores de variáveis de ambiente.</p>
+            </div>
+            <AdminStatusBadge style={runtimeStatus.security.secretsExposed ? badgeTones.danger : badgeTones.success}>
+              Secrets expostos: {runtimeStatus.security.secretsExposed ? "sim" : "não"}
+            </AdminStatusBadge>
+          </div>
+          <div style={styles.infoGrid}>
+            <div style={styles.infoCard}>
+              <span style={styles.cardLabel}>Ambiente</span>
+              <strong style={styles.cardValue}>{runtimeStatus.environment.nodeEnv}</strong>
+              <span style={styles.cardMeta}>Valor classificado, sem detalhes de infraestrutura.</span>
+            </div>
+            <div style={styles.infoCard}>
+              <span style={styles.cardLabel}>Banco</span>
+              <strong style={styles.cardValue}>{runtimeStatus.environment.databaseConfigured ? "Configurado" : "Pendente"}</strong>
+              <span style={styles.cardMeta}>Apenas presença de configuração, sem connection string.</span>
+            </div>
+            <div style={styles.infoCard}>
+              <span style={styles.cardLabel}>Frontend URL</span>
+              <strong style={styles.cardValue}>{runtimeStatus.environment.frontendUrlConfigured ? "Configurado" : "Fallback do sistema"}</strong>
+              <span style={styles.cardMeta}>Nenhuma URL sensível é exibida.</span>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <div style={styles.twoColumnGrid}>
         <section style={styles.sectionBlock}>
@@ -295,6 +399,11 @@ const badgeTones: Record<string, CSSProperties> = {
     background: "rgba(245,158,11,0.13)",
     border: "1px solid rgba(245,158,11,0.30)",
     color: "#fbbf24",
+  },
+  danger: {
+    background: "rgba(239,68,68,0.14)",
+    border: "1px solid rgba(239,68,68,0.32)",
+    color: "#fca5a5",
   },
 };
 
