@@ -1985,36 +1985,25 @@ export async function updateLocalAuthPasswordByUserId(payload: { userId: number;
     .where(eq(localAuthUsers.userId, payload.userId));
 }
 
-async function selectProductsForBackup(db: Awaited<ReturnType<typeof getDb>>, warnings: string[]) {
+function extractExecutedRows(result: unknown) {
+  if (Array.isArray(result)) {
+    return Array.isArray(result[0]) ? result[0] : result;
+  }
+  if (result && typeof result === "object" && "rows" in result && Array.isArray((result as { rows: unknown[] }).rows)) {
+    return (result as { rows: unknown[] }).rows;
+  }
+  return [];
+}
+
+async function dumpTableForBackup(db: Awaited<ReturnType<typeof getDb>>, tableName: string, warnings: string[]) {
   if (!db) return [];
+  const safeTableName = tableName.replace(/`/g, "``");
   try {
-    return await db.select().from(products);
+    return extractExecutedRows(await db.execute(sql.raw(`select * from \`${safeTableName}\``)));
   } catch (error) {
-    if (!isLegacyProductColumnError(error)) throw error;
-    warnings.push(`products: leitura em modo legado por coluna opcional ausente (${getDatabaseErrorMessage(error)})`);
-    const legacyRows = await db
-      .select({
-        id: products.id,
-        name: products.name,
-        description: products.description,
-        fullDescription: products.fullDescription,
-        category: products.category,
-        price: products.price,
-        imageUrl: products.imageUrl,
-        stock: products.stock,
-        createdAt: products.createdAt,
-        updatedAt: products.updatedAt,
-      })
-      .from(products);
-    return legacyRows.map(product => ({
-      ...product,
-      optionColors: null,
-      optionSizes: null,
-      sizeType: "alpha" as const,
-      imageThumbnailUrl: null,
-      imageDetailUrl: null,
-      imageBannerUrl: null,
-    }));
+    if (!isMissingDatabaseObjectError(error)) throw error;
+    warnings.push(`${tableName}: ${getDatabaseErrorMessage(error)}`);
+    return [];
   }
 }
 
@@ -2038,19 +2027,19 @@ export async function getBackupPayload() {
     paymentRows,
     auditRows,
   ] = await Promise.all([
-    safeOptionalSelect("users", () => db.select().from(users), warnings),
-    selectProductsForBackup(db, warnings),
-    safeOptionalSelect("productVariants", () => db.select().from(productVariants), warnings),
-    safeOptionalSelect("productImages", () => db.select().from(productImages), warnings),
-    safeOptionalSelect("orders", () => db.select().from(orders), warnings),
-    safeOptionalSelect("orderItems", () => db.select().from(orderItems), warnings),
-    safeOptionalSelect("coupons", () => db.select().from(coupons), warnings),
-    safeOptionalSelect("productReviews", () => db.select().from(productReviews), warnings),
-    safeOptionalSelect("stockReservations", () => db.select().from(stockReservations), warnings),
-    safeOptionalSelect("userProfiles", () => db.select().from(userProfiles), warnings),
-    safeOptionalSelect("userAddresses", () => db.select().from(userAddresses), warnings),
-    safeOptionalSelect("userPaymentMethods", () => db.select().from(userPaymentMethods), warnings),
-    safeOptionalSelect("auditLogs", () => db.select().from(auditLogs), warnings),
+    dumpTableForBackup(db, "users", warnings),
+    dumpTableForBackup(db, "products", warnings),
+    dumpTableForBackup(db, "productVariants", warnings),
+    dumpTableForBackup(db, "productImages", warnings),
+    dumpTableForBackup(db, "orders", warnings),
+    dumpTableForBackup(db, "orderItems", warnings),
+    dumpTableForBackup(db, "coupons", warnings),
+    dumpTableForBackup(db, "productReviews", warnings),
+    dumpTableForBackup(db, "stockReservations", warnings),
+    dumpTableForBackup(db, "userProfiles", warnings),
+    dumpTableForBackup(db, "userAddresses", warnings),
+    dumpTableForBackup(db, "userPaymentMethods", warnings),
+    dumpTableForBackup(db, "auditLogs", warnings),
   ]);
 
   return {
