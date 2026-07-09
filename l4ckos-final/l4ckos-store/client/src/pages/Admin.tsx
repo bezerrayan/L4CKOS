@@ -1,6 +1,6 @@
 ﻿import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
@@ -14,14 +14,12 @@ import {
   AdminImagePreview,
   AdminLoadingState,
   AdminPageHeader,
-  AdminQuickActions,
-  AdminStatCard,
-  AdminStatsGrid,
   AdminStatusBadge,
   AdminSurface,
   AdminSummaryPill,
   AdminTableWrapper,
 } from "../components/admin/AdminUI";
+import { AdminDashboard } from "../components/admin/dashboard/AdminDashboard";
 
 type Section =
   | "overview"
@@ -316,14 +314,6 @@ function formatAdminAddressLine(address?: {
 
 function confirmAdminAction(message: string) {
   return window.confirm(message);
-}
-
-function OverviewIcon({ children }: { children: ReactNode }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      {children}
-    </svg>
-  );
 }
 
 export default function Admin() {
@@ -654,11 +644,6 @@ export default function Admin() {
     [orders, selectedOrderId],
   );
   const recentAudit = useMemo(() => (auditQuery.data ?? []).slice(0, 5), [auditQuery.data]);
-  const recentOrders = useMemo(() => orders.slice(0, 5), [orders]);
-  const lowStockProducts = useMemo(
-    () => products.filter(row => Number(row.stock ?? 0) <= 5).slice(0, 5),
-    [products],
-  );
   const orderStatusSummary = useMemo(
     () =>
       orderStatuses.map(status => ({
@@ -773,249 +758,31 @@ export default function Admin() {
       </div>
 
       {section === "overview" && (
-        <div style={styles.dashboardStack}>
-          <AdminStatsGrid
-            style={{
-              gridTemplateColumns: isMobile
-                ? "1fr"
-                : isCompactAdmin
-                  ? "repeat(2, minmax(0, 1fr))"
-                  : "repeat(3, minmax(0, 1fr))",
-            }}
-          >
-            <AdminStatCard
-              label="Vendas de hoje"
-              value={formatPrice((dashboardQuery.data?.salesToday ?? 0) / 100)}
-              hint="Considera pedidos entregues no dia."
-              tone="success"
-              icon={<OverviewIcon><path d="M12 20V10"></path><path d="m18 20-6-6-6 6"></path><path d="M6 4h12"></path></OverviewIcon>}
-            />
-            <AdminStatCard
-              label="Pedidos pendentes"
-              value={String(dashboardQuery.data?.pendingOrders ?? 0)}
-              hint="Pedidos aguardando pagamento."
-              tone="warning"
-              icon={<OverviewIcon><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></OverviewIcon>}
-            />
-            <AdminStatCard
-              label="Pedidos hoje"
-              value={String(dashboardQuery.data?.ordersToday ?? 0)}
-              hint="Criados desde 00:00."
-              tone="info"
-              icon={<OverviewIcon><path d="M3 6h18"></path><path d="M8 6V3"></path><path d="M16 6V3"></path><rect x="3" y="6" width="18" height="15" rx="2"></rect></OverviewIcon>}
-            />
-            <AdminStatCard
-              label="Clientes"
-              value={String(dashboardQuery.data?.usersCount ?? 0)}
-              hint="Usuários com conta no sistema."
-              icon={<OverviewIcon><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></OverviewIcon>}
-            />
-            <AdminStatCard
-              label="Produtos ativos"
-              value={String(dashboardQuery.data?.productsCount ?? 0)}
-              hint="Itens disponíveis no catálogo."
-              icon={<OverviewIcon><path d="M6 7 3 9v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9l-3-2"></path><path d="M3 9h18"></path><path d="M8 12h8"></path><path d="M9 7V5a3 3 0 0 1 6 0v2"></path></OverviewIcon>}
-            />
-            <AdminStatCard
-              label="Estoque baixo"
-              value={String(dashboardQuery.data?.lowStockCount ?? 0)}
-              hint="Produtos com 5 unidades ou menos."
-              tone="warning"
-              icon={<OverviewIcon><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></OverviewIcon>}
-            />
-          </AdminStatsGrid>
-
-          <div
-            style={{
-              ...styles.dashboardColumns,
-              gridTemplateColumns: isCompactAdmin ? "1fr" : styles.dashboardColumns.gridTemplateColumns,
-            }}
-          >
-            <AdminSurface
-              title="Ações rápidas"
-              description="Atalhos para as rotinas mais frequentes do painel."
-            >
-              <AdminQuickActions actions={quickActions} />
-            </AdminSurface>
-
-            <AdminSurface
-              title="Status do sistema"
-              description="Resumo rápido da saúde operacional com base nos dados disponíveis hoje."
-            >
-              <div style={styles.systemStatusList}>
-                <div style={styles.systemStatusRow}>
-                  <span style={styles.systemStatusLabel}>Pedidos em aberto</span>
-                  <strong style={styles.systemStatusValue}>{dashboardQuery.data?.pendingOrders ?? 0}</strong>
-                </div>
-                <div style={styles.systemStatusRow}>
-                  <span style={styles.systemStatusLabel}>Catálogo publicado</span>
-                  <strong style={styles.systemStatusValue}>{dashboardQuery.data?.productsCount ?? 0} itens</strong>
-                </div>
-                <div style={styles.systemStatusRow}>
-                  <span style={styles.systemStatusLabel}>Cadastros ativos</span>
-                  <strong style={styles.systemStatusValue}>{dashboardQuery.data?.usersCount ?? 0} usuários</strong>
-                </div>
-              </div>
-            </AdminSurface>
-          </div>
-
-          <div
-            style={{
-              ...styles.dashboardColumns,
-              gridTemplateColumns: isCompactAdmin ? "1fr" : styles.dashboardColumns.gridTemplateColumns,
-            }}
-          >
-            <AdminSurface
-              title="Pedidos por status"
-              description="Distribuição rápida dos pedidos carregados no painel."
-            >
-              <div style={styles.statusSummaryGrid}>
-                {orderStatusSummary.map(item => (
-                  <div key={item.status} style={styles.statusSummaryCard}>
-                    <AdminStatusBadge style={getOrderStatusTone(item.status)}>
-                      {item.label}
-                    </AdminStatusBadge>
-                    <strong style={styles.statusSummaryValue}>{item.count}</strong>
-                  </div>
-                ))}
-              </div>
-            </AdminSurface>
-
-            <AdminSurface
-              title="Alertas operacionais"
-              description="Sinais rápidos para priorizar a rotina da loja."
-            >
-              {operationalAlerts.length === 0 ? (
-                <AdminEmptyState
-                  title="Sem alertas agora"
-                  description="Nenhum pedido ou estoque exige atenção imediata com os dados carregados."
-                />
-              ) : (
-                <div style={styles.alertList}>
-                  {operationalAlerts.map(alert => (
-                    <div
-                      key={alert.title}
-                      style={{
-                        ...styles.alertItem,
-                        ...(alert.tone === "danger"
-                          ? styles.alertItemDanger
-                          : alert.tone === "warning"
-                            ? styles.alertItemWarning
-                            : {}),
-                      }}
-                    >
-                      <strong style={styles.alertTitle}>{alert.title}</strong>
-                      <span style={styles.alertDescription}>{alert.description}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </AdminSurface>
-          </div>
-
-          <div
-            style={{
-              ...styles.dashboardColumns,
-              gridTemplateColumns: isCompactAdmin ? "1fr" : styles.dashboardColumns.gridTemplateColumns,
-            }}
-          >
-            <AdminSurface
-              title="Últimos pedidos"
-              description="Atalho visual para acompanhar o movimento mais recente."
-            >
-              {ordersQuery.isLoading ? (
-                <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
-              ) : recentOrders.length === 0 ? (
-                <AdminEmptyState
-                  title="Sem pedidos carregados"
-                  description="Quando houver pedidos, os mais recentes aparecerão aqui."
-                />
-              ) : (
-                <div style={styles.compactList}>
-                  {recentOrders.map(order => (
-                    <button
-                      key={order.id}
-                      type="button"
-                      style={styles.compactListItemButton}
-                      onClick={() => {
-                        setSelectedOrderId(order.id);
-                        setSection("orders");
-                      }}
-                    >
-                      <span style={styles.compactListTitle}>Pedido #{order.id}</span>
-                      <span style={styles.compactListMeta}>
-                        {order.customerName || order.customerEmail || `Cliente #${order.userId}`} · {formatPrice(Number(order.totalPrice) / 100)}
-                      </span>
-                      <AdminStatusBadge style={getOrderStatusTone(String(order.status))}>
-                        {getOrderStatusLabel(String(order.status))}
-                      </AdminStatusBadge>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </AdminSurface>
-
-            <AdminSurface
-              title="Estoque baixo"
-              description="Produtos com 5 unidades ou menos."
-            >
-              {productsQuery.isLoading ? (
-                <AdminLoadingState>Carregando produtos...</AdminLoadingState>
-              ) : lowStockProducts.length === 0 ? (
-                <AdminEmptyState
-                  title="Estoque saudável"
-                  description="Nenhum produto carregado está com estoque baixo."
-                />
-              ) : (
-                <div style={styles.compactList}>
-                  {lowStockProducts.map(product => (
-                    <button
-                      key={product.id}
-                      type="button"
-                      style={styles.compactListItemButton}
-                      onClick={() => {
-                        setProductSearch(product.name ?? String(product.id));
-                        setSection("products");
-                      }}
-                    >
-                      <span style={styles.compactListTitle}>{product.name}</span>
-                      <span style={styles.compactListMeta}>{getCategoryLabel(product.category)}</span>
-                      <strong style={Number(product.stock ?? 0) <= 0 ? styles.stockTextEmpty : styles.stockTextLow}>
-                        {Number(product.stock ?? 0) <= 0 ? "Sem estoque" : `${product.stock} un.`}
-                      </strong>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </AdminSurface>
-          </div>
-
-          <AdminSurface
-            title="Atividade recente"
-            description="Últimos eventos registrados na trilha de auditoria administrativa."
-          >
-            {recentAudit.length === 0 ? (
-              <AdminEmptyState
-                title="Sem atividade recente"
-                description="Assim que o painel registrar ações administrativas, elas aparecerão aqui."
-              />
-            ) : (
-              <div style={styles.activityList}>
-                {recentAudit.map(item => (
-                  <div key={item.id} style={styles.activityItem}>
-                    <div style={styles.activityBullet} />
-                    <div style={styles.activityContent}>
-                      <strong style={styles.activityTitle}>{item.action}</strong>
-                      <span style={styles.activityMeta}>
-                        {item.entity} {item.entityId ? `#${item.entityId}` : ""} · {new Date(item.createdAt).toLocaleString("pt-BR")}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </AdminSurface>
-        </div>
+        <AdminDashboard
+          dashboardData={dashboardQuery.data}
+          isMobile={isMobile}
+          isCompact={isCompactAdmin}
+          orders={orders}
+          products={products}
+          promoBanners={promoBannersQuery.data ?? []}
+          coupons={couponsQuery.data ?? []}
+          recentAudit={recentAudit}
+          quickActions={quickActions}
+          ordersLoading={ordersQuery.isLoading}
+          productsLoading={productsQuery.isLoading}
+          orderStatusSummary={orderStatusSummary}
+          operationalAlerts={operationalAlerts}
+          getOrderStatusLabel={getOrderStatusLabel}
+          getOrderStatusTone={getOrderStatusTone}
+          onViewOrder={orderId => {
+            setSelectedOrderId(orderId);
+            setSection("orders");
+          }}
+          onViewProduct={product => {
+            setProductSearch(product.name ?? String(product.id));
+            setSection("products");
+          }}
+        />
       )}
 
       {section === "customers" && (
@@ -2798,166 +2565,6 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     borderColor: "rgba(239,68,68,0.38)",
     boxShadow: "0 0 0 1px rgba(239,68,68,0.08)",
-  },
-  dashboardStack: {
-    display: "grid",
-    gap: 18,
-  },
-  dashboardColumns: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1.4fr) minmax(280px, 0.8fr)",
-    gap: 18,
-  },
-  systemStatusList: {
-    display: "grid",
-    gap: 12,
-  },
-  systemStatusRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
-    padding: "14px 16px",
-    borderRadius: 12,
-    background: "#090909",
-    border: "1px solid rgba(255,255,255,0.075)",
-  },
-  systemStatusLabel: {
-    color: "#9ca3af",
-    fontSize: 13,
-    lineHeight: 1.5,
-  },
-  systemStatusValue: {
-    color: "#f8f4ec",
-    fontSize: 16,
-  },
-  activityList: {
-    display: "grid",
-    gap: 12,
-  },
-  activityItem: {
-    display: "grid",
-    gridTemplateColumns: "10px 1fr",
-    gap: 12,
-    alignItems: "flex-start",
-    padding: "10px 0",
-    borderBottom: "1px solid #1f1f1f",
-  },
-  activityBullet: {
-    width: 10,
-    height: 10,
-    marginTop: 6,
-    borderRadius: "50%",
-    background: "#f0ede8",
-    opacity: 0.75,
-  },
-  activityContent: {
-    display: "grid",
-    gap: 4,
-  },
-  activityTitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-  },
-  activityMeta: {
-    color: "#8b949e",
-    fontSize: 12,
-    lineHeight: 1.5,
-  },
-  statusSummaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-    gap: 12,
-  },
-  statusSummaryCard: {
-    display: "grid",
-    gap: 12,
-    justifyItems: "start",
-    padding: "14px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.075)",
-    background: "#090909",
-  },
-  statusSummaryValue: {
-    color: "#f8f4ec",
-    fontSize: 26,
-    lineHeight: 1,
-    fontWeight: 900,
-  },
-  alertList: {
-    display: "grid",
-    gap: 10,
-  },
-  alertItem: {
-    display: "grid",
-    gap: 5,
-    padding: "13px 14px",
-    borderRadius: 13,
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "#090909",
-  },
-  alertItemWarning: {
-    borderColor: "rgba(245,158,11,0.28)",
-    background: "linear-gradient(180deg, rgba(245,158,11,0.08), rgba(245,158,11,0.025)), #090909",
-  },
-  alertItemDanger: {
-    borderColor: "rgba(239,68,68,0.34)",
-    background: "linear-gradient(180deg, rgba(239,68,68,0.09), rgba(239,68,68,0.025)), #090909",
-  },
-  alertTitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-    lineHeight: 1.35,
-  },
-  alertDescription: {
-    color: "#9ca3af",
-    fontSize: 12,
-    lineHeight: 1.55,
-  },
-  compactList: {
-    display: "grid",
-    gap: 10,
-  },
-  compactListItemButton: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    gap: "6px 12px",
-    alignItems: "center",
-    width: "100%",
-    padding: "13px 14px",
-    borderRadius: 13,
-    border: "1px solid rgba(255,255,255,0.075)",
-    background: "#090909",
-    color: "#f8f4ec",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  compactListTitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-    fontWeight: 800,
-    lineHeight: 1.35,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  compactListMeta: {
-    color: "#9ca3af",
-    fontSize: 12,
-    lineHeight: 1.45,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  stockTextLow: {
-    color: "#fbbf24",
-    fontSize: 13,
-    fontWeight: 900,
-  },
-  stockTextEmpty: {
-    color: "#f87171",
-    fontSize: 13,
-    fontWeight: 900,
   },
   grid: {
     display: "grid",
