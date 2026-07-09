@@ -1821,11 +1821,30 @@ export default function Admin() {
           ) : (
             <AdminTableWrapper>
               <table style={styles.table}>
-                <thead><tr><th>Visual</th><th>Produto</th><th>Categoria e opções</th><th>Preço rápido</th><th>Estoque rápido</th><th>Status</th><th>Datas</th><th>Variantes</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Visual</th><th>Produto</th><th>Operação</th><th>Ações</th></tr></thead>
                 <tbody>
                   {products.map(row => {
                     const optionColors = parseProductOptionList(row.optionColors);
                     const optionSizes = parseProductOptionList(row.optionSizes);
+                    const galleryImages = [
+                      row.imageUrl
+                        ? {
+                            imageUrl: row.imageUrl,
+                            imageThumbnailUrl: (row as any).imageThumbnailUrl ?? null,
+                            color: null,
+                          }
+                        : null,
+                      ...(row.images ?? []),
+                    ]
+                      .filter(Boolean)
+                      .filter((item, index, list) => {
+                        const imageUrl = typeof item === "string" ? item : item?.imageUrl;
+                        if (!imageUrl) return false;
+                        return list.findIndex(candidate => {
+                          const candidateUrl = typeof candidate === "string" ? candidate : candidate?.imageUrl;
+                          return candidateUrl === imageUrl;
+                        }) === index;
+                      });
                     return (
                     <tr key={row.id}>
                       <td>
@@ -1839,8 +1858,29 @@ export default function Admin() {
                           ) : (
                             <AdminImagePreview alt={row.name} variant="thumb" />
                           )}
+                          {galleryImages.length > 0 ? (
+                            <div style={styles.productThumbStrip}>
+                              {galleryImages.slice(0, 5).map((item, index) => {
+                                const imageUrl = typeof item === "string" ? item : item?.imageThumbnailUrl || item?.imageUrl;
+                                const color = typeof item === "string" ? null : item?.color ?? null;
+                                return (
+                                  <a
+                                    key={`${imageUrl}-${index}`}
+                                    href={resolveAdminImageUrl(imageUrl)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={styles.productThumbLink}
+                                    title={color ? `Cor: ${color}` : `Imagem ${index + 1}`}
+                                  >
+                                    <img src={resolveAdminImageUrl(imageUrl)} alt={`${row.name} ${index + 1}`} style={styles.productThumbImage} />
+                                  </a>
+                                );
+                              })}
+                              {galleryImages.length > 5 ? <span style={styles.productThumbMore}>+{galleryImages.length - 5}</span> : null}
+                            </div>
+                          ) : null}
                           <ProductVisualMeta>
-                            {(row.images?.length ?? 0) > 0 ? `${row.images?.length ?? 0} extras` : "Só capa"}
+                            {galleryImages.length > 1 ? `${galleryImages.length} imagens` : "Só capa"}
                           </ProductVisualMeta>
                         </div>
                       </td>
@@ -1850,66 +1890,67 @@ export default function Admin() {
                           <span style={styles.productTableMeta}>
                             {row.description?.trim() ? row.description : "Sem descrição curta"}
                           </span>
-                        </div>
-                      </td>
-                      <td>
-                        <div style={styles.productTableCell}>
-                          <span style={styles.categoryTableBadge}>{getCategoryLabel(row.category)}</span>
+                          <div style={styles.productMetaRow}>
+                            <span style={styles.categoryTableBadge}>{getCategoryLabel(row.category)}</span>
+                            <ProductStockBadge stock={Number(quickProductEdits[row.id]?.stock ?? row.stock)} />
+                            <span style={styles.variantCountBadge}>{row.variants?.length ?? 0} var.</span>
+                          </div>
                           <ProductOptionPreview label="Cores" values={optionColors} />
                           <ProductOptionPreview label="Tamanhos" values={optionSizes} />
+                          <span style={styles.productTableMeta}>
+                            Criado: {row.createdAt ? new Date(row.createdAt).toLocaleDateString("pt-BR") : "-"} · Atualizado: {row.updatedAt ? new Date(row.updatedAt).toLocaleDateString("pt-BR") : "-"}
+                          </span>
                         </div>
                       </td>
                       <td>
-                        <input
-                          style={{ ...styles.input, width: 130 }}
-                          value={quickProductEdits[row.id]?.price ?? centsToMoneyInput(row.price)}
-                          onChange={e => {
-                            const value = e.target.value;
-                            setQuickProductEdits(prev => ({
-                              ...prev,
-                              [row.id]: {
-                                price: value,
-                                stock: prev[row.id]?.stock ?? String(row.stock),
-                              },
-                            }));
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
+                        <div
                           style={{
-                            ...styles.input,
-                            width: 90,
-                            ...(Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 0
-                              ? styles.stockInputEmpty
-                              : Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 3
-                                ? styles.stockInputLow
-                                : {}),
+                            ...styles.quickEditGrid,
+                            ...(isCompactAdmin ? { gridTemplateColumns: "1fr", minWidth: 180, maxWidth: "100%" } : {}),
                           }}
-                          value={quickProductEdits[row.id]?.stock ?? String(row.stock)}
-                          onChange={e => {
-                            const value = e.target.value;
-                            setQuickProductEdits(prev => ({
-                              ...prev,
-                              [row.id]: {
-                                price: prev[row.id]?.price ?? centsToMoneyInput(row.price),
-                                stock: value,
-                              },
-                            }));
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <ProductStockBadge stock={Number(quickProductEdits[row.id]?.stock ?? row.stock)} />
-                      </td>
-                      <td>
-                        <div style={styles.productTableCell}>
-                          <span style={styles.productTableMeta}>Criado: {row.createdAt ? new Date(row.createdAt).toLocaleDateString("pt-BR") : "-"}</span>
-                          <span style={styles.productTableMeta}>Atualizado: {row.updatedAt ? new Date(row.updatedAt).toLocaleDateString("pt-BR") : "-"}</span>
+                        >
+                          <label style={styles.quickEditField}>
+                            <span style={styles.quickEditLabel}>Preço</span>
+                            <input
+                              style={styles.input}
+                              value={quickProductEdits[row.id]?.price ?? centsToMoneyInput(row.price)}
+                              onChange={e => {
+                                const value = e.target.value;
+                                setQuickProductEdits(prev => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    price: value,
+                                    stock: prev[row.id]?.stock ?? String(row.stock),
+                                  },
+                                }));
+                              }}
+                            />
+                          </label>
+                          <label style={styles.quickEditField}>
+                            <span style={styles.quickEditLabel}>Estoque</span>
+                            <input
+                              style={{
+                                ...styles.input,
+                                ...(Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 0
+                                  ? styles.stockInputEmpty
+                                  : Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 3
+                                    ? styles.stockInputLow
+                                    : {}),
+                              }}
+                              value={quickProductEdits[row.id]?.stock ?? String(row.stock)}
+                              onChange={e => {
+                                const value = e.target.value;
+                                setQuickProductEdits(prev => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    price: prev[row.id]?.price ?? centsToMoneyInput(row.price),
+                                    stock: value,
+                                  },
+                                }));
+                              }}
+                            />
+                          </label>
                         </div>
-                      </td>
-                      <td>
-                        <span style={styles.variantCountBadge}>{row.variants?.length ?? 0}</span>
                       </td>
                       <td style={styles.actionsCell}>
                       <button
@@ -3477,7 +3518,7 @@ const styles: Record<string, CSSProperties> = {
   },
   table: {
     width: "100%",
-    minWidth: 920,
+    minWidth: 760,
     borderCollapse: "separate",
     borderSpacing: 0,
     fontSize: 14,
@@ -3513,7 +3554,8 @@ const styles: Record<string, CSSProperties> = {
     gap: 4,
     alignItems: "flex-start",
     textAlign: "left",
-    minWidth: 180,
+    minWidth: 0,
+    maxWidth: 520,
   },
   productTableName: {
     color: "#f0ede8",
@@ -3525,6 +3567,14 @@ const styles: Record<string, CSSProperties> = {
     color: "#9ca3af",
     fontSize: 12,
     lineHeight: 1.5,
+    overflowWrap: "anywhere",
+  },
+  productMetaRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 4,
   },
   categoryTableBadge: {
     display: "inline-flex",
@@ -3553,6 +3603,45 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignItems: "center",
     gap: 6,
+    minWidth: 116,
+  },
+  productThumbStrip: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 28px)",
+    gap: 5,
+    justifyContent: "center",
+    maxWidth: 96,
+  },
+  productThumbLink: {
+    width: 28,
+    height: 34,
+    borderRadius: 8,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "#080808",
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  productThumbImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    objectPosition: "center",
+    display: "block",
+  },
+  productThumbMore: {
+    width: 28,
+    height: 34,
+    borderRadius: 8,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#f0ede8",
+    fontSize: 10,
+    fontWeight: 800,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   productVisualMeta: {
     color: "#9ca3af",
@@ -3614,12 +3703,33 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 800,
   },
+  quickEditGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(120px, 1fr))",
+    gap: 10,
+    minWidth: 260,
+    maxWidth: 360,
+  },
+  quickEditField: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minWidth: 0,
+  },
+  quickEditLabel: {
+    color: "#9ca3af",
+    fontSize: 10,
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+  },
   actionsCell: {
     display: "flex",
     gap: 6,
     flexWrap: "wrap",
     justifyContent: "center",
     alignItems: "center",
+    minWidth: 112,
   },
   smallBtn: {
     border: "1px solid rgba(255,255,255,0.10)",
