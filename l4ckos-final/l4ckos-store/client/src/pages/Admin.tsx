@@ -309,6 +309,10 @@ function formatAdminAddressLine(address?: {
   return [lineOneWithComplement, lineTwo, lineThree].filter(Boolean);
 }
 
+function confirmAdminAction(message: string) {
+  return window.confirm(message);
+}
+
 function OverviewIcon({ children }: { children: ReactNode }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -645,6 +649,58 @@ export default function Admin() {
     [orders, selectedOrderId],
   );
   const recentAudit = useMemo(() => (auditQuery.data ?? []).slice(0, 5), [auditQuery.data]);
+  const recentOrders = useMemo(() => orders.slice(0, 5), [orders]);
+  const lowStockProducts = useMemo(
+    () => products.filter(row => Number(row.stock ?? 0) <= 5).slice(0, 5),
+    [products],
+  );
+  const orderStatusSummary = useMemo(
+    () =>
+      orderStatuses.map(status => ({
+        status,
+        label: getOrderStatusLabel(status),
+        count: orders.filter(order => order.status === status).length,
+      })),
+    [orders],
+  );
+  const operationalAlerts = useMemo(() => {
+    const alerts: Array<{ title: string; description: string; tone: "danger" | "warning" | "neutral" }> = [];
+    const pendingOrders = orders.filter(order => order.status === "pending").length;
+    const paidOrders = orders.filter(order => order.status === "paid").length;
+    const emptyStockProducts = products.filter(product => Number(product.stock ?? 0) <= 0).length;
+    const lowStockTotal = products.filter(product => Number(product.stock ?? 0) > 0 && Number(product.stock ?? 0) <= 5).length;
+
+    if (pendingOrders > 0) {
+      alerts.push({
+        title: `${pendingOrders} pedido(s) aguardando pagamento`,
+        description: "Acompanhe para evitar pedidos esquecidos no fluxo.",
+        tone: "warning",
+      });
+    }
+    if (paidOrders > 0) {
+      alerts.push({
+        title: `${paidOrders} pedido(s) pago(s) para separar`,
+        description: "Priorize a operação de separação e envio.",
+        tone: "neutral",
+      });
+    }
+    if (emptyStockProducts > 0) {
+      alerts.push({
+        title: `${emptyStockProducts} produto(s) sem estoque`,
+        description: "Revise disponibilidade antes de novas campanhas.",
+        tone: "danger",
+      });
+    }
+    if (lowStockTotal > 0) {
+      alerts.push({
+        title: `${lowStockTotal} produto(s) com estoque baixo`,
+        description: "Itens com 1 a 5 unidades disponíveis.",
+        tone: "warning",
+      });
+    }
+
+    return alerts;
+  }, [orders, products]);
   const quickActions = useMemo(
     () => [
       { label: "Novo produto", caption: "Cadastre ou atualize o catálogo", onClick: () => setSection("products") },
@@ -678,7 +734,8 @@ export default function Admin() {
   }
 
   return (
-    <div style={styles.container}>
+    <div className="l4-admin" style={styles.container}>
+      <style>{adminCss}</style>
       <AdminPageHeader
         title="Painel Administrativo"
         subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
@@ -797,6 +854,137 @@ export default function Admin() {
             </AdminSurface>
           </div>
 
+          <div
+            style={{
+              ...styles.dashboardColumns,
+              gridTemplateColumns: isCompactAdmin ? "1fr" : styles.dashboardColumns.gridTemplateColumns,
+            }}
+          >
+            <AdminSurface
+              title="Pedidos por status"
+              description="Distribuição rápida dos pedidos carregados no painel."
+            >
+              <div style={styles.statusSummaryGrid}>
+                {orderStatusSummary.map(item => (
+                  <div key={item.status} style={styles.statusSummaryCard}>
+                    <span style={{ ...styles.statusBadge, ...getOrderStatusTone(item.status) }}>
+                      {item.label}
+                    </span>
+                    <strong style={styles.statusSummaryValue}>{item.count}</strong>
+                  </div>
+                ))}
+              </div>
+            </AdminSurface>
+
+            <AdminSurface
+              title="Alertas operacionais"
+              description="Sinais rápidos para priorizar a rotina da loja."
+            >
+              {operationalAlerts.length === 0 ? (
+                <AdminEmptyState
+                  title="Sem alertas agora"
+                  description="Nenhum pedido ou estoque exige atenção imediata com os dados carregados."
+                />
+              ) : (
+                <div style={styles.alertList}>
+                  {operationalAlerts.map(alert => (
+                    <div
+                      key={alert.title}
+                      style={{
+                        ...styles.alertItem,
+                        ...(alert.tone === "danger"
+                          ? styles.alertItemDanger
+                          : alert.tone === "warning"
+                            ? styles.alertItemWarning
+                            : {}),
+                      }}
+                    >
+                      <strong style={styles.alertTitle}>{alert.title}</strong>
+                      <span style={styles.alertDescription}>{alert.description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </AdminSurface>
+          </div>
+
+          <div
+            style={{
+              ...styles.dashboardColumns,
+              gridTemplateColumns: isCompactAdmin ? "1fr" : styles.dashboardColumns.gridTemplateColumns,
+            }}
+          >
+            <AdminSurface
+              title="Últimos pedidos"
+              description="Atalho visual para acompanhar o movimento mais recente."
+            >
+              {ordersQuery.isLoading ? (
+                <div style={styles.loadingPanel}>Carregando pedidos...</div>
+              ) : recentOrders.length === 0 ? (
+                <AdminEmptyState
+                  title="Sem pedidos carregados"
+                  description="Quando houver pedidos, os mais recentes aparecerão aqui."
+                />
+              ) : (
+                <div style={styles.compactList}>
+                  {recentOrders.map(order => (
+                    <button
+                      key={order.id}
+                      type="button"
+                      style={styles.compactListItemButton}
+                      onClick={() => {
+                        setSelectedOrderId(order.id);
+                        setSection("orders");
+                      }}
+                    >
+                      <span style={styles.compactListTitle}>Pedido #{order.id}</span>
+                      <span style={styles.compactListMeta}>
+                        {order.customerName || order.customerEmail || `Cliente #${order.userId}`} · {formatPrice(Number(order.totalPrice) / 100)}
+                      </span>
+                      <span style={{ ...styles.statusBadge, ...getOrderStatusTone(String(order.status)) }}>
+                        {getOrderStatusLabel(String(order.status))}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </AdminSurface>
+
+            <AdminSurface
+              title="Estoque baixo"
+              description="Produtos com 5 unidades ou menos."
+            >
+              {productsQuery.isLoading ? (
+                <div style={styles.loadingPanel}>Carregando produtos...</div>
+              ) : lowStockProducts.length === 0 ? (
+                <AdminEmptyState
+                  title="Estoque saudável"
+                  description="Nenhum produto carregado está com estoque baixo."
+                />
+              ) : (
+                <div style={styles.compactList}>
+                  {lowStockProducts.map(product => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      style={styles.compactListItemButton}
+                      onClick={() => {
+                        setProductSearch(product.name ?? String(product.id));
+                        setSection("products");
+                      }}
+                    >
+                      <span style={styles.compactListTitle}>{product.name}</span>
+                      <span style={styles.compactListMeta}>{getCategoryLabel(product.category)}</span>
+                      <strong style={Number(product.stock ?? 0) <= 0 ? styles.stockTextEmpty : styles.stockTextLow}>
+                        {Number(product.stock ?? 0) <= 0 ? "Sem estoque" : `${product.stock} un.`}
+                      </strong>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </AdminSurface>
+          </div>
+
           <AdminSurface
             title="Atividade recente"
             description="Últimos eventos registrados na trilha de auditoria administrativa."
@@ -864,7 +1052,14 @@ export default function Admin() {
                         <button style={styles.smallBtn} onClick={() => setFlagsMutation.mutate({ userId: row.id, isVip: !row.isVip })}>
                           {row.isVip ? "Remover VIP" : "Marcar VIP"}
                         </button>
-                        <button style={styles.dangerBtn} onClick={() => setFlagsMutation.mutate({ userId: row.id, isBlocked: !row.isBlocked })}>
+                        <button
+                          style={styles.dangerBtn}
+                          onClick={() => {
+                            const action = row.isBlocked ? "desbloquear" : "bloquear";
+                            if (!confirmAdminAction(`Confirmar ${action} o usuário ${row.email || `#${row.id}`}?`)) return;
+                            setFlagsMutation.mutate({ userId: row.id, isBlocked: !row.isBlocked });
+                          }}
+                        >
                           {row.isBlocked ? "Desbloquear" : "Bloquear"}
                         </button>
                       </td>
@@ -1663,7 +1858,15 @@ export default function Admin() {
                       >
                         Editar
                       </button>
-                      <button style={styles.dangerBtn} onClick={() => deleteProductMutation.mutate({ id: row.id })}>Excluir</button>
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => {
+                          if (!confirmAdminAction(`Excluir o produto "${row.name}"? Esta ação não pode ser desfeita pelo painel.`)) return;
+                          deleteProductMutation.mutate({ id: row.id });
+                        }}
+                      >
+                        Excluir
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1764,7 +1967,11 @@ export default function Admin() {
                           <select
                             style={styles.select}
                             value={row.status}
-                            onChange={e => updateOrderMutation.mutate({ orderId: row.id, status: e.target.value as any })}
+                            onChange={e => {
+                              const nextStatus = e.target.value as any;
+                              if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?`)) return;
+                              updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
+                            }}
                           >
                             {orderStatuses.map(status => <option key={status} value={status}>{getOrderStatusLabel(status)}</option>)}
                           </select>
@@ -2190,7 +2397,15 @@ export default function Admin() {
                       >
                         Duplicar
                       </button>
-                      <button style={styles.dangerBtn} onClick={() => deletePromoBannerMutation.mutate({ id: row.id })}>Excluir</button>
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => {
+                          if (!confirmAdminAction(`Excluir o banner "${row.title || `#${row.id}`}"?`)) return;
+                          deletePromoBannerMutation.mutate({ id: row.id });
+                        }}
+                      >
+                        Excluir
+                      </button>
                     </td>
                   </tr>
                   ))}
@@ -2243,7 +2458,17 @@ export default function Admin() {
                   {(couponsQuery.data ?? []).map(coupon => (
                     <tr key={coupon.id}>
                       <td>{coupon.id}</td><td>{coupon.code}</td><td>{coupon.type === "percent" ? "Percentual" : "Valor fixo"}</td><td>{coupon.value}</td><td>{coupon.usedCount}/{coupon.maxUses ?? "∞"}</td><td>{coupon.isActive ? "Sim" : "Não"}</td>
-                      <td><button style={styles.dangerBtn} onClick={() => couponDeleteMutation.mutate({ id: coupon.id })}>Excluir</button></td>
+                      <td>
+                        <button
+                          style={styles.dangerBtn}
+                          onClick={() => {
+                            if (!confirmAdminAction(`Excluir o cupom ${coupon.code}?`)) return;
+                            couponDeleteMutation.mutate({ id: coupon.id });
+                          }}
+                        >
+                          Excluir
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2422,7 +2647,7 @@ export default function Admin() {
                   showToast({ message: "Informe o nome do arquivo de backup", duration: 2300 });
                   return;
                 }
-                if (!window.confirm("Restaurar backup substitui dados atuais. Continuar?")) return;
+                if (!confirmAdminAction(`Restaurar o backup "${restoreFileName.trim()}"? Isso substitui dados atuais e deve ser feito apenas com certeza.`)) return;
                 backupRestoreMutation.mutate({ fileName: restoreFileName.trim(), confirmation: "RESTORE" });
               }}
             >
@@ -2454,6 +2679,58 @@ export default function Admin() {
   );
 }
 
+const adminCss = `
+.l4-admin {
+  background:
+    radial-gradient(circle at top right, rgba(220, 38, 38, 0.10), transparent 28%),
+    linear-gradient(180deg, #070707 0%, #0b0b0b 100%);
+  padding: clamp(14px, 2.4vw, 28px);
+}
+.l4-admin table th,
+.l4-admin table td {
+  padding: 14px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  vertical-align: middle;
+}
+.l4-admin table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #101010;
+  color: #b8bec8;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 800;
+  text-align: left;
+}
+.l4-admin table td {
+  background: rgba(255,255,255,0.01);
+}
+.l4-admin table tbody tr:hover td {
+  background: rgba(239,68,68,0.045);
+}
+.l4-admin input:focus,
+.l4-admin select:focus {
+  outline: none;
+  border-color: rgba(239,68,68,0.62) !important;
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.14);
+}
+.l4-admin button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.l4-admin button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+@media (max-width: 760px) {
+  .l4-admin table th,
+  .l4-admin table td {
+    padding: 12px 10px;
+  }
+}
+`;
+
 const styles: Record<string, CSSProperties> = {
   container: {
     display: "flex",
@@ -2461,6 +2738,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 22,
     overflowX: "hidden",
     color: "#f0ede8",
+    borderRadius: 24,
   },
   centerCard: {
     maxWidth: 520,
@@ -2487,27 +2765,30 @@ const styles: Record<string, CSSProperties> = {
   },
   tabs: {
     display: "flex",
-    gap: 10,
+    gap: 8,
     flexWrap: "wrap",
     justifyContent: "flex-start",
-    padding: 6,
-    borderRadius: 18,
-    border: "1px solid #202020",
-    background: "#0f0f0f",
+    padding: 8,
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.075)",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01)), #0b0b0b",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
   },
   tabBtn: {
     border: "1px solid transparent",
     background: "transparent",
     color: "#a1a1aa",
-    borderRadius: 12,
+    borderRadius: 10,
     padding: "10px 14px",
     cursor: "pointer",
     fontWeight: 700,
+    minHeight: 40,
   },
   tabBtnActive: {
-    background: "#171717",
+    background: "linear-gradient(180deg, rgba(239,68,68,0.18), rgba(127,29,29,0.12)), #141414",
     color: "#fff",
-    borderColor: "#2a2a2a",
+    borderColor: "rgba(239,68,68,0.38)",
+    boxShadow: "0 0 0 1px rgba(239,68,68,0.08)",
   },
   dashboardStack: {
     display: "grid",
@@ -2528,9 +2809,9 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 16,
     padding: "14px 16px",
-    borderRadius: 14,
-    background: "#0c0c0c",
-    border: "1px solid #202020",
+    borderRadius: 12,
+    background: "#090909",
+    border: "1px solid rgba(255,255,255,0.075)",
   },
   systemStatusLabel: {
     color: "#9ca3af",
@@ -2574,11 +2855,106 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     lineHeight: 1.5,
   },
+  statusSummaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: 12,
+  },
+  statusSummaryCard: {
+    display: "grid",
+    gap: 12,
+    justifyItems: "start",
+    padding: "14px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.075)",
+    background: "#090909",
+  },
+  statusSummaryValue: {
+    color: "#f8f4ec",
+    fontSize: 26,
+    lineHeight: 1,
+    fontWeight: 900,
+  },
+  alertList: {
+    display: "grid",
+    gap: 10,
+  },
+  alertItem: {
+    display: "grid",
+    gap: 5,
+    padding: "13px 14px",
+    borderRadius: 13,
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "#090909",
+  },
+  alertItemWarning: {
+    borderColor: "rgba(245,158,11,0.28)",
+    background: "linear-gradient(180deg, rgba(245,158,11,0.08), rgba(245,158,11,0.025)), #090909",
+  },
+  alertItemDanger: {
+    borderColor: "rgba(239,68,68,0.34)",
+    background: "linear-gradient(180deg, rgba(239,68,68,0.09), rgba(239,68,68,0.025)), #090909",
+  },
+  alertTitle: {
+    color: "#f8f4ec",
+    fontSize: 14,
+    lineHeight: 1.35,
+  },
+  alertDescription: {
+    color: "#9ca3af",
+    fontSize: 12,
+    lineHeight: 1.55,
+  },
+  compactList: {
+    display: "grid",
+    gap: 10,
+  },
+  compactListItemButton: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gap: "6px 12px",
+    alignItems: "center",
+    width: "100%",
+    padding: "13px 14px",
+    borderRadius: 13,
+    border: "1px solid rgba(255,255,255,0.075)",
+    background: "#090909",
+    color: "#f8f4ec",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  compactListTitle: {
+    color: "#f8f4ec",
+    fontSize: 14,
+    fontWeight: 800,
+    lineHeight: 1.35,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  compactListMeta: {
+    color: "#9ca3af",
+    fontSize: 12,
+    lineHeight: 1.45,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  stockTextLow: {
+    color: "#fbbf24",
+    fontSize: 13,
+    fontWeight: 900,
+  },
+  stockTextEmpty: {
+    color: "#f87171",
+    fontSize: 13,
+    fontWeight: 900,
+  },
   loadingPanel: {
     padding: "28px 18px",
-    borderRadius: 16,
-    border: "1px dashed #2f2f2f",
-    background: "#0d0d0d",
+    borderRadius: 14,
+    border: "1px dashed rgba(255,255,255,0.14)",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.008)), #090909",
     color: "#9ca3af",
     textAlign: "center",
   },
@@ -2612,14 +2988,15 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "center",
   },
   card: {
-    border: "1px solid #202020",
-    borderRadius: 20,
-    background: "#101010",
+    border: "1px solid rgba(255,255,255,0.075)",
+    borderRadius: 18,
+    background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.006)), #0d0d0d",
     padding: 22,
     display: "flex",
     flexDirection: "column",
     gap: 16,
     textAlign: "left",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
   },
   launchCard: {
     border: "1px solid #2f2f2f",
@@ -2778,12 +3155,13 @@ const styles: Record<string, CSSProperties> = {
     background: "#111111",
   },
   mediaPreviewImage: {
-    width: 56,
-    height: 56,
-    objectFit: "cover",
+    width: 72,
+    height: 90,
+    objectFit: "contain",
+    objectPosition: "center",
     borderRadius: 10,
-    border: "1px solid #2f2f2f",
-    background: "#0f0f0f",
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "#080808",
     flexShrink: 0,
   },
   galleryPreviewGrid: {
@@ -3025,8 +3403,10 @@ const styles: Record<string, CSSProperties> = {
   tableWrap: {
     overflowX: "auto",
     WebkitOverflowScrolling: "touch",
-    border: "1px solid #2f2f2f",
-    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.075)",
+    borderRadius: 14,
+    background: "#090909",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.035)",
   },
   table: {
     width: "100%",
@@ -3036,10 +3416,11 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     lineHeight: 1.4,
     color: "#e5e7eb",
-    textAlign: "center",
+    textAlign: "left",
   },
   activeTableRow: {
-    background: "rgba(255,255,255,0.03)",
+    outline: "1px solid rgba(239,68,68,0.30)",
+    background: "rgba(239,68,68,0.055)",
   },
   orderAdminLayout: {
     display: "grid",
@@ -3192,22 +3573,23 @@ const styles: Record<string, CSSProperties> = {
     gap: 6,
   },
   productThumb: {
-    width: 52,
-    height: 52,
-    objectFit: "cover",
+    width: 56,
+    height: 70,
+    objectFit: "contain",
+    objectPosition: "center",
     borderRadius: 10,
-    border: "1px solid #2f2f2f",
-    background: "#0f0f0f",
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "#080808",
   },
   productThumbEmpty: {
-    width: 52,
-    height: 52,
+    width: 56,
+    height: 70,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
-    border: "1px dashed #3a3a3a",
-    background: "#121212",
+    border: "1px dashed rgba(255,255,255,0.16)",
+    background: "#090909",
     color: "#9ca3af",
     fontSize: 10,
     textAlign: "center",
@@ -3261,42 +3643,45 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
   },
   smallBtn: {
-    border: "1px solid #2f2f2f",
+    border: "1px solid rgba(255,255,255,0.10)",
     background: "#111111",
     color: "#f0ede8",
-    borderRadius: 8,
+    borderRadius: 9,
     padding: "6px 10px",
     cursor: "pointer",
     fontWeight: 700,
     whiteSpace: "nowrap",
   },
   primaryBtn: {
-    border: "1px solid #3a3a3a",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    border: "1px solid rgba(239,68,68,0.46)",
+    background: "linear-gradient(135deg, #ef233c 0%, #991b1b 100%)",
     color: "#fff",
-    borderRadius: 8,
+    borderRadius: 10,
     padding: "12px 16px",
     cursor: "pointer",
     minWidth: 180,
     fontWeight: 800,
+    boxShadow: "0 12px 28px rgba(220,38,38,0.18)",
   },
   secondaryBtn: {
-    border: "1px solid #2f2f2f",
+    border: "1px solid rgba(255,255,255,0.10)",
     background: "#111111",
     color: "#f0ede8",
-    borderRadius: 8,
+    borderRadius: 10,
     padding: "10px 14px",
     cursor: "pointer",
     minWidth: 128,
     fontWeight: 700,
   },
   dangerBtn: {
-    border: "1px solid #dc2626",
-    background: "#111111",
-    color: "#dc2626",
-    borderRadius: 8,
+    border: "1px solid rgba(239,68,68,0.52)",
+    background: "rgba(127,29,29,0.14)",
+    color: "#f87171",
+    borderRadius: 9,
     padding: "6px 10px",
     cursor: "pointer",
+    fontWeight: 800,
+    whiteSpace: "nowrap",
   },
 };
 
