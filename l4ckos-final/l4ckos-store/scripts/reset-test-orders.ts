@@ -113,6 +113,11 @@ function isMissingDatabaseObjectError(error: unknown) {
   return /(unknown column|unknown table|doesn't exist|does not exist|no such table)/i.test(message);
 }
 
+function isOptionalWebhookTableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /asaasWebhookEvents/i.test(message);
+}
+
 function evaluateOrder(order: OrderRow, related: RelatedRows, args: Args) {
   const reasons: CandidateReason[] = [];
   const warnings: CandidateReason[] = [];
@@ -251,7 +256,7 @@ async function loadOrders(args: Args) {
       .from(asaasWebhookEvents)
       .where(inArray(asaasWebhookEvents.orderId, orderIds))
       .catch(error => {
-        if (isMissingDatabaseObjectError(error)) return [];
+        if (args.allOrders || isMissingDatabaseObjectError(error) || isOptionalWebhookTableError(error)) return [];
         throw error;
       }),
   ]);
@@ -350,7 +355,7 @@ async function deleteCandidates(candidates: Array<{ order: OrderRow; related: Re
       try {
         await deleteRelated();
       } catch (error) {
-        if (!isMissingDatabaseObjectError(error)) throw error;
+        if (!isMissingDatabaseObjectError(error) && !isOptionalWebhookTableError(error)) throw error;
       }
     }
     await tx.delete(orders).where(inArray(orders.id, ids));
