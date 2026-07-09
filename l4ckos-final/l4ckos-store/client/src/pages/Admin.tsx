@@ -2788,8 +2788,9 @@ const styles: Record<string, CSSProperties> = {
   },
   galleryPreviewGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(132px, 180px))",
     gap: 12,
+    alignItems: "start",
   },
   galleryPreviewCard: {
     display: "flex",
@@ -2800,14 +2801,17 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #2f2f2f",
     background: "#111111",
     textAlign: "left",
+    maxWidth: 180,
   },
   galleryPreviewImage: {
     width: "100%",
-    aspectRatio: "1 / 1",
-    objectFit: "cover",
+    aspectRatio: "4 / 5",
+    objectFit: "contain",
+    objectPosition: "center",
+    display: "block",
     borderRadius: 10,
     border: "1px solid #2f2f2f",
-    background: "#0f0f0f",
+    background: "#080808",
   },
   galleryPreviewMeta: {
     display: "flex",
