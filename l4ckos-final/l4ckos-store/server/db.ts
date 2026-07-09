@@ -549,9 +549,39 @@ export async function createOrUpdateProductReview(input: {
   return { updated: false, id: insertedId } as const;
 }
 
-function isMissingProductImageVariantColumnError(error: unknown) {
+function getDatabaseErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return /unknown column/i.test(message) && /image(Thumbnail|Detail|Banner)Url/i.test(message);
+  return message;
+}
+
+function isMissingDatabaseObjectError(error: unknown) {
+  const message = getDatabaseErrorMessage(error);
+  return /(unknown column|unknown table|doesn't exist|does not exist|no such table)/i.test(message);
+}
+
+function isLegacyProductColumnError(error: unknown) {
+  const message = getDatabaseErrorMessage(error);
+  return /unknown column/i.test(message) && /(image(Thumbnail|Detail|Banner)Url|optionColors|optionSizes|sizeType)/i.test(message);
+}
+
+function stripOptionalProductFields(product: Partial<InsertProduct>) {
+  const {
+    imageThumbnailUrl,
+    imageDetailUrl,
+    imageBannerUrl,
+    optionColors,
+    optionSizes,
+    sizeType,
+    ...legacyProduct
+  } = product as Partial<InsertProduct> & {
+    imageThumbnailUrl?: string | null;
+    imageDetailUrl?: string | null;
+    imageBannerUrl?: string | null;
+    optionColors?: string | null;
+    optionSizes?: string | null;
+    sizeType?: string | null;
+  };
+  return legacyProduct;
 }
 
 export async function createProduct(product: InsertProduct) {
@@ -560,12 +590,8 @@ export async function createProduct(product: InsertProduct) {
   try {
     return await db.insert(products).values(product);
   } catch (error) {
-    if (!isMissingProductImageVariantColumnError(error)) throw error;
-    const { imageThumbnailUrl, imageDetailUrl, imageBannerUrl, ...legacyProduct } = product as InsertProduct & {
-      imageThumbnailUrl?: string | null;
-      imageDetailUrl?: string | null;
-      imageBannerUrl?: string | null;
-    };
+    if (!isLegacyProductColumnError(error)) throw error;
+    const legacyProduct = stripOptionalProductFields(product) as InsertProduct;
     return await db.insert(products).values(legacyProduct);
   }
 }
@@ -576,12 +602,8 @@ export async function updateProduct(id: number, product: Partial<InsertProduct>)
   try {
     return await db.update(products).set(product).where(eq(products.id, id));
   } catch (error) {
-    if (!isMissingProductImageVariantColumnError(error)) throw error;
-    const { imageThumbnailUrl, imageDetailUrl, imageBannerUrl, ...legacyProduct } = product as Partial<InsertProduct> & {
-      imageThumbnailUrl?: string | null;
-      imageDetailUrl?: string | null;
-      imageBannerUrl?: string | null;
-    };
+    if (!isLegacyProductColumnError(error)) throw error;
+    const legacyProduct = stripOptionalProductFields(product);
     return await db.update(products).set(legacyProduct).where(eq(products.id, id));
   }
 }
@@ -1259,7 +1281,11 @@ export async function getOrdersByFilters(filters?: {
       isDefault: userAddresses.isDefault,
       updatedAt: userAddresses.updatedAt,
     })
-    .from(userAddresses);
+    .from(userAddresses)
+    .catch(error => {
+      if (isMissingDatabaseObjectError(error)) return [];
+      throw error;
+    });
   const reservations = await db
     .select({
       orderId: stockReservations.orderId,
@@ -1268,7 +1294,11 @@ export async function getOrdersByFilters(filters?: {
       productName: products.name,
     })
     .from(stockReservations)
-    .leftJoin(products, eq(products.id, stockReservations.productId));
+    .leftJoin(products, eq(products.id, stockReservations.productId))
+    .catch(error => {
+      if (isMissingDatabaseObjectError(error)) return [];
+      throw error;
+    });
 
   const usersById = new Map(usersRows.map(user => [user.id, user]));
   const itemsByOrder = new Map<number, typeof reservations>();
@@ -1356,6 +1386,16 @@ export async function setOrderAdminData(
     .where(eq(orders.id, orderId));
 }
 
+async function safeOptionalSelect<T>(label: string, query: () => Promise<T[]>, warnings?: string[]) {
+  try {
+    return await query();
+  } catch (error) {
+    if (!isMissingDatabaseObjectError(error)) throw error;
+    warnings?.push(`${label}: ${getDatabaseErrorMessage(error)}`);
+    return [];
+  }
+}
+
 export async function replaceProductImages(
   productId: number,
   imageUrls: Array<string | {
@@ -1369,7 +1409,12 @@ export async function replaceProductImages(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(productImages).where(eq(productImages.productId, productId));
+  try {
+    await db.delete(productImages).where(eq(productImages.productId, productId));
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error)) return;
+    throw error;
+  }
   if (imageUrls.length > 0) {
     const nextRows = imageUrls.map((item, index) => ({
       productId,
@@ -1385,10 +1430,16 @@ export async function replaceProductImages(
     try {
       await db.insert(productImages).values(nextRows);
     } catch (error) {
-      if (!isMissingProductImageVariantColumnError(error)) throw error;
-      await db.insert(productImages).values(
-        nextRows.map(({ imageThumbnailUrl, imageDetailUrl, imageBannerUrl, ...legacyRow }) => legacyRow),
-      );
+      if (!isMissingDatabaseObjectError(error)) throw error;
+      if (!/unknown column/i.test(getDatabaseErrorMessage(error))) return;
+      try {
+        await db.insert(productImages).values(
+          nextRows.map(({ imageThumbnailUrl, imageDetailUrl, imageBannerUrl, color, alt, ...legacyRow }) => legacyRow),
+        );
+      } catch (legacyError) {
+        if (isMissingDatabaseObjectError(legacyError)) return;
+        throw legacyError;
+      }
     }
   }
 }
@@ -1399,26 +1450,65 @@ export async function replaceProductVariants(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(productVariants).where(eq(productVariants.productId, productId));
+  try {
+    await db.delete(productVariants).where(eq(productVariants.productId, productId));
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error)) return;
+    throw error;
+  }
   if (variants.length > 0) {
-    await db.insert(productVariants).values(
-      variants.map(variant => ({
-        productId,
-        name: variant.name,
-        sku: variant.sku ?? null,
-        price: variant.price ?? null,
-        stock: variant.stock,
-      })),
-    );
+    try {
+      await db.insert(productVariants).values(
+        variants.map(variant => ({
+          productId,
+          name: variant.name,
+          sku: variant.sku ?? null,
+          price: variant.price ?? null,
+          stock: variant.stock,
+        })),
+      );
+    } catch (error) {
+      if (isMissingDatabaseObjectError(error)) return;
+      throw error;
+    }
   }
 }
 
 export async function getProductsAdmin() {
   const db = await getDb();
   if (!db) return [];
-  const productRows = await db.select().from(products).orderBy(desc(products.id));
-  const imageRows = await db.select().from(productImages);
-  const variantRows = await db.select().from(productVariants);
+  let productRows: Array<typeof products.$inferSelect>;
+  try {
+    productRows = await db.select().from(products).orderBy(desc(products.id));
+  } catch (error) {
+    if (!isLegacyProductColumnError(error)) throw error;
+    const legacyRows = await db
+      .select({
+        id: products.id,
+        name: products.name,
+        description: products.description,
+        fullDescription: products.fullDescription,
+        category: products.category,
+        price: products.price,
+        imageUrl: products.imageUrl,
+        stock: products.stock,
+        createdAt: products.createdAt,
+        updatedAt: products.updatedAt,
+      })
+      .from(products)
+      .orderBy(desc(products.id));
+    productRows = legacyRows.map(product => ({
+      ...product,
+      optionColors: null,
+      optionSizes: null,
+      sizeType: "alpha" as const,
+      imageThumbnailUrl: null,
+      imageDetailUrl: null,
+      imageBannerUrl: null,
+    }));
+  }
+  const imageRows = await safeOptionalSelect("productImages", () => db.select().from(productImages));
+  const variantRows = await safeOptionalSelect("productVariants", () => db.select().from(productVariants));
 
   const imagesMap = new Map<number, typeof imageRows>();
   for (const item of imageRows) {
@@ -1647,13 +1737,18 @@ export async function createAuditLog(payload: {
 }) {
   const db = await getDb();
   if (!db) return;
-  await db.insert(auditLogs).values({
-    actorUserId: payload.actorUserId,
-    action: payload.action,
-    entity: payload.entity,
-    entityId: payload.entityId ?? null,
-    metadata: payload.metadata ? JSON.stringify(payload.metadata) : null,
-  });
+  try {
+    await db.insert(auditLogs).values({
+      actorUserId: payload.actorUserId,
+      action: payload.action,
+      entity: payload.entity,
+      entityId: payload.entityId ?? null,
+      metadata: payload.metadata ? JSON.stringify(payload.metadata) : null,
+    });
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error)) return;
+    throw error;
+  }
 }
 
 export async function getAuditLogs(limit = 300) {
@@ -1845,9 +1940,43 @@ export async function updateLocalAuthPasswordByUserId(payload: { userId: number;
     .where(eq(localAuthUsers.userId, payload.userId));
 }
 
+async function selectProductsForBackup(db: Awaited<ReturnType<typeof getDb>>, warnings: string[]) {
+  if (!db) return [];
+  try {
+    return await db.select().from(products);
+  } catch (error) {
+    if (!isLegacyProductColumnError(error)) throw error;
+    warnings.push(`products: leitura em modo legado por coluna opcional ausente (${getDatabaseErrorMessage(error)})`);
+    const legacyRows = await db
+      .select({
+        id: products.id,
+        name: products.name,
+        description: products.description,
+        fullDescription: products.fullDescription,
+        category: products.category,
+        price: products.price,
+        imageUrl: products.imageUrl,
+        stock: products.stock,
+        createdAt: products.createdAt,
+        updatedAt: products.updatedAt,
+      })
+      .from(products);
+    return legacyRows.map(product => ({
+      ...product,
+      optionColors: null,
+      optionSizes: null,
+      sizeType: "alpha" as const,
+      imageThumbnailUrl: null,
+      imageDetailUrl: null,
+      imageBannerUrl: null,
+    }));
+  }
+}
+
 export async function getBackupPayload() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const warnings: string[] = [];
 
   const [
     usersRows,
@@ -1864,23 +1993,24 @@ export async function getBackupPayload() {
     paymentRows,
     auditRows,
   ] = await Promise.all([
-    db.select().from(users),
-    db.select().from(products),
-    db.select().from(productVariants),
-    db.select().from(productImages),
-    db.select().from(orders),
-    db.select().from(orderItems),
-    db.select().from(coupons),
-    db.select().from(productReviews),
-    db.select().from(stockReservations),
-    db.select().from(userProfiles),
-    db.select().from(userAddresses),
-    db.select().from(userPaymentMethods),
-    db.select().from(auditLogs),
+    safeOptionalSelect("users", () => db.select().from(users), warnings),
+    selectProductsForBackup(db, warnings),
+    safeOptionalSelect("productVariants", () => db.select().from(productVariants), warnings),
+    safeOptionalSelect("productImages", () => db.select().from(productImages), warnings),
+    safeOptionalSelect("orders", () => db.select().from(orders), warnings),
+    safeOptionalSelect("orderItems", () => db.select().from(orderItems), warnings),
+    safeOptionalSelect("coupons", () => db.select().from(coupons), warnings),
+    safeOptionalSelect("productReviews", () => db.select().from(productReviews), warnings),
+    safeOptionalSelect("stockReservations", () => db.select().from(stockReservations), warnings),
+    safeOptionalSelect("userProfiles", () => db.select().from(userProfiles), warnings),
+    safeOptionalSelect("userAddresses", () => db.select().from(userAddresses), warnings),
+    safeOptionalSelect("userPaymentMethods", () => db.select().from(userPaymentMethods), warnings),
+    safeOptionalSelect("auditLogs", () => db.select().from(auditLogs), warnings),
   ]);
 
   return {
     exportedAt: new Date().toISOString(),
+    warnings,
     data: {
       users: usersRows,
       products: productsRows,

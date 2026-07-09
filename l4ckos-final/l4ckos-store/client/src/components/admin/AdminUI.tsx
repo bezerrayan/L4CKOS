@@ -311,7 +311,7 @@ const styles: Record<string, CSSProperties> = {
   },
   statsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
     gap: 14,
   },
   statCard: {
@@ -392,7 +392,7 @@ const styles: Record<string, CSSProperties> = {
   },
   quickActions: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
     gap: 10,
   },
   quickActionCard: {
@@ -454,11 +454,15 @@ const styles: Record<string, CSSProperties> = {
     color: "#f0ede8",
     fontSize: 12,
     fontWeight: 700,
-    whiteSpace: "nowrap",
+    maxWidth: "100%",
+    minWidth: 0,
+    textAlign: "center",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
   },
   metricGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 135px), 1fr))",
     gap: 10,
   },
   metricCard: {
@@ -468,6 +472,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 14,
     border: "1px solid rgba(255,255,255,0.075)",
     background: "#090909",
+    minWidth: 0,
   },
   metricCardWarning: {
     borderColor: "rgba(245,158,11,0.26)",
@@ -493,6 +498,8 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 24,
     lineHeight: 1,
     fontWeight: 900,
+    minWidth: 0,
+    overflowWrap: "anywhere",
   },
   filterRow: {
     display: "flex",

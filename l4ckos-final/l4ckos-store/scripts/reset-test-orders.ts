@@ -7,8 +7,10 @@ import { asaasWebhookEvents, auditLogs, orderItems, orders, products, stockReser
 
 type Args = {
   confirm: boolean;
+  confirmAllOrders: boolean;
   confirmProduction: boolean;
   confirmNoRecentBackup: boolean;
+  allOrders: boolean;
   ids: number[];
   from?: Date;
   to?: Date;
@@ -39,8 +41,10 @@ const testIdentityPattern = /\b(teste|test|example|cliente exemplo)\b/i;
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     confirm: process.env.CONFIRM_RESET_TEST_ORDERS === "true",
+    confirmAllOrders: process.env.CONFIRM_RESET_ALL_ORDERS === "true",
     confirmProduction: process.env.CONFIRM_PRODUCTION_RESET === "true",
     confirmNoRecentBackup: process.env.CONFIRM_NO_RECENT_BACKUP === "true",
+    allOrders: process.env.RESET_ALL_ORDERS === "true",
     ids: [],
     maxTotalCents: Number(process.env.TEST_ORDER_MAX_TOTAL_CENTS || 1_000),
     backupMaxAgeHours: Number(process.env.BACKUP_MAX_AGE_HOURS || 24),
@@ -48,8 +52,10 @@ function parseArgs(argv: string[]): Args {
 
   for (const raw of argv) {
     if (raw === "--confirm-reset-test-orders") args.confirm = true;
+    if (raw === "--confirm-reset-all-orders") args.confirmAllOrders = true;
     if (raw === "--confirm-production-reset") args.confirmProduction = true;
     if (raw === "--confirm-no-recent-backup") args.confirmNoRecentBackup = true;
+    if (raw === "--all-orders") args.allOrders = true;
     if (raw.startsWith("--ids=")) {
       args.ids = raw
         .slice("--ids=".length)
@@ -102,6 +108,11 @@ function hasAnyProcessedWebhook(webhooks: Array<typeof asaasWebhookEvents.$infer
   return webhooks.some(row => row.status === "processed");
 }
 
+function isMissingDatabaseObjectError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /(unknown column|unknown table|doesn't exist|does not exist|no such table)/i.test(message);
+}
+
 function evaluateOrder(order: OrderRow, related: RelatedRows, args: Args) {
   const reasons: CandidateReason[] = [];
   const warnings: CandidateReason[] = [];
@@ -116,6 +127,19 @@ function evaluateOrder(order: OrderRow, related: RelatedRows, args: Args) {
   const nonPaidStatus = !paidOrderStatuses.has(String(order.status ?? ""));
   const paidWebhook = hasPaidWebhook(related.webhooks);
   const processedWebhook = hasAnyProcessedWebhook(related.webhooks);
+
+  if (args.allOrders) {
+    const allOrderWarnings: CandidateReason[] = [];
+    if (paidWebhook) allOrderWarnings.push({ code: "paid_webhook", description: "Há webhook Asaas processado com evento de pagamento recebido/confirmado." });
+    if (paidOrderStatuses.has(String(order.status ?? ""))) allOrderWarnings.push({ code: "paid_like_status", description: `Status atual é ${order.status}.` });
+    if (processedWebhook && !paidWebhook) allOrderWarnings.push({ code: "processed_webhook", description: "Há webhook Asaas processado relacionado ao pedido." });
+    return {
+      isCandidate: true,
+      isSuspect: false,
+      reasons: [{ code: "all_orders", description: "Modo explícito --all-orders selecionado." }],
+      warnings: allOrderWarnings,
+    };
+  }
 
   if (identityLooksTest) reasons.push({ code: "test_identity", description: "Nome/e-mail contém teste, test, example ou cliente exemplo." });
   if (manualIdMatch) reasons.push({ code: "manual_id", description: "ID informado manualmente em --ids." });
@@ -197,7 +221,11 @@ async function loadOrders(args: Args) {
       })
       .from(orderItems)
       .leftJoin(products, eq(products.id, orderItems.productId))
-      .where(inArray(orderItems.orderId, orderIds)),
+      .where(inArray(orderItems.orderId, orderIds))
+      .catch(error => {
+        if (isMissingDatabaseObjectError(error)) return [];
+        throw error;
+      }),
     db
       .select({
         id: stockReservations.id,
@@ -213,8 +241,19 @@ async function loadOrders(args: Args) {
       })
       .from(stockReservations)
       .leftJoin(products, eq(products.id, stockReservations.productId))
-      .where(inArray(stockReservations.orderId, orderIds)),
-    db.select().from(asaasWebhookEvents).where(inArray(asaasWebhookEvents.orderId, orderIds)),
+      .where(inArray(stockReservations.orderId, orderIds))
+      .catch(error => {
+        if (isMissingDatabaseObjectError(error)) return [];
+        throw error;
+      }),
+    db
+      .select()
+      .from(asaasWebhookEvents)
+      .where(inArray(asaasWebhookEvents.orderId, orderIds))
+      .catch(error => {
+        if (isMissingDatabaseObjectError(error)) return [];
+        throw error;
+      }),
   ]);
 
   const relatedByOrder = new Map<number, RelatedRows>();
@@ -256,6 +295,7 @@ function printReport(input: {
   const totalCents = input.candidates.reduce((sum, item) => sum + Number(item.order.totalPrice ?? 0), 0);
 
   console.log("\n=== DRY-RUN RESET DE PEDIDOS DE TESTE L4CKOS ===");
+  if (input.args.allOrders) console.log("Escopo: TODOS OS PEDIDOS (--all-orders)");
   console.log(`Modo: ${input.args.confirm ? "EXECUÇÃO REAL SOLICITADA" : "DRY-RUN (nenhuma exclusão será feita)"}`);
   console.log(`Ambiente NODE_ENV: ${process.env.NODE_ENV || "não definido"}`);
   console.log(`Pedidos candidatos: ${input.candidates.length}`);
@@ -302,22 +342,34 @@ async function deleteCandidates(candidates: Array<{ order: OrderRow; related: Re
   const ids = candidates.map(item => item.order.id);
 
   await db.transaction(async tx => {
-    await tx.delete(orderItems).where(inArray(orderItems.orderId, ids));
-    await tx.delete(stockReservations).where(inArray(stockReservations.orderId, ids));
-    await tx.delete(asaasWebhookEvents).where(inArray(asaasWebhookEvents.orderId, ids));
+    for (const deleteRelated of [
+      () => tx.delete(orderItems).where(inArray(orderItems.orderId, ids)),
+      () => tx.delete(stockReservations).where(inArray(stockReservations.orderId, ids)),
+      () => tx.delete(asaasWebhookEvents).where(inArray(asaasWebhookEvents.orderId, ids)),
+    ]) {
+      try {
+        await deleteRelated();
+      } catch (error) {
+        if (!isMissingDatabaseObjectError(error)) throw error;
+      }
+    }
     await tx.delete(orders).where(inArray(orders.id, ids));
-    await tx.insert(auditLogs).values({
-      actorUserId: 0,
-      action: "orders.resetTestOrders",
-      entity: "orders",
-      entityId: ids.join(","),
-      metadata: JSON.stringify({
-        script: "scripts/reset-test-orders.ts",
-        removedOrderIds: ids,
-        removedAt: new Date().toISOString(),
-        totalRemovedCents: candidates.reduce((sum, item) => sum + Number(item.order.totalPrice ?? 0), 0),
-      }),
-    });
+    try {
+      await tx.insert(auditLogs).values({
+        actorUserId: 0,
+        action: "orders.resetTestOrders",
+        entity: "orders",
+        entityId: ids.join(","),
+        metadata: JSON.stringify({
+          script: "scripts/reset-test-orders.ts",
+          removedOrderIds: ids,
+          removedAt: new Date().toISOString(),
+          totalRemovedCents: candidates.reduce((sum, item) => sum + Number(item.order.totalPrice ?? 0), 0),
+        }),
+      });
+    } catch (error) {
+      if (!isMissingDatabaseObjectError(error)) throw error;
+    }
   });
 
   console.log(`\nRemoção concluída em transação. Pedidos removidos: ${ids.join(", ")}`);
@@ -342,7 +394,14 @@ async function main() {
   if (!args.confirm) {
     console.log("\nDry-run concluído. Nada foi apagado.");
     console.log("Para executar de verdade, rode com --confirm-reset-test-orders ou CONFIRM_RESET_TEST_ORDERS=true.");
+    if (args.allOrders) {
+      console.log("Para zerar TODOS os pedidos, rode também com --confirm-reset-all-orders ou CONFIRM_RESET_ALL_ORDERS=true.");
+    }
     return;
+  }
+
+  if (args.allOrders && !args.confirmAllOrders) {
+    throw new Error("Modo --all-orders detectado. Use também --confirm-reset-all-orders para zerar todos os pedidos.");
   }
 
   if (process.env.NODE_ENV === "production" && !args.confirmProduction) {

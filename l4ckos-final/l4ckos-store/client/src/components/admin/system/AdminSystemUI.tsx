@@ -245,6 +245,7 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(255,255,255,0.08)",
     background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.006)), #090909",
     textAlign: "left",
+    minWidth: 0,
   },
   exportHeader: {
     display: "flex",
@@ -252,6 +253,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: 14,
     flexWrap: "wrap",
+    minWidth: 0,
   },
   exportBody: {
     display: "grid",
@@ -283,10 +285,11 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 8,
     flexWrap: "wrap",
+    minWidth: 0,
   },
   summaryGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 135px), 1fr))",
     gap: 10,
   },
   summaryCard: {

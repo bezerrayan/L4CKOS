@@ -69,6 +69,15 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function csvCell(value: unknown) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function csvRow(values: unknown[]) {
+  return values.map(csvCell).join(",");
+}
+
 function sanitizeRecipientList(emails: string[]) {
   return [...new Set(emails.map(item => String(item ?? "").trim().toLowerCase()).filter(Boolean))];
 }
@@ -645,12 +654,55 @@ export const adminRouter = router({
       }),
     )
     .query(async ({ input }) => {
-      const rows = await getSalesByPeriod(new Date(input.from), new Date(input.to));
-      const header = "date,totalSalesCents,ordersCount";
-      const lines = rows.map(row => `${row.day},${row.totalSales},${row.ordersCount}`);
+      const from = new Date(input.from);
+      const to = new Date(input.to);
+      const [summaryRows, ordersRows] = await Promise.all([
+        getSalesByPeriod(from, to),
+        getOrdersByFilters({ from, to }),
+      ]);
+      const totalSalesCents = summaryRows.reduce((sum, row) => sum + Number(row.totalSales ?? 0), 0);
+      const totalOrders = summaryRows.reduce((sum, row) => sum + Number(row.ordersCount ?? 0), 0);
+      const lines = [
+        csvRow(["L4CKOS - Relatorio de vendas"]),
+        csvRow(["periodFrom", input.from]),
+        csvRow(["periodTo", input.to]),
+        csvRow(["totalSalesCents", totalSalesCents]),
+        csvRow(["totalSalesBRL", (totalSalesCents / 100).toFixed(2)]),
+        csvRow(["ordersCount", totalOrders]),
+        "",
+        csvRow(["section", "date", "totalSalesCents", "totalSalesBRL", "ordersCount"]),
+        ...summaryRows.map(row => csvRow(["daily_summary", row.day, row.totalSales, (Number(row.totalSales) / 100).toFixed(2), row.ordersCount])),
+        "",
+        csvRow([
+          "section",
+          "orderId",
+          "createdAt",
+          "status",
+          "totalPriceCents",
+          "totalPriceBRL",
+          "customerName",
+          "customerEmail",
+          "trackingCode",
+          "itemCount",
+          "items",
+        ]),
+        ...ordersRows.map(order => csvRow([
+          "order",
+          order.id,
+          order.createdAt instanceof Date ? order.createdAt.toISOString() : order.createdAt,
+          order.status,
+          order.totalPrice,
+          (Number(order.totalPrice ?? 0) / 100).toFixed(2),
+          order.customerName,
+          order.customerEmail,
+          order.trackingCode,
+          order.items?.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0) ?? 0,
+          order.items?.map(item => `${item.productName || `Produto #${item.productId}`} x${item.quantity}`).join("; ") ?? "",
+        ])),
+      ];
       return {
         fileName: `sales-report-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.csv`,
-        csv: [header, ...lines].join("\n"),
+        csv: lines.join("\n"),
       };
     }),
 
@@ -662,11 +714,19 @@ export const adminRouter = router({
 
   backupManual: adminProcedure.mutation(async ({ ctx }) => {
     const backup = await getBackupPayload();
-    const dir = process.env.BACKUP_DIR || "backups";
-    await mkdir(dir, { recursive: true });
+    let dir = process.env.BACKUP_DIR || "backups";
     const fileName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-    const filePath = path.join(dir, fileName);
-    await writeFile(filePath, JSON.stringify(backup, null, 2), "utf-8");
+    let filePath = path.join(dir, fileName);
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(filePath, JSON.stringify(backup, null, 2), "utf-8");
+    } catch (error) {
+      if (process.env.BACKUP_DIR) throw error;
+      dir = path.join("/tmp", "l4ckos-backups");
+      filePath = path.join(dir, fileName);
+      await mkdir(dir, { recursive: true });
+      await writeFile(filePath, JSON.stringify(backup, null, 2), "utf-8");
+    }
     await createAuditLog({
       actorUserId: ctx.user.id,
       action: "backup.manual",

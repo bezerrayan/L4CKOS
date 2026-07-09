@@ -403,6 +403,7 @@ export default function Admin() {
   const [couponFilter, setCouponFilter] = useState<CouponListFilter>("all");
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
+  const [reportExporting, setReportExporting] = useState(false);
   const [restoreFileName, setRestoreFileName] = useState("");
   const [newCoupon, setNewCoupon] = useState({ code: "", type: "percent", value: "10", maxUses: "" });
   const [launchEmailForm, setLaunchEmailForm] = useState({
@@ -671,11 +672,6 @@ export default function Admin() {
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
-
-  const reportQuery = trpc.admin.reportsSalesCsv.useQuery(
-    { from: reportFrom || new Date(Date.now() - 7 * 86400000).toISOString(), to: reportTo || new Date().toISOString() },
-    { enabled: false },
-  );
 
   const searchedCustomers = useMemo(() => {
     const normalizedSearch = customerSearch.trim().toLowerCase();
@@ -1016,7 +1012,10 @@ export default function Admin() {
     [],
   );
   const wideFieldStyle = { ...styles.mediaField, gridColumn: "1 / -1" } as CSSProperties;
-  const mediumFieldStyle = { ...styles.mediaField, gridColumn: "span 2" } as CSSProperties;
+  const mediumFieldStyle = {
+    ...styles.mediaField,
+    gridColumn: isCompactAdmin ? "1 / -1" : "span 2",
+  } as CSSProperties;
 
   if (!isAuthenticated) {
     return (
@@ -2772,22 +2771,29 @@ export default function Admin() {
               <input type="datetime-local" style={styles.input} value={reportTo} onChange={e => setReportTo(e.target.value)} />
               <button
                 style={styles.primaryBtn}
+                disabled={reportExporting}
                 onClick={async () => {
-                  const fromIso = reportFrom ? new Date(reportFrom).toISOString() : new Date(Date.now() - 7 * 86400000).toISOString();
-                  const toIso = reportTo ? new Date(reportTo).toISOString() : new Date().toISOString();
-                  const data = await reportQuery.refetch({ throwOnError: true });
-                  const csvPayload = data.data ?? (await utils.admin.reportsSalesCsv.fetch({ from: fromIso, to: toIso }));
-                  const blob = new Blob([csvPayload.csv], { type: "text/csv;charset=utf-8;" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = csvPayload.fileName;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                  showToast({ message: "CSV exportado", duration: 2200 });
+                  try {
+                    setReportExporting(true);
+                    const fromIso = reportFrom ? new Date(reportFrom).toISOString() : new Date(Date.now() - 7 * 86400000).toISOString();
+                    const toIso = reportTo ? new Date(reportTo).toISOString() : new Date().toISOString();
+                    const csvPayload = await utils.admin.reportsSalesCsv.fetch({ from: fromIso, to: toIso });
+                    const blob = new Blob([csvPayload.csv], { type: "text/csv;charset=utf-8;" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = csvPayload.fileName;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    showToast({ message: "CSV exportado", duration: 2200 });
+                  } catch (error) {
+                    showToast({ message: error instanceof Error ? error.message : "Falha ao exportar CSV", duration: 2800 });
+                  } finally {
+                    setReportExporting(false);
+                  }
                 }}
               >
-                {reportQuery.isFetching ? "Exportando..." : "Exportar CSV"}
+                {reportExporting ? "Exportando..." : "Exportar CSV"}
               </button>
             </div>
           </ReportsExportCard>
@@ -3083,6 +3089,8 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: 12,
     textAlign: "left",
+    flexWrap: "wrap",
+    minWidth: 0,
   },
   productAdminTitle: {
     margin: 0,
@@ -3101,9 +3109,10 @@ const styles: Record<string, CSSProperties> = {
   },
   formGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
     gap: 14,
     alignItems: "stretch",
+    minWidth: 0,
   },
   couponCreateLayout: {
     display: "grid",
@@ -3150,6 +3159,7 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "flex-start",
+    minWidth: 0,
   },
   categoryPreviewBox: {
     display: "flex",
@@ -3163,7 +3173,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     background: "linear-gradient(135deg, #121212 0%, #181818 100%)",
     minHeight: 0,
-    gridColumn: "span 2",
+    minWidth: 0,
+    gridColumn: "1 / -1",
   },
   categoryPreviewLabel: {
     fontSize: 11,
@@ -3191,6 +3202,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     border: "1px solid #242424",
     background: "#101010",
+    minWidth: 0,
   },
   mediaActions: {
     display: "flex",
@@ -3203,6 +3215,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     flexWrap: "wrap",
     alignItems: "center",
+    minWidth: 0,
   },
   quickPickBtn: {
     border: "1px solid #2f2f2f",
@@ -3213,6 +3226,8 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 700,
     cursor: "pointer",
+    maxWidth: "100%",
+    overflowWrap: "anywhere",
   },
   mediaHint: {
     color: "#9ca3af",
@@ -3445,6 +3460,8 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "left",
     minHeight: 46,
     boxSizing: "border-box",
+    width: "100%",
+    minWidth: 0,
   },
   select: {
     border: "1px solid #27272a",
@@ -3455,6 +3472,8 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "left",
     minHeight: 46,
     boxSizing: "border-box",
+    width: "100%",
+    minWidth: 0,
   },
   table: {
     width: "100%",
