@@ -36,6 +36,13 @@ import {
   OrderStatusBadge,
   type OrderListFilter,
 } from "../components/admin/orders/AdminOrdersUI";
+import {
+  PromotionBannerPreview,
+  PromotionCampaignCell,
+  PromotionMediaBadge,
+  PromotionsSummaryCards,
+  PromotionStatusBadge,
+} from "../components/admin/promotions/AdminPromotionsUI";
 
 type Section =
   | "overview"
@@ -736,6 +743,17 @@ export default function Admin() {
       return row.status === orderQuickFilter;
     });
   }, [orderQuickFilter, searchedOrders]);
+  const promoSummary = useMemo(() => {
+    const rows = promoBannersQuery.data ?? [];
+    return {
+      total: rows.length,
+      active: rows.filter(row => Boolean(row.isActive)).length,
+      inactive: rows.filter(row => !row.isActive).length,
+      withDesktopImage: rows.filter(row => Boolean(resolveAdminImageUrl(row.imageUrl))).length,
+      withMobileImage: rows.filter(row => Boolean(resolveAdminImageUrl(row.mobileImageUrl))).length,
+      withoutImage: rows.filter(row => !resolveAdminImageUrl(row.imageUrl)).length,
+    };
+  }, [promoBannersQuery.data]);
   const orderOperationalAlerts = useMemo(() => {
     const rows = ordersQuery.data ?? [];
     const paidWithoutTracking = rows.filter(row => row.status === "paid" && !row.trackingCode).length;
@@ -1943,11 +1961,11 @@ export default function Admin() {
       )}
 
       {section === "promos" && (
-        <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Banners promocionais da Home</h2>
-          <p style={{ ...styles.muted, textAlign: "left" }}>
-            Esses banners alimentam o carrossel principal da home. Use esta área para manter campanhas sazonais mais organizadas e consistentes.
-          </p>
+        <AdminSurface
+          title="Promoções e banners"
+          description="Organize as campanhas do carrossel principal da home sem alterar o funcionamento público dos banners."
+        >
+          <PromotionsSummaryCards summary={promoSummary} />
           <div style={styles.formGrid}>
             <input style={styles.input} placeholder="Badge" value={newPromo.badge} onChange={e => setNewPromo(prev => ({ ...prev, badge: e.target.value }))} />
             <input style={styles.input} placeholder="Título" value={newPromo.title} onChange={e => setNewPromo(prev => ({ ...prev, title: e.target.value }))} />
@@ -2001,10 +2019,10 @@ export default function Admin() {
                 }}
               />
               {resolveAdminImageUrl(newPromo.imageUrl) ? (
-                <AdminImagePreview
+                <PromotionBannerPreview
                   src={resolveAdminImageUrl(newPromo.imageUrl)}
                   alt="Prévia do banner"
-                  caption="Essa imagem será exibida no carrossel principal da home. Prefira artes horizontais com boa leitura no centro do card."
+                  label="Desktop"
                 />
               ) : null}
               <span style={styles.mediaHint}>Proporção sugerida para desktop: 1600x900 ou 1920x1080.</span>
@@ -2058,10 +2076,11 @@ export default function Admin() {
                 }}
               />
               {resolveAdminImageUrl(newPromo.mobileImageUrl) ? (
-                <AdminImagePreview
+                <PromotionBannerPreview
                   src={resolveAdminImageUrl(newPromo.mobileImageUrl)}
                   alt="Prévia mobile do banner"
-                  caption="Use uma arte mais fechada para o mobile, com foco no centro da imagem."
+                  label="Mobile"
+                  variant="mobile"
                 />
               ) : null}
               <span style={styles.mediaHint}>Proporção sugerida para mobile: 1080x1350 ou 1080x1440.</span>
@@ -2185,7 +2204,7 @@ export default function Admin() {
           ) : (
             <AdminTableWrapper>
               <table style={styles.table}>
-                <thead><tr><th>Ordem</th><th>ID</th><th>Título</th><th>Imagem</th><th>Desconto</th><th>Ativo</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Ordem</th><th>Campanha</th><th>Previews</th><th>Status</th><th>CTA e link</th><th>Ações</th></tr></thead>
                 <tbody>
                   {(promoBannersQuery.data ?? []).map((row: any) => (
                   <tr
@@ -2206,37 +2225,56 @@ export default function Admin() {
                     <td>
                       <div style={styles.dragHandle}>
                         <span style={styles.dragGrip}>⋮⋮</span>
-                        <span>{row.sortOrder}</span>
+                        <span>#{row.sortOrder}</span>
                       </div>
                     </td>
-                    <td>{row.id}</td>
+                    <td>
+                      <PromotionCampaignCell
+                        badge={row.badge}
+                        title={row.title}
+                        description={row.description}
+                      />
+                    </td>
+                    <td>
+                      <div style={styles.promoTablePreviewGroup}>
+                        <PromotionBannerPreview
+                          src={resolveAdminImageUrl(row.imageUrl)}
+                          alt={row.title || "Banner"}
+                          label="Desktop"
+                        />
+                        <PromotionBannerPreview
+                          src={resolveAdminImageUrl(row.mobileImageUrl || row.imageUrl)}
+                          alt={row.title || "Banner mobile"}
+                          label="Mobile"
+                          variant="mobile"
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div style={styles.promoStatusStack}>
+                        <PromotionStatusBadge active={Boolean(row.isActive)} />
+                        <div style={styles.promoMediaBadgeRow}>
+                          <PromotionMediaBadge tone={resolveAdminImageUrl(row.imageUrl) ? "success" : "warning"}>
+                            {resolveAdminImageUrl(row.imageUrl) ? "Desktop ok" : "Sem desktop"}
+                          </PromotionMediaBadge>
+                          <PromotionMediaBadge tone={resolveAdminImageUrl(row.mobileImageUrl) ? "success" : "neutral"}>
+                            {resolveAdminImageUrl(row.mobileImageUrl) ? "Mobile ok" : "Usa desktop"}
+                          </PromotionMediaBadge>
+                        </div>
+                        {row.discountText ? (
+                          <PromotionMediaBadge tone="warning">
+                            {row.discountText} {row.discountLabel || "OFF"}
+                          </PromotionMediaBadge>
+                        ) : null}
+                      </div>
+                    </td>
                     <td>
                       <div style={styles.productTableCell}>
-                        <span style={styles.productTableName}>{row.title}</span>
-                        <span style={styles.productTableMeta}>{row.ctaLabel || "Sem CTA"} • {row.linkUrl || "Sem link"}</span>
+                        <span style={styles.productTableName}>{row.ctaLabel || "Sem CTA"}</span>
+                        <span style={styles.productTableMeta}>{row.linkUrl || "Sem link"}</span>
+                        <span style={styles.productTableMeta}>ID #{row.id}</span>
                       </div>
                     </td>
-                    <td>
-                      {resolveAdminImageUrl(row.imageUrl) ? (
-                        <div style={styles.productVisualCell}>
-                          <AdminImagePreview
-                            src={resolveAdminImageUrl(row.imageUrl) as string}
-                            alt={row.title || "Banner"}
-                            variant="thumb"
-                          />
-                          <div style={styles.productVisualMetaStack}>
-                            <span style={styles.productVisualMeta}>Desktop</span>
-                            <span style={styles.productVisualMeta}>
-                              {resolveAdminImageUrl(row.mobileImageUrl) ? "Mobile dedicado" : "Mobile usa a capa"}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        "Não"
-                      )}
-                    </td>
-                    <td>{row.discountText}</td>
-                    <td>{row.isActive ? "Sim" : "Não"}</td>
                     <td style={styles.actionsCell}>
                       <button
                         style={styles.smallBtn}
@@ -2307,7 +2345,7 @@ export default function Admin() {
               </table>
             </AdminTableWrapper>
           )}
-        </div>
+        </AdminSurface>
       )}
 
       {section === "coupons" && (
@@ -3190,6 +3228,26 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignItems: "center",
     gap: 2,
+  },
+  promoTablePreviewGroup: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 12,
+    flexWrap: "wrap",
+    minWidth: 280,
+  },
+  promoStatusStack: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 8,
+    minWidth: 150,
+  },
+  promoMediaBadgeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
   },
   dragHandle: {
     display: "inline-flex",
