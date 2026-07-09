@@ -11,11 +11,16 @@ import { formatPrice } from "../lib/utils";
 import { useIsMobile } from "../hooks/useIsMobile";
 import {
   AdminEmptyState,
+  AdminImagePreview,
+  AdminLoadingState,
   AdminPageHeader,
   AdminQuickActions,
   AdminStatCard,
   AdminStatsGrid,
+  AdminStatusBadge,
   AdminSurface,
+  AdminSummaryPill,
+  AdminTableWrapper,
 } from "../components/admin/AdminUI";
 
 type Section =
@@ -867,9 +872,9 @@ export default function Admin() {
               <div style={styles.statusSummaryGrid}>
                 {orderStatusSummary.map(item => (
                   <div key={item.status} style={styles.statusSummaryCard}>
-                    <span style={{ ...styles.statusBadge, ...getOrderStatusTone(item.status) }}>
+                    <AdminStatusBadge style={getOrderStatusTone(item.status)}>
                       {item.label}
-                    </span>
+                    </AdminStatusBadge>
                     <strong style={styles.statusSummaryValue}>{item.count}</strong>
                   </div>
                 ))}
@@ -919,7 +924,7 @@ export default function Admin() {
               description="Atalho visual para acompanhar o movimento mais recente."
             >
               {ordersQuery.isLoading ? (
-                <div style={styles.loadingPanel}>Carregando pedidos...</div>
+                <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
               ) : recentOrders.length === 0 ? (
                 <AdminEmptyState
                   title="Sem pedidos carregados"
@@ -941,9 +946,9 @@ export default function Admin() {
                       <span style={styles.compactListMeta}>
                         {order.customerName || order.customerEmail || `Cliente #${order.userId}`} · {formatPrice(Number(order.totalPrice) / 100)}
                       </span>
-                      <span style={{ ...styles.statusBadge, ...getOrderStatusTone(String(order.status)) }}>
+                      <AdminStatusBadge style={getOrderStatusTone(String(order.status))}>
                         {getOrderStatusLabel(String(order.status))}
-                      </span>
+                      </AdminStatusBadge>
                     </button>
                   ))}
                 </div>
@@ -955,7 +960,7 @@ export default function Admin() {
               description="Produtos com 5 unidades ou menos."
             >
               {productsQuery.isLoading ? (
-                <div style={styles.loadingPanel}>Carregando produtos...</div>
+                <AdminLoadingState>Carregando produtos...</AdminLoadingState>
               ) : lowStockProducts.length === 0 ? (
                 <AdminEmptyState
                   title="Estoque saudável"
@@ -1025,19 +1030,19 @@ export default function Admin() {
               value={customerSearch}
               onChange={e => setCustomerSearch(e.target.value)}
             />
-            <div style={styles.summaryPill}>Total: {customers.length}</div>
-            <div style={styles.summaryPill}>VIP: {customers.filter(row => row.isVip).length}</div>
-            <div style={styles.summaryPill}>Bloqueados: {customers.filter(row => row.isBlocked).length}</div>
+            <AdminSummaryPill>Total: {customers.length}</AdminSummaryPill>
+            <AdminSummaryPill>VIP: {customers.filter(row => row.isVip).length}</AdminSummaryPill>
+            <AdminSummaryPill>Bloqueados: {customers.filter(row => row.isBlocked).length}</AdminSummaryPill>
           </div>
           {customersQuery.isLoading ? (
-            <div style={styles.loadingPanel}>Carregando clientes...</div>
+            <AdminLoadingState>Carregando clientes...</AdminLoadingState>
           ) : customers.length === 0 ? (
             <AdminEmptyState
               title="Nenhum cliente encontrado"
               description="Quando houver usuários cadastrados, eles aparecerão aqui com seus indicadores principais."
             />
           ) : (
-            <div style={styles.tableWrap}>
+            <AdminTableWrapper>
               <table style={styles.table}>
                 <thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Role</th><th>Pedidos</th><th>VIP</th><th>Bloqueado</th><th>Ações</th></tr></thead>
                 <tbody>
@@ -1067,7 +1072,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </AdminTableWrapper>
           )}
         </AdminSurface>
       )}
@@ -1082,9 +1087,9 @@ export default function Admin() {
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
             />
-            <div style={styles.summaryPill}>Resultados: {products.length}</div>
-            <div style={styles.summaryPill}>Estoque baixo: {products.filter(row => Number(row.stock ?? 0) <= 5).length}</div>
-            <div style={styles.summaryPill}>Com variantes: {products.filter(row => (row.variants?.length ?? 0) > 0).length}</div>
+            <AdminSummaryPill>Resultados: {products.length}</AdminSummaryPill>
+            <AdminSummaryPill>Estoque baixo: {products.filter(row => Number(row.stock ?? 0) <= 5).length}</AdminSummaryPill>
+            <AdminSummaryPill>Com variantes: {products.filter(row => (row.variants?.length ?? 0) > 0).length}</AdminSummaryPill>
           </div>
           <div style={styles.productAdminHeader}>
             <div>
@@ -1164,10 +1169,11 @@ export default function Admin() {
                 }}
               />
               {resolveAdminImageUrl(newProduct.imageUrl) ? (
-                <div style={styles.mediaPreviewRow}>
-                  <img src={resolveAdminImageUrl(newProduct.imageUrl)} alt="Prévia da capa" style={styles.mediaPreviewImage} />
-                  <span style={styles.mediaHint}>Capa pronta para o card e para a página do produto.</span>
-                </div>
+                <AdminImagePreview
+                  src={resolveAdminImageUrl(newProduct.imageUrl)}
+                  alt="Prévia da capa"
+                  caption="Capa pronta para o card e para a página do produto."
+                />
               ) : null}
             </div>
             <div style={wideFieldStyle}>
@@ -1501,10 +1507,11 @@ export default function Admin() {
                     }}
                   />
                   {resolveAdminImageUrl(editProduct.imageUrl) ? (
-                    <div style={styles.mediaPreviewRow}>
-                      <img src={resolveAdminImageUrl(editProduct.imageUrl)} alt="Prévia da capa" style={styles.mediaPreviewImage} />
-                      <span style={styles.mediaHint}>Essa será a imagem principal exibida na vitrine.</span>
-                    </div>
+                    <AdminImagePreview
+                      src={resolveAdminImageUrl(editProduct.imageUrl)}
+                      alt="Prévia da capa"
+                      caption="Essa será a imagem principal exibida na vitrine."
+                    />
                   ) : null}
                 </div>
                 <div style={wideFieldStyle}>
@@ -1687,7 +1694,7 @@ export default function Admin() {
             </div>
           )}
 
-          <div style={styles.tableWrap}>
+          <AdminTableWrapper>
             <table style={styles.table}>
               <thead><tr><th>ID</th><th>Produto</th><th>Categoria</th><th>Preço (R$)</th><th>Estoque</th><th>Visual</th><th>Variantes</th><th>Ação</th></tr></thead>
               <tbody>
@@ -1748,13 +1755,13 @@ export default function Admin() {
                     <td>
                       <div style={styles.productVisualCell}>
                         {resolveAdminImageUrl(row.imageUrl) ? (
-                          <img
+                          <AdminImagePreview
                             src={resolveAdminImageUrl(row.imageUrl)}
                             alt={row.name}
-                            style={styles.productThumb as CSSProperties}
+                            variant="thumb"
                           />
                         ) : (
-                          <div style={styles.productThumbEmpty}>Sem imagem</div>
+                          <AdminImagePreview alt={row.name} variant="thumb" />
                         )}
                         <span style={styles.productVisualMeta}>
                           {(row.images?.length ?? 0) > 0 ? `${row.images?.length ?? 0} extras` : "Só capa"}
@@ -1872,7 +1879,7 @@ export default function Admin() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </AdminTableWrapper>
         </div>
       )}
 
@@ -1898,13 +1905,13 @@ export default function Admin() {
           }
         >
           <div style={styles.inlineRow}>
-            <div style={styles.summaryPill}>Resultados: {orders.length}</div>
-            <div style={styles.summaryPill}>Pendentes: {orders.filter(row => row.status === "pending").length}</div>
-            <div style={styles.summaryPill}>Pagos: {orders.filter(row => row.status === "paid").length}</div>
-            <div style={styles.summaryPill}>Em separação: {orders.filter(row => row.status === "processing").length}</div>
+            <AdminSummaryPill>Resultados: {orders.length}</AdminSummaryPill>
+            <AdminSummaryPill>Pendentes: {orders.filter(row => row.status === "pending").length}</AdminSummaryPill>
+            <AdminSummaryPill>Pagos: {orders.filter(row => row.status === "paid").length}</AdminSummaryPill>
+            <AdminSummaryPill>Em separação: {orders.filter(row => row.status === "processing").length}</AdminSummaryPill>
           </div>
           {ordersQuery.isLoading ? (
-            <div style={styles.loadingPanel}>Carregando pedidos...</div>
+            <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
           ) : orders.length === 0 ? (
             <AdminEmptyState
               title="Nenhum pedido encontrado"
@@ -1917,7 +1924,7 @@ export default function Admin() {
                 gridTemplateColumns: isCompactAdmin ? "1fr" : styles.orderAdminLayout.gridTemplateColumns,
               }}
             >
-              <div style={styles.tableWrap}>
+              <AdminTableWrapper>
                 <table style={styles.table}>
                   <thead><tr><th>Pedido</th><th>Cliente</th><th>Total</th><th>Status</th><th>Rastreio</th><th>Itens</th><th>Ações</th></tr></thead>
                   <tbody>
@@ -1943,9 +1950,9 @@ export default function Admin() {
                           <div style={styles.orderPrimaryText}>{formatPrice(Number(row.totalPrice) / 100)}</div>
                         </td>
                         <td>
-                          <span style={{ ...styles.statusBadge, ...getOrderStatusTone(String(row.status)) }}>
+                          <AdminStatusBadge style={getOrderStatusTone(String(row.status))}>
                             {getOrderStatusLabel(String(row.status))}
-                          </span>
+                          </AdminStatusBadge>
                         </td>
                         <td>
                           <div style={styles.orderPrimaryText}>{row.trackingCode || "Pendente"}</div>
@@ -1990,15 +1997,15 @@ export default function Admin() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </AdminTableWrapper>
 
               {selectedOrder ? (
                 <aside style={styles.orderDetailPanel}>
                   <div style={styles.orderDetailHeader}>
                     <strong style={styles.orderDetailTitle}>Pedido #{selectedOrder.id}</strong>
-                    <span style={{ ...styles.statusBadge, ...getOrderStatusTone(String(selectedOrder.status)) }}>
+                    <AdminStatusBadge style={getOrderStatusTone(String(selectedOrder.status))}>
                       {getOrderStatusLabel(String(selectedOrder.status))}
-                    </span>
+                    </AdminStatusBadge>
                   </div>
                   <div style={styles.orderDetailMeta}>
                     <span>Cliente: {selectedOrder.customerName || selectedOrder.customerEmail || `#${selectedOrder.userId}`}</span>
@@ -2109,10 +2116,11 @@ export default function Admin() {
                 }}
               />
               {resolveAdminImageUrl(newPromo.imageUrl) ? (
-                <div style={styles.mediaPreviewRow}>
-                  <img src={resolveAdminImageUrl(newPromo.imageUrl)} alt="Prévia do banner" style={styles.mediaPreviewImage} />
-                  <span style={styles.mediaHint}>Essa imagem será exibida no carrossel principal da home. Prefira artes horizontais com boa leitura no centro do card.</span>
-                </div>
+                <AdminImagePreview
+                  src={resolveAdminImageUrl(newPromo.imageUrl)}
+                  alt="Prévia do banner"
+                  caption="Essa imagem será exibida no carrossel principal da home. Prefira artes horizontais com boa leitura no centro do card."
+                />
               ) : null}
               <span style={styles.mediaHint}>Proporção sugerida para desktop: 1600x900 ou 1920x1080.</span>
             </div>
@@ -2165,10 +2173,11 @@ export default function Admin() {
                 }}
               />
               {resolveAdminImageUrl(newPromo.mobileImageUrl) ? (
-                <div style={styles.mediaPreviewRow}>
-                  <img src={resolveAdminImageUrl(newPromo.mobileImageUrl)} alt="Prévia mobile do banner" style={styles.mediaPreviewImage} />
-                  <span style={styles.mediaHint}>Use uma arte mais fechada para o mobile, com foco no centro da imagem.</span>
-                </div>
+                <AdminImagePreview
+                  src={resolveAdminImageUrl(newPromo.mobileImageUrl)}
+                  alt="Prévia mobile do banner"
+                  caption="Use uma arte mais fechada para o mobile, com foco no centro da imagem."
+                />
               ) : null}
               <span style={styles.mediaHint}>Proporção sugerida para mobile: 1080x1350 ou 1080x1440.</span>
             </div>
@@ -2282,14 +2291,14 @@ export default function Admin() {
           </div>
 
           {promoBannersQuery.isLoading ? (
-            <div style={styles.loadingPanel}>Carregando banners...</div>
+            <AdminLoadingState>Carregando banners...</AdminLoadingState>
           ) : !(promoBannersQuery.data ?? []).length ? (
             <AdminEmptyState
               title="Nenhum banner cadastrado"
               description="Crie o primeiro banner promocional para alimentar o carrossel principal da home."
             />
           ) : (
-            <div style={styles.tableWrap}>
+            <AdminTableWrapper>
               <table style={styles.table}>
                 <thead><tr><th>Ordem</th><th>ID</th><th>Título</th><th>Imagem</th><th>Desconto</th><th>Ativo</th><th>Ações</th></tr></thead>
                 <tbody>
@@ -2325,10 +2334,10 @@ export default function Admin() {
                     <td>
                       {resolveAdminImageUrl(row.imageUrl) ? (
                         <div style={styles.productVisualCell}>
-                          <img
+                          <AdminImagePreview
                             src={resolveAdminImageUrl(row.imageUrl) as string}
                             alt={row.title || "Banner"}
-                            style={styles.productThumb as CSSProperties}
+                            variant="thumb"
                           />
                           <div style={styles.productVisualMetaStack}>
                             <span style={styles.productVisualMeta}>Desktop</span>
@@ -2411,7 +2420,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </AdminTableWrapper>
           )}
         </div>
       )}
@@ -2444,14 +2453,14 @@ export default function Admin() {
             </button>
           </div>
           {couponsQuery.isLoading ? (
-            <div style={styles.loadingPanel}>Carregando cupons...</div>
+            <AdminLoadingState>Carregando cupons...</AdminLoadingState>
           ) : !(couponsQuery.data ?? []).length ? (
             <AdminEmptyState
               title="Nenhum cupom cadastrado"
               description="Crie o primeiro cupom para liberar descontos promocionais no checkout."
             />
           ) : (
-            <div style={styles.tableWrap}>
+            <AdminTableWrapper>
               <table style={styles.table}>
                 <thead><tr><th>ID</th><th>Código</th><th>Tipo</th><th>Valor</th><th>Usos</th><th>Ativo</th><th>Ação</th></tr></thead>
                 <tbody>
@@ -2473,7 +2482,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </AdminTableWrapper>
           )}
           <div style={styles.launchCard}>
             <h3 style={styles.sectionTitle}>Avisar lista de espera sobre a abertura</h3>
@@ -2547,7 +2556,7 @@ export default function Admin() {
                 <span>Falhas: {launchEmailResult.failed}</span>
 
                 {launchEmailResult.failures.length > 0 ? (
-                  <div style={styles.tableWrap}>
+                  <AdminTableWrapper>
                     <table style={{ ...styles.table, minWidth: 640 }}>
                       <thead><tr><th>Email</th><th>Erro</th></tr></thead>
                       <tbody>
@@ -2559,7 +2568,7 @@ export default function Admin() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </AdminTableWrapper>
                 ) : null}
               </div>
             ) : null}
@@ -2604,14 +2613,14 @@ export default function Admin() {
           description="Últimos registros administrativos para rastreabilidade, conferência e apoio à investigação."
         >
           {auditQuery.isLoading ? (
-            <div style={styles.loadingPanel}>Carregando auditoria...</div>
+            <AdminLoadingState>Carregando auditoria...</AdminLoadingState>
           ) : !(auditQuery.data ?? []).length ? (
             <AdminEmptyState
               title="Sem logs disponíveis"
               description="Os registros administrativos aparecerão aqui conforme ações forem executadas no painel."
             />
           ) : (
-            <div style={styles.tableWrap}>
+            <AdminTableWrapper>
               <table style={styles.table}>
                 <thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>ID</th><th>Meta</th></tr></thead>
                 <tbody>
@@ -2627,7 +2636,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </AdminTableWrapper>
           )}
         </AdminSurface>
       )}
@@ -2655,14 +2664,14 @@ export default function Admin() {
             </button>
           </div>
           {backupsQuery.isLoading ? (
-            <div style={styles.loadingPanel}>Carregando backups...</div>
+            <AdminLoadingState>Carregando backups...</AdminLoadingState>
           ) : !(backupsQuery.data ?? []).length ? (
             <AdminEmptyState
               title="Nenhum backup disponível"
               description="Crie um backup manual para que ele apareça listado aqui."
             />
           ) : (
-            <div style={styles.tableWrap}>
+            <AdminTableWrapper>
               <table style={styles.table}>
                 <thead><tr><th>Arquivos disponíveis</th></tr></thead>
                 <tbody>
@@ -2671,7 +2680,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </AdminTableWrapper>
           )}
         </AdminSurface>
       )}
@@ -2950,28 +2959,6 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 900,
   },
-  loadingPanel: {
-    padding: "28px 18px",
-    borderRadius: 14,
-    border: "1px dashed rgba(255,255,255,0.14)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.008)), #090909",
-    color: "#9ca3af",
-    textAlign: "center",
-  },
-  summaryPill: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 38,
-    padding: "0 14px",
-    borderRadius: 999,
-    border: "1px solid #262626",
-    background: "#121212",
-    color: "#f0ede8",
-    fontSize: 12,
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-  },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -3144,25 +3131,6 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     lineHeight: 1.5,
     textAlign: "left",
-  },
-  mediaPreviewRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: 10,
-    borderRadius: 10,
-    border: "1px solid #2f2f2f",
-    background: "#111111",
-  },
-  mediaPreviewImage: {
-    width: 72,
-    height: 90,
-    objectFit: "contain",
-    objectPosition: "center",
-    borderRadius: 10,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "#080808",
-    flexShrink: 0,
   },
   galleryPreviewGrid: {
     display: "grid",
@@ -3400,14 +3368,6 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 46,
     boxSizing: "border-box",
   },
-  tableWrap: {
-    overflowX: "auto",
-    WebkitOverflowScrolling: "touch",
-    border: "1px solid rgba(255,255,255,0.075)",
-    borderRadius: 14,
-    background: "#090909",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.035)",
-  },
   table: {
     width: "100%",
     minWidth: 920,
@@ -3501,18 +3461,6 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 700,
   },
-  statusBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 32,
-    padding: "0 10px",
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: "0.02em",
-    whiteSpace: "nowrap",
-  },
   orderPrimaryText: {
     color: "#f0ede8",
     fontSize: 14,
@@ -3571,29 +3519,6 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignItems: "center",
     gap: 6,
-  },
-  productThumb: {
-    width: 56,
-    height: 70,
-    objectFit: "contain",
-    objectPosition: "center",
-    borderRadius: 10,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "#080808",
-  },
-  productThumbEmpty: {
-    width: 56,
-    height: 70,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 10,
-    border: "1px dashed rgba(255,255,255,0.16)",
-    background: "#090909",
-    color: "#9ca3af",
-    fontSize: 10,
-    textAlign: "center",
-    padding: 4,
   },
   productVisualMeta: {
     color: "#9ca3af",

@@ -151,6 +151,53 @@ export function AdminEmptyState({
   );
 }
 
+export function AdminLoadingState({ children }: { children: ReactNode }) {
+  return <div style={styles.loadingState}>{children}</div>;
+}
+
+export function AdminSummaryPill({ children }: { children: ReactNode }) {
+  return <div style={styles.summaryPill}>{children}</div>;
+}
+
+export function AdminTableWrapper({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return <div style={{ ...styles.tableWrapper, ...style }}>{children}</div>;
+}
+
+export function AdminStatusBadge({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return <span style={{ ...styles.statusBadge, ...style }}>{children}</span>;
+}
+
+export function AdminImagePreview({
+  src,
+  alt,
+  caption,
+  emptyLabel = "Sem imagem",
+  variant = "media",
+}: {
+  src?: string | null;
+  alt: string;
+  caption?: ReactNode;
+  emptyLabel?: string;
+  variant?: "media" | "thumb";
+}) {
+  if (variant === "thumb") {
+    return src ? (
+      <img src={src} alt={alt} style={styles.imageThumb} />
+    ) : (
+      <div style={styles.imageThumbEmpty}>{emptyLabel}</div>
+    );
+  }
+
+  if (!src) return null;
+
+  return (
+    <div style={styles.imagePreviewRow}>
+      <img src={src} alt={alt} style={styles.imagePreviewMedia} />
+      {caption ? <span style={styles.imagePreviewCaption}>{caption}</span> : null}
+    </div>
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
   headerShell: {
     display: "flex",
@@ -328,5 +375,95 @@ const styles: Record<string, CSSProperties> = {
     color: "#9ca3af",
     fontSize: 14,
     lineHeight: 1.6,
+  },
+  loadingState: {
+    padding: "28px 18px",
+    borderRadius: 14,
+    border: "1px dashed rgba(255,255,255,0.14)",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.008)), #090909",
+    color: "#9ca3af",
+    textAlign: "center",
+  },
+  summaryPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 38,
+    padding: "0 14px",
+    borderRadius: 999,
+    border: "1px solid #262626",
+    background: "#121212",
+    color: "#f0ede8",
+    fontSize: 12,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  tableWrapper: {
+    overflowX: "auto",
+    WebkitOverflowScrolling: "touch",
+    border: "1px solid rgba(255,255,255,0.075)",
+    borderRadius: 14,
+    background: "#090909",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.035)",
+  },
+  statusBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 32,
+    padding: "0 10px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.02em",
+    whiteSpace: "nowrap",
+  },
+  imagePreviewRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: 10,
+    borderRadius: 10,
+    border: "1px solid #2f2f2f",
+    background: "#111111",
+  },
+  imagePreviewMedia: {
+    width: 72,
+    height: 90,
+    objectFit: "contain",
+    objectPosition: "center",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "#080808",
+    flexShrink: 0,
+  },
+  imagePreviewCaption: {
+    color: "#9ca3af",
+    fontSize: 12,
+    lineHeight: 1.5,
+    textAlign: "left",
+  },
+  imageThumb: {
+    width: 56,
+    height: 70,
+    objectFit: "contain",
+    objectPosition: "center",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "#080808",
+  },
+  imageThumbEmpty: {
+    width: 56,
+    height: 70,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    border: "1px dashed rgba(255,255,255,0.16)",
+    background: "#090909",
+    color: "#9ca3af",
+    fontSize: 10,
+    textAlign: "center",
+    padding: 4,
   },
 };
