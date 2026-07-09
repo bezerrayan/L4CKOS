@@ -47,6 +47,20 @@ import {
   type CustomerListFilter,
 } from "../components/admin/customers/AdminCustomersUI";
 import {
+  CouponCodeCell,
+  CouponFormPreview,
+  CouponOperationalAlerts,
+  CouponsFilters,
+  CouponsSummaryCards,
+  CouponStatusBadge,
+  CouponTypeBadge,
+  CouponUsageBadge,
+  CouponValidity,
+  CouponValue,
+  getCouponStatus,
+  type CouponListFilter,
+} from "../components/admin/coupons/AdminCouponsUI";
+import {
   PromotionBannerPreview,
   PromotionCampaignCell,
   PromotionMediaBadge,
@@ -375,6 +389,8 @@ export default function Admin() {
   const [productFilter, setProductFilter] = useState<ProductListFilter>("all");
   const [orderSearch, setOrderSearch] = useState("");
   const [orderQuickFilter, setOrderQuickFilter] = useState<OrderListFilter>("all");
+  const [couponSearch, setCouponSearch] = useState("");
+  const [couponFilter, setCouponFilter] = useState<CouponListFilter>("all");
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
   const [restoreFileName, setRestoreFileName] = useState("");
@@ -817,6 +833,88 @@ export default function Admin() {
       withoutImage: rows.filter(row => !resolveAdminImageUrl(row.imageUrl)).length,
     };
   }, [promoBannersQuery.data]);
+  const searchedCoupons = useMemo(() => {
+    const normalizedSearch = couponSearch.trim().toLowerCase();
+    return [...(couponsQuery.data ?? [])].filter(row => {
+      if (!normalizedSearch) return true;
+      return [row.code, row.type, String(row.id)]
+        .some(value => String(value ?? "").toLowerCase().includes(normalizedSearch));
+    });
+  }, [couponSearch, couponsQuery.data]);
+  const couponSummary = useMemo(() => {
+    const rows = couponsQuery.data ?? [];
+    return {
+      total: rows.length,
+      active: rows.filter(row => getCouponStatus(row) === "active").length,
+      inactive: rows.filter(row => getCouponStatus(row) === "inactive").length,
+      expired: rows.filter(row => getCouponStatus(row) === "expired").length,
+      future: rows.filter(row => getCouponStatus(row) === "future").length,
+      unlimited: rows.filter(row => row.maxUses == null).length,
+      limited: rows.filter(row => row.maxUses != null).length,
+      percent: rows.filter(row => row.type === "percent").length,
+      fixed: rows.filter(row => row.type === "fixed").length,
+    };
+  }, [couponsQuery.data]);
+  const couponFilterOptions = useMemo(
+    () => [
+      { key: "all" as const, label: "Todos", count: searchedCoupons.length },
+      { key: "active" as const, label: "Ativos", count: searchedCoupons.filter(row => getCouponStatus(row) === "active").length },
+      { key: "inactive" as const, label: "Inativos", count: searchedCoupons.filter(row => getCouponStatus(row) === "inactive").length },
+      { key: "expired" as const, label: "Expirados", count: searchedCoupons.filter(row => getCouponStatus(row) === "expired").length },
+      { key: "future" as const, label: "Agendados", count: searchedCoupons.filter(row => getCouponStatus(row) === "future").length },
+      { key: "percent" as const, label: "Percentual", count: searchedCoupons.filter(row => row.type === "percent").length },
+      { key: "fixed" as const, label: "Valor fixo", count: searchedCoupons.filter(row => row.type === "fixed").length },
+      { key: "unlimited" as const, label: "Sem limite", count: searchedCoupons.filter(row => row.maxUses == null).length },
+      { key: "limited" as const, label: "Com limite", count: searchedCoupons.filter(row => row.maxUses != null).length },
+    ],
+    [searchedCoupons],
+  );
+  const coupons = useMemo(() => {
+    return searchedCoupons.filter(row => {
+      if (couponFilter === "active") return getCouponStatus(row) === "active";
+      if (couponFilter === "inactive") return getCouponStatus(row) === "inactive";
+      if (couponFilter === "expired") return getCouponStatus(row) === "expired";
+      if (couponFilter === "future") return getCouponStatus(row) === "future";
+      if (couponFilter === "percent") return row.type === "percent";
+      if (couponFilter === "fixed") return row.type === "fixed";
+      if (couponFilter === "unlimited") return row.maxUses == null;
+      if (couponFilter === "limited") return row.maxUses != null;
+      return true;
+    });
+  }, [couponFilter, searchedCoupons]);
+  const couponOperationalAlerts = useMemo(() => {
+    const rows = couponsQuery.data ?? [];
+    const now = Date.now();
+    const sevenDaysFromNow = now + 7 * 24 * 60 * 60 * 1000;
+    const activeExpired = rows.filter(row => Boolean(row.isActive) && getCouponStatus(row) === "expired").length;
+    const expiringSoon = rows.filter(row => {
+      if (!row.expiresAt || getCouponStatus(row) !== "active") return false;
+      const expiresAt = new Date(row.expiresAt as any).getTime();
+      return Number.isFinite(expiresAt) && expiresAt >= now && expiresAt <= sevenDaysFromNow;
+    }).length;
+    const nearLimit = rows.filter(row => {
+      if (row.maxUses == null) return false;
+      const maxUses = Number(row.maxUses);
+      const usedCount = Number(row.usedCount ?? 0);
+      return maxUses > 0 && usedCount < maxUses && usedCount / maxUses >= 0.8;
+    }).length;
+    const withoutExpiry = rows.filter(row => Boolean(row.isActive) && !row.expiresAt).length;
+
+    return [
+      ...(activeExpired > 0
+        ? [{ title: `${activeExpired} cupom(ns) ativo(s) expirado(s)`, description: "Cupons expirados não aplicam no checkout, mas ainda aparecem no admin para revisão.", tone: "danger" as const }]
+        : []),
+      ...(expiringSoon > 0
+        ? [{ title: `${expiringSoon} cupom(ns) vencem em até 7 dias`, description: "Revise campanhas próximas do fim para evitar comunicação desatualizada.", tone: "warning" as const }]
+        : []),
+      ...(nearLimit > 0
+        ? [{ title: `${nearLimit} cupom(ns) perto do limite de uso`, description: "Cupons com 80% ou mais do limite utilizado merecem acompanhamento.", tone: "warning" as const }]
+        : []),
+      ...(withoutExpiry > 0
+        ? [{ title: `${withoutExpiry} cupom(ns) ativo(s) sem validade`, description: "Campanhas sem data de expiração ficam disponíveis até remoção ou atualização manual.", tone: "neutral" as const }]
+        : []),
+    ];
+  }, [couponsQuery.data]);
   const orderOperationalAlerts = useMemo(() => {
     const rows = ordersQuery.data ?? [];
     const paidWithoutTracking = rows.filter(row => row.status === "paid" && !row.trackingCode).length;
@@ -2440,16 +2538,46 @@ export default function Admin() {
       )}
 
       {section === "coupons" && (
-        <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Cupons e Descontos</h2>
-          <div style={styles.formGrid}>
-            <input style={styles.input} placeholder="Código" value={newCoupon.code} onChange={e => setNewCoupon(prev => ({ ...prev, code: e.target.value }))} />
-            <select style={styles.select} value={newCoupon.type} onChange={e => setNewCoupon(prev => ({ ...prev, type: e.target.value }))}>
-              <option value="percent">Percentual</option>
-              <option value="fixed">Valor fixo</option>
-            </select>
-            <input style={styles.input} placeholder="Valor" value={newCoupon.value} onChange={e => setNewCoupon(prev => ({ ...prev, value: e.target.value }))} />
-            <input style={styles.input} placeholder="Máx. usos" value={newCoupon.maxUses} onChange={e => setNewCoupon(prev => ({ ...prev, maxUses: e.target.value }))} />
+        <AdminSurface
+          title="Cupons e descontos"
+          description="Controle os cupons promocionais da loja com leitura rápida de status, uso e validade."
+        >
+          <CouponsSummaryCards summary={couponSummary} />
+          <CouponOperationalAlerts alerts={couponOperationalAlerts} />
+          <div style={styles.productAdminHeader}>
+            <div>
+              <h3 style={styles.productAdminTitle}>Criar cupom</h3>
+              <p style={styles.productAdminText}>Preencha os dados principais do desconto. O envio para o backend permanece no mesmo formato atual.</p>
+            </div>
+          </div>
+          <div style={{ ...styles.couponCreateLayout, ...(isCompactAdmin ? styles.couponCreateLayoutCompact : {}) }}>
+            <div style={styles.formGrid}>
+              <label style={styles.couponField}>
+                <span style={styles.mediaHint}>Código do cupom</span>
+                <input style={styles.input} placeholder="Ex: LANCAMENTO15" value={newCoupon.code} onChange={e => setNewCoupon(prev => ({ ...prev, code: e.target.value }))} />
+              </label>
+              <label style={styles.couponField}>
+                <span style={styles.mediaHint}>Tipo de desconto</span>
+                <select style={styles.select} value={newCoupon.type} onChange={e => setNewCoupon(prev => ({ ...prev, type: e.target.value }))}>
+                  <option value="percent">Percentual</option>
+                  <option value="fixed">Valor fixo</option>
+                </select>
+              </label>
+              <label style={styles.couponField}>
+                <span style={styles.mediaHint}>Valor</span>
+                <input style={styles.input} placeholder={newCoupon.type === "percent" ? "Ex: 15" : "Ex: 20"} value={newCoupon.value} onChange={e => setNewCoupon(prev => ({ ...prev, value: e.target.value }))} />
+              </label>
+              <label style={styles.couponField}>
+                <span style={styles.mediaHint}>Limite de usos</span>
+                <input style={styles.input} placeholder="Vazio = sem limite" value={newCoupon.maxUses} onChange={e => setNewCoupon(prev => ({ ...prev, maxUses: e.target.value }))} />
+              </label>
+            </div>
+            <CouponFormPreview
+              code={newCoupon.code}
+              type={newCoupon.type}
+              value={newCoupon.value}
+              maxUses={newCoupon.maxUses}
+            />
           </div>
           <div style={styles.productAdminActions}>
             <button
@@ -2466,6 +2594,23 @@ export default function Admin() {
               Criar cupom
             </button>
           </div>
+
+          <div style={styles.inlineRow}>
+            <input
+              style={{ ...styles.input, minWidth: 260 }}
+              placeholder="Buscar por código, tipo ou ID"
+              value={couponSearch}
+              onChange={e => setCouponSearch(e.target.value)}
+            />
+            <AdminSummaryPill>Exibindo: {coupons.length}</AdminSummaryPill>
+            <AdminSummaryPill>Busca: {searchedCoupons.length}</AdminSummaryPill>
+          </div>
+          <CouponsFilters
+            value={couponFilter}
+            onChange={setCouponFilter}
+            options={couponFilterOptions}
+          />
+
           {couponsQuery.isLoading ? (
             <AdminLoadingState>Carregando cupons...</AdminLoadingState>
           ) : !(couponsQuery.data ?? []).length ? (
@@ -2473,14 +2618,24 @@ export default function Admin() {
               title="Nenhum cupom cadastrado"
               description="Crie o primeiro cupom para liberar descontos promocionais no checkout."
             />
+          ) : coupons.length === 0 ? (
+            <AdminEmptyState
+              title="Nenhum cupom encontrado"
+              description="Ajuste a busca ou os filtros para visualizar outros cupons carregados."
+            />
           ) : (
             <AdminTableWrapper>
               <table style={styles.table}>
-                <thead><tr><th>ID</th><th>Código</th><th>Tipo</th><th>Valor</th><th>Usos</th><th>Ativo</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Código</th><th>Tipo</th><th>Valor</th><th>Status</th><th>Uso</th><th>Validade</th><th>Ação</th></tr></thead>
                 <tbody>
-                  {(couponsQuery.data ?? []).map(coupon => (
+                  {coupons.map(coupon => (
                     <tr key={coupon.id}>
-                      <td>{coupon.id}</td><td>{coupon.code}</td><td>{coupon.type === "percent" ? "Percentual" : "Valor fixo"}</td><td>{coupon.value}</td><td>{coupon.usedCount}/{coupon.maxUses ?? "∞"}</td><td>{coupon.isActive ? "Sim" : "Não"}</td>
+                      <td><CouponCodeCell coupon={coupon} /></td>
+                      <td><CouponTypeBadge type={coupon.type} /></td>
+                      <td><CouponValue coupon={coupon} /></td>
+                      <td><CouponStatusBadge coupon={coupon} /></td>
+                      <td><CouponUsageBadge coupon={coupon} /></td>
+                      <td><CouponValidity coupon={coupon} /></td>
                       <td>
                         <button
                           style={styles.dangerBtn}
@@ -2587,7 +2742,7 @@ export default function Admin() {
               </div>
             ) : null}
           </div>
-        </div>
+        </AdminSurface>
       )}
 
       {section === "reports" && (
@@ -2902,6 +3057,21 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 14,
     alignItems: "stretch",
+  },
+  couponCreateLayout: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.35fr) minmax(260px, 0.65fr)",
+    gap: 16,
+    alignItems: "stretch",
+  },
+  couponCreateLayoutCompact: {
+    gridTemplateColumns: "1fr",
+  },
+  couponField: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    textAlign: "left",
   },
   productAdminActions: {
     display: "flex",
