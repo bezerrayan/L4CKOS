@@ -20,6 +20,14 @@ import {
   AdminTableWrapper,
 } from "../components/admin/AdminUI";
 import { AdminDashboard } from "../components/admin/dashboard/AdminDashboard";
+import {
+  ProductOptionPreview,
+  ProductStockBadge,
+  ProductVisualMeta,
+  ProductsFilters,
+  ProductsSummaryCards,
+  type ProductListFilter,
+} from "../components/admin/products/AdminProductsUI";
 
 type Section =
   | "overview"
@@ -231,6 +239,16 @@ function appendCsvToken(currentValue: string, token: string) {
   return items.join(", ");
 }
 
+function parseProductOptionList(raw?: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(item => String(item)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function buildVariantDraft(name: string, colorsCsv: string, sizesCsv: string, price: string) {
   const colors = colorsCsv.split(",").map(item => item.trim()).filter(Boolean);
   const sizes = sizesCsv.split(",").map(item => item.trim()).filter(Boolean);
@@ -328,6 +346,7 @@ export default function Admin() {
   const [orderFilterStatus, setOrderFilterStatus] = useState<string>("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
+  const [productFilter, setProductFilter] = useState<ProductListFilter>("all");
   const [orderSearch, setOrderSearch] = useState("");
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
@@ -614,7 +633,7 @@ export default function Admin() {
       })
       .sort((a, b) => b.id - a.id);
   }, [customerSearch, customersQuery.data]);
-  const products = useMemo(() => {
+  const searchedProducts = useMemo(() => {
     const normalizedSearch = productSearch.trim().toLowerCase();
     return [...(productsQuery.data ?? [])]
       .filter(row => {
@@ -624,6 +643,36 @@ export default function Admin() {
       })
       .sort((a, b) => b.id - a.id);
   }, [productSearch, productsQuery.data]);
+  const productSummary = useMemo(() => {
+    const rows = productsQuery.data ?? [];
+    return {
+      total: rows.length,
+      withStock: rows.filter(row => Number(row.stock ?? 0) > 0).length,
+      outOfStock: rows.filter(row => Number(row.stock ?? 0) <= 0).length,
+      lowStock: rows.filter(row => Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length,
+      withoutImage: rows.filter(row => !resolveAdminImageUrl(row.imageUrl)).length,
+      withVariants: rows.filter(row => (row.variants?.length ?? 0) > 0).length,
+    };
+  }, [productsQuery.data]);
+  const productFilterOptions = useMemo(
+    () => [
+      { key: "all" as const, label: "Todos", count: searchedProducts.length },
+      { key: "lowStock" as const, label: "Estoque baixo", count: searchedProducts.filter(row => Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length },
+      { key: "outOfStock" as const, label: "Sem estoque", count: searchedProducts.filter(row => Number(row.stock ?? 0) <= 0).length },
+      { key: "withoutImage" as const, label: "Sem imagem", count: searchedProducts.filter(row => !resolveAdminImageUrl(row.imageUrl)).length },
+      { key: "withVariants" as const, label: "Com variantes", count: searchedProducts.filter(row => (row.variants?.length ?? 0) > 0).length },
+    ],
+    [searchedProducts],
+  );
+  const products = useMemo(() => {
+    return searchedProducts.filter(row => {
+      if (productFilter === "lowStock") return Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5;
+      if (productFilter === "outOfStock") return Number(row.stock ?? 0) <= 0;
+      if (productFilter === "withoutImage") return !resolveAdminImageUrl(row.imageUrl);
+      if (productFilter === "withVariants") return (row.variants?.length ?? 0) > 0;
+      return true;
+    });
+  }, [productFilter, searchedProducts]);
   const orders = useMemo(() => {
     const normalizedSearch = orderSearch.trim().toLowerCase();
     return [...(ordersQuery.data ?? [])]
@@ -846,7 +895,15 @@ export default function Admin() {
 
       {section === "products" && (
         <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Produtos</h2>
+          <div style={styles.productSectionHero}>
+            <div>
+              <h2 style={styles.sectionTitle}>Produtos</h2>
+              <p style={styles.productAdminText}>
+                Cadastre, revise estoque, organize imagens e acompanhe a saúde operacional do catálogo.
+              </p>
+            </div>
+          </div>
+          <ProductsSummaryCards summary={productSummary} />
           <div style={styles.inlineRow}>
             <input
               style={{ ...styles.input, minWidth: 280 }}
@@ -854,10 +911,14 @@ export default function Admin() {
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
             />
-            <AdminSummaryPill>Resultados: {products.length}</AdminSummaryPill>
-            <AdminSummaryPill>Estoque baixo: {products.filter(row => Number(row.stock ?? 0) <= 5).length}</AdminSummaryPill>
-            <AdminSummaryPill>Com variantes: {products.filter(row => (row.variants?.length ?? 0) > 0).length}</AdminSummaryPill>
+            <AdminSummaryPill>Exibindo: {products.length}</AdminSummaryPill>
+            <AdminSummaryPill>Busca: {searchedProducts.length}</AdminSummaryPill>
           </div>
+          <ProductsFilters
+            value={productFilter}
+            onChange={setProductFilter}
+            options={productFilterOptions}
+          />
           <div style={styles.productAdminHeader}>
             <div>
               <h3 style={styles.productAdminTitle}>Criar produto</h3>
@@ -1461,84 +1522,107 @@ export default function Admin() {
             </div>
           )}
 
-          <AdminTableWrapper>
-            <table style={styles.table}>
-              <thead><tr><th>ID</th><th>Produto</th><th>Categoria</th><th>Preço (R$)</th><th>Estoque</th><th>Visual</th><th>Variantes</th><th>Ação</th></tr></thead>
-              <tbody>
-                {products.map(row => (
-                  <tr key={row.id}>
-                    <td>{row.id}</td>
-                    <td>
-                      <div style={styles.productTableCell}>
-                        <strong style={styles.productTableName}>{row.name}</strong>
-                        <span style={styles.productTableMeta}>
-                          {row.description?.trim() ? row.description : "Sem descrição curta"}
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <span style={styles.categoryTableBadge}>{getCategoryLabel(row.category)}</span>
-                    </td>
-                    <td>
-                      <input
-                        style={{ ...styles.input, width: 130 }}
-                        value={quickProductEdits[row.id]?.price ?? centsToMoneyInput(row.price)}
-                        onChange={e => {
-                          const value = e.target.value;
-                          setQuickProductEdits(prev => ({
-                            ...prev,
-                            [row.id]: {
-                              price: value,
-                              stock: prev[row.id]?.stock ?? String(row.stock),
-                            },
-                          }));
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        style={{
-                          ...styles.input,
-                          width: 90,
-                          ...(Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 0
-                            ? styles.stockInputEmpty
-                            : Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 3
-                              ? styles.stockInputLow
-                              : {}),
-                        }}
-                        value={quickProductEdits[row.id]?.stock ?? String(row.stock)}
-                        onChange={e => {
-                          const value = e.target.value;
-                          setQuickProductEdits(prev => ({
-                            ...prev,
-                            [row.id]: {
-                              price: prev[row.id]?.price ?? centsToMoneyInput(row.price),
-                              stock: value,
-                            },
-                          }));
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <div style={styles.productVisualCell}>
-                        {resolveAdminImageUrl(row.imageUrl) ? (
-                          <AdminImagePreview
-                            src={resolveAdminImageUrl(row.imageUrl)}
-                            alt={row.name}
-                            variant="thumb"
-                          />
-                        ) : (
-                          <AdminImagePreview alt={row.name} variant="thumb" />
-                        )}
-                        <span style={styles.productVisualMeta}>
-                          {(row.images?.length ?? 0) > 0 ? `${row.images?.length ?? 0} extras` : "Só capa"}
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <span style={styles.variantCountBadge}>{row.variants?.length ?? 0}</span>
-                    </td>
-                    <td style={styles.actionsCell}>
+          {productsQuery.isLoading ? (
+            <AdminLoadingState>Carregando produtos...</AdminLoadingState>
+          ) : products.length === 0 ? (
+            <AdminEmptyState
+              title="Nenhum produto encontrado"
+              description="Ajuste a busca ou filtro para visualizar itens do catálogo."
+            />
+          ) : (
+            <AdminTableWrapper>
+              <table style={styles.table}>
+                <thead><tr><th>Visual</th><th>Produto</th><th>Categoria e opções</th><th>Preço rápido</th><th>Estoque rápido</th><th>Status</th><th>Datas</th><th>Variantes</th><th>Ações</th></tr></thead>
+                <tbody>
+                  {products.map(row => {
+                    const optionColors = parseProductOptionList(row.optionColors);
+                    const optionSizes = parseProductOptionList(row.optionSizes);
+                    return (
+                    <tr key={row.id}>
+                      <td>
+                        <div style={styles.productVisualCell}>
+                          {resolveAdminImageUrl(row.imageUrl) ? (
+                            <AdminImagePreview
+                              src={resolveAdminImageUrl(row.imageUrl)}
+                              alt={row.name}
+                              variant="thumb"
+                            />
+                          ) : (
+                            <AdminImagePreview alt={row.name} variant="thumb" />
+                          )}
+                          <ProductVisualMeta>
+                            {(row.images?.length ?? 0) > 0 ? `${row.images?.length ?? 0} extras` : "Só capa"}
+                          </ProductVisualMeta>
+                        </div>
+                      </td>
+                      <td>
+                        <div style={styles.productTableCell}>
+                          <strong style={styles.productTableName}>#{row.id} · {row.name}</strong>
+                          <span style={styles.productTableMeta}>
+                            {row.description?.trim() ? row.description : "Sem descrição curta"}
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div style={styles.productTableCell}>
+                          <span style={styles.categoryTableBadge}>{getCategoryLabel(row.category)}</span>
+                          <ProductOptionPreview label="Cores" values={optionColors} />
+                          <ProductOptionPreview label="Tamanhos" values={optionSizes} />
+                        </div>
+                      </td>
+                      <td>
+                        <input
+                          style={{ ...styles.input, width: 130 }}
+                          value={quickProductEdits[row.id]?.price ?? centsToMoneyInput(row.price)}
+                          onChange={e => {
+                            const value = e.target.value;
+                            setQuickProductEdits(prev => ({
+                              ...prev,
+                              [row.id]: {
+                                price: value,
+                                stock: prev[row.id]?.stock ?? String(row.stock),
+                              },
+                            }));
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          style={{
+                            ...styles.input,
+                            width: 90,
+                            ...(Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 0
+                              ? styles.stockInputEmpty
+                              : Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 3
+                                ? styles.stockInputLow
+                                : {}),
+                          }}
+                          value={quickProductEdits[row.id]?.stock ?? String(row.stock)}
+                          onChange={e => {
+                            const value = e.target.value;
+                            setQuickProductEdits(prev => ({
+                              ...prev,
+                              [row.id]: {
+                                price: prev[row.id]?.price ?? centsToMoneyInput(row.price),
+                                stock: value,
+                              },
+                            }));
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <ProductStockBadge stock={Number(quickProductEdits[row.id]?.stock ?? row.stock)} />
+                      </td>
+                      <td>
+                        <div style={styles.productTableCell}>
+                          <span style={styles.productTableMeta}>Criado: {row.createdAt ? new Date(row.createdAt).toLocaleDateString("pt-BR") : "-"}</span>
+                          <span style={styles.productTableMeta}>Atualizado: {row.updatedAt ? new Date(row.updatedAt).toLocaleDateString("pt-BR") : "-"}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span style={styles.variantCountBadge}>{row.variants?.length ?? 0}</span>
+                      </td>
+                      <td style={styles.actionsCell}>
                       <button
                         style={styles.smallBtn}
                         onClick={() => {
@@ -1641,12 +1725,14 @@ export default function Admin() {
                       >
                         Excluir
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </AdminTableWrapper>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </AdminTableWrapper>
+          )}
         </div>
       )}
 
@@ -2619,6 +2705,14 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "left",
     fontSize: 24,
     lineHeight: 1.15,
+  },
+  productSectionHero: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 14,
+    flexWrap: "wrap",
+    padding: "4px 0 2px",
   },
   productAdminHeader: {
     display: "flex",
