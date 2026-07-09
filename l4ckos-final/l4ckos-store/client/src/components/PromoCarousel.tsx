@@ -20,27 +20,33 @@ interface Promo {
 const PROMOS_FALLBACK: Promo[] = [
   {
     id: 1,
-    badge: "PROMOCAO",
-    title: "Desconto em peças de aventura",
-    description: "Ate 30% OFF em modelos dry fit, regatas e oversized.",
+    badge: "LANÇAMENTO L4CKOS x CLÃ 14 BIS",
+    title: "CONFIRA A CAMISETA EXCLUSIVA DA PARCERIA",
+    description: "Edição especial com identidade escoteira e estética urbana da L4CKOS.",
     ctaLabel: "Aproveitar oferta",
     linkUrl: "/produtos",
-    discount: "30%",
-    discountLabel: "OFF",
-    color: "linear-gradient(135deg, #151515 0%, #2a0a12 100%)",
-  },
-  {
-    id: 2,
-    badge: "PROMOCAO",
-    title: "Promocao de roupas",
-    description: "Compre 2 e ganhe desconto progressivo em camisetas e jaquetas.",
-    ctaLabel: "Ver promocao",
-    linkUrl: "/produtos",
-    discount: "50%",
-    discountLabel: "OFF",
-    color: "linear-gradient(135deg, #1a1a1a 0%, #32111a 100%)",
+    discount: "",
+    discountLabel: "",
+    color: "linear-gradient(135deg, #070707 0%, #111111 52%, #210711 100%)",
   },
 ];
+
+function toLaunchPromo(base?: Partial<Promo> | null): Promo {
+  return {
+    id: Number(base?.id ?? 1),
+    badge: "LANÇAMENTO L4CKOS x CLÃ 14 BIS",
+    title: "CONFIRA A CAMISETA EXCLUSIVA DA PARCERIA",
+    description: "Edição especial com identidade escoteira e estética urbana da L4CKOS.",
+    ctaLabel: "Aproveitar oferta",
+    imageUrl: base?.imageUrl,
+    mobileImageUrl: base?.mobileImageUrl,
+    imageAlt: base?.imageAlt || "Camiseta L4CKOS x Clã 14 Bis com estampa das costas",
+    linkUrl: base?.linkUrl || "/produtos",
+    discount: "",
+    discountLabel: "",
+    color: "linear-gradient(135deg, #070707 0%, #111111 52%, #210711 100%)",
+  };
+}
 
 function resolvePromoImageUrl(raw?: string | null) {
   const value = (raw || "").trim();
@@ -72,7 +78,7 @@ export default function PromoCarousel() {
       color: String(item.bgStyle ?? "").trim() || "linear-gradient(135deg, #151515 0%, #2a0a12 100%)",
     }));
 
-    return fromApi.length > 0 ? fromApi : PROMOS_FALLBACK;
+    return [toLaunchPromo(fromApi[0] || PROMOS_FALLBACK[0])];
   }, [promotionsQuery.data]);
 
   useEffect(() => {
@@ -119,29 +125,20 @@ export default function PromoCarousel() {
         }}
       >
         <div className="l4-home-hero-carousel-frame">
-          {promoImage ? (
-            <img
-              src={promoImage}
-              alt={promo.imageAlt || promo.title}
-              className="l4-home-hero-carousel-image"
-              loading="lazy"
-            />
-          ) : (
-            <div className="l4-home-hero-carousel-fallback">
-              <span>L4CKOS</span>
-            </div>
-          )}
           <div className="l4-home-hero-carousel-overlay" />
-          <div className="l4-home-hero-carousel-top">
-            <span className="l4-home-hero-carousel-badge">{promo.badge}</span>
-            <span className="l4-home-hero-carousel-count">
-              {String(current + 1).padStart(2, "0")} / {String(promos.length).padStart(2, "0")}
+          <div className="l4-home-hero-carousel-copy-panel">
+            <span className="l4-home-hero-carousel-badge">
+              <span aria-hidden="true" />
+              {promo.badge}
             </span>
-          </div>
-          <div className="l4-home-hero-carousel-bottom">
             <div className="l4-home-hero-carousel-copy-wrap">
               <div className="l4-home-hero-carousel-copy">
-                <h3>{promo.title}</h3>
+                <h3>
+                  <span>CONFIRA A</span>
+                  <span>CAMISETA</span>
+                  <span>EXCLUSIVA DA</span>
+                  <span className="is-red">PARCERIA</span>
+                </h3>
                 <p>{promo.description}</p>
               </div>
               <a
@@ -152,44 +149,60 @@ export default function PromoCarousel() {
                 {promo.ctaLabel}
               </a>
             </div>
-            {promo.discount ? (
-              <div className="l4-home-hero-carousel-discount">
-                <strong>{promo.discount}</strong>
-                <span>{promo.discountLabel}</span>
-              </div>
-            ) : null}
+            <span className="l4-home-hero-carousel-count">
+              {String(current + 1).padStart(2, "0")} / {String(promos.length).padStart(2, "0")}
+            </span>
+          </div>
+          <div className="l4-home-hero-carousel-product" aria-label={promo.imageAlt || promo.title}>
+            <div className="l4-home-hero-carousel-product-frame">
+              {promoImage ? (
+                <img
+                  src={promoImage}
+                  alt={promo.imageAlt || promo.title}
+                  className="l4-home-hero-carousel-image"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="l4-home-hero-carousel-fallback">
+                  <span>L4CKOS</span>
+                  <small>x CLÃ 14 BIS</small>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
-      <div className="l4-home-hero-carousel-controls">
-        <button
-          type="button"
-          className="l4-home-hero-carousel-nav"
-          onClick={() => setCurrent((prev) => (prev - 1 + promos.length) % promos.length)}
-          aria-label="Banner anterior"
-        >
-          {"<"}
-        </button>
-        <div className="l4-home-hero-carousel-dots">
-          {promos.map((_, idx) => (
-            <button
-              type="button"
-              key={idx}
-              className={`l4-home-hero-carousel-dot${idx === current ? " is-active" : ""}`}
-              onClick={() => setCurrent(idx)}
-              aria-label={`Ir para banner ${idx + 1}`}
-            />
-          ))}
+      {promos.length > 1 ? (
+        <div className="l4-home-hero-carousel-controls">
+          <button
+            type="button"
+            className="l4-home-hero-carousel-nav"
+            onClick={() => setCurrent((prev) => (prev - 1 + promos.length) % promos.length)}
+            aria-label="Banner anterior"
+          >
+            {"<"}
+          </button>
+          <div className="l4-home-hero-carousel-dots">
+            {promos.map((_, idx) => (
+              <button
+                type="button"
+                key={idx}
+                className={`l4-home-hero-carousel-dot${idx === current ? " is-active" : ""}`}
+                onClick={() => setCurrent(idx)}
+                aria-label={`Ir para banner ${idx + 1}`}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            className="l4-home-hero-carousel-nav"
+            onClick={() => setCurrent((prev) => (prev + 1) % promos.length)}
+            aria-label="Proximo banner"
+          >
+            {">"}
+          </button>
         </div>
-        <button
-          type="button"
-          className="l4-home-hero-carousel-nav"
-          onClick={() => setCurrent((prev) => (prev + 1) % promos.length)}
-          aria-label="Proximo banner"
-        >
-          {">"}
-        </button>
-      </div>
+      ) : null}
     </section>
   );
 }
