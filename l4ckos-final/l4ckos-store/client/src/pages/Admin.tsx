@@ -37,6 +37,16 @@ import {
   type OrderListFilter,
 } from "../components/admin/orders/AdminOrdersUI";
 import {
+  CustomerDateMeta,
+  CustomerOrdersCount,
+  CustomerProfileCell,
+  CustomerRoleBadge,
+  CustomerStatusBadges,
+  CustomersFilters,
+  CustomersSummaryCards,
+  type CustomerListFilter,
+} from "../components/admin/customers/AdminCustomersUI";
+import {
   PromotionBannerPreview,
   PromotionCampaignCell,
   PromotionMediaBadge,
@@ -360,6 +370,7 @@ export default function Admin() {
   const [section, setSection] = useState<Section>("overview");
   const [orderFilterStatus, setOrderFilterStatus] = useState<string>("");
   const [customerSearch, setCustomerSearch] = useState("");
+  const [customerFilter, setCustomerFilter] = useState<CustomerListFilter>("all");
   const [productSearch, setProductSearch] = useState("");
   const [productFilter, setProductFilter] = useState<ProductListFilter>("all");
   const [orderSearch, setOrderSearch] = useState("");
@@ -639,7 +650,7 @@ export default function Admin() {
     { enabled: false },
   );
 
-  const customers = useMemo(() => {
+  const searchedCustomers = useMemo(() => {
     const normalizedSearch = customerSearch.trim().toLowerCase();
     return [...(customersQuery.data ?? [])]
       .filter(row => {
@@ -649,6 +660,58 @@ export default function Admin() {
       })
       .sort((a, b) => b.id - a.id);
   }, [customerSearch, customersQuery.data]);
+  const customerSummary = useMemo(() => {
+    const rows = customersQuery.data ?? [];
+    const recentCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+    return {
+      total: rows.length,
+      admins: rows.filter(row => row.role === "admin").length,
+      customers: rows.filter(row => row.role === "user").length,
+      vip: rows.filter(row => Boolean(row.isVip)).length,
+      blocked: rows.filter(row => Boolean(row.isBlocked)).length,
+      active: rows.filter(row => !row.isBlocked).length,
+      recent: rows.filter(row => {
+        const createdAt = new Date(row.createdAt as any).getTime();
+        return Number.isFinite(createdAt) && createdAt >= recentCutoff;
+      }).length,
+    };
+  }, [customersQuery.data]);
+  const customerFilterOptions = useMemo(
+    () => [
+      { key: "all" as const, label: "Todos", count: searchedCustomers.length },
+      { key: "admins" as const, label: "Admins", count: searchedCustomers.filter(row => row.role === "admin").length },
+      { key: "customers" as const, label: "Clientes", count: searchedCustomers.filter(row => row.role === "user").length },
+      { key: "vip" as const, label: "VIP", count: searchedCustomers.filter(row => Boolean(row.isVip)).length },
+      { key: "blocked" as const, label: "Bloqueados", count: searchedCustomers.filter(row => Boolean(row.isBlocked)).length },
+      { key: "active" as const, label: "Ativos", count: searchedCustomers.filter(row => !row.isBlocked).length },
+      {
+        key: "recent" as const,
+        label: "Recentes",
+        count: searchedCustomers.filter(row => {
+          const createdAt = new Date(row.createdAt as any).getTime();
+          return Number.isFinite(createdAt) && createdAt >= Date.now() - 30 * 24 * 60 * 60 * 1000;
+        }).length,
+      },
+    ],
+    [searchedCustomers],
+  );
+  const customers = useMemo(() => {
+    const recentCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+    return searchedCustomers.filter(row => {
+      if (customerFilter === "admins") return row.role === "admin";
+      if (customerFilter === "customers") return row.role === "user";
+      if (customerFilter === "vip") return Boolean(row.isVip);
+      if (customerFilter === "blocked") return Boolean(row.isBlocked);
+      if (customerFilter === "active") return !row.isBlocked;
+      if (customerFilter === "recent") {
+        const createdAt = new Date(row.createdAt as any).getTime();
+        return Number.isFinite(createdAt) && createdAt >= recentCutoff;
+      }
+      return true;
+    });
+  }, [customerFilter, searchedCustomers]);
   const searchedProducts = useMemo(() => {
     const normalizedSearch = productSearch.trim().toLowerCase();
     return [...(productsQuery.data ?? [])]
@@ -930,9 +993,10 @@ export default function Admin() {
 
       {section === "customers" && (
         <AdminSurface
-          title="Clientes"
-          description="Gerencie perfis, permissões e sinais operacionais dos usuários cadastrados."
+          title="Clientes e usuários"
+          description="Gerencie perfis, permissões e sinais operacionais dos usuários cadastrados com mais clareza."
         >
+          <CustomersSummaryCards summary={customerSummary} />
           <div style={styles.inlineRow}>
             <input
               style={{ ...styles.input, minWidth: 260 }}
@@ -940,31 +1004,58 @@ export default function Admin() {
               value={customerSearch}
               onChange={e => setCustomerSearch(e.target.value)}
             />
-            <AdminSummaryPill>Total: {customers.length}</AdminSummaryPill>
-            <AdminSummaryPill>VIP: {customers.filter(row => row.isVip).length}</AdminSummaryPill>
-            <AdminSummaryPill>Bloqueados: {customers.filter(row => row.isBlocked).length}</AdminSummaryPill>
+            <AdminSummaryPill>Exibindo: {customers.length}</AdminSummaryPill>
+            <AdminSummaryPill>Busca: {searchedCustomers.length}</AdminSummaryPill>
           </div>
+          <CustomersFilters
+            value={customerFilter}
+            onChange={setCustomerFilter}
+            options={customerFilterOptions}
+          />
           {customersQuery.isLoading ? (
             <AdminLoadingState>Carregando clientes...</AdminLoadingState>
+          ) : (customersQuery.data ?? []).length === 0 ? (
+            <AdminEmptyState
+              title="Nenhum cliente cadastrado"
+              description="Quando houver usuários cadastrados, eles aparecerão aqui com seus indicadores principais."
+            />
           ) : customers.length === 0 ? (
             <AdminEmptyState
               title="Nenhum cliente encontrado"
-              description="Quando houver usuários cadastrados, eles aparecerão aqui com seus indicadores principais."
+              description="Ajuste a busca ou os filtros para encontrar outros usuários carregados."
             />
           ) : (
             <AdminTableWrapper>
               <table style={styles.table}>
-                <thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Role</th><th>Pedidos</th><th>VIP</th><th>Bloqueado</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Cliente</th><th>Role</th><th>Status</th><th>Pedidos</th><th>Datas</th><th>Ações</th></tr></thead>
                 <tbody>
                   {customers.map(row => (
                     <tr key={row.id}>
-                      <td>{row.id}</td><td>{row.name || "-"}</td><td>{row.email || "-"}</td><td>{row.role}</td><td>{row.ordersCount}</td>
-                      <td>{row.isVip ? "Sim" : "Não"}</td><td>{row.isBlocked ? "Sim" : "Não"}</td>
+                      <td><CustomerProfileCell customer={row} /></td>
+                      <td><CustomerRoleBadge role={row.role} /></td>
+                      <td><CustomerStatusBadges customer={row} /></td>
+                      <td><CustomerOrdersCount value={row.ordersCount} /></td>
+                      <td><CustomerDateMeta createdAt={row.createdAt} lastSignedIn={row.lastSignedIn} /></td>
                       <td style={styles.actionsCell}>
-                        <button style={styles.smallBtn} onClick={() => setRoleMutation.mutate({ userId: row.id, role: row.role === "admin" ? "user" : "admin" })}>
+                        <button
+                          style={styles.smallBtn}
+                          onClick={() => {
+                            const nextRole = row.role === "admin" ? "user" : "admin";
+                            const action = nextRole === "admin" ? "tornar admin" : "remover admin";
+                            if (!confirmAdminAction(`Confirmar ${action} para ${row.email || row.name || `#${row.id}`}?`)) return;
+                            setRoleMutation.mutate({ userId: row.id, role: nextRole });
+                          }}
+                        >
                           {row.role === "admin" ? "Remover admin" : "Tornar admin"}
                         </button>
-                        <button style={styles.smallBtn} onClick={() => setFlagsMutation.mutate({ userId: row.id, isVip: !row.isVip })}>
+                        <button
+                          style={styles.smallBtn}
+                          onClick={() => {
+                            const action = row.isVip ? "remover VIP de" : "marcar como VIP";
+                            if (!confirmAdminAction(`Confirmar ${action} ${row.email || row.name || `#${row.id}`}?`)) return;
+                            setFlagsMutation.mutate({ userId: row.id, isVip: !row.isVip });
+                          }}
+                        >
                           {row.isVip ? "Remover VIP" : "Marcar VIP"}
                         </button>
                         <button
