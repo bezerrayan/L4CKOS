@@ -36,10 +36,10 @@ body {
 
 /* Superfície única para fotos recortadas de produto em toda a loja. */
 .l4-product-media-surface {
-  background:
-    radial-gradient(circle at 50% 42%, rgba(43, 43, 43, 0.72) 0%, rgba(20, 20, 20, 0.92) 48%, #090909 100%) !important;
+  background: #080808 !important;
   border-color: rgba(255, 255, 255, 0.09) !important;
   padding: clamp(14px, 3%, 24px) !important;
+  box-shadow: inset 0 0 72px rgba(255, 255, 255, 0.018);
 }
 
 .l4-product-media-surface--thumb {

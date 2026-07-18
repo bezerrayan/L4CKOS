@@ -373,6 +373,8 @@ export default function ProductDetail() {
               ...styles.imageContainer,
               padding: isMobile ? 12 : styles.imageContainer.padding,
               borderRadius: isMobile ? 16 : styles.imageContainer.borderRadius,
+              aspectRatio: isMobile ? "1 / 1" : styles.imageContainer.aspectRatio,
+              maxHeight: isMobile ? 560 : 720,
             } as CSSProperties}
           >
             <img
