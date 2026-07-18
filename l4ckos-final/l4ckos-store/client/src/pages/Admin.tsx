@@ -154,6 +154,10 @@ function resolveAdminImageUrl(imageUrl?: string | null) {
   return apiUrl(`/${imageUrl}`);
 }
 
+function getPromotionLinkedProductId(linkUrl?: string | null) {
+  return linkUrl?.trim().match(/^\/produto\/(\d+)\/?$/)?.[1] ?? "";
+}
+
 function normalizeAdminImageValue(imageUrl?: string | null) {
   const value = String(imageUrl ?? "").trim();
   if (!value) return "";
@@ -2208,6 +2212,8 @@ export default function Admin() {
             <input style={styles.input} placeholder="Descrição" value={newPromo.description} onChange={e => setNewPromo(prev => ({ ...prev, description: e.target.value }))} />
             <input style={styles.input} placeholder="CTA" value={newPromo.ctaLabel} onChange={e => setNewPromo(prev => ({ ...prev, ctaLabel: e.target.value }))} />
             <div style={styles.mediaField}>
+              <strong style={styles.mediaFieldTitle}>Imagem da promoção</strong>
+              <span style={styles.mediaHint}>Envie uma arte exclusiva. Ela não será puxada nem substituída pelo produto vinculado.</span>
               <input style={styles.input} placeholder="URL da imagem" value={newPromo.imageUrl} onChange={e => setNewPromo(prev => ({ ...prev, imageUrl: e.target.value }))} />
               <div style={styles.mediaActions}>
                 <button
@@ -2264,6 +2270,7 @@ export default function Admin() {
               <span style={styles.mediaHint}>Proporção sugerida para desktop: 1600x900 ou 1920x1080.</span>
             </div>
             <div style={styles.mediaField}>
+              <strong style={styles.mediaFieldTitle}>Imagem mobile da promoção</strong>
               <input
                 style={styles.input}
                 placeholder="URL da imagem mobile (opcional)"
@@ -2322,7 +2329,37 @@ export default function Admin() {
               <span style={styles.mediaHint}>Proporção sugerida para mobile: 1080x1350 ou 1080x1440.</span>
             </div>
             <input style={styles.input} placeholder="Texto alternativo da imagem" value={newPromo.imageAlt} onChange={e => setNewPromo(prev => ({ ...prev, imageAlt: e.target.value }))} />
-            <input style={styles.input} placeholder="Link do banner (ex: /produtos)" value={newPromo.linkUrl} onChange={e => setNewPromo(prev => ({ ...prev, linkUrl: e.target.value }))} />
+            <div style={{ ...styles.mediaField, gridColumn: "1 / -1" }}>
+              <strong style={styles.mediaFieldTitle}>Destino da promoção (opcional)</strong>
+              <span style={styles.mediaHint}>Vincular um produto altera somente o destino do botão. A imagem promocional acima continua independente.</span>
+              <label style={styles.promoDestinationField}>
+                <span style={styles.mediaHint}>Produto vinculado</span>
+                <select
+                  style={styles.input}
+                  value={getPromotionLinkedProductId(newPromo.linkUrl)}
+                  onChange={event => {
+                    const productId = event.target.value;
+                    setNewPromo(prev => ({ ...prev, linkUrl: productId ? `/produto/${productId}` : "" }));
+                  }}
+                >
+                  <option value="">Nenhum produto vinculado</option>
+                  {(productsQuery.data ?? []).map((product: any) => (
+                    <option key={product.id} value={String(product.id)}>
+                      #{product.id} · {product.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={styles.promoDestinationField}>
+                <span style={styles.mediaHint}>Ou use um link manual</span>
+                <input
+                  style={styles.input}
+                  placeholder="/produtos, /categoria/camisas ou URL externa"
+                  value={newPromo.linkUrl}
+                  onChange={event => setNewPromo(prev => ({ ...prev, linkUrl: event.target.value }))}
+                />
+              </label>
+            </div>
             <input style={styles.input} placeholder="Desconto opcional (ex: 30%)" value={newPromo.discountText} onChange={e => setNewPromo(prev => ({ ...prev, discountText: e.target.value }))} />
             <input style={styles.input} placeholder="Label desconto opcional" value={newPromo.discountLabel} onChange={e => setNewPromo(prev => ({ ...prev, discountLabel: e.target.value }))} />
             <input style={styles.input} placeholder="Background CSS" value={newPromo.bgStyle} onChange={e => setNewPromo(prev => ({ ...prev, bgStyle: e.target.value }))} />
@@ -3244,6 +3281,19 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #242424",
     background: "#101010",
     minWidth: 0,
+  },
+  mediaFieldTitle: {
+    color: "#f0ede8",
+    fontSize: 13,
+    fontWeight: 800,
+    textAlign: "left",
+  },
+  promoDestinationField: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minWidth: 0,
+    textAlign: "left",
   },
   mediaActions: {
     display: "flex",
