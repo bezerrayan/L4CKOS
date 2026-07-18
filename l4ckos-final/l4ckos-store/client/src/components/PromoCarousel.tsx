@@ -129,7 +129,7 @@ export default function PromoCarousel() {
           <div className="l4-home-hero-carousel-copy-panel">
             <span className="l4-home-hero-carousel-badge">
               <span aria-hidden="true" />
-              {promo.badge}
+              LANÇAMENTO
             </span>
             <div className="l4-home-hero-carousel-copy-wrap">
               <div className="l4-home-hero-carousel-copy">

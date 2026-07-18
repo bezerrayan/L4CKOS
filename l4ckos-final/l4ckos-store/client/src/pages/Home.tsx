@@ -141,26 +141,28 @@ export default function Home() {
       <section className="l4-home-hero">
         <div className="l4-home-hero-grid" />
         <div className="l4-home-hero-bg" />
-        <div className="l4-home-hero-content">
-          <div className="l4-home-tag">L4CKOS — LOJA OFICIAL</div>
-          <h1 className="l4-home-title">
-            <span>BUILT FOR</span>
-            <br />
-            <span className="accent">ADVENTURE</span>
-          </h1>
-          <p className="l4-home-subtitle">
-            Peças criadas para quem carrega identidade no cotidiano e espírito de aventura por onde passa.
-          </p>
-          <div className="l4-home-hero-cta">
-            <Link to="/produtos" className="l4-btn-primary">
-              EXPLORAR PRODUTOS
-            </Link>
-            <Link to="/sobre" className="l4-btn-outline">
-              CONHECER A L4CKOS
-            </Link>
+        <div className="l4-home-hero-inner">
+          <div className="l4-home-hero-content">
+            <div className="l4-home-tag">L4CKOS — LOJA OFICIAL</div>
+            <h1 className="l4-home-title">
+              <span>BUILT FOR</span>
+              <br />
+              <span className="accent">ADVENTURE</span>
+            </h1>
+            <p className="l4-home-subtitle">
+              Peças criadas para quem carrega identidade no cotidiano e espírito de aventura por onde passa.
+            </p>
+            <div className="l4-home-hero-cta">
+              <Link to="/produtos" className="l4-btn-primary">
+                EXPLORAR PRODUTOS
+              </Link>
+              <Link to="/sobre" className="l4-btn-outline">
+                CONHECER A L4CKOS
+              </Link>
+            </div>
           </div>
+          <PromoCarousel />
         </div>
-        <PromoCarousel />
       </section>
 
       <div className="l4-home-marquee">
