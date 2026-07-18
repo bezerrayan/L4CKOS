@@ -1669,9 +1669,9 @@
 .l4-home-hero-bg {
   background-image:
     radial-gradient(ellipse 29% 48% at 78% 48%, rgba(232,0,42,.14), rgba(232,0,42,.045) 42%, transparent 72%),
-    url("/images/hero/montanhas-l4ckos.svg"),
+    url("/images/hero/montanhas-l4ckos-bg.webp"),
     linear-gradient(180deg, rgba(8,8,8,0) 0%, rgba(8,8,8,.74) 100%);
-  background-position: center, left bottom, center;
+  background-position: center, center bottom, center;
   background-repeat: no-repeat;
   background-size: auto, max(1500px, 100%) auto, auto;
 }
@@ -1756,6 +1756,10 @@
   .l4-home-announce-track span { gap: 8px; }
   .l4-home-announce-track span:nth-of-type(n+3) { display: none; }
   .l4-home-hero { padding-top: 30px; }
+  .l4-home-hero-bg {
+    background-position: center, 52% bottom, center;
+    background-size: auto, 1350px auto, auto;
+  }
   .l4-home-hero-inner { gap: 24px; }
   .l4-home-tag {
     padding: 6px 10px;
