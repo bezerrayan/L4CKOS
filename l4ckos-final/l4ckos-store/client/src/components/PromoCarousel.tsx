@@ -134,10 +134,9 @@ export default function PromoCarousel() {
             <div className="l4-home-hero-carousel-copy-wrap">
               <div className="l4-home-hero-carousel-copy">
                 <h3>
-                  <span>CONFIRA A</span>
                   <span>CAMISETA</span>
-                  <span>EXCLUSIVA DA</span>
-                  <span className="is-red">PARCERIA</span>
+                  <span>EXCLUSIVA</span>
+                  <span className="is-red">CLÃ 14 BIS</span>
                 </h3>
                 <p>{promo.description}</p>
               </div>
