@@ -1658,7 +1658,9 @@ export async function replaceProductImages(
   try {
     await db.delete(productImages).where(eq(productImages.productId, productId));
   } catch (error) {
-    if (isMissingDatabaseObjectError(error)) return;
+    if (isMissingDatabaseObjectError(error)) {
+      throw new Error("A estrutura de fotos do catálogo não está disponível no banco de dados.");
+    }
     throw error;
   }
   if (imageUrls.length > 0) {
@@ -1679,11 +1681,13 @@ export async function replaceProductImages(
       if (!isMissingDatabaseObjectError(error)) throw error;
       if (!/unknown column/i.test(getDatabaseErrorMessage(error))) return;
       try {
-        await db.insert(productImages).values(
-          nextRows.map(({ imageThumbnailUrl, imageDetailUrl, imageBannerUrl, color, alt, ...legacyRow }) => legacyRow),
-        );
-      } catch (legacyError) {
-        if (isMissingDatabaseObjectError(legacyError)) return;
+      await db.insert(productImages).values(
+        nextRows.map(({ imageThumbnailUrl, imageDetailUrl, imageBannerUrl, color, alt, ...legacyRow }) => legacyRow),
+      );
+    } catch (legacyError) {
+        if (isMissingDatabaseObjectError(legacyError)) {
+          throw new Error("Não foi possível gravar as fotos adicionais do produto.");
+        }
         throw legacyError;
       }
     }

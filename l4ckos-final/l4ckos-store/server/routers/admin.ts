@@ -341,9 +341,13 @@ export const adminRouter = router({
         try {
           await replaceProductImages(insertedId, allImages);
         } catch (error) {
-          console.warn("[admin.productCreate] optional image sync failed", {
+          console.error("[admin.productCreate] image sync failed", {
             productId: insertedId,
             reason: error instanceof Error ? error.message : String(error),
+          });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "O produto foi criado, mas as fotos adicionais não puderam ser salvas. Abra-o para editar e tente enviar as fotos novamente.",
           });
         }
         try {
@@ -420,9 +424,13 @@ export const adminRouter = router({
         try {
           await replaceProductImages(id, buildProductImageList(data, images));
         } catch (error) {
-          console.warn("[admin.productUpdate] optional image sync failed", {
+          console.error("[admin.productUpdate] image sync failed", {
             productId: id,
             reason: error instanceof Error ? error.message : String(error),
+          });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "As alterações do produto foram salvas, mas as fotos adicionais não puderam ser gravadas. Tente novamente.",
           });
         }
       }
