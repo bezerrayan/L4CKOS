@@ -1781,6 +1781,30 @@
   .l4-home-hero-cta { margin-top: 26px; }
   .l4-btn-primary,
   .l4-btn-outline { min-height: 48px; }
+  .l4-home-products-wrap .l4-home-section-header {
+    gap: 18px;
+    margin-bottom: 24px;
+  }
+  .l4-home-products-wrap .l4-home-section-copy {
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .l4-home-view-all { align-self: flex-start; }
+  .l4-home-product-card {
+    width: 100%;
+    overflow: hidden;
+  }
+  .l4-home-product-img {
+    width: 100%;
+    max-height: none;
+    aspect-ratio: 1 / 1;
+    border-radius: 0;
+  }
+  .l4-home-product-info { padding: 14px 16px 16px; }
+  .l4-home-product-meta {
+    flex-wrap: nowrap;
+    gap: 16px;
+  }
   .l4-home-hero-carousel-frame {
     height: auto;
     grid-template-rows: auto auto;
