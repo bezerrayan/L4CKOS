@@ -356,8 +356,8 @@
 }
 
 .l4-home-hero-carousel-copy h3 .is-red {
-  color: #e8002a;
-  text-shadow: 0 0 20px rgba(232, 0, 42, 0.28);
+  color: #f2efe9;
+  text-shadow: inherit;
 }
 
 .l4-home-hero-carousel-copy p {
@@ -1715,10 +1715,10 @@
   .l4-home-hero-carousel-copy-wrap { margin-top: 27px; gap: 18px; }
   .l4-home-hero-carousel-product { padding: 5px 10px; }
   .l4-home-hero-carousel-image {
-    width: min(96%, 520px);
-    height: min(94%, 570px);
-    max-width: 520px;
-    max-height: 570px;
+    width: min(91%, 485px);
+    height: min(90%, 535px);
+    max-width: 485px;
+    max-height: 535px;
     padding: 0;
     transform: translateX(3%);
   }
@@ -1727,10 +1727,10 @@
 @media (max-width: 1180px) {
   .l4-home-hero { min-height: 0; }
   .l4-home-hero-carousel-image {
-    width: min(90%, 500px);
+    width: min(86%, 470px);
     height: auto;
-    max-width: 500px;
-    max-height: 540px;
+    max-width: 470px;
+    max-height: 510px;
     padding: 0;
     transform: none;
     mix-blend-mode: normal;
@@ -1790,9 +1790,9 @@
     min-height: 0;
   }
   .l4-home-hero-carousel-image {
-    width: min(84vw, 320px);
+    width: min(80vw, 300px);
     height: auto;
-    max-width: 320px;
+    max-width: 300px;
     max-height: none;
   }
   .l4-home-marquee { min-height: 32px; padding-block: 6px; }
