@@ -261,12 +261,6 @@ export default function ProductDetail() {
       cor: selectedColor,
       tamanho: selectedSize,
     });
-    showToast({
-      message: `${product.name} adicionado à sacola (${quantity}x).`,
-      actionLabel: "Ver sacola",
-      action: () => navigate("/carrinho"),
-      duration: 4500,
-    });
     setShowSelectionWarning(false);
     setQuantity(1);
   };
