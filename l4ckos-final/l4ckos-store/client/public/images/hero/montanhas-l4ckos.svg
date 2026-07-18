@@ -1,0 +1,27 @@
+<svg width="1920" height="720" viewBox="0 0 1920 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="far" x1="960" y1="150" x2="960" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#292929" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#111111" stop-opacity=".72"/>
+    </linearGradient>
+    <linearGradient id="mid" x1="960" y1="260" x2="960" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202020" stop-opacity=".52"/>
+      <stop offset="1" stop-color="#0C0C0C" stop-opacity=".92"/>
+    </linearGradient>
+    <linearGradient id="near" x1="960" y1="390" x2="960" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171717" stop-opacity=".78"/>
+      <stop offset="1" stop-color="#090909"/>
+    </linearGradient>
+  </defs>
+
+  <path d="M0 720V574L158 474L258 513L438 318L528 391L686 181L774 266L842 225L1010 425L1118 338L1228 443L1392 255L1473 329L1554 278L1760 491L1920 402V720H0Z" fill="url(#far)"/>
+  <path d="M258 513L438 318L528 391L686 181L774 266L842 225L1010 425M1118 338L1228 443L1392 255L1473 329L1554 278L1760 491" stroke="#505050" stroke-opacity=".22" stroke-width="2"/>
+  <path d="M438 318L480 375L528 391L573 314L616 296L686 181L718 273L774 266L812 321L842 225" stroke="#777" stroke-opacity=".12"/>
+
+  <path d="M0 720V638L177 538L315 585L511 402L616 485L760 350L882 468L1020 378L1172 526L1350 363L1486 486L1635 390L1812 553L1920 502V720H0Z" fill="url(#mid)"/>
+  <path d="M177 538L315 585L511 402L616 485L760 350L882 468L1020 378L1172 526L1350 363L1486 486L1635 390L1812 553" stroke="#4B4B4B" stroke-opacity=".2" stroke-width="1.5"/>
+  <path d="M511 402L555 482L616 485L663 437L703 419L760 350L795 433L882 468M1350 363L1391 446L1486 486L1540 432L1635 390" stroke="#6A6A6A" stroke-opacity=".1"/>
+
+  <path d="M0 720V689L226 584L392 646L604 501L735 616L914 476L1080 617L1243 508L1420 631L1584 522L1777 627L1920 573V720H0Z" fill="url(#near)"/>
+  <path d="M226 584L392 646L604 501L735 616L914 476L1080 617L1243 508L1420 631L1584 522L1777 627" stroke="#383838" stroke-opacity=".2" stroke-width="1.5"/>
+</svg>

@@ -31,6 +31,9 @@ const PROMOS_FALLBACK: Promo[] = [
   },
 ];
 
+const HERO_SHIRT_CUTOUT = "/images/hero/camiseta-cla-14-bis-recorte.png";
+const LEGACY_HERO_IMAGE = "9a1c1469-8e7d-49ba-9a5b-f9de68cad788-banner.webp";
+
 function toLaunchPromo(base?: Partial<Promo> | null): Promo {
   return {
     id: Number(base?.id ?? 1),
@@ -110,7 +113,11 @@ export default function PromoCarousel() {
 
   const promo = promos[current] ?? promos[0];
   if (!promo) return null;
-  const promoImage = isMobileViewport && promo.mobileImageUrl ? promo.mobileImageUrl : promo.imageUrl;
+  const configuredPromoImage = isMobileViewport && promo.mobileImageUrl ? promo.mobileImageUrl : promo.imageUrl;
+  const promoImage =
+    configuredPromoImage && !configuredPromoImage.includes(LEGACY_HERO_IMAGE)
+      ? configuredPromoImage
+      : HERO_SHIRT_CUTOUT;
 
   return (
     <section
@@ -160,6 +167,11 @@ export default function PromoCarousel() {
                   alt={promo.imageAlt || promo.title}
                   className="l4-home-hero-carousel-image"
                   loading="lazy"
+                  onError={(event) => {
+                    if (!event.currentTarget.src.endsWith(HERO_SHIRT_CUTOUT)) {
+                      event.currentTarget.src = HERO_SHIRT_CUTOUT;
+                    }
+                  }}
                 />
               ) : (
                 <div className="l4-home-hero-carousel-fallback">

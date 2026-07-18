@@ -167,16 +167,20 @@ export default function Home() {
 
       <div className="l4-home-marquee">
         <div className="l4-home-marquee-track">
-          <span>OUTDOOR</span>
-          <span>L4CKOS</span>
-          <span>L4CKOS</span>
-          <span>IDENTIDADE URBANA</span>
-          <span>BUILT FOR ADVENTURE</span>
-          <span>OUTDOOR</span>
-          <span>L4CKOS</span>
-          <span>L4CKOS</span>
-          <span>IDENTIDADE URBANA</span>
-          <span>BUILT FOR ADVENTURE</span>
+          <div className="l4-home-marquee-group">
+            <span>OUTDOOR</span>
+            <span>L4CKOS</span>
+            <span>IDENTIDADE URBANA</span>
+            <span>BUILT FOR ADVENTURE</span>
+            <span>L4CKOS</span>
+          </div>
+          <div className="l4-home-marquee-group" aria-hidden="true">
+            <span>OUTDOOR</span>
+            <span>L4CKOS</span>
+            <span>IDENTIDADE URBANA</span>
+            <span>BUILT FOR ADVENTURE</span>
+            <span>L4CKOS</span>
+          </div>
         </div>
       </div>
 
