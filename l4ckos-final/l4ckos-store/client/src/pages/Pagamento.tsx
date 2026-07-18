@@ -15,6 +15,9 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
+import { ChevronDown, LockKeyhole, Minus, Plus, Trash2 } from "lucide-react";
+import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
+import "./Pagamento.css";
 
 type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 
@@ -126,6 +129,8 @@ export default function Pagamento() {
   const [couponError, setCouponError] = useState("");
   const [couponDiscount, setCouponDiscount] = useState(0);
   const [appliedCouponCode, setAppliedCouponCode] = useState<string | null>(null);
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [isCouponOpen, setIsCouponOpen] = useState(false);
   const canShowTechnicalShippingError = import.meta.env.DEV || user?.role === "admin";
 
   const validateCoupon = trpc.orders.validateCoupon.useMutation();
@@ -422,6 +427,134 @@ export default function Pagamento() {
       setPaymentError(parsed.message);
     }
   };
+
+  if (cart.items.length > 0) {
+    const summaryExpanded = !isMobile || isSummaryOpen;
+    return (
+      <div className="l4-checkout-page">
+        <header className="l4-checkout-header">
+          <Link to="/" className="l4-checkout-brand" aria-label="L4CKOS, voltar ao início">
+            <img src={logoMainDark} alt="L4CKOS" />
+          </Link>
+          <div className="l4-checkout-secure"><LockKeyhole size={15} aria-hidden="true" /> Compra segura</div>
+          <ol className="l4-checkout-progress" aria-label="Etapas da compra">
+            <li> Sacola</li><li className="is-active">Checkout</li><li>Confirmação</li>
+          </ol>
+        </header>
+
+        <div className="l4-checkout-layout">
+          <aside className="l4-checkout-summary">
+            <button
+              type="button"
+              className="l4-checkout-summary-toggle"
+              onClick={() => setIsSummaryOpen(value => !value)}
+              aria-expanded={summaryExpanded}
+              aria-controls="checkout-order-summary"
+            >
+              <span><strong>Resumo do pedido</strong><small>{cart.itemCount} {cart.itemCount === 1 ? "item" : "itens"}</small></span>
+              <strong>{formatPrice(orderTotal)}</strong>
+              <ChevronDown size={18} className={summaryExpanded ? "is-open" : ""} aria-hidden="true" />
+            </button>
+            {summaryExpanded ? (
+              <div id="checkout-order-summary" className="l4-checkout-summary-content">
+                <div className="l4-checkout-summary-items">
+                  {cart.items.map(item => (
+                    <article key={getItemKey(item.product.id, item.selectedOptions)} className="l4-checkout-summary-item">
+                      <img src={item.product.imageThumbnail || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
+                      <div>
+                        <div className="l4-checkout-item-title"><h3>{item.product.name}</h3><strong>{formatPrice(item.product.price * item.quantity)}</strong></div>
+                        {item.selectedOptions ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}
+                        <div className="l4-checkout-item-controls">
+                          <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
+                          <span>{item.quantity}</span>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
+                          <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <dl className="l4-checkout-totals">
+                  <div><dt>Subtotal</dt><dd>{formatPrice(cart.total)}</dd></div>
+                  <div><dt>Frete</dt><dd>{selectedShipping ? formatPrice(selectedShipping.price) : "Calcular"}</dd></div>
+                  {couponDiscount > 0 ? <div><dt>Desconto</dt><dd>-{formatPrice(couponDiscount)}</dd></div> : null}
+                  <div className="l4-checkout-grand-total"><dt>Total</dt><dd>{formatPrice(orderTotal)}</dd></div>
+                </dl>
+                <Link to="/carrinho" className="l4-checkout-edit-cart">Editar sacola</Link>
+              </div>
+            ) : null}
+          </aside>
+
+          <main className="l4-checkout-form-panel">
+            <div className="l4-checkout-form-intro"><p>Checkout</p><h1>Finalize seu pedido</h1></div>
+
+            <section className="l4-checkout-section" aria-labelledby="checkout-contact-title">
+              <div className="l4-checkout-section-heading"><span>01</span><h2 id="checkout-contact-title">Contato</h2></div>
+              <div className="l4-checkout-fields">
+                <label>Nome completo<input value={customerName} onChange={event => setCustomerName(event.target.value)} autoComplete="name" /></label>
+                <label>E-mail<input type="email" value={customerEmail} onChange={event => setCustomerEmail(event.target.value)} autoComplete="email" /></label>
+                <label>CPF ou CNPJ<input value={cpfCnpj} onChange={event => setCpfCnpj(event.target.value)} inputMode="numeric" autoComplete="off" /></label>
+              </div>
+            </section>
+
+            <section className="l4-checkout-section" aria-labelledby="checkout-shipping-title">
+              <div className="l4-checkout-section-heading"><span>02</span><h2 id="checkout-shipping-title">Entrega</h2></div>
+              <div className="l4-checkout-cep-row">
+                <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" /></label>
+                <button type="button" onClick={handleLookupCep} disabled={addressLoading}>{addressLoading ? "Consultando..." : "Consultar CEP"}</button>
+              </div>
+              <div className="l4-checkout-fields l4-checkout-address-fields">
+                <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => setAddressStreet(event.target.value)} autoComplete="address-line1" /></label>
+                <label>Número<input value={addressNumber} onChange={event => setAddressNumber(event.target.value)} autoComplete="address-line2" /></label>
+                <label>Complemento <em>opcional</em><input value={addressComplement} onChange={event => setAddressComplement(event.target.value)} /></label>
+                <label>Bairro<input value={addressNeighborhood} onChange={event => setAddressNeighborhood(event.target.value)} autoComplete="address-level3" /></label>
+                <label>Cidade<input value={addressCity} onChange={event => setAddressCity(event.target.value)} autoComplete="address-level2" /></label>
+                <label>UF<input value={addressState} onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} /></label>
+              </div>
+              <div className="l4-checkout-live" aria-live="polite">{shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
+              {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options">
+                {shippingOptions.map(option => <button key={option.id} type="button" className={selectedShippingId === option.id ? "is-selected" : ""} onClick={() => setSelectedShippingId(option.id)}>
+                  <span><strong>{option.label}</strong><small>{option.description} · {option.minDays} a {option.maxDays} dias úteis</small></span><strong>{formatPrice(option.price)}</strong>
+                </button>)}
+              </div> : null}
+              {selectedShipping ? <p className="l4-checkout-delivery-note">Previsão: <strong>{estimatedDateRange}</strong>, após a aprovação do pagamento.</p> : null}
+            </section>
+
+            <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
+              <div className="l4-checkout-section-heading"><span>03</span><h2 id="checkout-payment-title">Pagamento</h2></div>
+              <div className="l4-checkout-payment-methods">
+                {(["PIX", "CARD", "BOLETO"] as CheckoutMethod[]).map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => setCheckoutMethod(method)} aria-pressed={checkoutMethod === method}>
+                  <strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small>
+                </button>)}
+              </div>
+              <p className="l4-checkout-payment-hint">{checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
+            </section>
+
+            <section className="l4-checkout-coupon">
+              <button type="button" onClick={() => setIsCouponOpen(value => !value)} aria-expanded={isCouponOpen}><span>Possui cupom de desconto?</span><ChevronDown size={17} className={isCouponOpen ? "is-open" : ""} /></button>
+              {isCouponOpen ? <div><label>Cupom<input value={couponCode} onChange={event => setCouponCode(event.target.value.toUpperCase())} placeholder="Digite o código" /></label><button type="button" onClick={() => void handleApplyCoupon()} disabled={validateCoupon.isPending}>{validateCoupon.isPending ? "Validando..." : "Aplicar"}</button>{appliedCouponCode ? <p aria-live="polite">Cupom {appliedCouponCode} aplicado.</p> : null}{couponError ? <p className="is-error" aria-live="polite">{couponError}</p> : null}</div> : null}
+            </section>
+
+            <section className="l4-checkout-finish">
+              <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
+              <button type="button" onClick={() => void handleCheckout()} disabled={createAsaasCharge.isPending}>{createAsaasCharge.isPending ? "Gerando cobrança..." : "Finalizar compra"}</button>
+              <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
+              {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
+            </section>
+
+            {paymentData ? <section className="l4-checkout-charge" aria-live="polite">
+              <strong>Cobrança {paymentData.method} gerada para o pedido #{paymentData.orderId}</strong>
+              {paymentData.method === "PIX" && paymentData.pixQrCode ? <img src={getPixQrCodeSource(paymentData.pixQrCode)} alt="QR Code PIX" /> : null}
+              {paymentData.method === "PIX" && paymentData.pixCopyPaste ? <><textarea readOnly value={paymentData.pixCopyPaste} /><button type="button" onClick={() => void handleCopyText(paymentData.pixCopyPaste)}>Copiar código PIX</button></> : null}
+              {paymentData.method === "BOLETO" && paymentData.digitableLine ? <><textarea readOnly value={paymentData.digitableLine} /><button type="button" onClick={() => void handleCopyText(paymentData.digitableLine)}>Copiar linha digitável</button></> : null}
+              {paymentData.invoiceUrl ? <a href={paymentData.invoiceUrl} target="_blank" rel="noreferrer">Abrir fatura no Asaas</a> : null}
+              {paymentData.method === "BOLETO" && paymentData.bankSlipUrl ? <a href={paymentData.bankSlipUrl} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
+            </section> : null}
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

@@ -93,6 +93,7 @@ function AppRoutes() {
   const location = useLocation();
   const { user, isAuthenticated, isLoading } = useUser();
   const comingSoonEnabled = siteMode === "coming-soon";
+  const isCheckoutRoute = location.pathname === "/checkout";
   const isAdmin = isAuthenticated && user?.role === "admin";
   const comingSoonAllowedRoutes = new Set(["/em-breve", "/login", "/entrar", "/cadastro", "/esqueci-senha", "/redefinir-senha", "/gestao", "/admin"]);
   const isAllowedDuringComingSoon = comingSoonAllowedRoutes.has(location.pathname);
@@ -104,11 +105,11 @@ function AppRoutes() {
 
   return (
     <>
-      <Header />
+      {!isCheckoutRoute ? <Header /> : null}
 
       <div
         style={{
-          minHeight: isMobile ? "calc(100vh - 150px)" : "calc(100vh - 170px)",
+          minHeight: isCheckoutRoute ? "100vh" : isMobile ? "calc(100vh - 150px)" : "calc(100vh - 170px)",
           margin: "0 auto",
           padding: "0",
           width: "100%",
@@ -148,7 +149,7 @@ function AppRoutes() {
         </Suspense>
       </div>
 
-      <Footer />
+      {!isCheckoutRoute ? <Footer /> : null}
       <CartDrawer />
       <CookiePreferences />
     </>
