@@ -119,6 +119,7 @@ export default function Pagamento() {
   const [addressNumber, setAddressNumber] = useState("");
   const [addressComplement, setAddressComplement] = useState("");
   const [addressLoading, setAddressLoading] = useState(false);
+  const [shippingLoading, setShippingLoading] = useState(false);
   const [cep, setCep] = useState("");
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
   const [selectedShippingId, setSelectedShippingId] = useState<ShippingOption["id"] | null>(null);
@@ -164,6 +165,19 @@ export default function Pagamento() {
 
   const orderBaseTotal = cart.total + (selectedShipping?.price ?? 0);
   const orderTotal = Math.max(0, Number((orderBaseTotal - couponDiscount).toFixed(2)));
+  const hasCompleteCheckoutData = Boolean(
+    isAuthenticated &&
+    customerName.trim() &&
+    customerEmail.trim() &&
+    cpfCnpj.trim() &&
+    sanitizeCep(cep).length === 8 &&
+    addressStreet.trim() &&
+    addressNumber.trim() &&
+    addressNeighborhood.trim() &&
+    addressCity.trim() &&
+    addressState.trim() &&
+    selectedShipping,
+  );
 
   useEffect(() => {
     if (!user) return;
@@ -181,13 +195,21 @@ export default function Pagamento() {
   }, [clearCart, isPaymentConfirmed, paymentData?.orderId]);
 
   useEffect(() => {
-    if (couponDiscount <= 0) return;
+    if (!appliedCouponCode) return;
     const normalizedCode = couponCode.trim().toUpperCase();
     if (!normalizedCode || normalizedCode !== appliedCouponCode) {
       setCouponDiscount(0);
       setAppliedCouponCode(null);
     }
-  }, [cart.total, selectedShipping?.price]);
+  }, [appliedCouponCode, couponCode]);
+
+  useEffect(() => {
+    if (!appliedCouponCode) return;
+    setCouponDiscount(0);
+    setAppliedCouponCode(null);
+    setCouponError("O pedido foi alterado. Aplique o cupom novamente.");
+    setIsCouponOpen(true);
+  }, [cart.itemCount, cart.total, selectedShipping?.price]);
 
   useEffect(() => {
     const normalizedCep = sanitizeCep(cep);
@@ -232,9 +254,9 @@ export default function Pagamento() {
     await navigator.clipboard.writeText(value);
   };
 
-  const handleCalculateShipping = async () => {
+  const handleCalculateShipping = async (cepValue = cep) => {
     setShippingError("");
-    const normalizedCep = sanitizeCep(cep);
+    const normalizedCep = sanitizeCep(cepValue);
 
     if (normalizedCep.length !== 8) {
       setShippingOptions([]);
@@ -243,6 +265,7 @@ export default function Pagamento() {
       return;
     }
 
+    setShippingLoading(true);
     try {
       const response = await csrfFetch(apiUrl("/api/shipping/quote"), {
         method: "POST",
@@ -269,7 +292,7 @@ export default function Pagamento() {
       };
       const options = data.options?.length ? data.options : buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
       setShippingOptions(options);
-      setSelectedShippingId(options[0]?.id ?? null);
+      setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options[0]?.id ?? null);
       const sanitizedProviderError = (data.providerError || "")
         .replace(/\s*\|\s*/g, "; ")
         .replace(/\s+/g, " ")
@@ -289,6 +312,8 @@ export default function Pagamento() {
       setShippingOptions(fallbackOptions);
       setSelectedShippingId(fallbackOptions[0]?.id ?? null);
       setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+    } finally {
+      setShippingLoading(false);
     }
   };
 
@@ -327,12 +352,12 @@ export default function Pagamento() {
       setAddressNeighborhood(data.bairro || "");
       setAddressCity(data.localidade || "");
       setAddressState(data.uf || "");
-      await handleCalculateShipping();
+      await handleCalculateShipping(normalizedCep);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível consultar o CEP.");
       const message = parsed.message;
       setShippingError(message.includes("Load failed") ? "Não foi possível consultar o CEP agora." : message);
-      await handleCalculateShipping();
+      await handleCalculateShipping(normalizedCep);
     } finally {
       setAddressLoading(false);
     }
@@ -371,6 +396,10 @@ export default function Pagamento() {
 
   const handleCheckout = async () => {
     setPaymentError("");
+
+    if (paymentData || createAsaasCharge.isPending) {
+      return;
+    }
 
     if (!isAuthenticated) {
       setPaymentError("Faça login para finalizar a compra.");
@@ -500,8 +529,8 @@ export default function Pagamento() {
             <section className="l4-checkout-section" aria-labelledby="checkout-shipping-title">
               <div className="l4-checkout-section-heading"><span>02</span><h2 id="checkout-shipping-title">Entrega</h2></div>
               <div className="l4-checkout-cep-row">
-                <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" /></label>
-                <button type="button" onClick={handleLookupCep} disabled={addressLoading}>{addressLoading ? "Consultando..." : "Consultar CEP"}</button>
+                <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
+                <button type="button" onClick={handleLookupCep} disabled={addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
               </div>
               <div className="l4-checkout-fields l4-checkout-address-fields">
                 <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => setAddressStreet(event.target.value)} autoComplete="address-line1" /></label>
@@ -511,8 +540,8 @@ export default function Pagamento() {
                 <label>Cidade<input value={addressCity} onChange={event => setAddressCity(event.target.value)} autoComplete="address-level2" /></label>
                 <label>UF<input value={addressState} onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} /></label>
               </div>
-              <div className="l4-checkout-live" aria-live="polite">{shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
-              {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options">
+              <div id="checkout-shipping-status" className="l4-checkout-live" aria-live="polite">{shippingLoading ? <p>Calculando modalidades de entrega...</p> : shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
+              {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options" aria-busy={shippingLoading}>
                 {shippingOptions.map(option => <button key={option.id} type="button" className={selectedShippingId === option.id ? "is-selected" : ""} onClick={() => setSelectedShippingId(option.id)}>
                   <span><strong>{option.label}</strong><small>{option.description} · {option.minDays} a {option.maxDays} dias úteis</small></span><strong>{formatPrice(option.price)}</strong>
                 </button>)}
@@ -537,7 +566,8 @@ export default function Pagamento() {
 
             <section className="l4-checkout-finish">
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={createAsaasCharge.isPending}>{createAsaasCharge.isPending ? "Gerando cobrança..." : "Finalizar compra"}</button>
+              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)}>{createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
+              {!hasCompleteCheckoutData && !paymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
               {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
             </section>
