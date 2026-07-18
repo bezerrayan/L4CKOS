@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import Footer from "./components/Footer";
 import Header from "./components/Header";
 import CookiePreferences from "./components/CookiePreferences";
+import CartDrawer from "./components/CartDrawer";
 import { useUser } from "./contexts/UserContext";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { siteMode } from "./config/site";
@@ -148,6 +149,7 @@ function AppRoutes() {
       </div>
 
       <Footer />
+      <CartDrawer />
       <CookiePreferences />
     </>
   );

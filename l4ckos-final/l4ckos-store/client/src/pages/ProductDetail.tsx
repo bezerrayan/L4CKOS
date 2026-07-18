@@ -94,7 +94,7 @@ export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { addToCart } = useCart();
+  const { addToCart, closeCartDrawer } = useCart();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const { showToast } = useToast();
 
@@ -285,6 +285,7 @@ export default function ProductDetail() {
 
     addToCart(product, quantity, { cor: selectedColor, tamanho: selectedSize });
     setShowSelectionWarning(false);
+    closeCartDrawer();
     navigate("/checkout");
   };
 

@@ -18,7 +18,7 @@ function firstName(name?: string, email?: string) {
 
 export default function Header() {
   const location = useLocation();
-  const { cart } = useCart();
+  const { cart, isCartDrawerOpen, openCartDrawer } = useCart();
   const { favorites } = useFavorites();
   const { user, logout } = useUser();
   const isMobile = useIsMobile(980);
@@ -108,14 +108,17 @@ export default function Header() {
             {favoriteCount > 0 ? <span className="l4-header-count">{favoriteCount}</span> : null}
           </Link>
 
-          <Link
-            to="/carrinho"
-            className={`l4-header-icon-btn ${location.pathname === "/carrinho" ? "active" : ""}`}
+          <button
+            type="button"
+            onClick={openCartDrawer}
+            className={`l4-header-icon-btn ${location.pathname === "/carrinho" || isCartDrawerOpen ? "active" : ""}`}
             aria-label={bagCount > 0 ? `Sacola, ${bagCount} item${bagCount > 1 ? "s" : ""}` : "Sacola vazia"}
+            aria-haspopup="dialog"
+            aria-expanded={isCartDrawerOpen}
           >
             <ShoppingBag size={18} aria-hidden="true" />
             {bagCount > 0 ? <span className="l4-header-count">{bagCount}</span> : null}
-          </Link>
+          </button>
 
           <div className="l4-header-account" ref={accountRef}>
             <button
