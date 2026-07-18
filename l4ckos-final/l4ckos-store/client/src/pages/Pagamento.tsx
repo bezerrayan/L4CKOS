@@ -41,6 +41,20 @@ type ShippingOption = {
   maxDays: number;
 };
 
+type SavedCheckoutAddress = {
+  id: string;
+  label: string;
+  recipient: string;
+  zipCode: string;
+  street: string;
+  number: string;
+  complement?: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  isDefault: boolean;
+};
+
 const checkoutHighlights = [
   "Revise frete, prazo e dados antes de gerar a cobrança.",
   "O pedido segue para separação após confirmação do pagamento.",
@@ -110,6 +124,7 @@ export default function Pagamento() {
   const createAsaasCharge = useCreateAsaasCharge();
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const lastCepLookupRef = useRef<string | null>(null);
+  const loadedSavedAddressRef = useRef(false);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -120,6 +135,7 @@ export default function Pagamento() {
   const [addressState, setAddressState] = useState("");
   const [addressNumber, setAddressNumber] = useState("");
   const [addressComplement, setAddressComplement] = useState("");
+  const [selectedSavedAddressId, setSelectedSavedAddressId] = useState("");
   const [addressLoading, setAddressLoading] = useState(false);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [cep, setCep] = useState("");
@@ -137,6 +153,10 @@ export default function Pagamento() {
   const canShowTechnicalShippingError = import.meta.env.DEV || user?.role === "admin";
 
   const validateCoupon = trpc.orders.validateCoupon.useMutation();
+  const profileQuery = trpc.profile.get.useQuery(undefined, {
+    enabled: isAuthenticated,
+    refetchOnWindowFocus: false,
+  });
   const paymentOrderQuery = trpc.orders.detail.useQuery(paymentData?.orderId ?? 0, {
     enabled: Boolean(paymentData?.orderId),
     refetchInterval: data => {
@@ -150,6 +170,11 @@ export default function Pagamento() {
     () => shippingOptions.find(option => option.id === selectedShippingId) ?? null,
     [shippingOptions, selectedShippingId],
   );
+  const savedAddresses = useMemo<SavedCheckoutAddress[]>(() => (profileQuery.data?.addresses ?? []).map(address => ({
+    id: String(address.id), label: address.label, recipient: address.recipient, zipCode: address.zipCode,
+    street: address.street, number: address.number, complement: address.complement, neighborhood: address.neighborhood,
+    city: address.city, state: address.state, isDefault: address.isDefault,
+  })), [profileQuery.data?.addresses]);
   const paymentStatus = (paymentOrderQuery.data as any)?.status as string | undefined;
   const isPaymentConfirmed =
     paymentStatus === "paid" || paymentStatus === "processing" || paymentStatus === "shipped" || paymentStatus === "delivered";
@@ -186,6 +211,30 @@ export default function Pagamento() {
     setCustomerName(user.name || "");
     setCustomerEmail(user.email || "");
   }, [user]);
+
+  const applySavedAddress = (address: SavedCheckoutAddress) => {
+    setSelectedSavedAddressId(address.id);
+    setCep(sanitizeCep(address.zipCode));
+    setAddressStreet(address.street);
+    setAddressNumber(address.number);
+    setAddressComplement(address.complement ?? "");
+    setAddressNeighborhood(address.neighborhood);
+    setAddressCity(address.city);
+    setAddressState(address.state);
+  };
+
+  useEffect(() => {
+    if (loadedSavedAddressRef.current || savedAddresses.length === 0) return;
+    if (cep || addressStreet || addressNumber || addressNeighborhood || addressCity || addressState) {
+      loadedSavedAddressRef.current = true;
+      return;
+    }
+    const preferredAddress = savedAddresses.find(address => address.isDefault) ?? savedAddresses[0];
+    if (preferredAddress) applySavedAddress(preferredAddress);
+    loadedSavedAddressRef.current = true;
+    // Carrega somente o endereço salvo inicial; alterações posteriores continuam manuais.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedAddresses]);
 
   useEffect(() => {
     if (!paymentData?.orderId || !isPaymentConfirmed || clearedOrdersRef.current.has(paymentData.orderId)) {
@@ -548,6 +597,19 @@ export default function Pagamento() {
 
             <section className="l4-checkout-section" aria-labelledby="checkout-shipping-title">
               <div className="l4-checkout-section-heading"><span>02</span><div><h2 id="checkout-shipping-title">Entrega</h2><p>Calcule o frete e preencha o endereço.</p></div></div>
+              {savedAddresses.length > 0 ? <div className="l4-checkout-saved-address">
+                <label>Endereço salvo
+                  <select value={selectedSavedAddressId} onChange={event => {
+                    const address = savedAddresses.find(item => item.id === event.target.value);
+                    setSelectedSavedAddressId(event.target.value);
+                    if (address) applySavedAddress(address);
+                  }}>
+                    <option value="">Preencher outro endereço</option>
+                    {savedAddresses.map(address => <option key={address.id} value={address.id}>{address.label}{address.isDefault ? " (principal)" : ""} — {address.street}, {address.number}</option>)}
+                  </select>
+                </label>
+                <p>Você pode trocar o endereço salvo ou editar os campos abaixo.</p>
+              </div> : null}
               <div className="l4-checkout-cep-row">
                 <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
                 <button type="button" onClick={handleLookupCep} disabled={sanitizeCep(cep).length !== 8 || addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>

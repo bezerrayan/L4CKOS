@@ -27,6 +27,11 @@
 .l4-checkout-fields input:focus, .l4-checkout-cep-row input:focus, .l4-checkout-coupon input:focus { border-color: #e8002a; }
 .l4-checkout-fields input:focus-visible, .l4-checkout-cep-row input:focus-visible, .l4-checkout-coupon input:focus-visible { outline: 2px solid rgba(240, 237, 232, .88); outline-offset: 2px; }
 .l4-checkout-cep-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: end; margin-bottom: 14px; }
+.l4-checkout-saved-address { margin-bottom: 14px; }
+.l4-checkout-saved-address label { display: grid; gap: 7px; color: #d1d5db; font-size: 12px; font-weight: 800; }
+.l4-checkout-saved-address select { width: 100%; min-height: 50px; padding: 12px 13px; border: 1px solid #343434; border-radius: 7px; outline: none; color: #f0ede8; background: #101010; font: 400 16px "DM Sans", sans-serif; }
+.l4-checkout-saved-address select:focus-visible { border-color: #e8002a; outline: 2px solid #f0ede8; outline-offset: 2px; }
+.l4-checkout-saved-address p { margin: 7px 0 0; color: #9ca3af; font-size: 12px; line-height: 1.4; }
 .l4-checkout-cep-row button, .l4-checkout-coupon > div > button { min-height: 52px; padding: 0 15px; border: 1px solid #3b3b3b; border-radius: 7px; color: #e9e6e1; background: #181818; font-size: 13px; font-weight: 800; transition: background-color .16s ease, border-color .16s ease, color .16s ease; }
 .l4-checkout-cep-row button:hover:not(:disabled), .l4-checkout-coupon > div > button:hover:not(:disabled) { border-color: #515151; background: #212121; }
 .l4-checkout-cep-row button:disabled, .l4-checkout-coupon > div > button:disabled { cursor: not-allowed; opacity: .52; }
