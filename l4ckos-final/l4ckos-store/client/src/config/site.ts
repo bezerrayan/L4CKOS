@@ -19,7 +19,7 @@ export const siteMode: SiteMode = normalizeSiteMode(
 
 export const contactChannels = {
   email: "contato@l4ckos.com.br",
-  instagramUrl: "https://instagram.com/l4ckos",
+  instagramUrl: "https://www.instagram.com/l4ckosstore/",
   whatsappNumber: "",
   responseTime: "Buscamos responder em até 2 dias úteis.",
 };

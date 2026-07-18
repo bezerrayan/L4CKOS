@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { contactChannels } from "../../config/site";
 import { apiUrl } from "../../const";
 import { csrfFetch } from "../../lib/csrf";
 
@@ -72,7 +73,7 @@ export default function WaitlistForm() {
         <p className="text-center font-sans text-sm text-zinc-600 sm:text-[15px]">+1200 pessoas aguardando o lançamento</p>
 
         <a
-          href="https://instagram.com/l4ckos"
+          href={contactChannels.instagramUrl}
           target="_blank"
           rel="noreferrer"
           className="inline-flex h-10 w-full items-center justify-center rounded-xl font-sans text-sm font-medium text-zinc-700 transition hover:bg-zinc-100/45 hover:text-zinc-900"
