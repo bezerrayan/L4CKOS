@@ -467,6 +467,7 @@ export default function Pagamento() {
             <img src={logoMainDark} alt="L4CKOS" />
           </Link>
           <div className="l4-checkout-secure"><LockKeyhole size={15} aria-hidden="true" /> Compra segura</div>
+          <div className="l4-checkout-form-intro"><p>Checkout</p><h1>Finalize seu pedido</h1><span>Preencha os dados abaixo para concluir sua compra.</span></div>
           <ol className="l4-checkout-progress" aria-label="Etapas da compra">
             <li> Sacola</li><li className="is-active">Checkout</li><li>Confirmação</li>
           </ol>
@@ -516,8 +517,6 @@ export default function Pagamento() {
           </aside>
 
           <main className="l4-checkout-form-panel">
-            <div className="l4-checkout-form-intro"><p>Checkout</p><h1>Finalize seu pedido</h1><span>Preencha os dados abaixo para concluir sua compra.</span></div>
-
             <section className="l4-checkout-section" aria-labelledby="checkout-contact-title">
               <div className="l4-checkout-section-heading"><span>01</span><div><h2 id="checkout-contact-title">Contato</h2><p>Informe seus dados para continuarmos.</p></div></div>
               <div className="l4-checkout-fields">
