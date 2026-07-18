@@ -103,7 +103,8 @@ function getOrderStatusLabel(status?: string | null) {
 }
 
 export default function Pagamento() {
-  const isMobile = useIsMobile();
+  // O resumo passa a ser compacto no mesmo ponto em que o layout deixa as duas colunas.
+  const isMobile = useIsMobile(900);
   const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
@@ -515,22 +516,22 @@ export default function Pagamento() {
           </aside>
 
           <main className="l4-checkout-form-panel">
-            <div className="l4-checkout-form-intro"><p>Checkout</p><h1>Finalize seu pedido</h1></div>
+            <div className="l4-checkout-form-intro"><p>Checkout</p><h1>Finalize seu pedido</h1><span>Preencha os dados abaixo para concluir sua compra.</span></div>
 
             <section className="l4-checkout-section" aria-labelledby="checkout-contact-title">
-              <div className="l4-checkout-section-heading"><span>01</span><h2 id="checkout-contact-title">Contato</h2></div>
+              <div className="l4-checkout-section-heading"><span>01</span><div><h2 id="checkout-contact-title">Contato</h2><p>Informe seus dados para continuarmos.</p></div></div>
               <div className="l4-checkout-fields">
-                <label>Nome completo<input value={customerName} onChange={event => setCustomerName(event.target.value)} autoComplete="name" /></label>
+                <label className="l4-checkout-contact-name">Nome completo<input value={customerName} onChange={event => setCustomerName(event.target.value)} autoComplete="name" /></label>
                 <label>E-mail<input type="email" value={customerEmail} onChange={event => setCustomerEmail(event.target.value)} autoComplete="email" /></label>
                 <label>CPF ou CNPJ<input value={cpfCnpj} onChange={event => setCpfCnpj(event.target.value)} inputMode="numeric" autoComplete="off" /></label>
               </div>
             </section>
 
             <section className="l4-checkout-section" aria-labelledby="checkout-shipping-title">
-              <div className="l4-checkout-section-heading"><span>02</span><h2 id="checkout-shipping-title">Entrega</h2></div>
+              <div className="l4-checkout-section-heading"><span>02</span><div><h2 id="checkout-shipping-title">Entrega</h2><p>Calcule o frete e preencha o endereço.</p></div></div>
               <div className="l4-checkout-cep-row">
                 <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
-                <button type="button" onClick={handleLookupCep} disabled={addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
+                <button type="button" onClick={handleLookupCep} disabled={sanitizeCep(cep).length !== 8 || addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
               </div>
               <div className="l4-checkout-fields l4-checkout-address-fields">
                 <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => setAddressStreet(event.target.value)} autoComplete="address-line1" /></label>
@@ -550,7 +551,7 @@ export default function Pagamento() {
             </section>
 
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
-              <div className="l4-checkout-section-heading"><span>03</span><h2 id="checkout-payment-title">Pagamento</h2></div>
+              <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
               <div className="l4-checkout-payment-methods">
                 {(["PIX", "CARD", "BOLETO"] as CheckoutMethod[]).map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => setCheckoutMethod(method)} aria-pressed={checkoutMethod === method}>
                   <strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small>
