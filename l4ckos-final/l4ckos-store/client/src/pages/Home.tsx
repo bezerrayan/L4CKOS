@@ -134,7 +134,7 @@ export default function Home() {
     <div className="l4-home">
       <div className="l4-home-announce">
         <span className="l4-home-announce-track">
-          LOJA OFICIAL — BUILT FOR ADVENTURE — IDENTIDADE EM MOVIMENTO — L4CKOS — BUILT FOR ADVENTURE — IDENTIDADE EM MOVIMENTO
+          <strong>L4CKOS</strong><span>Loja oficial</span><span>Built for Adventure</span><span>Identidade em movimento</span><span>Drops autorais</span>
         </span>
       </div>
 
