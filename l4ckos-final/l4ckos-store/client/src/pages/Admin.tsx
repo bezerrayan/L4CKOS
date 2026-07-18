@@ -456,6 +456,7 @@ export default function Admin() {
 
       for (const file of allowedFiles) {
         const formData = new FormData();
+        formData.append("purpose", target.startsWith("promo-") ? "promotion" : "product");
         formData.append("file", file);
 
         const response = await csrfFetch(apiUrl("/api/upload"), {

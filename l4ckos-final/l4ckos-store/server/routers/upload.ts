@@ -51,11 +51,100 @@ function sanitizeExtension(fileName: string) {
   return ALLOWED_EXTENSIONS.has(extension) ? extension : ".bin";
 }
 
-export async function buildProductImageVariants(buffer: Buffer) {
+type ProductImageVariantOptions = {
+  removeCheckerboardBackground?: boolean;
+};
+
+async function normalizeProductImage(buffer: Buffer, removeCheckerboardBackground: boolean) {
+  const normalized = sharp(buffer, { animated: false })
+    .rotate()
+    .resize({ width: 2400, height: 2400, fit: "inside", withoutEnlargement: true })
+    .ensureAlpha();
+
+  if (!removeCheckerboardBackground) {
+    return normalized.png().toBuffer();
+  }
+
+  const { data, info } = await normalized.raw().toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = info;
+  const pixelCount = width * height;
+
+  const isNeutralLight = (pixelIndex: number, minimumChannel: number, maximumSpread: number) => {
+    const offset = pixelIndex * channels;
+    const red = data[offset];
+    const green = data[offset + 1];
+    const blue = data[offset + 2];
+    const alpha = data[offset + 3];
+    const minimum = Math.min(red, green, blue);
+    const maximum = Math.max(red, green, blue);
+    return alpha > 0 && minimum >= minimumChannel && maximum - minimum <= maximumSpread;
+  };
+
+  const perimeter: number[] = [];
+  for (let x = 0; x < width; x += 1) {
+    perimeter.push(x, (height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    perimeter.push(y * width, y * width + width - 1);
+  }
+
+  let lightEdges = 0;
+  let darkestEdge = 255;
+  let brightestEdge = 0;
+  for (const pixelIndex of perimeter) {
+    if (!isNeutralLight(pixelIndex, 185, 24)) continue;
+    lightEdges += 1;
+    const offset = pixelIndex * channels;
+    const luminance = Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3);
+    darkestEdge = Math.min(darkestEdge, luminance);
+    brightestEdge = Math.max(brightestEdge, luminance);
+  }
+
+  const hasBakedCheckerboard =
+    lightEdges / Math.max(1, perimeter.length) >= 0.7 &&
+    brightestEdge - darkestEdge >= 8;
+
+  if (!hasBakedCheckerboard) {
+    return sharp(data, { raw: info }).png().toBuffer();
+  }
+
+  const visited = new Uint8Array(pixelCount);
+  const queue = new Int32Array(pixelCount);
+  let queueStart = 0;
+  let queueEnd = 0;
+
+  const enqueue = (pixelIndex: number) => {
+    if (visited[pixelIndex] || !isNeutralLight(pixelIndex, 145, 45)) return;
+    visited[pixelIndex] = 1;
+    queue[queueEnd] = pixelIndex;
+    queueEnd += 1;
+  };
+
+  for (const pixelIndex of perimeter) enqueue(pixelIndex);
+
+  while (queueStart < queueEnd) {
+    const pixelIndex = queue[queueStart];
+    queueStart += 1;
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    if (x > 0) enqueue(pixelIndex - 1);
+    if (x + 1 < width) enqueue(pixelIndex + 1);
+    if (y > 0) enqueue(pixelIndex - width);
+    if (y + 1 < height) enqueue(pixelIndex + width);
+  }
+
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    if (visited[pixelIndex]) data[pixelIndex * channels + 3] = 0;
+  }
+
+  return sharp(data, { raw: info }).png().toBuffer();
+}
+
+export async function buildProductImageVariants(buffer: Buffer, options: ProductImageVariantOptions = {}) {
+  const normalizedBuffer = await normalizeProductImage(buffer, Boolean(options.removeCheckerboardBackground));
   const entries = await Promise.all(
     Object.entries(PRODUCT_IMAGE_VARIANTS).map(async ([key, config]) => {
-      const output = await sharp(buffer, { animated: false })
-        .rotate()
+      const output = await sharp(normalizedBuffer, { animated: false })
         .resize({
           width: config.width,
           height: config.height,
@@ -151,7 +240,9 @@ router.post("/", requireAdminUser, async (req, res) => {
 
         let variantBuffers: Record<keyof typeof PRODUCT_IMAGE_VARIANTS, Buffer>;
         try {
-          variantBuffers = await buildProductImageVariants(buffer);
+          variantBuffers = await buildProductImageVariants(buffer, {
+            removeCheckerboardBackground: req.body?.purpose !== "promotion",
+          });
         } catch (processingError) {
           securityLog("warn", "upload.image_processing_failed", {
             userId: user.id,

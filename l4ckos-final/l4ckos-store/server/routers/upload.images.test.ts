@@ -83,4 +83,43 @@ describe("product upload image variants", () => {
       expect(data[centerAlphaIndex]).toBe(255);
     }
   });
+
+  it("removes a baked checkerboard background from product uploads", async () => {
+    const squareSize = 20;
+    const width = 400;
+    const height = 500;
+    const checkerboard = Buffer.alloc(width * height * 4);
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const offset = (y * width + x) * 4;
+        const channel = (Math.floor(x / squareSize) + Math.floor(y / squareSize)) % 2 === 0 ? 238 : 255;
+        checkerboard[offset] = channel;
+        checkerboard[offset + 1] = channel;
+        checkerboard[offset + 2] = channel;
+        checkerboard[offset + 3] = 255;
+      }
+    }
+
+    const productShape = await sharp({
+      create: {
+        width: 220,
+        height: 360,
+        channels: 4,
+        background: { r: 12, g: 28, b: 70, alpha: 1 },
+      },
+    }).png().toBuffer();
+
+    const source = await sharp(checkerboard, { raw: { width, height, channels: 4 } })
+      .composite([{ input: productShape, left: 90, top: 70 }])
+      .png()
+      .toBuffer();
+
+    const variants = await buildProductImageVariants(source, { removeCheckerboardBackground: true });
+    const { data, info } = await sharp(variants.detail).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+    expect(data[3]).toBe(0);
+    const centerAlphaIndex = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * info.channels + 3;
+    expect(data[centerAlphaIndex]).toBe(255);
+  });
 });
