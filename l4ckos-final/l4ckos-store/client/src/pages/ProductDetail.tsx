@@ -172,10 +172,17 @@ export default function ProductDetail() {
   );
   const activeGalleryImages = useMemo(() => {
     if (!selectedColor) return galleryImages;
-    const matches = galleryImages.filter(
+    const colorMatches = galleryImages.filter(
       item => normalizeColorToken(item.color) === normalizeColorToken(selectedColor),
     );
-    return matches.length > 0 ? matches : galleryImages;
+    if (colorMatches.length === 0) return galleryImages;
+
+    // Fotos sem cor vinculada são fotos gerais do produto e devem continuar na galeria.
+    // Assim, selecionar uma cor não faz as fotos adicionais desaparecerem.
+    const sharedImages = galleryImages.filter(item => !normalizeColorToken(item.color));
+    return Array.from(
+      new Map([...colorMatches, ...sharedImages].map(item => [item.imageUrl, item])).values(),
+    );
   }, [galleryImages, selectedColor]);
   const handleGoBack = () => {
     const from = (location.state as any)?.from;
