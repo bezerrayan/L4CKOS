@@ -15,6 +15,7 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
+import { trackStoreEvent } from "../lib/analytics";
 import { ChevronDown, LockKeyhole, Minus, Plus, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Pagamento.css";
@@ -125,6 +126,7 @@ export default function Pagamento() {
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const lastCepLookupRef = useRef<string | null>(null);
   const loadedSavedAddressRef = useRef(false);
+  const checkoutTrackedRef = useRef(false);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -211,6 +213,12 @@ export default function Pagamento() {
     setCustomerName(user.name || "");
     setCustomerEmail(user.email || "");
   }, [user]);
+
+  useEffect(() => {
+    if (cart.items.length === 0 || checkoutTrackedRef.current) return;
+    checkoutTrackedRef.current = true;
+    trackStoreEvent("checkout_started", { item_count: cart.itemCount });
+  }, [cart.itemCount, cart.items.length]);
 
   const applySavedAddress = (address: SavedCheckoutAddress) => {
     setSelectedSavedAddressId(address.id);
@@ -358,11 +366,13 @@ export default function Pagamento() {
           : publicWarning
         : "";
       setShippingError(detailedWarning);
+      trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, options_count: options.length });
     } catch {
       const fallbackOptions = buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
       setShippingOptions(fallbackOptions);
       setSelectedShippingId(fallbackOptions[0]?.id ?? null);
       setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+      trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, success: false });
     } finally {
       setShippingLoading(false);
     }
@@ -456,11 +466,13 @@ export default function Pagamento() {
       });
       setCouponDiscount(Number(result.discountAmount.toFixed(2)));
       setAppliedCouponCode(result.code);
+      trackStoreEvent("coupon_applied", { success: true });
     } catch (error) {
       setCouponDiscount(0);
       setAppliedCouponCode(null);
       const parsed = getApiErrorDisplay(error, "Cupom inválido ou expirado.");
       setCouponError(parsed.message);
+      trackStoreEvent("coupon_applied", { success: false });
     }
   };
 
@@ -521,9 +533,11 @@ export default function Pagamento() {
       });
 
       setPaymentData(result);
+      trackStoreEvent("payment_charge_created", { method: checkoutMethod });
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível gerar a cobrança.");
       setPaymentError(parsed.message);
+      trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
     }
   };
 
@@ -634,7 +648,7 @@ export default function Pagamento() {
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
               <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
               <div className="l4-checkout-payment-methods">
-                {(["PIX", "CARD", "BOLETO"] as CheckoutMethod[]).map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => setCheckoutMethod(method)} aria-pressed={checkoutMethod === method}>
+                {(["PIX", "CARD", "BOLETO"] as CheckoutMethod[]).map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => { setCheckoutMethod(method); trackStoreEvent("payment_method_selected", { method }); }} aria-pressed={checkoutMethod === method}>
                   <strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small>
                 </button>)}
               </div>

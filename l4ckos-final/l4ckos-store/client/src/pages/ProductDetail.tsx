@@ -17,6 +17,7 @@ import { getCategoryLabel } from "../lib/productCategories";
 import { resolveCatalogImageUrl, retryImageWithVersion } from "../lib/images";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
+import { trackStoreEvent } from "../lib/analytics";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -153,6 +154,10 @@ export default function ProductDetail() {
     if (!product) return;
     setSelectedImage(product.image);
   }, [product?.id, product?.image]);
+
+  useEffect(() => {
+    if (product) trackStoreEvent("product_viewed", { product_id: product.id, category: product.category || null });
+  }, [product?.id]);
 
   const galleryImages = useMemo(
     () =>
@@ -311,9 +316,11 @@ export default function ProductDetail() {
 
       setShippingOptions(data.options || []);
       setShippingError(data.warning || "");
+      trackStoreEvent("shipping_quoted", { product_id: product.id, options_count: data.options?.length ?? 0 });
     } catch (error) {
       setShippingOptions([]);
       setShippingError(error instanceof Error ? error.message : "Não foi possível calcular o frete.");
+      trackStoreEvent("shipping_quoted", { product_id: product.id, success: false });
     } finally {
       setIsCalculatingShipping(false);
     }
@@ -507,7 +514,7 @@ export default function ProductDetail() {
                     <button
                       key={color.name}
                       type="button"
-                      onClick={() => setSelectedColor(color.name)}
+                      onClick={() => { setSelectedColor(color.name); trackStoreEvent("product_option_selected", { product_id: product.id, option_type: "color" }); }}
                       aria-pressed={isSelected}
                       aria-label={`Selecionar cor ${color.name}`}
                       style={{
@@ -557,7 +564,7 @@ export default function ProductDetail() {
                 <button
                   key={size}
                   type="button"
-                  onClick={() => setSelectedSize(size)}
+                  onClick={() => { setSelectedSize(size); trackStoreEvent("product_option_selected", { product_id: product.id, option_type: "size" }); }}
                   aria-pressed={selectedSize === size}
                   style={{
                     ...styles.sizeOption,

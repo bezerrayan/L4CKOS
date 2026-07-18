@@ -7,6 +7,7 @@ import React, { createContext, useContext, useState, ReactNode, useCallback, use
 import type { CartItem, Cart, SelectedOptions } from "../types/cart";
 import type { Product } from "../types/product";
 import { calculateCartTotal, calculateItemCount } from "../types/cart";
+import { trackStoreEvent } from "../lib/analytics";
 
 // ============= TIPOS =============
 
@@ -86,6 +87,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       // Senão, adiciona novo
       return [...prev, { product, quantity, selectedOptions, addedAt: new Date() }];
     });
+    trackStoreEvent("cart_item_added", { product_id: product.id, quantity });
     setIsCartDrawerOpen(true);
   }, []);
 
@@ -99,6 +101,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         return normalizeOptions(item.selectedOptions) !== currentOptionsKey;
       })
     );
+    trackStoreEvent("cart_item_removed", { product_id: productId });
   }, []);
 
   // 📌 Atualizar quantidade
