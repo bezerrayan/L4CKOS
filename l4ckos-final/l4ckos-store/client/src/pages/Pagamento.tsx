@@ -109,6 +109,7 @@ export default function Pagamento() {
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
   const clearedOrdersRef = useRef<Set<number>>(new Set());
+  const lastCepLookupRef = useRef<string | null>(null);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -326,6 +327,7 @@ export default function Pagamento() {
       return;
     }
 
+    lastCepLookupRef.current = normalizedCep;
     setAddressLoading(true);
     try {
       const response = await fetch(apiUrl(`/api/cep/${normalizedCep}`), {
@@ -349,10 +351,10 @@ export default function Pagamento() {
         return;
       }
 
-      setAddressStreet(data.logradouro || "");
-      setAddressNeighborhood(data.bairro || "");
-      setAddressCity(data.localidade || "");
-      setAddressState(data.uf || "");
+      setAddressStreet(current => data.logradouro || current);
+      setAddressNeighborhood(current => data.bairro || current);
+      setAddressCity(current => data.localidade || current);
+      setAddressState(current => data.uf || current);
       await handleCalculateShipping(normalizedCep);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível consultar o CEP.");
@@ -363,6 +365,24 @@ export default function Pagamento() {
       setAddressLoading(false);
     }
   };
+
+  useEffect(() => {
+    const normalizedCep = sanitizeCep(cep);
+    if (normalizedCep.length !== 8) {
+      lastCepLookupRef.current = null;
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (lastCepLookupRef.current === normalizedCep) return;
+      lastCepLookupRef.current = normalizedCep;
+      void handleLookupCep();
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+    // A consulta deve ocorrer somente quando o CEP informado mudar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cep]);
 
   const handleApplyCoupon = async () => {
     setCouponError("");
@@ -532,6 +552,7 @@ export default function Pagamento() {
                 <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
                 <button type="button" onClick={handleLookupCep} disabled={sanitizeCep(cep).length !== 8 || addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
               </div>
+              <div id="checkout-shipping-status" className="l4-checkout-live" aria-live="polite">{addressLoading ? <p>Consultando endereço...</p> : shippingLoading ? <p>Calculando modalidades de entrega...</p> : shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
               <div className="l4-checkout-fields l4-checkout-address-fields">
                 <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => setAddressStreet(event.target.value)} autoComplete="address-line1" /></label>
                 <label>Número<input value={addressNumber} onChange={event => setAddressNumber(event.target.value)} autoComplete="address-line2" /></label>
@@ -540,7 +561,6 @@ export default function Pagamento() {
                 <label>Cidade<input value={addressCity} onChange={event => setAddressCity(event.target.value)} autoComplete="address-level2" /></label>
                 <label>UF<input value={addressState} onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} /></label>
               </div>
-              <div id="checkout-shipping-status" className="l4-checkout-live" aria-live="polite">{shippingLoading ? <p>Calculando modalidades de entrega...</p> : shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
               {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options" aria-busy={shippingLoading}>
                 {shippingOptions.map(option => <button key={option.id} type="button" className={selectedShippingId === option.id ? "is-selected" : ""} onClick={() => setSelectedShippingId(option.id)}>
                   <span><strong>{option.label}</strong><small>{option.description} · {option.minDays} a {option.maxDays} dias úteis</small></span><strong>{formatPrice(option.price)}</strong>
