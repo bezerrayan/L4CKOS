@@ -1714,19 +1714,38 @@
   .l4-home-hero-carousel-copy-panel { padding: 32px 0 28px 38px; }
   .l4-home-hero-carousel-copy-wrap { margin-top: 27px; gap: 18px; }
   .l4-home-hero-carousel-product { padding: 5px 10px; }
-  .l4-home-hero-carousel-image { width: 120%; height: 120%; transform: translateX(5%); }
+  .l4-home-hero-carousel-image {
+    width: min(96%, 520px);
+    height: min(94%, 570px);
+    max-width: 520px;
+    max-height: 570px;
+    padding: 0;
+    transform: translateX(3%);
+  }
 }
 
 @media (max-width: 1180px) {
   .l4-home-hero { min-height: 0; }
-  .l4-home-hero-carousel-image { mix-blend-mode: normal; }
+  .l4-home-hero-carousel-image {
+    width: min(90%, 500px);
+    height: auto;
+    max-width: 500px;
+    max-height: 540px;
+    padding: 0;
+    transform: none;
+    mix-blend-mode: normal;
+  }
 }
 
 @media (max-width: 640px) {
   .l4-home-announce { min-height: 26px; padding-inline: 12px; }
   .l4-home-hero { padding-top: 32px; }
   .l4-home-hero-carousel-count { margin-top: 18px; }
-  .l4-home-hero-carousel-image { width: 108%; height: 108%; transform: none; }
+  .l4-home-hero-carousel-image {
+    width: min(90%, 360px);
+    height: auto;
+    max-height: 390px;
+  }
   .l4-home-marquee { min-height: 32px; padding-block: 6px; }
   .l4-home-marquee-track { font-size: 12px; }
   .l4-home-marquee-group { gap: 28px; padding-inline: 18px; }
