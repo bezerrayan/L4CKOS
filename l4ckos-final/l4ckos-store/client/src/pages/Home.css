@@ -13,7 +13,25 @@
   font-family: "DM Sans", sans-serif;
   border-radius: 20px;
   overflow: hidden;
+  isolation: isolate;
 }
+
+/* Relevo discreto: textura de marca, sem interferir no conteúdo ou nas ações. */
+.l4-home::before {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  inset: auto 0 0;
+  height: min(56vh, 620px);
+  pointer-events: none;
+  opacity: .34;
+  background-image: url("data:image/svg+xml,%3Csvg width='1600' height='640' viewBox='0 0 1600 640' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 570 170 360l105 118 180-258 158 211 154-125 151 166 226-329 236 352 120-114 180 217v102H0Z' fill='%23111111'/%3E%3Cpath d='M0 620 234 421l145 132 180-204 126 123 189-172 144 163 222-236 180 205 120-113 160 156v145H0Z' fill='%23171717' fill-opacity='.88'/%3E%3Cpath d='M0 620 290 474l144 83 169-118 177 93 132-127 204 112 201-141 183 125 100-61v160H0Z' fill='%230d0d0d'/%3E%3C/svg%3E");
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.l4-home > * { position: relative; z-index: 1; }
 
 .l4-home-announce {
   background: var(--red);
@@ -259,25 +277,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(240, 237, 232, 0.13);
-  background:
-    linear-gradient(rgba(240, 237, 232, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(240, 237, 232, 0.018) 1px, transparent 1px),
-    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.07), transparent 44%),
-    rgba(4, 4, 4, 0.24);
-  background-size: 48px 48px, 48px 48px, auto, auto;
-  box-shadow:
-    inset 0 0 36px rgba(0, 0, 0, 0.62),
-    0 0 28px rgba(232, 0, 42, 0.08);
+  background: transparent;
 }
 
 .l4-home-hero-carousel-product-frame::before,
 .l4-home-hero-carousel-product-frame::after {
-  content: "";
-  position: absolute;
-  width: 32px;
-  height: 32px;
-  pointer-events: none;
+  content: none;
 }
 
 .l4-home-hero-carousel-product-frame::before {
