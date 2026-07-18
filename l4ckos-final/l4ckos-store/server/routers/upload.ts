@@ -19,7 +19,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/svg+xml",
 ]);
 const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"]);
-const PRODUCT_IMAGE_BACKGROUND = { r: 8, g: 8, b: 8, alpha: 1 };
+const PRODUCT_IMAGE_BACKGROUND = { r: 0, g: 0, b: 0, alpha: 0 };
 const PRODUCT_IMAGE_VARIANTS = {
   thumbnail: { width: 800, height: 1000, suffix: "thumb" },
   detail: { width: 1200, height: 1500, suffix: "detail" },
@@ -63,7 +63,7 @@ export async function buildProductImageVariants(buffer: Buffer) {
           position: "center",
           background: PRODUCT_IMAGE_BACKGROUND,
         })
-        .webp({ quality: 88, effort: 4 })
+        .webp({ quality: 88, alphaQuality: 100, effort: 4 })
         .toBuffer();
 
       return [key, output] as const;

@@ -65,6 +65,7 @@ export default function Carrinho() {
                 }}
               >
                 <img
+                  className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image"
                   src={item.product.image}
                   alt={item.product.name}
                   style={{

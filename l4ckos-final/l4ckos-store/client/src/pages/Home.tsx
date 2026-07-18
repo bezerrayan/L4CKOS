@@ -26,17 +26,6 @@ type TrustHighlight = {
   linkLabel?: string;
 };
 
-const productBgClasses = [
-  "l4-home-prod-img-1",
-  "l4-home-prod-img-2",
-  "l4-home-prod-img-3",
-  "l4-home-prod-img-4",
-  "l4-home-prod-img-5",
-  "l4-home-prod-img-6",
-  "l4-home-prod-img-7",
-  "l4-home-prod-img-8",
-];
-
 const trustHighlights: TrustHighlight[] = [
   {
     number: "01",
@@ -212,9 +201,10 @@ export default function Home() {
                 }
               }}
             >
-              <div className={`l4-home-product-img ${productBgClasses[idx % productBgClasses.length]}`}>
+              <div className="l4-home-product-img l4-product-media-surface">
                 {product.imageUrl ? (
                   <img
+                    className="l4-product-media-image"
                     src={product.imageThumbnailUrl || product.imageUrl}
                     alt={product.name}
                     loading={idx < 4 ? "eager" : "lazy"}
@@ -224,7 +214,7 @@ export default function Home() {
                     }}
                   />
                 ) : (
-                  <img src={camisaFallback} alt={product.name} loading="lazy" />
+                  <img className="l4-product-media-image" src={camisaFallback} alt={product.name} loading="lazy" />
                 )}
               </div>
               <div className="l4-home-product-info">

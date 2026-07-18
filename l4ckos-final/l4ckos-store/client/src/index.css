@@ -34,6 +34,26 @@ body {
   overflow-x: hidden;
 }
 
+/* Superfície única para fotos recortadas de produto em toda a loja. */
+.l4-product-media-surface {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(43, 43, 43, 0.72) 0%, rgba(20, 20, 20, 0.92) 48%, #090909 100%) !important;
+  border-color: rgba(255, 255, 255, 0.09) !important;
+  padding: clamp(14px, 3%, 24px) !important;
+}
+
+.l4-product-media-surface--thumb {
+  padding: 6px !important;
+}
+
+.l4-product-media-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  object-position: center;
+}
+
 a {
   text-decoration: none;
   color: inherit;

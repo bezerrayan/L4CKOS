@@ -45,4 +45,42 @@ describe("product upload image variants", () => {
     expect(rightPixel[0]).toBeLessThan(100);
     expect(rightPixel[1]).toBeGreaterThan(140);
   });
+
+  it("preserves transparency around a cutout product in every generated variant", async () => {
+    const transparentSource = await sharp({
+      create: {
+        width: 500,
+        height: 700,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      },
+    })
+      .composite([
+        {
+          input: await sharp({
+            create: {
+              width: 260,
+              height: 520,
+              channels: 4,
+              background: { r: 15, g: 30, b: 75, alpha: 1 },
+            },
+          }).png().toBuffer(),
+          left: 120,
+          top: 90,
+        },
+      ])
+      .png()
+      .toBuffer();
+
+    const variants = await buildProductImageVariants(transparentSource);
+
+    for (const variant of Object.values(variants)) {
+      const { data, info } = await sharp(variant).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      expect(info.channels).toBe(4);
+      expect(data[3]).toBe(0);
+
+      const centerAlphaIndex = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * info.channels + 3;
+      expect(data[centerAlphaIndex]).toBe(255);
+    }
+  });
 });

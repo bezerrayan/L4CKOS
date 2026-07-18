@@ -368,6 +368,7 @@ export default function ProductDetail() {
       >
         <div style={styles.leftColumn as CSSProperties}>
           <div
+            className="l4-product-media-surface"
             style={{
               ...styles.imageContainer,
               padding: isMobile ? 12 : styles.imageContainer.padding,
@@ -375,6 +376,7 @@ export default function ProductDetail() {
             } as CSSProperties}
           >
             <img
+              className="l4-product-media-image"
               src={selectedImage || product.image}
               alt={product.name}
               style={styles.productImage as CSSProperties}
@@ -396,6 +398,7 @@ export default function ProductDetail() {
               const active = (selectedImage || product.image) === image.imageUrl;
               return (
                 <button
+                  className="l4-product-media-surface l4-product-media-surface--thumb"
                   key={`${image.imageUrl}-${idx}`}
                   type="button"
                   onClick={() => setSelectedImage(image.imageUrl)}
@@ -408,6 +411,7 @@ export default function ProductDetail() {
                   } as CSSProperties}
                 >
                   <img
+                    className="l4-product-media-image"
                     src={(image as any).imageThumbnailUrl || image.imageUrl}
                     alt={`Foto ${idx + 1}`}
                     style={styles.thumbImage as CSSProperties}

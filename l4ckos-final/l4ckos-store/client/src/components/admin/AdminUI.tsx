@@ -239,7 +239,7 @@ export function AdminImagePreview({
 }) {
   if (variant === "thumb") {
     return src ? (
-      <img src={src} alt={alt} style={styles.imageThumb} />
+      <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={src} alt={alt} style={styles.imageThumb} />
     ) : (
       <div style={styles.imageThumbEmpty}>{emptyLabel}</div>
     );
@@ -249,7 +249,7 @@ export function AdminImagePreview({
 
   return (
     <div style={styles.imagePreviewRow}>
-      <img src={src} alt={alt} style={styles.imagePreviewMedia} />
+      <img className="l4-product-media-surface l4-product-media-image" src={src} alt={alt} style={styles.imagePreviewMedia} />
       {caption ? <span style={styles.imagePreviewCaption}>{caption}</span> : null}
     </div>
   );

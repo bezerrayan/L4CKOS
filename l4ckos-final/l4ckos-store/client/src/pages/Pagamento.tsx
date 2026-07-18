@@ -574,7 +574,7 @@ export default function Pagamento() {
                 <div className="l4-checkout-summary-items">
                   {cart.items.map(item => (
                     <article key={getItemKey(item.product.id, item.selectedOptions)} className="l4-checkout-summary-item">
-                      <img src={item.product.imageThumbnail || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
+                      <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={item.product.imageThumbnail || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
                       <div>
                         <div className="l4-checkout-item-title"><h3>{item.product.name}</h3><strong>{formatPrice(item.product.price * item.quantity)}</strong></div>
                         {item.selectedOptions ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}
@@ -722,8 +722,9 @@ export default function Pagamento() {
                 isMobile ? (
                   <div key={getItemKey(item.product.id, item.selectedOptions)} style={styles.mobileCard}>
                     <div style={styles.mobileTopRow}>
-                      <div style={styles.mobileImageWrap}>
+                      <div className="l4-product-media-surface l4-product-media-surface--thumb" style={styles.mobileImageWrap}>
                         <img
+                          className="l4-product-media-image"
                           src={item.product.image}
                           alt={item.product.name}
                           style={styles.mobileImage}
@@ -795,8 +796,9 @@ export default function Pagamento() {
                         gap: styles.cartItem.gap,
                       }}
                     >
-                      <div style={styles.itemImageContainer}>
+                      <div className="l4-product-media-surface l4-product-media-surface--thumb" style={styles.itemImageContainer}>
                         <img
+                          className="l4-product-media-image"
                           src={item.product.image}
                           alt={item.product.name}
                           style={styles.itemImage}

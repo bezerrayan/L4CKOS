@@ -1264,7 +1264,7 @@ export default function Admin() {
                 >
                   {uploadingField === "create-main" ? "Enviando capa..." : "Upload da capa"}
                 </button>
-                <span style={styles.mediaHint}>Ou cole uma URL manualmente.</span>
+                <span style={styles.mediaHint}>Prefira PNG ou WebP com fundo transparente; o fundo padrão é aplicado pela loja.</span>
               </div>
               <input
                 ref={createMainImageInputRef}
@@ -1319,7 +1319,7 @@ export default function Admin() {
                 >
                   {uploadingField === "create-gallery" ? "Enviando galeria..." : "Upload da galeria"}
                 </button>
-                <span style={styles.mediaHint}>Você pode selecionar várias imagens de uma vez.</span>
+                <span style={styles.mediaHint}>Você pode selecionar várias imagens transparentes de uma vez.</span>
               </div>
               <input
                 ref={createGalleryImageInputRef}
@@ -1343,7 +1343,7 @@ export default function Admin() {
                 <div style={styles.galleryPreviewGrid}>
                   {parseImageCsvEntries(newProduct.imagesCsv).map((item, index) => (
                     <div key={`${item.imageUrl}-${index}`} style={styles.galleryPreviewCard}>
-                      <img src={item.imageUrl} alt={`Galeria ${index + 1}`} style={styles.galleryPreviewImage} />
+                      <img className="l4-product-media-surface l4-product-media-image" src={item.imageUrl} alt={`Galeria ${index + 1}`} style={styles.galleryPreviewImage} />
                       <div style={styles.galleryPreviewMeta}>
                         <strong style={styles.galleryPreviewTitle}>Imagem {index + 1}</strong>
                         <span style={styles.galleryPreviewText}>{item.color ? `Cor: ${item.color}` : "Sem cor vinculada"}</span>
@@ -1602,7 +1602,7 @@ export default function Admin() {
                     >
                       {uploadingField === "edit-main" ? "Enviando capa..." : "Trocar capa"}
                     </button>
-                    <span style={styles.mediaHint}>Você também pode substituir a URL manualmente.</span>
+                    <span style={styles.mediaHint}>Prefira PNG ou WebP com fundo transparente; o fundo padrão é aplicado pela loja.</span>
                   </div>
                   <input
                     ref={editMainImageInputRef}
@@ -1657,7 +1657,7 @@ export default function Admin() {
                     >
                       {uploadingField === "edit-gallery" ? "Enviando galeria..." : "Adicionar na galeria"}
                     </button>
-                    <span style={styles.mediaHint}>As novas imagens serão adicionadas ao CSV atual.</span>
+                    <span style={styles.mediaHint}>As novas imagens transparentes serão adicionadas ao CSV atual.</span>
                   </div>
                   <input
                     ref={editGalleryImageInputRef}
@@ -1681,7 +1681,7 @@ export default function Admin() {
                     <div style={styles.galleryPreviewGrid}>
                       {parseImageCsvEntries(editProduct.imagesCsv).map((item, index) => (
                         <div key={`${item.imageUrl}-${index}`} style={styles.galleryPreviewCard}>
-                          <img src={item.imageUrl} alt={`Galeria ${index + 1}`} style={styles.galleryPreviewImage} />
+                        <img className="l4-product-media-surface l4-product-media-image" src={item.imageUrl} alt={`Galeria ${index + 1}`} style={styles.galleryPreviewImage} />
                           <div style={styles.galleryPreviewMeta}>
                             <strong style={styles.galleryPreviewTitle}>Imagem {index + 1}</strong>
                             <span style={styles.galleryPreviewText}>{item.color ? `Cor: ${item.color}` : "Sem cor vinculada"}</span>
@@ -1872,7 +1872,7 @@ export default function Admin() {
                                     style={styles.productThumbLink}
                                     title={color ? `Cor: ${color}` : `Imagem ${index + 1}`}
                                   >
-                                    <img src={resolveAdminImageUrl(imageUrl)} alt={`${row.name} ${index + 1}`} style={styles.productThumbImage} />
+                                    <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={resolveAdminImageUrl(imageUrl)} alt={`${row.name} ${index + 1}`} style={styles.productThumbImage} />
                                   </a>
                                 );
                               })}

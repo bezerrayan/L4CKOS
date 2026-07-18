@@ -64,6 +64,7 @@ export default function CartDrawer() {
               {cart.items.map(item => (
                 <article key={`${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
                   <img
+                    className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image"
                     src={item.product.imageThumbnail || item.product.image}
                     alt={item.product.name}
                     onError={event => { event.currentTarget.src = camisaFallback; }}
