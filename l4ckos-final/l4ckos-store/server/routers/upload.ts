@@ -51,7 +51,7 @@ function sanitizeExtension(fileName: string) {
   return ALLOWED_EXTENSIONS.has(extension) ? extension : ".bin";
 }
 
-async function buildProductImageVariants(buffer: Buffer) {
+export async function buildProductImageVariants(buffer: Buffer) {
   const entries = await Promise.all(
     Object.entries(PRODUCT_IMAGE_VARIANTS).map(async ([key, config]) => {
       const output = await sharp(buffer, { animated: false })

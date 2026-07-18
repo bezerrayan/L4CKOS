@@ -66,6 +66,34 @@ const orderStatusSchema = z.enum([
 const backupFileNameSchema = z.string().trim().regex(/^[A-Za-z0-9._-]+\.json$/);
 const productImageUrlSchema = z.string().trim().max(500, "A URL da imagem deve ter no máximo 500 caracteres.");
 
+type ProductImageInput = {
+  imageUrl: string;
+  imageThumbnailUrl?: string | null;
+  imageDetailUrl?: string | null;
+  imageBannerUrl?: string | null;
+  color?: string | null;
+  alt?: string | null;
+};
+
+export function buildProductImageList(
+  cover: Omit<ProductImageInput, "imageUrl"> & { imageUrl?: string | null },
+  gallery: ProductImageInput[],
+) {
+  const coverImage = cover.imageUrl
+    ? [{
+        imageUrl: cover.imageUrl,
+        imageThumbnailUrl: cover.imageThumbnailUrl ?? null,
+        imageDetailUrl: cover.imageDetailUrl ?? null,
+        imageBannerUrl: cover.imageBannerUrl ?? null,
+        color: null,
+      }]
+    : [];
+
+  return [...coverImage, ...gallery].filter(
+    (image, index, images) => images.findIndex(candidate => candidate.imageUrl === image.imageUrl) === index,
+  );
+}
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -309,15 +337,7 @@ export const adminRouter = router({
       const result = await createProduct(productData);
       const insertedId = Number((result as any)?.[0]?.insertId ?? 0);
       if (insertedId > 0) {
-        const allImages: Array<string | {
-          imageUrl: string;
-          imageThumbnailUrl?: string | null;
-          imageDetailUrl?: string | null;
-          imageBannerUrl?: string | null;
-          color?: string | null;
-          alt?: string | null;
-        }> = [...images];
-        if (productData.imageUrl) allImages.unshift(productData.imageUrl);
+        const allImages = buildProductImageList(productData, images);
         try {
           await replaceProductImages(insertedId, allImages);
         } catch (error) {
@@ -398,7 +418,7 @@ export const adminRouter = router({
       await updateProduct(id, data);
       if (images) {
         try {
-          await replaceProductImages(id, images);
+          await replaceProductImages(id, buildProductImageList(data, images));
         } catch (error) {
           console.warn("[admin.productUpdate] optional image sync failed", {
             productId: id,

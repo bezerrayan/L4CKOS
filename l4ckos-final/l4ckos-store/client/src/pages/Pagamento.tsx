@@ -1105,7 +1105,9 @@ const styles: Record<string, CSSProperties> = {
   mobileImage: {
     width: "100%",
     height: "100%",
-    objectFit: "cover",
+    objectFit: "contain",
+    objectPosition: "center",
+    background: "#080808",
   },
   mobileInfoCol: {
     flex: 1,
@@ -1200,7 +1202,9 @@ const styles: Record<string, CSSProperties> = {
   itemImage: {
     width: "100%",
     height: 100,
-    objectFit: "cover",
+    objectFit: "contain",
+    objectPosition: "center",
+    background: "#080808",
   },
   itemDetails: {
     paddingLeft: 8,

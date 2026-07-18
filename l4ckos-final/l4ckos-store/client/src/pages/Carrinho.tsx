@@ -197,8 +197,9 @@ const styles: Record<string, CSSProperties> = {
     width: 80,
     height: 80,
     borderRadius: 8,
-    objectFit: "cover",
-    background: "#1f1f1f",
+    objectFit: "contain",
+    objectPosition: "center",
+    background: "#080808",
   },
   itemInfo: {
     minWidth: 0,
