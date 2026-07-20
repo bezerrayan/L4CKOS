@@ -317,7 +317,6 @@ export const productReviews = mysqlTable("productReviews", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => ({
-  userProductUnique: uniqueIndex("productReviews_user_product_unique").on(table.userId, table.productId),
   reservationUnique: uniqueIndex("productReviews_reservation_unique").on(table.stockReservationId),
   productPublicationIdx: index("productReviews_product_publication_idx").on(
     table.productId,

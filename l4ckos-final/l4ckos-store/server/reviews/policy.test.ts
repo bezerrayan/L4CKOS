@@ -4,6 +4,7 @@ import { createReviewInputSchema, reviewModerationInputSchema } from "./policy";
 describe("verified review validation", () => {
   const validReview = {
     productId: 12,
+    stockReservationId: 120,
     rating: 5,
     comment: "A peça vestiu muito bem e chegou em ótimo estado.",
     sizePerception: "true_to_size" as const,
@@ -13,7 +14,7 @@ describe("verified review validation", () => {
     expect(createReviewInputSchema.parse(validReview)).toEqual(validReview);
   });
 
-  it("rejects identifiers and verification fields controlled by the browser", () => {
+  it("accepts only the selected purchase id and rejects identity or verification claims", () => {
     expect(createReviewInputSchema.safeParse({ ...validReview, userId: 99 }).success).toBe(false);
     expect(createReviewInputSchema.safeParse({ ...validReview, orderId: 77 }).success).toBe(false);
     expect(createReviewInputSchema.safeParse({ ...validReview, verifiedPurchase: true }).success).toBe(false);
@@ -35,4 +36,3 @@ describe("verified review validation", () => {
     expect(reviewModerationInputSchema.safeParse({ reviewId: 1 }).success).toBe(false);
   });
 });
-

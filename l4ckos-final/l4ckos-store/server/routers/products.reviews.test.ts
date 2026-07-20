@@ -40,6 +40,7 @@ function createCaller() {
 
 const validInput = {
   productId: 7,
+  stockReservationId: 70,
   rating: 5,
   comment: "Produto muito confortável e acabamento excelente.",
   sizePerception: "true_to_size" as const,
@@ -60,6 +61,15 @@ describe("products.reviewCreate", () => {
     expect(dbMocks.createVerifiedProductReview).not.toHaveBeenCalled();
   });
 
+  it("keeps the selected purchase identifier but derives ownership from authentication", async () => {
+    dbMocks.createVerifiedProductReview.mockResolvedValue({ outcome: "created", id: 11 });
+    await createCaller().reviewCreate(validInput);
+    expect(dbMocks.createVerifiedProductReview).toHaveBeenCalledWith({
+      ...validInput,
+      userId: 41,
+    });
+  });
+
   it("rejects a product without a paid and delivered purchase", async () => {
     dbMocks.createVerifiedProductReview.mockResolvedValue({ outcome: "not_eligible" });
     await expect(createCaller().reviewCreate(validInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -76,4 +86,3 @@ describe("products.reviewCreate", () => {
       .rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
-

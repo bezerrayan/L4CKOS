@@ -105,7 +105,7 @@ export const productsRouter = router({
         if (result.outcome === "duplicate") {
           throw new TRPCError({
             code: "CONFLICT",
-            message: "Você já avaliou este produto.",
+            message: "Você já avaliou este item desta compra.",
           });
         }
         if (result.outcome === "invalid_image") {
@@ -119,7 +119,7 @@ export const productsRouter = router({
         if (error instanceof TRPCError) throw error;
         const message = error instanceof Error ? error.message : "";
         if (/duplicate|unique|ER_DUP_ENTRY/i.test(message)) {
-          throw new TRPCError({ code: "CONFLICT", message: "Você já avaliou este produto." });
+          throw new TRPCError({ code: "CONFLICT", message: "Você já avaliou este item desta compra." });
         }
         throw error;
       }

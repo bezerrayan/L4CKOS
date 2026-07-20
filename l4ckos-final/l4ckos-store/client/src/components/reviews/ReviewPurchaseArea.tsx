@@ -8,6 +8,7 @@ import { getApiErrorDisplay } from "../../utils/apiError";
 import "./reviews.css";
 
 type EligibleReview = {
+  stockReservationId: number;
   productId: number;
   productName: string;
   productImage: string | null;
@@ -92,6 +93,7 @@ export function ReviewPurchaseArea({ orderId }: ReviewPurchaseAreaProps) {
       const imageToken = form.image ? await uploadImage(selected.productId, form.image) : undefined;
       await createReview.mutateAsync({
         productId: selected.productId,
+        stockReservationId: selected.stockReservationId,
         rating: form.rating,
         comment: form.comment.trim(),
         sizePerception: form.sizePerception,
@@ -126,7 +128,7 @@ export function ReviewPurchaseArea({ orderId }: ReviewPurchaseAreaProps) {
       {eligibilityQuery.isLoading ? <p className="l4-profile-empty-line">Verificando compras entregues...</p> : (
         <div className="l4-review-eligible-list">
           {eligible.map(item => (
-            <article key={item.productId}>
+            <article key={item.stockReservationId}>
               {item.productImage ? <img src={resolveProductImage(item.productImage)} alt="" /> : <div className="l4-review-product-placeholder" />}
               <div>
                 <strong>{item.productName}</strong>

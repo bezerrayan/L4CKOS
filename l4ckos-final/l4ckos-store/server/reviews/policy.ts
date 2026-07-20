@@ -11,6 +11,7 @@ export const reviewCommentSchema = z
 
 export const createReviewInputSchema = z.object({
   productId: z.number().int().positive(),
+  stockReservationId: z.number().int().positive(),
   rating: z.number().int().min(1).max(5),
   comment: reviewCommentSchema,
   sizePerception: z.enum(["small", "true_to_size", "large"]),

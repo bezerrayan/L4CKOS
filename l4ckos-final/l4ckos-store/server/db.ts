@@ -672,8 +672,7 @@ export async function getEligibleReviewProducts(userId: number, orderId?: number
     .leftJoin(
       productReviews,
       and(
-        eq(productReviews.userId, userId),
-        eq(productReviews.productId, stockReservations.productId),
+        eq(productReviews.stockReservationId, stockReservations.id),
         eq(productReviews.verifiedPurchase, 1),
       ),
     )
@@ -686,13 +685,7 @@ export async function getEligibleReviewProducts(userId: number, orderId?: number
     ))
     .orderBy(desc(orders.updatedAt), desc(stockReservations.id));
 
-  const byProduct = new Map<number, (typeof rows)[number]>();
-  for (const row of rows) {
-    if (!isTrustedPaymentConfirmation(row)) continue;
-    if (!byProduct.has(row.productId)) byProduct.set(row.productId, row);
-  }
-
-  return Array.from(byProduct.values()).map(row => ({
+  return rows.filter(isTrustedPaymentConfirmation).map(row => ({
     stockReservationId: row.stockReservationId,
     orderId: row.orderId,
     productId: row.productId,
@@ -721,6 +714,7 @@ export async function registerProductReviewUpload(input: {
 
 export async function createVerifiedProductReview(input: {
   productId: number;
+  stockReservationId: number;
   userId: number;
   rating: number;
   comment: string;
@@ -744,36 +738,27 @@ export async function createVerifiedProductReview(input: {
       .from(stockReservations)
       .innerJoin(orders, eq(orders.id, stockReservations.orderId))
       .where(and(
+        eq(stockReservations.id, input.stockReservationId),
         eq(stockReservations.userId, input.userId),
         eq(stockReservations.productId, input.productId),
         eq(orders.userId, input.userId),
         eq(orders.status, "delivered"),
       ))
-      .orderBy(desc(orders.updatedAt), desc(stockReservations.id));
+      .limit(1);
 
-    const purchase = eligibleRows.find(isTrustedPaymentConfirmation);
-    if (!purchase) {
+    const purchase = eligibleRows[0];
+    if (!purchase || !isTrustedPaymentConfirmation(purchase)) {
       return { outcome: "not_eligible" as const };
     }
 
     const existing = await tx
       .select({
         id: productReviews.id,
-        verifiedPurchase: productReviews.verifiedPurchase,
       })
       .from(productReviews)
-      .where(and(
-        eq(productReviews.productId, input.productId),
-        eq(productReviews.userId, input.userId),
-      ))
+      .where(eq(productReviews.stockReservationId, purchase.stockReservationId))
       .limit(1);
-    if (existing[0]?.verifiedPurchase === 1) return { outcome: "duplicate" as const };
-    if (existing[0]) {
-      // Avaliações do fluxo legado não possuíam vínculo verificável com pedido.
-      // Elas ficam ocultas e são substituídas somente quando o cliente passa
-      // pela nova validação de compra paga e entregue.
-      await tx.delete(productReviews).where(eq(productReviews.id, existing[0].id));
-    }
+    if (existing[0]) return { outcome: "duplicate" as const };
 
     let imageUrl: string | null = null;
     if (input.imageToken) {
