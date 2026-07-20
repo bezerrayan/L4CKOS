@@ -1121,7 +1121,21 @@ export default function Admin() {
         />
       )}
 
-      {section === "reviews" && <AdminReviewsPanel />}
+      {section === "reviews" && (
+        <AdminReviewsPanel
+          onOpenOrder={orderId => {
+            setOrderSearch(String(orderId));
+            setOrderQuickFilter("all");
+            setSelectedOrderId(orderId);
+            setSection("orders");
+          }}
+          onOpenProduct={(productId, productName) => {
+            setProductSearch(productName || String(productId));
+            setProductFilter("all");
+            setSection("products");
+          }}
+        />
+      )}
 
       {section === "customers" && (
         <AdminSurface
