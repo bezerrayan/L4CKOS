@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import { useOrderDetail } from "../hooks/useOrders";
 import { trpc } from "../lib/trpc";
+import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
 type OrderStatus = "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled";
 
 const statusText: Record<OrderStatus, string> = {
@@ -238,6 +239,7 @@ export default function PedidoDetalhe() {
           ) : (
             <p style={styles.muted}>Os itens deste pedido não estão disponíveis no momento.</p>
           )}
+          {query.data.status === "delivered" ? <ReviewPurchaseArea orderId={query.data.id} /> : null}
         </article>
       ) : null}
     </section>

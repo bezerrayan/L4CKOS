@@ -537,7 +537,7 @@ export const adminRouter = router({
               customerEmail: user.email,
               customerName: user.name || "Cliente",
               orderNumber: String(updatedOrder.id),
-              reviewUrl: `${appBaseUrl}/perfil`,
+              reviewUrl: `${appBaseUrl}/meus-pedidos/${updatedOrder.id}`,
             });
           }
         } catch {}

@@ -85,9 +85,11 @@ export const productsRouter = router({
     return await getProductReviews(input);
   }),
 
-  reviewEligibility: protectedProcedure.query(async ({ ctx }) => {
-    return await getEligibleReviewProducts(ctx.user.id);
-  }),
+  reviewEligibility: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive() }).strict().optional())
+    .query(async ({ ctx, input }) => {
+      return await getEligibleReviewProducts(ctx.user.id, input?.orderId);
+    }),
 
   reviewCreate: protectedProcedure
     .input(createReviewInputSchema)

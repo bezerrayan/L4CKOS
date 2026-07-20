@@ -14,6 +14,10 @@ type EligibleReview = {
   orderId: number;
 };
 
+interface ReviewPurchaseAreaProps {
+  orderId?: number;
+}
+
 const initialForm = {
   rating: 0,
   comment: "",
@@ -27,10 +31,10 @@ function resolveProductImage(imageUrl: string | null) {
   return apiUrl(imageUrl.startsWith("/") ? imageUrl : `/${imageUrl}`);
 }
 
-export function ReviewPurchaseArea() {
+export function ReviewPurchaseArea({ orderId }: ReviewPurchaseAreaProps) {
   const { showToast } = useToast();
   const utils = trpc.useUtils();
-  const eligibilityQuery = trpc.products.reviewEligibility.useQuery(undefined, {
+  const eligibilityQuery = trpc.products.reviewEligibility.useQuery(orderId ? { orderId } : undefined, {
     refetchOnWindowFocus: false,
   });
   const createReview = trpc.products.reviewCreate.useMutation();
@@ -111,7 +115,7 @@ export function ReviewPurchaseArea() {
 
   return (
     <section className="l4-review-purchase-area" aria-labelledby="review-purchase-title">
-      <div className="l4-profile-section-heading">
+      <div className="l4-review-purchase-heading">
         <div>
           <p>Sua experiência</p>
           <h2 id="review-purchase-title">Avalie sua compra</h2>

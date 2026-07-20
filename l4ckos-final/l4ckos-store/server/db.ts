@@ -642,7 +642,7 @@ export async function getProductReviews(productId: number) {
   };
 }
 
-export async function getEligibleReviewProducts(userId: number) {
+export async function getEligibleReviewProducts(userId: number, orderId?: number) {
   const db = await getDb();
   if (!db) return [];
 
@@ -672,6 +672,7 @@ export async function getEligibleReviewProducts(userId: number) {
       eq(stockReservations.status, "consumed"),
       eq(orders.userId, userId),
       eq(orders.status, "delivered"),
+      ...(orderId ? [eq(orders.id, orderId)] : []),
       isNull(productReviews.id),
     ))
     .orderBy(desc(orders.updatedAt), desc(stockReservations.id));
