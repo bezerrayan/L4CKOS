@@ -372,6 +372,10 @@ describe("security hardening contracts", () => {
     await Promise.all([asaasWebhookHandler(request, first as any), asaasWebhookHandler(request, second as any)]);
 
     expect(db.markOrderPaid).toHaveBeenCalledTimes(1);
+    expect(db.markOrderPaid).toHaveBeenCalledWith(11, {
+      source: "asaas_webhook",
+      reference: "evt-concurrent",
+    });
     expect([first.body?.reason, second.body?.reason]).toContain("duplicate_event");
 
     process.env.ASAAS_WEBHOOK_TOKEN = previousToken;

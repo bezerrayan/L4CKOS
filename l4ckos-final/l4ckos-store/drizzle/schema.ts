@@ -124,6 +124,11 @@ export const orders = mysqlTable("orders", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   status: mysqlEnum("status", ["pending", "processing", "paid", "shipped", "delivered", "cancelled"]).default("pending").notNull(),
+  paymentStatus: mysqlEnum("paymentStatus", ["unconfirmed", "confirmed"]).default("unconfirmed").notNull(),
+  paymentConfirmationSource: mysqlEnum("paymentConfirmationSource", ["asaas_webhook", "manual"]),
+  paymentConfirmedAt: timestamp("paymentConfirmedAt"),
+  paymentConfirmedBy: int("paymentConfirmedBy"),
+  paymentConfirmationReference: varchar("paymentConfirmationReference", { length: 191 }),
   trackingCode: varchar("trackingCode", { length: 120 }),
   totalPrice: int("totalPrice").notNull(), // em centavos
   asaasCheckoutId: varchar("asaasCheckoutId", { length: 64 }),

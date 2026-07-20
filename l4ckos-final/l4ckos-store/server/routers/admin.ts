@@ -23,6 +23,7 @@ import {
   getOrdersByFilters,
   getProductsAdmin,
   getAdminProductReviews,
+  markOrderPaid,
   getSalesByPeriod,
   getUsersWithStats,
   replaceProductImages,
@@ -36,6 +37,10 @@ import {
   updateUserRole,
 } from "../db";
 import { reviewModerationInputSchema } from "../reviews/policy";
+import {
+  isTrustedPaymentConfirmation,
+  manualPaymentConfirmationInputSchema,
+} from "../payments/confirmation";
 import { ENV } from "../_core/env";
 import { TRPCError } from "@trpc/server";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -49,6 +54,7 @@ import {
   sendNewDropAnnouncementEmail,
   sendNewProductsAnnouncementEmail,
   sendOrderDeliveredEmail,
+  sendPaymentApprovedEmail,
   sendOrderPreparingEmail,
   sendPaymentNotFinishedEmail,
   sendPromotionEmail,
@@ -501,6 +507,19 @@ export const adminRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const currentOrder = await getOrderById(input.orderId);
+      if (!currentOrder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado." });
+      }
+      if (
+        input.status
+        && ["paid", "processing", "shipped", "delivered"].includes(input.status)
+        && !isTrustedPaymentConfirmation(currentOrder)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Confirme o pagamento pelo botão próprio antes de avançar o pedido.",
+        });
+      }
       await setOrderAdminData(input.orderId, {
         status: input.status,
         trackingCode: input.trackingCode,
@@ -550,6 +569,46 @@ export const adminRouter = router({
         metadata: { status: input.status, trackingCode: input.trackingCode },
       });
       return { success: true } as const;
+    }),
+
+  orderConfirmPayment: adminProcedure
+    .input(manualPaymentConfirmationInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const currentOrder = await getOrderById(input.orderId);
+      if (!currentOrder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado." });
+      }
+      if (currentOrder.status === "cancelled") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Não é possível confirmar o pagamento de um pedido cancelado.",
+        });
+      }
+
+      const result = await markOrderPaid(input.orderId, {
+        source: "manual",
+        actorUserId: ctx.user.id,
+      });
+
+      if (result.updated) {
+        const user = await getUserById(currentOrder.userId);
+        if (user?.email) {
+          try {
+            await sendPaymentApprovedEmail({
+              customerEmail: user.email,
+              customerName: user.name || "Cliente",
+              orderNumber: String(currentOrder.id),
+              total: formatCurrency(currentOrder.totalPrice / 100),
+            });
+          } catch {}
+        }
+      }
+
+      return {
+        success: true,
+        updated: result.updated,
+        paymentConfirmedAt: result.paymentConfirmedAt ?? currentOrder.paymentConfirmedAt,
+      } as const;
     }),
 
   reviewsList: adminProcedure.query(async () => {

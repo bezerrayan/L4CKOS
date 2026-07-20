@@ -613,6 +613,19 @@ export default function Admin() {
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
+  const confirmOrderPaymentMutation = trpc.admin.orderConfirmPayment.useMutation({
+    onSuccess: data => {
+      showToast({
+        message: data.updated ? "Pagamento confirmado e auditado" : "O pagamento já estava confirmado",
+        duration: 2400,
+      });
+      void ordersQuery.refetch();
+      void dashboardQuery.refetch();
+      void auditQuery.refetch();
+    },
+    onError: error => showToast({ message: error.message, duration: 3000 }),
+  });
+
   const waitlistLaunchSendMutation = trpc.admin.waitlistLaunchSend.useMutation({
     onSuccess: data => {
       setLaunchEmailResult({
@@ -2200,6 +2213,13 @@ export default function Admin() {
                 statusLabel={getOrderStatusLabel}
                 statusTone={getOrderStatusTone}
                 addressLines={formatAdminAddressLine}
+                confirmingPayment={confirmOrderPaymentMutation.isPending}
+                onConfirmPayment={order => {
+                  if (!confirmAdminAction(
+                    `Confirmar manualmente o pagamento do pedido #${order.id}? Esta ação registra seu usuário e horário na auditoria.`,
+                  )) return;
+                  confirmOrderPaymentMutation.mutate({ orderId: order.id });
+                }}
               />
             </div>
           )}

@@ -28,6 +28,11 @@ import {
   asaasWebhookEvents,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import {
+  buildPaymentConfirmationValues,
+  isTrustedPaymentConfirmation,
+  type TrustedPaymentConfirmation,
+} from "./payments/confirmation";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 const inMemoryAsaasWebhookEvents = new Set<string>();
@@ -655,6 +660,11 @@ export async function getEligibleReviewProducts(userId: number, orderId?: number
       productImage: products.imageThumbnailUrl,
       productFallbackImage: products.imageUrl,
       deliveredAt: orders.updatedAt,
+      paymentStatus: orders.paymentStatus,
+      paymentConfirmationSource: orders.paymentConfirmationSource,
+      paymentConfirmedAt: orders.paymentConfirmedAt,
+      paymentConfirmedBy: orders.paymentConfirmedBy,
+      paymentConfirmationReference: orders.paymentConfirmationReference,
     })
     .from(stockReservations)
     .innerJoin(orders, eq(orders.id, stockReservations.orderId))
@@ -669,7 +679,6 @@ export async function getEligibleReviewProducts(userId: number, orderId?: number
     )
     .where(and(
       eq(stockReservations.userId, userId),
-      eq(stockReservations.status, "consumed"),
       eq(orders.userId, userId),
       eq(orders.status, "delivered"),
       ...(orderId ? [eq(orders.id, orderId)] : []),
@@ -679,6 +688,7 @@ export async function getEligibleReviewProducts(userId: number, orderId?: number
 
   const byProduct = new Map<number, (typeof rows)[number]>();
   for (const row of rows) {
+    if (!isTrustedPaymentConfirmation(row)) continue;
     if (!byProduct.has(row.productId)) byProduct.set(row.productId, row);
   }
 
@@ -725,21 +735,26 @@ export async function createVerifiedProductReview(input: {
       .select({
         stockReservationId: stockReservations.id,
         orderId: orders.id,
+        paymentStatus: orders.paymentStatus,
+        paymentConfirmationSource: orders.paymentConfirmationSource,
+        paymentConfirmedAt: orders.paymentConfirmedAt,
+        paymentConfirmedBy: orders.paymentConfirmedBy,
+        paymentConfirmationReference: orders.paymentConfirmationReference,
       })
       .from(stockReservations)
       .innerJoin(orders, eq(orders.id, stockReservations.orderId))
       .where(and(
         eq(stockReservations.userId, input.userId),
         eq(stockReservations.productId, input.productId),
-        eq(stockReservations.status, "consumed"),
         eq(orders.userId, input.userId),
         eq(orders.status, "delivered"),
       ))
-      .orderBy(desc(orders.updatedAt), desc(stockReservations.id))
-      .limit(1);
+      .orderBy(desc(orders.updatedAt), desc(stockReservations.id));
 
-    const purchase = eligibleRows[0];
-    if (!purchase) return { outcome: "not_eligible" as const };
+    const purchase = eligibleRows.find(isTrustedPaymentConfirmation);
+    if (!purchase) {
+      return { outcome: "not_eligible" as const };
+    }
 
     const existing = await tx
       .select({
@@ -1323,72 +1338,63 @@ export async function reserveStockForOrder(input: {
   });
 }
 
-export async function consumeStockReservationsForOrder(orderId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const now = new Date();
-  await db.transaction(async tx => {
-    const activeReservations = await tx
-      .select()
-      .from(stockReservations)
-      .where(
-        and(
-          eq(stockReservations.orderId, orderId),
-          eq(stockReservations.status, "active"),
-          gte(stockReservations.expiresAt, now),
-        ),
-      );
-
-    for (const reservation of activeReservations) {
-      await tx
-        .update(products)
-        .set({
-          stock: sql`${products.stock} - ${reservation.quantity}`,
-        })
-        .where(eq(products.id, reservation.productId));
-    }
-
-    await tx
-      .update(stockReservations)
-      .set({ status: "consumed" })
-      .where(and(eq(stockReservations.orderId, orderId), eq(stockReservations.status, "active")));
-  });
-}
-
 export async function getAllOrders() {
   const db = await getDb();
   if (!db) return [];
   return await db.select().from(orders);
 }
 
-export async function updateOrderStatus(
+export async function markOrderPaid(
   orderId: number,
-  status: "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled",
+  confirmation: TrustedPaymentConfirmation,
 ) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  return await db.update(orders).set({ status }).where(eq(orders.id, orderId));
-}
-
-export async function markOrderPaid(orderId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   return await db.transaction(async tx => {
-    const current = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    // Serializa webhook e confirmação manual concorrentes para impedir baixa
+    // duplicada de estoque ou sobrescrita da evidência de pagamento.
+    const current = await tx
+      .select()
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1)
+      .for("update");
     const order = current[0];
     if (!order) {
       throw new Error("Order not found");
     }
 
-    if (order.status === "paid" || order.status === "shipped" || order.status === "delivered") {
+    if (isTrustedPaymentConfirmation(order)) {
       return { updated: false, status: order.status, lowStockProducts: [] } as const;
     }
 
     const lowStockProducts: Array<{ id: number; name: string; stock: number }> = [];
+    const confirmationValues = buildPaymentConfirmationValues(confirmation);
+    const nextStatus = ["pending", "processing"].includes(order.status) ? "paid" : order.status;
 
-    await tx.update(orders).set({ status: "paid" }).where(eq(orders.id, orderId));
+    await tx
+      .update(orders)
+      .set({
+        status: nextStatus,
+        ...confirmationValues,
+      })
+      .where(eq(orders.id, orderId));
+
+    if (confirmation.source === "manual") {
+      await tx.insert(auditLogs).values({
+        actorUserId: confirmation.actorUserId,
+        action: "order.payment_confirmed_manual",
+        entity: "order",
+        entityId: String(orderId),
+        metadata: JSON.stringify({
+          source: "manual",
+          paymentConfirmedAt: confirmationValues.paymentConfirmedAt.toISOString(),
+          previousOrderStatus: order.status,
+          resultingOrderStatus: nextStatus,
+        }),
+      });
+    }
 
     const now = new Date();
     const activeReservations = await tx
@@ -1433,12 +1439,19 @@ export async function markOrderPaid(orderId: number) {
       }
     }
 
-    await tx
-      .update(stockReservations)
-      .set({ status: "consumed" })
-      .where(and(eq(stockReservations.orderId, orderId), eq(stockReservations.status, "active")));
+    if (activeReservations.length > 0) {
+      await tx
+        .update(stockReservations)
+        .set({ status: "consumed" })
+        .where(inArray(stockReservations.id, activeReservations.map(reservation => reservation.id)));
+    }
 
-    return { updated: true, status: "paid", lowStockProducts } as const;
+    return {
+      updated: true,
+      status: nextStatus,
+      paymentConfirmedAt: confirmationValues.paymentConfirmedAt,
+      lowStockProducts,
+    } as const;
   });
 }
 

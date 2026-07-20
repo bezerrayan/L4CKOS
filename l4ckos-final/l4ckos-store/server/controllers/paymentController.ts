@@ -418,10 +418,13 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
       async () => {
         let result: { updated: boolean; invalidTransition?: boolean; lowStockProducts?: ReadonlyArray<{ id: number; name: string; stock: number }> } = { updated: false };
         if (PAID_EVENTS.has(event)) {
-          if (!["pending", "processing"].includes(order.status)) {
+          if (order.status === "cancelled") {
             result = { updated: false, invalidTransition: true };
           } else {
-            result = await markOrderPaid(orderId);
+            result = await markOrderPaid(orderId, {
+              source: "asaas_webhook",
+              reference: eventId,
+            });
           }
         }
 

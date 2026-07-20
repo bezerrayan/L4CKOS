@@ -10,6 +10,10 @@ export type AdminOrderView = {
   customerName?: string | null;
   customerEmail?: string | null;
   status?: string | null;
+  paymentStatus?: string | null;
+  paymentConfirmationSource?: string | null;
+  paymentConfirmedAt?: Date | string | null;
+  paymentConfirmedBy?: number | null;
   totalPrice?: number | string | null;
   trackingCode?: string | null;
   createdAt?: Date | string | null;
@@ -121,11 +125,15 @@ export function OrderDetailPanel({
   statusLabel,
   statusTone,
   addressLines,
+  onConfirmPayment,
+  confirmingPayment = false,
 }: {
   order: AdminOrderView | null;
   statusLabel: (status: string) => string;
   statusTone: (status: string) => CSSProperties;
   addressLines: (address: NonNullable<AdminOrderView["shippingAddress"]>) => string[];
+  onConfirmPayment?: (order: AdminOrderView) => void;
+  confirmingPayment?: boolean;
 }) {
   if (!order) return null;
 
@@ -150,6 +158,38 @@ export function OrderDetailPanel({
         <DetailInfo label="Rastreio" value={order.trackingCode || "Ainda não informado"} />
         <DetailInfo label="Itens" value={`${itemCount} item(ns)`} />
       </div>
+
+      <section style={styles.detailSection}>
+        <strong style={styles.detailSubtitle}>Pagamento</strong>
+        {order.paymentStatus === "confirmed" ? (
+          <div style={styles.paymentConfirmed}>
+            <strong style={styles.itemName}>Pagamento confirmado</strong>
+            <span style={styles.secondaryText}>
+              {order.paymentConfirmationSource === "manual"
+                ? `Confirmação manual pelo admin #${order.paymentConfirmedBy ?? "—"}`
+                : "Confirmação recebida pelo webhook validado do Asaas"}
+            </span>
+            <span style={styles.secondaryText}>{formatDateTime(order.paymentConfirmedAt)}</span>
+          </div>
+        ) : (
+          <div style={styles.paymentPending}>
+            <strong style={styles.itemName}>Pagamento ainda não comprovado</strong>
+            <span style={styles.secondaryText}>
+              O status de entrega não confirma pagamento. Use esta ação somente após conferir o recebimento.
+            </span>
+            {onConfirmPayment ? (
+              <button
+                type="button"
+                style={styles.confirmPaymentButton}
+                disabled={confirmingPayment || order.status === "cancelled"}
+                onClick={() => onConfirmPayment(order)}
+              >
+                {confirmingPayment ? "Confirmando..." : "Confirmar pagamento manualmente"}
+              </button>
+            ) : null}
+          </div>
+        )}
+      </section>
 
       <section style={styles.detailSection}>
         <strong style={styles.detailSubtitle}>Entrega</strong>
@@ -423,5 +463,33 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.35,
     overflowWrap: "anywhere",
+  },
+  paymentConfirmed: {
+    display: "grid",
+    gap: 5,
+    padding: "12px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "#121212",
+  },
+  paymentPending: {
+    display: "grid",
+    gap: 8,
+    padding: "12px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(245,158,11,0.28)",
+    background: "rgba(245,158,11,0.045)",
+  },
+  confirmPaymentButton: {
+    minHeight: 44,
+    marginTop: 3,
+    padding: "0 14px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "#f4f1eb",
+    color: "#080808",
+    fontSize: 12,
+    fontWeight: 850,
+    cursor: "pointer",
   },
 };

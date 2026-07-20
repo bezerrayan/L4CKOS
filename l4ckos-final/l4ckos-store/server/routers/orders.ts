@@ -10,13 +10,11 @@ import {
   getOrdersByUserId,
   getApplicableCouponByCode,
   incrementCouponUsage,
-  markOrderPaid,
   reserveStockForOrder,
   updateOrderShippingAddress,
 } from "../db";
 import { createAsaasChargeForOrder } from "../services/asaas";
 import { quoteShippingDetailed } from "../services/shippingService";
-import { listAsaasPaymentsByExternalReference } from "../services/asaasService";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { sendOrderCreatedEmail, sendPaymentPendingEmail } from "../services/emailService.js";
 import { securityLog } from "../_core/security";
@@ -128,40 +126,9 @@ async function resolveOrderPricing(input: {
   };
 }
 
-const ASAAS_PAID_STATUSES = new Set([
-  "RECEIVED",
-  "CONFIRMED",
-  "RECEIVED_IN_CASH",
-  "REFUNDED_PARTIALLY",
-]);
-
-async function syncOrderPaymentIfNeeded(order: Awaited<ReturnType<typeof getOrderByIdAndUser>>) {
-  if (!order) return order;
-  if (!["pending", "processing"].includes(String(order.status))) {
-    return order;
-  }
-
-  try {
-    const payments = await listAsaasPaymentsByExternalReference(String(order.id));
-    const hasPaidPayment = payments.some(payment => ASAAS_PAID_STATUSES.has(String(payment.status ?? "").toUpperCase()));
-
-    if (!hasPaidPayment) {
-      return order;
-    }
-
-    await markOrderPaid(order.id);
-    const refreshed = await getOrderByIdAndUser(order.id, order.userId);
-    return refreshed ?? order;
-  } catch {
-    return order;
-  }
-}
-
 export const ordersRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
-    const orders = await getOrdersByUserId(ctx.user.id);
-    const syncedOrders = await Promise.all(orders.map(order => syncOrderPaymentIfNeeded(order)));
-    return syncedOrders;
+    return await getOrdersByUserId(ctx.user.id);
   }),
 
   track: protectedProcedure
@@ -180,31 +147,28 @@ export const ordersRouter = router({
         ? await getOrderByIdAndUser(input.orderId, ctx.user.id)
         : await getOrderByTrackingCodeAndUser(input.trackingCode ?? "", ctx.user.id);
 
-      const syncedOrder = await syncOrderPaymentIfNeeded(order);
-
-      if (!syncedOrder) {
+      if (!order) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Pedido não encontrado para este usuário",
         });
       }
 
-      const items = await getOrderReservationItems(syncedOrder.id);
-      return { ...syncedOrder, items };
+      const items = await getOrderReservationItems(order.id);
+      return { ...order, items };
     }),
 
   detail: protectedProcedure.input(z.number().int().positive()).query(async ({ input, ctx }) => {
     const order = await getOrderByIdAndUser(input, ctx.user.id);
-    const syncedOrder = await syncOrderPaymentIfNeeded(order);
-    if (!syncedOrder) {
+    if (!order) {
       throw new TRPCError({
         code: "NOT_FOUND",
         message: "Pedido não encontrado para este usuário",
       });
     }
 
-    const items = await getOrderReservationItems(syncedOrder.id);
-    return { ...syncedOrder, items };
+    const items = await getOrderReservationItems(order.id);
+    return { ...order, items };
   }),
 
   updateShippingAddress: protectedProcedure
@@ -216,23 +180,21 @@ export const ordersRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       const order = await getOrderByIdAndUser(input.orderId, ctx.user.id);
-      const syncedOrder = await syncOrderPaymentIfNeeded(order);
-
-      if (!syncedOrder) {
+      if (!order) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Pedido não encontrado para este usuário",
         });
       }
 
-      if (!["pending", "paid"].includes(String(syncedOrder.status))) {
+      if (!["pending", "paid"].includes(String(order.status))) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "O endereço só pode ser ajustado antes do pedido entrar em separação.",
         });
       }
 
-      await updateOrderShippingAddress(syncedOrder.id, {
+      await updateOrderShippingAddress(order.id, {
         recipient: input.address.recipient,
         street: input.address.street,
         number: input.address.number,
@@ -240,7 +202,7 @@ export const ordersRouter = router({
         neighborhood: input.address.neighborhood,
       });
 
-      const updatedOrder = await getOrderByIdAndUser(syncedOrder.id, ctx.user.id);
+      const updatedOrder = await getOrderByIdAndUser(order.id, ctx.user.id);
       if (!updatedOrder) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",

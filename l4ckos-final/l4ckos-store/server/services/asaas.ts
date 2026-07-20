@@ -1,5 +1,3 @@
-import { consumeStockReservationsForOrder, updateOrderStatus } from "../db";
-
 const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
 
 export type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
@@ -28,12 +26,6 @@ type AsaasPixQrCodeResponse = {
   encodedImage?: string;
   payload?: string;
 };
-
-const PAID_EVENTS = new Set([
-  "PAYMENT_RECEIVED",
-  "PAYMENT_CONFIRMED",
-  "PAYMENT_OVERDUE_RECEIVED",
-]);
 
 function getAsaasConfig() {
   const apiKey = process.env.ASAAS_API_KEY?.trim();
@@ -137,34 +129,4 @@ export async function createAsaasChargeForOrder(input: {
     nossoNumero: payment.nossoNumero || null,
     billingType: payment.billingType || null,
   };
-}
-
-export async function handleAsaasWebhookEvent(payload: unknown) {
-  const eventData = payload as {
-    event?: string;
-    payment?: { id?: string; externalReference?: string };
-  };
-
-  if (!eventData?.event || !eventData.payment) {
-    return { handled: false, reason: "invalid_payload" } as const;
-  }
-
-  if (!PAID_EVENTS.has(eventData.event)) {
-    return { handled: false, reason: "event_ignored" } as const;
-  }
-
-  const orderId = Number(eventData.payment.externalReference);
-  if (!Number.isInteger(orderId) || orderId <= 0) {
-    return { handled: false, reason: "missing_external_reference" } as const;
-  }
-
-  await updateOrderStatus(orderId, "processing");
-  await consumeStockReservationsForOrder(orderId);
-
-  return {
-    handled: true,
-    event: eventData.event,
-    orderId,
-    paymentId: eventData.payment.id || null,
-  } as const;
 }
