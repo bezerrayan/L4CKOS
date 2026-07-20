@@ -6,6 +6,7 @@ import { useToast } from "../contexts/ToastContext";
 import { trpc } from "../lib/trpc";
 import { getApiErrorDisplay } from "../utils/apiError";
 import { useOrders } from "../hooks/useOrders";
+import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
 import "./Perfil.css";
 
 type SavedAddress = { id: string; label: string; recipient: string; zipCode: string; street: string; number: string; complement: string; neighborhood: string; city: string; state: string; isDefault: boolean };
@@ -96,6 +97,7 @@ export default function Perfil() {
         <article className="l4-profile-summary"><Package size={18} aria-hidden="true" /><div><h3>Pedidos recentes</h3><p>{recentOrders.length ? `${recentOrders.length} pedido${recentOrders.length > 1 ? "s" : ""} recente${recentOrders.length > 1 ? "s" : ""}.` : "Você ainda não tem pedidos."}</p></div><Link to="/meus-pedidos">Ver histórico</Link></article>
         <article className="l4-profile-summary"><ShieldCheck size={18} aria-hidden="true" /><div><h3>Precisa de ajuda?</h3><p>Fale com o suporte pelos canais oficiais.</p></div><button onClick={() => navigate("/contato")}>Falar com suporte</button></article>
       </div>
+      <ReviewPurchaseArea />
       <section className="l4-profile-subsection"><div className="l4-profile-section-heading"><div><h2>Meus pedidos</h2><p>Compras recentes da sua conta.</p></div><Link to="/meus-pedidos" className="l4-profile-text-action">Histórico completo</Link></div>
         {ordersQuery.isLoading ? <p className="l4-profile-empty-line">Carregando pedidos...</p> : recentOrders.length ? <div className="l4-profile-list">{recentOrders.map(order => <article className="l4-profile-list-item" key={order.id}><div><strong>Pedido #{order.id}</strong><p>Status: {String(order.status)} · Total: R$ {(Number(order.totalPrice || 0) / 100).toFixed(2).replace(".", ",")}</p></div><Link className="l4-profile-text-action" to={`/meus-pedidos/${order.id}`}>Ver pedido</Link></article>)}</div> : <div className="l4-profile-empty-line"><p>Quando realizar uma compra, seus pedidos aparecerão aqui.</p><Link className="l4-profile-secondary-action" to="/meus-pedidos">Ver histórico</Link></div>}
       </section>

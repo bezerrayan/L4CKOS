@@ -42,7 +42,8 @@ export function getAllowedMethodsForApiPath(pathname: string) {
     path === "/api/waitlist" ||
     path === "/api/contact" ||
     path === "/api/contact/test" ||
-    path === "/api/upload"
+    path === "/api/upload" ||
+    path === "/api/review-images"
   ) {
     return ["POST"];
   }

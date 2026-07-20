@@ -22,6 +22,7 @@ import {
   getUserById,
   getOrdersByFilters,
   getProductsAdmin,
+  getAdminProductReviews,
   getSalesByPeriod,
   getUsersWithStats,
   replaceProductImages,
@@ -29,10 +30,12 @@ import {
   restoreBackupPayload,
   setOrderAdminData,
   setUserFlags,
+  moderateProductReview,
   updateProduct,
   updateCoupon,
   updateUserRole,
 } from "../db";
+import { reviewModerationInputSchema } from "../reviews/policy";
 import { ENV } from "../_core/env";
 import { TRPCError } from "@trpc/server";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -534,7 +537,7 @@ export const adminRouter = router({
               customerEmail: user.email,
               customerName: user.name || "Cliente",
               orderNumber: String(updatedOrder.id),
-              reviewUrl: `${appBaseUrl}/meus-pedidos/${updatedOrder.id}`,
+              reviewUrl: `${appBaseUrl}/perfil`,
             });
           }
         } catch {}
@@ -545,6 +548,32 @@ export const adminRouter = router({
         entity: "order",
         entityId: String(input.orderId),
         metadata: { status: input.status, trackingCode: input.trackingCode },
+      });
+      return { success: true } as const;
+    }),
+
+  reviewsList: adminProcedure.query(async () => {
+    return await getAdminProductReviews();
+  }),
+
+  reviewModerate: adminProcedure
+    .input(reviewModerationInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      await moderateProductReview({
+        reviewId: input.reviewId,
+        actorUserId: ctx.user.id,
+        moderationStatus: input.moderationStatus,
+        imageStatus: input.imageStatus,
+      });
+      await createAuditLog({
+        actorUserId: ctx.user.id,
+        action: "review.moderate",
+        entity: "productReview",
+        entityId: String(input.reviewId),
+        metadata: {
+          moderationStatus: input.moderationStatus,
+          imageStatus: input.imageStatus,
+        },
       });
       return { success: true } as const;
     }),

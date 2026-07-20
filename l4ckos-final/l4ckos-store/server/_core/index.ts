@@ -19,6 +19,7 @@ import { configureTrustProxy, createRateLimiter } from "./rateLimit";
 import { CSRF_COOKIE_NAME, createCsrfToken, csrfMiddleware } from "./csrf";
 import { getSessionCookieOptions } from "./cookies";
 import uploadRouter from "../routers/upload";
+import reviewUploadRouter from "../routers/reviewUpload";
 import paymentRoutes from "../routes/paymentRoutes";
 import webhookRoutes from "../routes/webhookRoutes";
 import shippingRoutes from "../routes/shippingRoutes";
@@ -300,6 +301,14 @@ async function startServer() {
   });
   app.use("/api/contact", publicWriteLimiter);
   app.use("/api/waitlist", publicWriteLimiter);
+  app.use(
+    "/api/review-images",
+    createRateLimiter({
+      windowMs: 15 * 60 * 1000,
+      max: isProduction ? 12 : 50,
+      message: { error: "Muitos envios de imagem. Tente novamente mais tarde." },
+    }),
+  );
 
   // Additional protection for admin-only API routes.
   const adminApiLimiter = createRateLimiter({
@@ -480,6 +489,7 @@ async function startServer() {
   app.post("/webhook/asaas", asaasWebhookHandler);
   // REST API (upload)
   app.use("/api/upload", uploadRouter);
+  app.use("/api/review-images", reviewUploadRouter);
   app.use(
     "/uploads",
     (req, res, next) => {

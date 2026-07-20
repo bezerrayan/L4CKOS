@@ -13,6 +13,7 @@ import {
   productImages,
   productVariants,
   productReviews,
+  productReviewUploads,
   coupons,
   auditLogs,
   localAuthUsers,
@@ -579,63 +580,275 @@ export async function getProductByIdWithDetails(id: number) {
 
 export async function getProductReviews(productId: number) {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    return {
+      summary: {
+        total: 0,
+        average: 0,
+        ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } as Record<number, number>,
+        sizeDistribution: { small: 0, true_to_size: 0, large: 0 },
+      },
+      reviews: [],
+    };
+  }
 
   const reviews = await db
     .select({
       id: productReviews.id,
       productId: productReviews.productId,
-      userId: productReviews.userId,
       rating: productReviews.rating,
       comment: productReviews.comment,
+      sizePerception: productReviews.sizePerception,
+      imageUrl: productReviews.imageUrl,
+      imageStatus: productReviews.imageStatus,
       createdAt: productReviews.createdAt,
-      updatedAt: productReviews.updatedAt,
       userName: users.name,
     })
     .from(productReviews)
     .leftJoin(users, eq(users.id, productReviews.userId))
-    .where(eq(productReviews.productId, productId))
+    .where(and(
+      eq(productReviews.productId, productId),
+      eq(productReviews.verifiedPurchase, 1),
+      eq(productReviews.moderationStatus, "published"),
+    ))
     .orderBy(desc(productReviews.id));
 
-  return reviews;
+  const ratingDistribution = [1, 2, 3, 4, 5].reduce<Record<number, number>>((acc, rating) => {
+    acc[rating] = reviews.filter(review => review.rating === rating).length;
+    return acc;
+  }, {});
+  const sizeDistribution = {
+    small: reviews.filter(review => review.sizePerception === "small").length,
+    true_to_size: reviews.filter(review => review.sizePerception === "true_to_size").length,
+    large: reviews.filter(review => review.sizePerception === "large").length,
+  };
+  const total = reviews.length;
+
+  return {
+    summary: {
+      total,
+      average: total
+        ? Number((reviews.reduce((sum, review) => sum + review.rating, 0) / total).toFixed(1))
+        : 0,
+      ratingDistribution,
+      sizeDistribution,
+    },
+    reviews: reviews.slice(0, 12).map(review => ({
+      ...review,
+      userName: String(review.userName || "Cliente L4CKOS").trim().split(/\s+/)[0],
+      imageUrl: review.imageStatus === "approved" ? review.imageUrl : null,
+      verifiedPurchase: true as const,
+    })),
+  };
 }
 
-export async function createOrUpdateProductReview(input: {
+export async function getEligibleReviewProducts(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db
+    .select({
+      stockReservationId: stockReservations.id,
+      orderId: orders.id,
+      productId: products.id,
+      productName: products.name,
+      productImage: products.imageThumbnailUrl,
+      productFallbackImage: products.imageUrl,
+      deliveredAt: orders.updatedAt,
+    })
+    .from(stockReservations)
+    .innerJoin(orders, eq(orders.id, stockReservations.orderId))
+    .innerJoin(products, eq(products.id, stockReservations.productId))
+    .leftJoin(
+      productReviews,
+      and(
+        eq(productReviews.userId, userId),
+        eq(productReviews.productId, stockReservations.productId),
+        eq(productReviews.verifiedPurchase, 1),
+      ),
+    )
+    .where(and(
+      eq(stockReservations.userId, userId),
+      eq(stockReservations.status, "consumed"),
+      eq(orders.userId, userId),
+      eq(orders.status, "delivered"),
+      isNull(productReviews.id),
+    ))
+    .orderBy(desc(orders.updatedAt), desc(stockReservations.id));
+
+  const byProduct = new Map<number, (typeof rows)[number]>();
+  for (const row of rows) {
+    if (!byProduct.has(row.productId)) byProduct.set(row.productId, row);
+  }
+
+  return Array.from(byProduct.values()).map(row => ({
+    stockReservationId: row.stockReservationId,
+    orderId: row.orderId,
+    productId: row.productId,
+    productName: row.productName,
+    productImage: row.productImage || row.productFallbackImage || null,
+    deliveredAt: row.deliveredAt,
+  }));
+}
+
+export async function hasEligibleReviewPurchase(userId: number, productId: number) {
+  const eligible = await getEligibleReviewProducts(userId);
+  return eligible.some(item => item.productId === productId);
+}
+
+export async function registerProductReviewUpload(input: {
+  token: string;
+  userId: number;
+  productId: number;
+  imageUrl: string;
+  expiresAt: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(productReviewUploads).values(input);
+}
+
+export async function createVerifiedProductReview(input: {
   productId: number;
   userId: number;
   rating: number;
-  comment?: string;
+  comment: string;
+  sizePerception: "small" | "true_to_size" | "large";
+  imageToken?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const existing = await db
-    .select()
-    .from(productReviews)
-    .where(and(eq(productReviews.productId, input.productId), eq(productReviews.userId, input.userId)))
-    .limit(1);
-
-  if (existing.length > 0) {
-    await db
-      .update(productReviews)
-      .set({
-        rating: input.rating,
-        comment: input.comment?.trim() || null,
+  return await db.transaction(async tx => {
+    const eligibleRows = await tx
+      .select({
+        stockReservationId: stockReservations.id,
+        orderId: orders.id,
       })
-      .where(eq(productReviews.id, existing[0].id));
+      .from(stockReservations)
+      .innerJoin(orders, eq(orders.id, stockReservations.orderId))
+      .where(and(
+        eq(stockReservations.userId, input.userId),
+        eq(stockReservations.productId, input.productId),
+        eq(stockReservations.status, "consumed"),
+        eq(orders.userId, input.userId),
+        eq(orders.status, "delivered"),
+      ))
+      .orderBy(desc(orders.updatedAt), desc(stockReservations.id))
+      .limit(1);
 
-    return { updated: true, id: existing[0].id } as const;
-  }
+    const purchase = eligibleRows[0];
+    if (!purchase) return { outcome: "not_eligible" as const };
 
-  const result = await db.insert(productReviews).values({
-    productId: input.productId,
-    userId: input.userId,
-    rating: input.rating,
-    comment: input.comment?.trim() || null,
+    const existing = await tx
+      .select({
+        id: productReviews.id,
+        verifiedPurchase: productReviews.verifiedPurchase,
+      })
+      .from(productReviews)
+      .where(and(
+        eq(productReviews.productId, input.productId),
+        eq(productReviews.userId, input.userId),
+      ))
+      .limit(1);
+    if (existing[0]?.verifiedPurchase === 1) return { outcome: "duplicate" as const };
+    if (existing[0]) {
+      // Avaliações do fluxo legado não possuíam vínculo verificável com pedido.
+      // Elas ficam ocultas e são substituídas somente quando o cliente passa
+      // pela nova validação de compra paga e entregue.
+      await tx.delete(productReviews).where(eq(productReviews.id, existing[0].id));
+    }
+
+    let imageUrl: string | null = null;
+    if (input.imageToken) {
+      const uploadRows = await tx
+        .select()
+        .from(productReviewUploads)
+        .where(and(
+          eq(productReviewUploads.token, input.imageToken),
+          eq(productReviewUploads.userId, input.userId),
+          eq(productReviewUploads.productId, input.productId),
+          isNull(productReviewUploads.claimedAt),
+          gte(productReviewUploads.expiresAt, new Date()),
+        ))
+        .limit(1);
+      if (!uploadRows[0]) return { outcome: "invalid_image" as const };
+      imageUrl = uploadRows[0].imageUrl;
+    }
+
+    const result = await tx.insert(productReviews).values({
+      productId: input.productId,
+      userId: input.userId,
+      orderId: purchase.orderId,
+      stockReservationId: purchase.stockReservationId,
+      rating: input.rating,
+      comment: input.comment.trim(),
+      sizePerception: input.sizePerception,
+      imageUrl,
+      imageStatus: imageUrl ? "pending" : "none",
+      moderationStatus: "published",
+      verifiedPurchase: 1,
+    });
+
+    if (input.imageToken) {
+      await tx
+        .update(productReviewUploads)
+        .set({ claimedAt: new Date() })
+        .where(eq(productReviewUploads.token, input.imageToken));
+    }
+
+    return {
+      outcome: "created" as const,
+      id: Number((result as any)?.[0]?.insertId ?? 0),
+    };
   });
+}
 
-  const insertedId = Number((result as any)?.[0]?.insertId ?? 0);
-  return { updated: false, id: insertedId } as const;
+export async function getAdminProductReviews() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db
+    .select({
+      id: productReviews.id,
+      productId: productReviews.productId,
+      productName: products.name,
+      userName: users.name,
+      userEmail: users.email,
+      orderId: productReviews.orderId,
+      rating: productReviews.rating,
+      comment: productReviews.comment,
+      sizePerception: productReviews.sizePerception,
+      imageUrl: productReviews.imageUrl,
+      imageStatus: productReviews.imageStatus,
+      moderationStatus: productReviews.moderationStatus,
+      verifiedPurchase: productReviews.verifiedPurchase,
+      createdAt: productReviews.createdAt,
+      moderatedAt: productReviews.moderatedAt,
+    })
+    .from(productReviews)
+    .leftJoin(products, eq(products.id, productReviews.productId))
+    .leftJoin(users, eq(users.id, productReviews.userId))
+    .orderBy(desc(productReviews.id));
+}
+
+export async function moderateProductReview(input: {
+  reviewId: number;
+  actorUserId: number;
+  moderationStatus?: "published" | "hidden_spam" | "hidden_offensive";
+  imageStatus?: "approved" | "rejected";
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const update = {
+    ...(input.moderationStatus ? { moderationStatus: input.moderationStatus } : {}),
+    ...(input.imageStatus ? { imageStatus: input.imageStatus } : {}),
+    moderatedBy: input.actorUserId,
+    moderatedAt: new Date(),
+  };
+  await db.update(productReviews).set(update).where(eq(productReviews.id, input.reviewId));
+  return { success: true } as const;
 }
 
 function getDatabaseErrorMessage(error: unknown) {

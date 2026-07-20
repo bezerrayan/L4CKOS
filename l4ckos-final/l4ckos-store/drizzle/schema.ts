@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -298,14 +298,50 @@ export const productReviews = mysqlTable("productReviews", {
   id: int("id").autoincrement().primaryKey(),
   productId: int("productId").notNull(),
   userId: int("userId").notNull(),
+  orderId: int("orderId"),
+  stockReservationId: int("stockReservationId"),
   rating: int("rating").notNull(),
   comment: text("comment"),
+  sizePerception: mysqlEnum("sizePerception", ["small", "true_to_size", "large"]),
+  imageUrl: varchar("imageUrl", { length: 500 }),
+  imageStatus: mysqlEnum("imageStatus", ["none", "pending", "approved", "rejected"]).default("none").notNull(),
+  moderationStatus: mysqlEnum("moderationStatus", ["published", "hidden_spam", "hidden_offensive"]).default("published").notNull(),
+  verifiedPurchase: int("verifiedPurchase").default(0).notNull(),
+  moderatedBy: int("moderatedBy"),
+  moderatedAt: timestamp("moderatedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => ({
+  userProductUnique: uniqueIndex("productReviews_user_product_unique").on(table.userId, table.productId),
+  reservationUnique: uniqueIndex("productReviews_reservation_unique").on(table.stockReservationId),
+  productPublicationIdx: index("productReviews_product_publication_idx").on(
+    table.productId,
+    table.verifiedPurchase,
+    table.moderationStatus,
+    table.createdAt,
+  ),
+}));
 
 export type ProductReview = typeof productReviews.$inferSelect;
 export type InsertProductReview = typeof productReviews.$inferInsert;
+
+// Uploads de fotos de avaliações ficam vinculados ao usuário antes de serem
+// consumidos por uma avaliação. O token impede o uso de URLs arbitrárias.
+export const productReviewUploads = mysqlTable("productReviewUploads", {
+  token: varchar("token", { length: 64 }).primaryKey(),
+  userId: int("userId").notNull(),
+  productId: int("productId").notNull(),
+  imageUrl: varchar("imageUrl", { length: 500 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  claimedAt: timestamp("claimedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({
+  ownerProductIdx: index("productReviewUploads_owner_product_idx").on(table.userId, table.productId),
+  expiresAtIdx: index("productReviewUploads_expires_idx").on(table.expiresAt),
+}));
+
+export type ProductReviewUpload = typeof productReviewUploads.$inferSelect;
+export type InsertProductReviewUpload = typeof productReviewUploads.$inferInsert;
 
 // Reserva temporaria de estoque no checkout
 export const stockReservations = mysqlTable("stockReservations", {

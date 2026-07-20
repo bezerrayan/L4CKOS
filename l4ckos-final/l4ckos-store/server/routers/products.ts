@@ -6,10 +6,13 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  createOrUpdateProductReview,
+  createVerifiedProductReview,
+  getEligibleReviewProducts,
   getProductReviews,
   getPromoBanners,
 } from "../db";
+import { TRPCError } from "@trpc/server";
+import { createReviewInputSchema } from "../reviews/policy";
 
 export const productsRouter = router({
   promotions: publicProcedure.query(async () => {
@@ -82,21 +85,42 @@ export const productsRouter = router({
     return await getProductReviews(input);
   }),
 
-  reviewUpsert: protectedProcedure
-    .input(
-      z.object({
-        productId: z.number().int().positive(),
-        rating: z.number().int().min(1).max(5),
-        comment: z.string().max(1000).optional(),
-      }),
-    )
+  reviewEligibility: protectedProcedure.query(async ({ ctx }) => {
+    return await getEligibleReviewProducts(ctx.user.id);
+  }),
+
+  reviewCreate: protectedProcedure
+    .input(createReviewInputSchema)
     .mutation(async ({ input, ctx }) => {
-      return await createOrUpdateProductReview({
-        productId: input.productId,
-        userId: ctx.user.id,
-        rating: input.rating,
-        comment: input.comment,
-      });
+      try {
+        const result = await createVerifiedProductReview({ ...input, userId: ctx.user.id });
+        if (result.outcome === "not_eligible") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "A avaliação é exclusiva para compras pagas e entregues desta conta.",
+          });
+        }
+        if (result.outcome === "duplicate") {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Você já avaliou este produto.",
+          });
+        }
+        if (result.outcome === "invalid_image") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "A foto expirou ou não pertence a esta avaliação. Envie novamente.",
+          });
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        const message = error instanceof Error ? error.message : "";
+        if (/duplicate|unique|ER_DUP_ENTRY/i.test(message)) {
+          throw new TRPCError({ code: "CONFLICT", message: "Você já avaliou este produto." });
+        }
+        throw error;
+      }
     }),
 
   // Criar novo produto (apenas admin)

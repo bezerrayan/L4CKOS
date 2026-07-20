@@ -76,6 +76,7 @@ import {
   SystemMetricCards,
 } from "../components/admin/system/AdminSystemUI";
 import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
+import { AdminReviewsPanel } from "../components/admin/reviews/AdminReviewsPanel";
 
 type Section =
   | "overview"
@@ -83,6 +84,7 @@ type Section =
   | "products"
   | "promos"
   | "orders"
+  | "reviews"
   | "coupons"
   | "reports"
   | "audit"
@@ -1061,6 +1063,7 @@ export default function Admin() {
           { key: "products", label: "Produtos" },
           { key: "promos", label: "Promoções" },
           { key: "orders", label: "Pedidos" },
+          { key: "reviews", label: "Avaliações" },
           { key: "coupons", label: "Cupons" },
           { key: "reports", label: "Relatórios" },
           { key: "audit", label: "Auditoria" },
@@ -1104,6 +1107,8 @@ export default function Admin() {
           }}
         />
       )}
+
+      {section === "reviews" && <AdminReviewsPanel />}
 
       {section === "customers" && (
         <AdminSurface

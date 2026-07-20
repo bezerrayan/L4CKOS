@@ -18,6 +18,7 @@ import { resolveCatalogImageUrl, retryImageWithVersion } from "../lib/images";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import { trackStoreEvent } from "../lib/analytics";
+import { ProductReviews } from "../components/reviews/ProductReviews";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -700,6 +701,7 @@ export default function ProductDetail() {
           )}
         </div>
       </div>
+      <ProductReviews productId={product.id} />
     </div>
   );
 }
