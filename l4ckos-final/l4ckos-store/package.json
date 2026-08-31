@@ -14,7 +14,11 @@
     "check:server": "tsc --noEmit --project tsconfig.server.json",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "staging:provision-db": "node scripts/provision-staging-db.mjs",
+    "staging:seed": "node scripts/seed-staging.mjs",
+    "staging:migrate": "node scripts/staging-migration-gate.mjs",
+    "staging:smoke": "node scripts/smoke-staging.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

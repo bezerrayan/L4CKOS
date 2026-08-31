@@ -106,6 +106,15 @@ export default function ProductDetail() {
                 color: typeof img === "string" ? null : String(img?.color ?? "").trim() || null,
               }))
             : [],
+        variants: Array.isArray((productQuery.data as any).variants)
+          ? ((productQuery.data as any).variants as Array<any>).map(variant => ({
+              id: Number(variant.id),
+              size: String(variant.size ?? "").trim() || null,
+              color: String(variant.color ?? "").trim() || null,
+              price: variant.price === null || variant.price === undefined ? null : normalizePrice(Number(variant.price)),
+              stock: Number(variant.stock ?? 0),
+            }))
+          : [],
       }
     : null;
   const isFav = product ? isFavorited(product.id) : false;
@@ -189,22 +198,31 @@ export default function ProductDetail() {
       Array.from(activeGalleryImages.map(item => [item.imageUrl, item])),
     ).values(),
   );
-  const colorOptions = (product.optionColors?.length ? product.optionColors : DEFAULT_COLORS).map(name => ({
+  const colorOptions = (product.optionColors ?? []).map(name => ({
     name,
     hex: COLOR_HEX_BY_NAME[name.toLowerCase()] ?? "#d1d5db",
   }));
-  const sizeOptions = product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES;
-  const canAddToCart = Boolean(selectedColor && selectedSize && product.stock > 0);
+  const sizeOptions = product.optionSizes ?? [];
+  const requiresColor = colorOptions.length > 0 || product.variants.some(variant => Boolean(variant.color));
+  const requiresSize = sizeOptions.length > 0 || product.variants.some(variant => Boolean(variant.size));
+  const selectedVariant = product.variants.find(variant =>
+    (!variant.color || normalizeColorToken(variant.color) === normalizeColorToken(selectedColor)) &&
+    (!variant.size || normalizeColorToken(variant.size) === normalizeColorToken(selectedSize)),
+  );
+  const hasVariants = product.variants.length > 0;
+  const effectiveStock = hasVariants ? Number(selectedVariant?.stock ?? 0) : product.stock;
+  const selectionsComplete = (!requiresColor || Boolean(selectedColor)) && (!requiresSize || Boolean(selectedSize));
+  const canAddToCart = Boolean(selectionsComplete && effectiveStock > 0 && (!hasVariants || selectedVariant));
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
   }).format(product.price);
-  if (!selectedColor) missingSelections.push("cor");
-  if (!selectedSize) missingSelections.push("tamanho");
+  if (requiresColor && !selectedColor) missingSelections.push("cor");
+  if (requiresSize && !selectedSize) missingSelections.push("tamanho");
 
   const handleAddToCart = () => {
-    if (product.stock <= 0) {
+    if (effectiveStock <= 0) {
       showToast({
         message: "Este produto está Indisponível no momento.",
         duration: 3500,
@@ -212,19 +230,26 @@ export default function ProductDetail() {
       return;
     }
 
-    if (!selectedColor || !selectedSize) {
+    if (!selectionsComplete) {
       setShowSelectionWarning(true);
       showToast({
-        message: "Selecione cor e tamanho antes de adicionar ao carrinho",
+        message: `Selecione ${missingSelections.join(" e ")} antes de adicionar ao carrinho`,
         duration: 3500,
       });
       return;
     }
 
-    addToCart(product, quantity, {
-      cor: selectedColor,
-      tamanho: selectedSize,
-    });
+    if (hasVariants && !selectedVariant) {
+      setShowSelectionWarning(true);
+      showToast({ message: "Esta combinação de cor e tamanho não está disponível.", duration: 3500 });
+      return;
+    }
+
+    const selectedOptions = Object.fromEntries([
+      ...(selectedColor ? [["cor", selectedColor]] : []),
+      ...(selectedSize ? [["tamanho", selectedSize]] : []),
+    ]);
+    addToCart(selectedVariant?.price ? { ...product, price: selectedVariant.price } : product, quantity, selectedOptions, selectedVariant?.id ?? null);
     showToast({
       message: `${product.name} adicionado ao carrinho (${quantity}x).`,
       actionLabel: "Ver carrinho",

@@ -43,6 +43,15 @@ function formatDate(value: unknown) {
   });
 }
 
+function displayOrderStatus(paymentStatus?: string | null, fulfillmentStatus?: string | null): OrderStatus {
+  if (fulfillmentStatus === "cancelled") return "cancelled";
+  if (fulfillmentStatus === "delivered") return "delivered";
+  if (fulfillmentStatus === "shipped") return "shipped";
+  if (fulfillmentStatus === "processing") return "processing";
+  if (fulfillmentStatus === "ready" && ["confirmed", "received", "partially_refunded"].includes(String(paymentStatus))) return "paid";
+  return "pending";
+}
+
 export default function MeusPedidos() {
   const { isAuthenticated } = useUser();
   const ordersQuery = useOrders();
@@ -85,7 +94,7 @@ export default function MeusPedidos() {
 
       <div style={styles.list}>
         {orders.map(order => {
-          const status = order.status as OrderStatus;
+          const status = displayOrderStatus(order.payment?.status, order.fulfillmentStatus);
           return (
             <article key={order.id} style={styles.card}>
               <div style={styles.cardTop}>

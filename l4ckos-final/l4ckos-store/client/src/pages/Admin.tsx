@@ -29,6 +29,7 @@ type Section =
   | "backup";
 
 const orderStatuses = ["pending", "paid", "processing", "shipped", "delivered", "cancelled"] as const;
+const adminFulfillmentActions = ["processing", "shipped", "delivered", "cancelled"] as const;
 const productColorSuggestions = ["preto", "branco", "verde", "azul-marinho", "cinza", "caqui"] as const;
 const alphaSizeSuggestions = ["PP", "P", "M", "G", "GG", "XG"] as const;
 const numericSizeSuggestions = ["36", "38", "40", "42", "44", "46"] as const;
@@ -203,6 +204,18 @@ function buildVariantDraft(name: string, colorsCsv: string, sizesCsv: string, pr
   }
 
   return "";
+}
+
+function resolveVariantOptions(name: string, colors: string[], sizes: string[]) {
+  const normalizedName = name.trim().toLocaleLowerCase("pt-BR");
+  const matches = (option: string) => {
+    const normalized = option.trim().toLocaleLowerCase("pt-BR");
+    return normalizedName === normalized || normalizedName.endsWith(` ${normalized}`) || normalizedName.includes(` ${normalized} `);
+  };
+  return {
+    color: colors.find(matches) ?? null,
+    size: sizes.find(matches) ?? null,
+  };
 }
 
 function getOrderStatusLabel(status: string) {
@@ -392,6 +405,7 @@ export default function Admin() {
     orderFilterStatus ? { status: orderFilterStatus as any } : undefined,
     { enabled: isAuthenticated && isAdmin },
   );
+  const inventoryExceptionsQuery = trpc.admin.inventoryExceptions.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const promoBannersQuery = trpc.admin.promoBannersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const couponsQuery = trpc.admin.couponsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const auditQuery = trpc.admin.auditList.useQuery({ limit: 200 }, { enabled: isAuthenticated && isAdmin });
@@ -476,6 +490,24 @@ export default function Admin() {
       void couponsQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
+  });
+
+  const resolveInventoryExceptionMutation = trpc.admin.inventoryExceptionResolve.useMutation({
+    onSuccess: () => {
+      showToast({ message: "Exceção de estoque atualizada", duration: 2400 });
+      void inventoryExceptionsQuery.refetch();
+      void ordersQuery.refetch();
+    },
+    onError: error => showToast({ message: error.message, duration: 3200 }),
+  });
+
+  const manualPaymentMutation = trpc.admin.manualPaymentConfirm.useMutation({
+    onSuccess: () => {
+      showToast({ message: "Pagamento manual registrado com auditoria", duration: 2600 });
+      void ordersQuery.refetch();
+      void inventoryExceptionsQuery.refetch();
+    },
+    onError: error => showToast({ message: error.message, duration: 3200 }),
   });
 
   const waitlistLaunchSendMutation = trpc.admin.waitlistLaunchSend.useMutation({
@@ -1045,9 +1077,11 @@ export default function Admin() {
                 .filter(Boolean)
                 .map(raw => {
                   const [name, sku, variantPrice, variantStock] = raw.split("|").map(part => part?.trim() ?? "");
+                  const options = resolveVariantOptions(name, optionColors, optionSizes);
                   return {
                     name,
                     sku: sku || null,
+                    ...options,
                     price: variantPrice ? parseMoneyToCents(variantPrice) : null,
                     stock: Number(variantStock || "0"),
                   };
@@ -1361,9 +1395,11 @@ export default function Admin() {
                       .filter(Boolean)
                       .map(raw => {
                         const [name, sku, variantPrice, variantStock] = raw.split("|").map(part => part?.trim() ?? "");
+                        const options = resolveVariantOptions(name, optionColors, optionSizes);
                         return {
                           name,
                           sku: sku || null,
+                          ...options,
                           price: variantPrice ? parseMoneyToCents(variantPrice) : null,
                           stock: Number(variantStock || "0"),
                         };
@@ -1599,9 +1635,41 @@ export default function Admin() {
           <div style={styles.inlineRow}>
             <div style={styles.summaryPill}>Resultados: {orders.length}</div>
             <div style={styles.summaryPill}>Pendentes: {orders.filter(row => row.status === "pending").length}</div>
-            <div style={styles.summaryPill}>Pagos: {orders.filter(row => row.status === "paid").length}</div>
-            <div style={styles.summaryPill}>Em separação: {orders.filter(row => row.status === "processing").length}</div>
+            <div style={styles.summaryPill}>Pagos: {orders.filter(row => ["confirmed", "received", "partially_refunded"].includes(String(row.payment?.status))).length}</div>
+            <div style={styles.summaryPill}>Em separação: {orders.filter(row => row.fulfillmentStatus === "processing").length}</div>
           </div>
+          {(inventoryExceptionsQuery.data?.length ?? 0) > 0 ? (
+            <div style={{ margin: "16px 0", padding: 16, border: "1px solid #ef4444", borderRadius: 12, background: "rgba(127,29,29,.18)" }}>
+              <div style={{ fontWeight: 800, color: "#fca5a5", marginBottom: 10 }}>
+                Exceções de estoque — não liberar para envio ({inventoryExceptionsQuery.data?.length})
+              </div>
+              {(inventoryExceptionsQuery.data ?? []).map(row => (
+                <div key={row.id} style={{ padding: "12px 0", borderTop: "1px solid rgba(252,165,165,.25)" }}>
+                  <div style={styles.orderPrimaryText}>Pedido #{row.id} · {row.customerName || row.customerEmail || `Cliente #${row.userId}`}</div>
+                  <div style={styles.orderSecondaryText}>
+                    Financeiro: {row.payment?.status || "sem pagamento"} · Pago: {formatPrice(Number(row.payment?.paidAmount ?? 0) / 100)} · Exceção: {row.fulfillmentIssue || "não informada"}
+                  </div>
+                  <div style={styles.orderSecondaryText}>
+                    {(row.items ?? []).map(item => `${item.productName || `Produto #${item.productId}`}${item.variantName ? ` / ${item.variantName}` : ""} × ${item.quantity}`).join(", ")}
+                  </div>
+                  <div style={{ ...styles.inlineRow, marginTop: 8 }}>
+                    <button style={styles.smallBtn} onClick={() => {
+                      const note = window.prompt("Confirme a reposição e descreva a evidência:");
+                      if (note) resolveInventoryExceptionMutation.mutate({ orderId: row.id, action: "stock_replenished", note });
+                    }}>Estoque reposto</button>
+                    <button style={styles.smallBtn} onClick={() => {
+                      const note = window.prompt("Descreva o encaminhamento do reembolso no gateway:");
+                      if (note) resolveInventoryExceptionMutation.mutate({ orderId: row.id, action: "refund_required", note });
+                    }}>Encaminhar reembolso</button>
+                    <button style={styles.smallBtn} onClick={() => {
+                      const note = window.prompt("Observação operacional:");
+                      if (note) resolveInventoryExceptionMutation.mutate({ orderId: row.id, action: "note", note });
+                    }}>Registrar nota</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {ordersQuery.isLoading ? (
             <div style={styles.loadingPanel}>Carregando pedidos...</div>
           ) : orders.length === 0 ? (
@@ -1624,7 +1692,7 @@ export default function Admin() {
                       <tr
                         key={row.id}
                         onClick={() => setSelectedOrderId(row.id)}
-                        style={selectedOrder?.id === row.id ? styles.activeTableRow : undefined}
+                        style={row.fulfillmentStatus === "inventory_exception" ? { background: "rgba(127,29,29,.22)" } : selectedOrder?.id === row.id ? styles.activeTableRow : undefined}
                       >
                         <td>
                           <div style={styles.orderPrimaryText}>#{row.id}</div>
@@ -1643,8 +1711,9 @@ export default function Admin() {
                         </td>
                         <td>
                           <span style={{ ...styles.statusBadge, ...getOrderStatusTone(String(row.status)) }}>
-                            {getOrderStatusLabel(String(row.status))}
+                            {String(row.fulfillmentStatus)}
                           </span>
+                          <div style={styles.orderSecondaryText}>Financeiro: {row.payment?.status || "não criado"}</div>
                         </td>
                         <td>
                           <div style={styles.orderPrimaryText}>{row.trackingCode || "Pendente"}</div>
@@ -1665,11 +1734,21 @@ export default function Admin() {
                         <td style={styles.actionsCell} onClick={event => event.stopPropagation()}>
                           <select
                             style={styles.select}
-                            value={row.status}
-                            onChange={e => updateOrderMutation.mutate({ orderId: row.id, status: e.target.value as any })}
+                            value=""
+                            onChange={e => e.target.value && updateOrderMutation.mutate({ orderId: row.id, status: e.target.value as any })}
                           >
-                            {orderStatuses.map(status => <option key={status} value={status}>{getOrderStatusLabel(status)}</option>)}
+                            <option value="">Ação operacional…</option>
+                            {adminFulfillmentActions.map(status => <option key={status} value={status}>{getOrderStatusLabel(status)}</option>)}
                           </select>
+                          {row.payment?.status === "pending" || row.payment?.status === "overdue" || row.payment?.status === "failed" ? (
+                            <button style={styles.smallBtn} onClick={() => {
+                              const reason = window.prompt("Justificativa do pagamento manual (mín. 10 caracteres):");
+                              if (!reason) return;
+                              const evidence = window.prompt("Evidência/origem (recibo, caixa, referência):");
+                              if (!evidence) return;
+                              manualPaymentMutation.mutate({ orderId: row.id, amount: Number(row.payment?.amount ?? row.totalPrice), reason, evidence });
+                            }}>Pagamento manual</button>
+                          ) : null}
                           <button
                             style={styles.smallBtn}
                             onClick={() => {

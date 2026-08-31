@@ -1,10 +1,8 @@
 import type { Request, Response } from "express";
 import {
   getOrderByAsaasCheckoutId,
-  getOrderById,
-  getOrderReservationItems,
   getOrderByIdAndUser,
-  markOrderPaid,
+  processAsaasPaymentEvent,
   getUserById,
   getUserPhoneById,
   setOrderAsaasCheckoutId,
@@ -16,16 +14,11 @@ import {
   getAsaasPayment,
   validateAsaasWebhookSignature,
 } from "../services/asaasService";
+import { deterministicWebhookEventId, sanitizeWebhookPayload } from "../services/checkoutIntegrity";
 import { securityLog } from "../_core/security";
 import { buildApiErrorResponse } from "../_core/appErrors";
-import { formatCurrency } from "../utils/email/formatCurrency.js";
-import {
-  sendInternalLowStockAlertEmail,
-  sendInternalNewSaleAlertEmail,
-  sendInternalPaymentFailedAlertEmail,
-  sendPaymentApprovedEmail,
-  sendPaymentFailedEmail,
-} from "../services/emailService.js";
+import { sendInternalLowStockAlertEmail } from "../services/emailService.js";
+import { getCheckoutAvailability } from "../_core/operationalConfig";
 
 type AuthenticatedRequest = Request & {
   authUser?: {
@@ -42,9 +35,6 @@ function sendControllerError(
 ) {
   res.status(status).json(buildApiErrorResponse({ status, code, message, details }));
 }
-
-const PAID_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"]);
-const FAILED_EVENTS = new Set(["PAYMENT_REFUSED", "PAYMENT_DELETED", "PAYMENT_REPROVED", "PAYMENT_FAILED"]);
 
 function isTrustedRedirectUrl(redirectUrl: string) {
   try {
@@ -130,6 +120,11 @@ async function ensureAsaasCustomerForUser(input: {
 
 export async function createCustomerHandler(req: Request, res: Response) {
   try {
+    const availability = getCheckoutAvailability();
+    if (!availability.available) {
+      sendControllerError(res, 503, availability.code || "CHECKOUT_DISABLED", availability.message || "Checkout indisponível.");
+      return;
+    }
     const authReq = req as AuthenticatedRequest;
     const userId = authReq.authUser?.id;
     if (!userId) {
@@ -157,70 +152,12 @@ export async function createCustomerHandler(req: Request, res: Response) {
 }
 
 export async function createCheckoutHandler(req: Request, res: Response) {
-  try {
-    const authReq = req as AuthenticatedRequest;
-    const userId = authReq.authUser?.id;
-    if (!userId) {
-      sendControllerError(res, 401, "AUTH_REQUIRED", "Faça login para continuar.");
-      return;
-    }
-
-    const body = req.body as {
-      orderId?: number;
-      redirectUrl?: string;
-      billingTypes?: Array<"PIX" | "CREDIT_CARD" | "BOLETO">;
-      checkoutName?: string;
-      cpf?: string;
-      phone?: string;
-    };
-
-    const orderId = Number(body.orderId);
-    if (!Number.isInteger(orderId) || orderId <= 0) {
-      sendControllerError(res, 400, "INVALID_ORDER_ID", "Pedido inválido.");
-      return;
-    }
-
-    const redirectUrl = String(body.redirectUrl || "").trim();
-    if (!redirectUrl || !isTrustedRedirectUrl(redirectUrl)) {
-      sendControllerError(res, 400, "INVALID_REDIRECT_URL", "Não foi possível iniciar o checkout.");
-      return;
-    }
-
-    const { asaasCustomerId } = await ensureAsaasCustomerForUser({
-      userId,
-      cpf: body.cpf,
-      phone: body.phone,
-    });
-
-    const order = await getOrderByIdAndUser(orderId, userId);
-    if (!order) {
-      sendControllerError(res, 404, "ORDER_NOT_FOUND", "Pedido não encontrado.");
-      return;
-    }
-
-    const checkout = await createAsaasCheckout({
-      name: body.checkoutName?.trim() || `Pedido #${order.id}`,
-      value: Number((order.totalPrice / 100).toFixed(2)),
-      billingTypes: body.billingTypes?.length ? body.billingTypes : ["PIX", "CREDIT_CARD"],
-      customer: asaasCustomerId,
-      redirectUrl,
-      externalReference: String(order.id),
-    });
-
-    await setOrderAsaasCheckoutId(order.id, checkout.id);
-
-    res.status(201).json({
-      orderId: order.id,
-      asaasCheckoutId: checkout.id,
-      checkoutUrl: checkout.checkoutUrl,
-    });
-  } catch (error) {
-    securityLog("warn", "payment.create_checkout_failed", {
-      requestIp: req.ip || "unknown",
-      reason: error instanceof Error ? error.message : "unknown",
-    });
-    sendControllerError(res, 400, "CHECKOUT_CREATE_FAILED", "Não foi possível gerar a cobrança agora.");
-  }
+  sendControllerError(
+    res,
+    410,
+    "LEGACY_CHECKOUT_DISABLED",
+    "Este fluxo foi substituído pelo checkout transacional e idempotente.",
+  );
 }
 
 export async function asaasWebhookHandler(req: Request, res: Response) {
@@ -237,124 +174,44 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
 
     const payload = req.body as any;
     const event = String(payload?.event || "").trim();
+    const providerEventId = String(payload?.id || "").trim() || deterministicWebhookEventId(payload);
+    const providerPaymentId = parsePaymentIdFromWebhook(payload);
+    const externalReference = String(payload?.payment?.externalReference ?? payload?.externalReference ?? "").trim() || null;
+    const rawValue = Number(payload?.payment?.value);
+    const amountCents = Number.isFinite(rawValue) ? Math.round(rawValue * 100) : null;
+    const rawRefundedValue = Number(payload?.payment?.refundedValue);
+    const refundedAmountCents = Number.isFinite(rawRefundedValue) ? Math.round(rawRefundedValue * 100) : null;
+    const correlationId = String(req.headers["x-correlation-id"] || providerEventId).slice(0, 191);
+    const result = await processAsaasPaymentEvent({
+      providerEventId,
+      eventType: event || "UNKNOWN",
+      providerPaymentId,
+      externalReference,
+      amountCents,
+      refundedAmountCents,
+      sanitizedPayload: sanitizeWebhookPayload(payload),
+      source: "webhook",
+      correlationId,
+    });
 
-    if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event)) {
-      res.status(200).json({ handled: false, reason: "event_ignored" });
+    if (result.duplicate) {
+      res.status(200).json({ handled: true, duplicate: true, event });
       return;
     }
 
-    let orderId = parseOrderIdFromWebhook(payload);
-    let checkoutId = parseCheckoutIdFromWebhook(payload);
-    const paymentId = parsePaymentIdFromWebhook(payload);
-
-    if (!orderId && checkoutId) {
-      const order = await getOrderByAsaasCheckoutId(checkoutId);
-      orderId = order?.id ?? null;
-    }
-
-    if (!orderId && paymentId) {
-      try {
-        const payment = await getAsaasPayment(paymentId);
-        orderId = Number(payment?.externalReference) || null;
-        if (!checkoutId) {
-          checkoutId = payment?.checkout?.id?.trim() || null;
-        }
-        if (!orderId && checkoutId) {
-          const order = await getOrderByAsaasCheckoutId(checkoutId);
-          orderId = order?.id ?? null;
-        }
-      } catch (error) {
-        securityLog("warn", "payment.asaas_webhook_resolve_failed", {
-          paymentId,
-          requestIp: req.ip || "unknown",
-          reason: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (!orderId) {
-      securityLog("warn", "payment.asaas_webhook_order_unresolved", {
-        requestIp: req.ip || "unknown",
-        event,
-        paymentId,
-        checkoutId,
-      });
-      res.status(200).json({ handled: false, reason: "order_not_resolved" });
-      return;
-    }
-
-    const order = await getOrderById(orderId);
-    let result = { updated: false };
-    if (PAID_EVENTS.has(event)) {
-      result = await markOrderPaid(orderId);
-    }
-
-    if (order) {
-      const user = await getUserById(order.userId);
-      const orderItems = PAID_EVENTS.has(event) ? await getOrderReservationItems(order.id) : [];
-      if (user?.email) {
-        try {
-          if (PAID_EVENTS.has(event)) {
-            await sendPaymentApprovedEmail({
-              customerEmail: user.email,
-              customerName: user.name || "Cliente",
-              orderNumber: String(order.id),
-              total: formatCurrency(order.totalPrice / 100),
-            });
-            await sendInternalNewSaleAlertEmail({
-              customerName: user.name || "Cliente",
-              customerEmail: user.email,
-              orderNumber: String(order.id),
-              total: formatCurrency(order.totalPrice / 100),
-              items: orderItems.map(item => ({
-                id: item.productId,
-                name: item.productName || `Produto #${item.productId}`,
-                price: formatCurrency((Number(item.productPrice || 0) * Number(item.quantity || 1)) / 100),
-                imageUrl: item.productImage || "",
-              })),
-              orderUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/meus-pedidos/${order.id}`,
-            });
-            if (Array.isArray((result as any).lowStockProducts) && (result as any).lowStockProducts.length > 0) {
-              await sendInternalLowStockAlertEmail({
-                products: (result as any).lowStockProducts,
-              });
-            }
-          } else if (FAILED_EVENTS.has(event)) {
-            await sendPaymentFailedEmail({
-              customerEmail: user.email,
-              customerName: user.name || "Cliente",
-              orderNumber: String(order.id),
-              total: formatCurrency(order.totalPrice / 100),
-              paymentUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/checkout`,
-              failureReason: "A operadora ou o provedor não confirmou o pagamento.",
-            });
-            await sendInternalPaymentFailedAlertEmail({
-              customerName: user.name || "Cliente",
-              customerEmail: user.email,
-              orderNumber: String(order.id),
-              total: formatCurrency(order.totalPrice / 100),
-              failureReason: "A operadora ou o provedor não confirmou o pagamento.",
-            });
-          }
-        } catch (error) {
-          securityLog("warn", PAID_EVENTS.has(event) ? "email.payment_approved_failed" : "email.payment_failed_notification_failed", {
-            orderId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      }
-    }
+    const orderId = result.orderId;
 
     securityLog("info", "payment.asaas_webhook_processed", {
       requestIp: req.ip || "unknown",
       event,
       orderId,
-      paymentId,
-      checkoutId,
-      updated: result.updated,
+      paymentId: providerPaymentId,
+      correlationId,
+      duplicate: false,
+      conflict: Boolean(result.conflict),
     });
 
-    res.status(200).json({ handled: true, event, orderId });
+    res.status(200).json({ handled: true, event, orderId, conflict: Boolean(result.conflict), reason: result.reason ?? null });
   } catch (error) {
     securityLog("error", "payment.asaas_webhook_failed", {
       requestIp: req.ip || "unknown",

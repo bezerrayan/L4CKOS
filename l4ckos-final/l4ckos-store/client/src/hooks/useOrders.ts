@@ -10,7 +10,10 @@ export function useOrders() {
       const orders = (query.state.data ?? []).filter(
         (order): order is NonNullable<typeof order> => Boolean(order),
       );
-      const hasOpenOrder = orders.some(order => ["pending", "processing"].includes(String(order.status)));
+      const hasOpenOrder = orders.some(order =>
+        ["pending", "overdue", "failed"].includes(String(order.payment?.status))
+        || ["awaiting_payment", "ready", "processing"].includes(String(order.fulfillmentStatus)),
+      );
       return hasOpenOrder ? 10000 : false;
     },
   });
@@ -32,9 +35,10 @@ export function useTrackOrder(input?: { orderId?: number; trackingCode?: string 
     retry: false,
     refetchOnWindowFocus: true,
     refetchInterval: query => {
-      const data = query.state.data as { status?: string } | undefined;
-      const status = String(data?.status ?? "");
-      return status === "pending" || status === "processing" ? 8000 : false;
+      const data = query.state.data as { payment?: { status?: string } | null; fulfillmentStatus?: string } | undefined;
+      const paymentStatus = String(data?.payment?.status ?? "");
+      const fulfillmentStatus = String(data?.fulfillmentStatus ?? "");
+      return ["pending", "overdue", "failed"].includes(paymentStatus) || ["awaiting_payment", "ready", "processing"].includes(fulfillmentStatus) ? 8000 : false;
     },
   });
 }

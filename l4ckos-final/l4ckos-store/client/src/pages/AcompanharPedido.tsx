@@ -94,8 +94,17 @@ function formatShippingAddress(address?: {
   ].filter(Boolean);
 }
 
-function canEditShippingAddress(status?: string | null) {
-  return status === "pending" || status === "paid";
+function canEditShippingAddress(status?: string | null, issue?: string | null) {
+  return !issue && (status === "awaiting_payment" || status === "ready");
+}
+
+function displayOrderStatus(paymentStatus?: string | null, fulfillmentStatus?: string | null): OrderStatus {
+  if (fulfillmentStatus === "cancelled") return "cancelled";
+  if (fulfillmentStatus === "delivered") return "delivered";
+  if (fulfillmentStatus === "shipped") return "shipped";
+  if (fulfillmentStatus === "processing") return "processing";
+  if (fulfillmentStatus === "ready" && ["confirmed", "received", "partially_refunded"].includes(String(paymentStatus))) return "paid";
+  return "pending";
 }
 
 export default function AcompanharPedido() {
@@ -111,7 +120,7 @@ export default function AcompanharPedido() {
 
   const query = useTrackOrder(payload);
 
-  const currentStatus = (query.data?.status as OrderStatus | undefined) ?? "pending";
+  const currentStatus = displayOrderStatus(query.data?.payment?.status, query.data?.fulfillmentStatus);
   const timelineIndex = timelineSteps.findIndex(step => {
     if (currentStatus === "paid" && step.key === "processing") return true;
     return step.key === currentStatus;
@@ -333,7 +342,7 @@ export default function AcompanharPedido() {
           </div>
 
           <div style={styles.actions}>
-            {canEditShippingAddress(query.data.status) ? (
+          {canEditShippingAddress(query.data.fulfillmentStatus, query.data.fulfillmentIssue) ? (
               <Link to={`/meus-pedidos/${query.data.id}`} style={styles.secondaryButton}>
                  Ajustar endereço
               </Link>

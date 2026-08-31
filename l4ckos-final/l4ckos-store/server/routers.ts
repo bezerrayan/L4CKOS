@@ -1,5 +1,4 @@
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
+import { getSessionCookieName, getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { productsRouter } from "./routers/products";
@@ -296,7 +295,7 @@ export const appRouter = router({
         });
 
         const cookieOptions = getSessionCookieOptions(ctx.req);
-        ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ENV.sessionTtlMs });
+        ctx.res.cookie(getSessionCookieName(), sessionToken, { ...cookieOptions, maxAge: ENV.sessionTtlMs });
 
         clearLoginAttemptLimit(emailIpKey, ipKey);
         securityLog("info", "auth.local_login_succeeded", { email: normalizedEmail, requestIp, userId: user.id });
@@ -383,7 +382,7 @@ export const appRouter = router({
         });
 
         const cookieOptions = getSessionCookieOptions(ctx.req);
-        ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ENV.sessionTtlMs });
+        ctx.res.cookie(getSessionCookieName(), sessionToken, { ...cookieOptions, maxAge: ENV.sessionTtlMs });
         securityLog("info", "auth.local_signup_succeeded", { email: normalizedEmail, requestIp, userId: user.id });
 
         try {
@@ -556,7 +555,7 @@ export const appRouter = router({
         securityLog("info", "auth.logout", { userId: ctx.user.id, requestIp: ctx.req.ip || "unknown" });
       }
       const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      ctx.res.clearCookie(getSessionCookieName(), { ...cookieOptions, maxAge: -1 });
       return {
         success: true,
       } as const;

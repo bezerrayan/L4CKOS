@@ -51,9 +51,12 @@ function sanitizeCep(value: string) {
   return value.replace(/\D/g, "").slice(0, 8);
 }
 
-function isPlanoPilotoArea(cep: string) {
-  // Faixa principal de Brasilia/Plano Piloto e entorno imediato
-  return /^7[0-3]\d{6}$/.test(cep);
+export function isExplicitLocalDeliveryCep(cep: string) {
+  const configuredPrefixes = String(process.env.LOCAL_DELIVERY_CEP_PREFIXES ?? "700,701,702,703,704,706,707,708,709")
+    .split(",")
+    .map(prefix => prefix.replace(/\D/g, ""))
+    .filter(prefix => prefix.length >= 3 && prefix.length <= 8);
+  return configuredPrefixes.some(prefix => cep.startsWith(prefix));
 }
 
 function buildLocalOption(): ShippingOption {
@@ -129,13 +132,13 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
 
   const options: ShippingOption[] = [];
 
-  if (isPlanoPilotoArea(cep)) {
+  if (isExplicitLocalDeliveryCep(cep)) {
     options.push(buildLocalOption());
   }
 
   const cfg = getMelhorEnvioConfig();
   if (!cfg.token) {
-    return options.length > 0 ? options : [buildLocalOption()];
+    return options;
   }
 
   try {
@@ -171,7 +174,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
     const parsed = parseMelhorEnvioQuotes(response.data);
     return [...options, ...parsed];
   } catch {
-    return options.length > 0 ? options : [buildLocalOption()];
+    return options;
   }
 }
 
@@ -182,17 +185,18 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
   }
 
   const localOptions: ShippingOption[] = [];
-  if (isPlanoPilotoArea(cep)) {
+  if (isExplicitLocalDeliveryCep(cep)) {
     localOptions.push(buildLocalOption());
   }
 
   const cfg = getMelhorEnvioConfig();
   if (!cfg.token) {
-    const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
     return {
-      options: fallback,
+      options: localOptions,
       source: "fallback-local",
-      warning: "Token do Melhor Envio ausente. Usando entrega local.",
+      warning: localOptions.length > 0
+        ? "Token do Melhor Envio ausente. Entrega local disponível para este CEP."
+        : "Frete indisponível: não foi possível cotar uma entrega segura para este CEP.",
     };
   }
 
@@ -228,12 +232,13 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
 
     const parsed = parseMelhorEnvioQuotes(response.data);
     if (parsed.length === 0) {
-      const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
       const providerError = extractMelhorEnvioItemErrors(response.data);
       return {
-        options: fallback,
+        options: localOptions,
         source: "fallback-local",
-        warning: "Melhor Envio não retornou cotações para este CEP. Usando entrega local.",
+        warning: localOptions.length > 0
+          ? "Melhor Envio não retornou cotações. Entrega local disponível para este CEP."
+          : "Frete indisponível: o provedor não retornou uma opção válida para este CEP.",
         providerError: providerError || "API respondeu sem opcoes validas de frete.",
       };
     }
@@ -244,11 +249,12 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
     };
   } catch (error) {
     const providerError = extractProviderError(error);
-    const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
     return {
-      options: fallback,
+      options: localOptions,
       source: "fallback-local",
-      warning: "Cotacao externa indisponivel. Usando entrega local.",
+      warning: localOptions.length > 0
+        ? "Cotação externa indisponível. Entrega local disponível para este CEP."
+        : "Frete indisponível: a cotação externa falhou e não há entrega local para este CEP.",
       providerError,
     };
   }

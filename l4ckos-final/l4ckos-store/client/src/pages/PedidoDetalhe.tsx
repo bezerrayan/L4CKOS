@@ -48,8 +48,17 @@ function formatShippingAddress(address?: {
   ].filter(Boolean);
 }
 
-function canEditShippingAddress(status?: string | null) {
-  return status === "pending" || status === "paid";
+function canEditShippingAddress(status?: string | null, issue?: string | null) {
+  return !issue && (status === "awaiting_payment" || status === "ready");
+}
+
+function displayOrderStatus(paymentStatus?: string | null, fulfillmentStatus?: string | null): OrderStatus {
+  if (fulfillmentStatus === "cancelled") return "cancelled";
+  if (fulfillmentStatus === "delivered") return "delivered";
+  if (fulfillmentStatus === "shipped") return "shipped";
+  if (fulfillmentStatus === "processing") return "processing";
+  if (fulfillmentStatus === "ready" && ["confirmed", "received", "partially_refunded"].includes(String(paymentStatus))) return "paid";
+  return "pending";
 }
 
 export default function PedidoDetalhe() {
@@ -108,7 +117,7 @@ export default function PedidoDetalhe() {
               <h2 style={styles.orderId}>Pedido #{query.data.id}</h2>
               <p style={styles.muted}>Criado em {formatDate(query.data.createdAt)}</p>
             </div>
-            <span style={styles.badge}>{statusText[query.data.status as OrderStatus]}</span>
+            <span style={styles.badge}>{statusText[displayOrderStatus(query.data.payment?.status, query.data.fulfillmentStatus)]}</span>
           </div>
 
           <div style={styles.metaGrid}>
@@ -131,7 +140,7 @@ export default function PedidoDetalhe() {
               <h3 style={styles.sectionTitle}>Entrega</h3>
               <div style={styles.addressActions}>
                 <span style={styles.sectionHint}>Confira se este é o endereço correto do pedido.</span>
-                {canEditShippingAddress(query.data.status) ? (
+                {canEditShippingAddress(query.data.fulfillmentStatus, query.data.fulfillmentIssue) ? (
                   <button
                     type="button"
                     style={styles.editButton}
@@ -151,13 +160,13 @@ export default function PedidoDetalhe() {
             ) : (
               <p style={styles.muted}>Endereco de entrega indisponivel no momento.</p>
             )}
-            {canEditShippingAddress(query.data.status) ? (
+            {canEditShippingAddress(query.data.fulfillmentStatus, query.data.fulfillmentIssue) ? (
               <p style={styles.addressRule}>
                 Voce pode ajustar destinatario, rua, numero, complemento e bairro ate o pedido entrar em separacao.
                 CEP, cidade e UF ficam travados para não alterar o frete da cobrança.
               </p>
             ) : null}
-            {isEditingAddress && canEditShippingAddress(query.data.status) ? (
+            {isEditingAddress && canEditShippingAddress(query.data.fulfillmentStatus, query.data.fulfillmentIssue) ? (
               <form
                 style={styles.addressForm}
                 onSubmit={event => {

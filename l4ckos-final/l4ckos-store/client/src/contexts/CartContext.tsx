@@ -12,7 +12,7 @@ import { calculateCartTotal, calculateItemCount } from "../types/cart";
 
 type CartContextType = {
   cart: Cart;
-  addToCart: (product: Product, quantity: number, selectedOptions?: SelectedOptions) => void;
+  addToCart: (product: Product, quantity: number, selectedOptions?: SelectedOptions, variantId?: number | null) => void;
   removeFromCart: (productId: number, selectedOptions?: SelectedOptions) => void;
   updateQuantity: (productId: number, quantity: number, selectedOptions?: SelectedOptions) => void;
   clearCart: () => void;
@@ -63,24 +63,24 @@ export function CartProvider({ children }: { children: ReactNode }) {
   };
 
   // 📌 Adicionar produto ao carrinho
-  const addToCart = useCallback((product: Product, quantity: number = 1, selectedOptions?: SelectedOptions) => {
+  const addToCart = useCallback((product: Product, quantity: number = 1, selectedOptions?: SelectedOptions, variantId?: number | null) => {
     setItems((prev) => {
       const currentOptionsKey = normalizeOptions(selectedOptions);
       const existing = prev.find(
-        (item) => item.product.id === product.id && normalizeOptions(item.selectedOptions) === currentOptionsKey
+        (item) => item.product.id === product.id && (item.variantId ?? null) === (variantId ?? null) && normalizeOptions(item.selectedOptions) === currentOptionsKey
       );
       
       if (existing) {
         // Se já existe, aumenta a quantidade
         return prev.map((item) =>
-          item.product.id === product.id && normalizeOptions(item.selectedOptions) === currentOptionsKey
+          item.product.id === product.id && (item.variantId ?? null) === (variantId ?? null) && normalizeOptions(item.selectedOptions) === currentOptionsKey
             ? { ...item, quantity: item.quantity + quantity }
             : item
         );
       }
       
       // Senão, adiciona novo
-      return [...prev, { product, quantity, selectedOptions, addedAt: new Date() }];
+      return [...prev, { product, variantId: variantId ?? null, quantity, selectedOptions, addedAt: new Date() }];
     });
   }, []);
 

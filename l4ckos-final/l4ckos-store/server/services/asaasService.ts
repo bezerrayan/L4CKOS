@@ -16,11 +16,18 @@ type AsaasCheckoutResponse = {
   id: string;
 };
 
-type AsaasPaymentResponse = {
+export type AsaasPaymentResponse = {
   id: string;
   externalReference?: string | null;
   status?: string | null;
   confirmedDate?: string | null;
+  customer?: string | null;
+  billingType?: string | null;
+  invoiceUrl?: string | null;
+  bankSlipUrl?: string | null;
+  identificationField?: string | null;
+  value?: number | null;
+  refundedValue?: number | null;
   checkout?: {
     id?: string | null;
   } | null;

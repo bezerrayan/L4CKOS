@@ -22,6 +22,8 @@ import {
   getUserById,
   getOrdersByFilters,
   getProductsAdmin,
+  confirmManualPayment,
+  resolveInventoryException,
   getSalesByPeriod,
   getUsersWithStats,
   replaceProductImages,
@@ -193,6 +195,8 @@ export const adminRouter = router({
             z.object({
               name: z.string().min(1),
               sku: z.string().optional().nullable(),
+              size: z.string().max(60).optional().nullable(),
+              color: z.string().max(60).optional().nullable(),
               price: z.number().optional().nullable(),
               stock: z.number().int().min(0),
             }),
@@ -252,6 +256,8 @@ export const adminRouter = router({
             z.object({
               name: z.string().min(1),
               sku: z.string().optional().nullable(),
+              size: z.string().max(60).optional().nullable(),
+              color: z.string().max(60).optional().nullable(),
               price: z.number().optional().nullable(),
               stock: z.number().int().min(0),
             }),
@@ -331,6 +337,7 @@ export const adminRouter = router({
       await setOrderAdminData(input.orderId, {
         status: input.status,
         trackingCode: input.trackingCode,
+        actorUserId: ctx.user.id,
       });
       const updatedOrder = await getOrderById(input.orderId);
       const user = updatedOrder ? await getUserById(updatedOrder.userId) : undefined;
@@ -458,6 +465,28 @@ export const adminRouter = router({
       });
       return { success: true } as const;
     }),
+
+  inventoryExceptions: adminProcedure.query(async () => {
+    const rows = await getOrdersByFilters();
+    return rows.filter(row => row.fulfillmentStatus === "inventory_exception");
+  }),
+
+  inventoryExceptionResolve: adminProcedure
+    .input(z.object({
+      orderId: z.number().int().positive(),
+      action: z.enum(["stock_replenished", "refund_required", "note"]),
+      note: z.string().trim().min(3).max(1000),
+    }))
+    .mutation(async ({ ctx, input }) => resolveInventoryException({ ...input, actorUserId: ctx.user.id })),
+
+  manualPaymentConfirm: adminProcedure
+    .input(z.object({
+      orderId: z.number().int().positive(),
+      amount: z.number().int().positive(),
+      reason: z.string().trim().min(10).max(500),
+      evidence: z.string().trim().min(3).max(500),
+    }))
+    .mutation(async ({ ctx, input }) => confirmManualPayment({ ...input, actorUserId: ctx.user.id })),
 
   promoBannersList: adminProcedure.query(async () => {
     return await getPromoBanners();

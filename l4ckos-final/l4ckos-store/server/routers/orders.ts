@@ -2,27 +2,35 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
 import {
-  createOrderWithId,
+  claimPaymentCreation,
+  completePaymentCreation,
+  createCheckoutOrderAtomically,
+  getCheckoutByAttempt,
   getProductsByIds,
+  getProductVariantsByIds,
+  getPaymentById,
   getOrderByIdAndUser,
   getOrderReservationItems,
   getOrderByTrackingCodeAndUser,
   getOrdersByUserId,
   getApplicableCouponByCode,
-  incrementCouponUsage,
-  markOrderPaid,
-  reserveStockForOrder,
+  markPaymentCreationUnknown,
+  releaseExpiredStockReservations,
+  updateUserAsaasCustomerId,
   updateOrderShippingAddress,
 } from "../db";
 import { createAsaasChargeForOrder } from "../services/asaas";
 import { quoteShippingDetailed } from "../services/shippingService";
 import { listAsaasPaymentsByExternalReference } from "../services/asaasService";
+import { buildCheckoutFingerprint } from "../services/checkoutIntegrity";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { sendOrderCreatedEmail, sendPaymentPendingEmail } from "../services/emailService.js";
 import { securityLog } from "../_core/security";
+import { getCheckoutAvailability } from "../_core/operationalConfig";
 
 const checkoutItemSchema = z.object({
   productId: z.number().int().positive(),
+  variantId: z.number().int().positive().nullable().optional(),
   quantity: z.number().int().positive().max(99),
 });
 
@@ -51,13 +59,15 @@ const shippingAddressEditableSchema = z.object({
 });
 
 async function resolveOrderPricing(input: {
-  items: Array<{ productId: number; quantity: number }>;
+  items: Array<{ productId: number; variantId?: number | null; quantity: number }>;
   shipping: { cep: string; optionId: string };
   couponCode?: string;
 }) {
   const productIds = input.items.map(item => item.productId);
-  const products = await getProductsByIds(productIds);
+  const variantIds = input.items.map(item => item.variantId).filter((id): id is number => Boolean(id));
+  const [products, variants] = await Promise.all([getProductsByIds(productIds), getProductVariantsByIds(variantIds)]);
   const productsById = new Map(products.map(product => [product.id, product]));
+  const variantsById = new Map(variants.map(variant => [variant.id, variant]));
 
   let itemsSubtotalCents = 0;
   for (const item of input.items) {
@@ -66,11 +76,15 @@ async function resolveOrderPricing(input: {
       throw new TRPCError({ code: "BAD_REQUEST", message: `Produto ${item.productId} não encontrado` });
     }
 
-    if (Number(product.stock ?? 0) < item.quantity) {
+    const variant = item.variantId ? variantsById.get(item.variantId) : undefined;
+    if (item.variantId && (!variant || variant.productId !== product.id)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `Variante inválida para ${product.name}` });
+    }
+    if (Number(variant?.stock ?? product.stock ?? 0) < item.quantity) {
       throw new TRPCError({ code: "BAD_REQUEST", message: `Estoque insuficiente para ${product.name}` });
     }
 
-    itemsSubtotalCents += Number(product.price) * item.quantity;
+    itemsSubtotalCents += Number(variant?.price ?? product.price) * item.quantity;
   }
 
   const shippingQuote = await quoteShippingDetailed({
@@ -115,7 +129,7 @@ async function resolveOrderPricing(input: {
     itemsPreview: input.items.map(item => ({
       name: productsById.get(item.productId)?.name || `Produto #${item.productId}`,
       quantity: item.quantity,
-      price: formatCurrency((Number(productsById.get(item.productId)?.price || 0) * item.quantity) / 100),
+      price: formatCurrency((Number((item.variantId ? variantsById.get(item.variantId)?.price : null) ?? productsById.get(item.productId)?.price ?? 0) * item.quantity) / 100),
     })),
     itemsSubtotalCents,
     shippingCents,
@@ -128,33 +142,8 @@ async function resolveOrderPricing(input: {
   };
 }
 
-const ASAAS_PAID_STATUSES = new Set([
-  "RECEIVED",
-  "CONFIRMED",
-  "RECEIVED_IN_CASH",
-  "REFUNDED_PARTIALLY",
-]);
-
 async function syncOrderPaymentIfNeeded(order: Awaited<ReturnType<typeof getOrderByIdAndUser>>) {
-  if (!order) return order;
-  if (!["pending", "processing"].includes(String(order.status))) {
-    return order;
-  }
-
-  try {
-    const payments = await listAsaasPaymentsByExternalReference(String(order.id));
-    const hasPaidPayment = payments.some(payment => ASAAS_PAID_STATUSES.has(String(payment.status ?? "").toUpperCase()));
-
-    if (!hasPaidPayment) {
-      return order;
-    }
-
-    await markOrderPaid(order.id);
-    const refreshed = await getOrderByIdAndUser(order.id, order.userId);
-    return refreshed ?? order;
-  } catch {
-    return order;
-  }
+  return order;
 }
 
 export const ordersRouter = router({
@@ -225,7 +214,7 @@ export const ordersRouter = router({
         });
       }
 
-      if (!["pending", "paid"].includes(String(syncedOrder.status))) {
+      if (!["awaiting_payment", "ready"].includes(String(syncedOrder.fulfillmentStatus)) || syncedOrder.fulfillmentIssue) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "O endereço só pode ser ajustado antes do pedido entrar em separação.",
@@ -296,6 +285,7 @@ export const ordersRouter = router({
   createAsaasCharge: protectedProcedure
     .input(
       z.object({
+        checkoutAttemptId: z.string().uuid(),
         method: z.enum(["PIX", "BOLETO", "CARD"]),
         items: z.array(checkoutItemSchema).min(1),
         shipping: shippingSelectionSchema,
@@ -315,56 +305,153 @@ export const ordersRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      const availability = getCheckoutAvailability();
+      if (!availability.available) {
+        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: availability.message });
+      }
       let orderId = 0;
+      let claimedPaymentId: number | null = null;
 
       try {
-        const pricing = await resolveOrderPricing({
+        const checkoutFingerprint = buildCheckoutFingerprint({
+          userId: ctx.user.id,
+          method: input.method,
           items: input.items,
           shipping: input.shipping,
+          shippingAddress: input.shippingAddress,
           couponCode: input.couponCode,
         });
-
-        orderId = await createOrderWithId(ctx.user.id, pricing.finalTotalCents, {
-          recipient: input.shippingAddress.recipient,
-          zipCode: input.shippingAddress.zipCode,
-          street: input.shippingAddress.street,
-          number: input.shippingAddress.number,
-          complement: input.shippingAddress.complement,
-          neighborhood: input.shippingAddress.neighborhood,
-          city: input.shippingAddress.city,
-          state: input.shippingAddress.state,
-        });
-        await reserveStockForOrder({
-          userId: ctx.user.id,
-          orderId,
-          items: input.items,
-        });
-
-        const payment = await createAsaasChargeForOrder({
-          orderId,
-          method: input.method,
-          value: Number((pricing.finalTotalCents / 100).toFixed(2)),
-          description: pricing.description,
-          dueDate: input.dueDate,
-          customer: {
-            name: input.customer.name,
-            cpfCnpj: input.customer.cpfCnpj,
-            email: input.customer.email || ctx.user.email || undefined,
-          },
-        });
-
-        if (pricing.appliedCouponId) {
-          await incrementCouponUsage(pricing.appliedCouponId);
+        const existingCheckout = await getCheckoutByAttempt(input.checkoutAttemptId, ctx.user.id);
+        if (existingCheckout && existingCheckout.order.checkoutFingerprint !== checkoutFingerprint) {
+          throw new Error("CHECKOUT_IDEMPOTENCY_CONFLICT");
         }
 
-        const formattedTotal = formatCurrency(pricing.finalTotalCents / 100);
+        await releaseExpiredStockReservations();
+
+        const previewPricing = existingCheckout
+          ? {
+              shippingCents: 0,
+              shippingOption: { label: "Frete já registrado no pedido" },
+              itemsPreview: (await getOrderReservationItems(existingCheckout.order.id)).map(item => ({
+                name: item.productName || `Produto #${item.productId}`,
+                quantity: item.quantity,
+                price: formatCurrency(Number(item.totalPrice ?? item.unitPrice * item.quantity) / 100),
+              })),
+            }
+          : await resolveOrderPricing({
+              items: input.items,
+              shipping: input.shipping,
+              couponCode: input.couponCode,
+            });
+
+        const checkout = await createCheckoutOrderAtomically({
+          userId: ctx.user.id,
+          checkoutAttemptId: input.checkoutAttemptId,
+          checkoutFingerprint,
+          method: input.method,
+          items: input.items,
+          shippingCents: previewPricing.shippingCents,
+          couponCode: input.couponCode,
+          shippingAddress: input.shippingAddress,
+        });
+        orderId = checkout.order.id;
+        let ledgerPayment = checkout.payment;
+        if (!ledgerPayment) throw new Error("PAYMENT_LEDGER_NOT_FOUND");
+
+        const paymentResponse = () => ({
+          method: input.method,
+          customerId: ledgerPayment?.providerCustomerId ?? null,
+          paymentId: ledgerPayment?.providerPaymentId ?? null,
+          invoiceUrl: ledgerPayment?.invoiceUrl ?? null,
+          pixQrCode: ledgerPayment?.pixQrCode ?? null,
+          pixCopyPaste: ledgerPayment?.pixCopyPaste ?? null,
+          bankSlipUrl: ledgerPayment?.bankSlipUrl ?? null,
+          digitableLine: ledgerPayment?.digitableLine ?? null,
+          billingType: ledgerPayment?.billingType ?? input.method,
+        });
+
+        if (ledgerPayment.creationStatus === "created" && ledgerPayment.providerPaymentId) {
+          return { orderId, ...paymentResponse(), reused: true };
+        }
+
+        const claimed = await claimPaymentCreation(ledgerPayment.id);
+        if (!claimed) {
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            ledgerPayment = await getPaymentById(ledgerPayment.id);
+            if (ledgerPayment?.creationStatus === "created" && ledgerPayment.providerPaymentId) {
+              return { orderId, ...paymentResponse(), reused: true };
+            }
+          }
+          throw new Error("PAYMENT_CREATION_IN_PROGRESS");
+        }
+        claimedPaymentId = ledgerPayment.id;
+
+        let payment: Awaited<ReturnType<typeof createAsaasChargeForOrder>>;
+        const reconciliationCandidates = await listAsaasPaymentsByExternalReference(ledgerPayment.externalReference);
+        const matchingCandidates = reconciliationCandidates.filter(candidate =>
+          candidate.value === null || candidate.value === undefined || Math.round(Number(candidate.value) * 100) === ledgerPayment!.amount,
+        );
+        if (reconciliationCandidates.length > 0 && matchingCandidates.length === 0) {
+          throw new Error("ASAAS_RECONCILIATION_AMOUNT_MISMATCH");
+        }
+        if (matchingCandidates.length > 1) {
+          throw new Error("ASAAS_DUPLICATE_PAYMENTS_FOR_REFERENCE");
+        }
+        const reconciled = matchingCandidates[0];
+        if (reconciled?.id) {
+          payment = {
+            method: input.method,
+            customerId: reconciled.customer ?? ledgerPayment.providerCustomerId ?? "",
+            paymentId: reconciled.id,
+            invoiceUrl: reconciled.invoiceUrl ?? null,
+            pixQrCode: null,
+            pixCopyPaste: null,
+            bankSlipUrl: reconciled.bankSlipUrl ?? null,
+            digitableLine: reconciled.identificationField ?? null,
+            nossoNumero: null,
+            billingType: reconciled.billingType ?? null,
+          };
+        } else {
+          payment = await createAsaasChargeForOrder({
+            orderId,
+            method: input.method,
+            value: Number((ledgerPayment.amount / 100).toFixed(2)),
+            description: `Pedido #${orderId} | Frete: ${previewPricing.shippingOption.label}`,
+            dueDate: input.dueDate,
+            externalReference: ledgerPayment.externalReference,
+            customerId: ctx.user.asaasCustomerId ?? undefined,
+            customer: {
+              name: input.customer.name,
+              cpfCnpj: input.customer.cpfCnpj,
+              email: input.customer.email || ctx.user.email || undefined,
+            },
+          });
+        }
+
+        await completePaymentCreation(ledgerPayment.id, {
+          providerPaymentId: payment.paymentId,
+          providerCustomerId: payment.customerId,
+          billingType: payment.billingType,
+          invoiceUrl: payment.invoiceUrl,
+          bankSlipUrl: payment.bankSlipUrl,
+          pixQrCode: payment.pixQrCode,
+          pixCopyPaste: payment.pixCopyPaste,
+          digitableLine: payment.digitableLine,
+        });
+        claimedPaymentId = null;
+        if (!ctx.user.asaasCustomerId && payment.customerId) {
+          await updateUserAsaasCustomerId(ctx.user.id, payment.customerId);
+        }
+
+        const formattedTotal = formatCurrency(ledgerPayment.amount / 100);
         try {
           await sendOrderCreatedEmail({
             customerEmail: input.customer.email || ctx.user.email || "",
             customerName: input.customer.name,
             orderNumber: String(orderId),
             total: formattedTotal,
-            items: pricing.itemsPreview,
+            items: previewPricing.itemsPreview,
             orderUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/meus-pedidos/${orderId}`,
           });
         } catch {}
@@ -383,17 +470,25 @@ export const ordersRouter = router({
         return {
           orderId,
           ...payment,
+          reused: checkout.reused,
         };
       } catch (error) {
+        if (claimedPaymentId) {
+          await markPaymentCreationUnknown(claimedPaymentId);
+        }
         securityLog("warn", "orders.asaas_charge_failed", {
           userId: ctx.user.id,
           orderId: orderId || undefined,
           reason: error instanceof Error ? error.message : "unknown",
         });
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Não foi possível gerar a cobrança agora.",
-        });
+        const reason = error instanceof Error ? error.message : "unknown";
+        if (reason === "CHECKOUT_IDEMPOTENCY_CONFLICT") {
+          throw new TRPCError({ code: "CONFLICT", message: "Esta tentativa de checkout já foi usada com outros dados." });
+        }
+        if (reason.includes("INSUFFICIENT_")) {
+          throw new TRPCError({ code: "CONFLICT", message: "O estoque mudou durante a compra. Revise o carrinho." });
+        }
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Não foi possível gerar a cobrança agora. Tente novamente com a mesma tentativa." });
       }
     }),
 });

@@ -20,7 +20,7 @@ type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 type ChargeResult = {
   method: CheckoutMethod;
   orderId: number;
-  paymentId: string;
+  paymentId: string | null;
   invoiceUrl: string | null;
   pixQrCode: string | null;
   pixCopyPaste: string | null;
@@ -68,17 +68,16 @@ function addBusinessDays(startDate: Date, daysToAdd: number) {
   return date;
 }
 
-function buildShippingOptions(_cep: string, _subtotal: number, _itemCount: number): ShippingOption[] {
-  return [
-    {
-      id: "local-plano-piloto",
-      label: "Entrega local - Plano Piloto",
-      description: "Agendamento local no Plano Piloto (Brasilia - DF)",
-      price: 0,
-      minDays: 1,
-      maxDays: 2,
-    },
-  ];
+const CHECKOUT_ATTEMPT_STORAGE_KEY = "l4ckos:checkout-attempt";
+
+function getCheckoutAttemptId(signature: string) {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(CHECKOUT_ATTEMPT_STORAGE_KEY) || "null") as { signature?: string; id?: string } | null;
+    if (stored?.signature === signature && stored.id) return stored.id;
+  } catch {}
+  const id = crypto.randomUUID();
+  sessionStorage.setItem(CHECKOUT_ATTEMPT_STORAGE_KEY, JSON.stringify({ signature, id }));
+  return id;
 }
 
 function getOrderStatusLabel(status?: string | null) {
@@ -103,6 +102,8 @@ export default function Pagamento() {
   const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
+  const runtimeQuery = trpc.system.runtime.useQuery();
+  const checkoutAvailability = runtimeQuery.data?.checkout;
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
   const [customerName, setCustomerName] = useState("");
@@ -131,9 +132,9 @@ export default function Pagamento() {
   const paymentOrderQuery = trpc.orders.detail.useQuery(paymentData?.orderId ?? 0, {
     enabled: Boolean(paymentData?.orderId),
     refetchInterval: data => {
-      const status = (data as any)?.status;
+      const status = (data as any)?.payment?.status;
       if (!status) return 10000;
-      return status === "paid" || status === "processing" || status === "shipped" || status === "delivered" ? false : 10000;
+      return status === "confirmed" || status === "received" || status === "partially_refunded" ? false : 10000;
     },
   });
 
@@ -141,9 +142,9 @@ export default function Pagamento() {
     () => shippingOptions.find(option => option.id === selectedShippingId) ?? null,
     [shippingOptions, selectedShippingId],
   );
-  const paymentStatus = (paymentOrderQuery.data as any)?.status as string | undefined;
+  const paymentStatus = (paymentOrderQuery.data as any)?.payment?.status as string | undefined;
   const isPaymentConfirmed =
-    paymentStatus === "paid" || paymentStatus === "processing" || paymentStatus === "shipped" || paymentStatus === "delivered";
+    paymentStatus === "confirmed" || paymentStatus === "received" || paymentStatus === "partially_refunded";
   const paymentOrderTotalCents = Number((paymentOrderQuery.data as any)?.totalPrice ?? 0);
 
   const estimatedDateRange = useMemo(() => {
@@ -261,7 +262,7 @@ export default function Pagamento() {
         providerError?: string;
         source?: "melhor-envio" | "fallback-local" | "mixed";
       };
-      const options = data.options?.length ? data.options : buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
+      const options = data.options ?? [];
       setShippingOptions(options);
       setSelectedShippingId(options[0]?.id ?? null);
       const sanitizedProviderError = (data.providerError || "")
@@ -279,10 +280,9 @@ export default function Pagamento() {
         : "";
       setShippingError(detailedWarning);
     } catch {
-      const fallbackOptions = buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
-      setShippingOptions(fallbackOptions);
-      setSelectedShippingId(fallbackOptions[0]?.id ?? null);
-      setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+      setShippingOptions([]);
+      setSelectedShippingId(null);
+      setShippingError("Não foi possível obter uma opção de frete segura para este CEP. Tente novamente mais tarde.");
     }
   };
 
@@ -346,6 +346,7 @@ export default function Pagamento() {
         code: normalized,
         items: cart.items.map(item => ({
           productId: item.product.id,
+          variantId: item.variantId ?? null,
           quantity: item.quantity,
         })),
         shipping: {
@@ -365,6 +366,11 @@ export default function Pagamento() {
 
   const handleCheckout = async () => {
     setPaymentError("");
+
+    if (checkoutAvailability && !checkoutAvailability.available) {
+      setPaymentError(checkoutAvailability.message || "O checkout está temporariamente indisponível.");
+      return;
+    }
 
     if (!isAuthenticated) {
       setPaymentError("Faça login para finalizar a compra.");
@@ -387,10 +393,21 @@ export default function Pagamento() {
     }
 
     try {
+      const requestSignature = JSON.stringify({
+        method: checkoutMethod,
+        items: cart.items.map(item => ({ productId: item.product.id, variantId: item.variantId ?? null, quantity: item.quantity })),
+        shippingId: selectedShipping.id,
+        cep: sanitizeCep(cep),
+        address: [addressStreet, addressNumber, addressComplement, addressNeighborhood, addressCity, addressState],
+        customer: [customerName, customerEmail, cpfCnpj],
+        coupon: appliedCouponCode,
+      });
       const result = await createAsaasCharge.mutateAsync({
+        checkoutAttemptId: getCheckoutAttemptId(requestSignature),
         method: checkoutMethod,
         items: cart.items.map(item => ({
           productId: item.product.id,
+          variantId: item.variantId ?? null,
           quantity: item.quantity,
         })),
         shipping: {
@@ -416,6 +433,7 @@ export default function Pagamento() {
       });
 
       setPaymentData(result);
+      sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível gerar a cobrança.");
       setPaymentError(parsed.message);
@@ -424,6 +442,11 @@ export default function Pagamento() {
 
   return (
     <div>
+      {checkoutAvailability && !checkoutAvailability.available ? (
+        <div role="status" style={{ margin: "0 auto 24px", maxWidth: 1180, padding: "14px 18px", border: "1px solid #d4a72c", background: "#fff8dc", color: "#5f4700", borderRadius: 10 }}>
+          {checkoutAvailability.message}
+        </div>
+      ) : null}
       {/* Header */}
       <div style={{ ...styles.header, marginBottom: isMobile ? 28 : styles.header.marginBottom, paddingBottom: isMobile ? 20 : styles.header.paddingBottom }}>
         <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>
@@ -846,9 +869,9 @@ export default function Pagamento() {
                 onClick={() => {
                   void handleCheckout();
                 }}
-                disabled={createAsaasCharge.isPending}
+                disabled={createAsaasCharge.isPending || runtimeQuery.isLoading || checkoutAvailability?.available === false}
               >
-                {createAsaasCharge.isPending ? "Gerando cobrança..." : "Finalizar compra"}
+                {checkoutAvailability?.available === false ? "Checkout indisponível" : createAsaasCharge.isPending ? "Gerando cobrança..." : "Finalizar compra"}
               </button>
 
               <p style={styles.checkoutSupportText}>
