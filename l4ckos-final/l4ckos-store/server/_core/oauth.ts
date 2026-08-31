@@ -1,9 +1,8 @@
-import { COOKIE_NAME } from "@shared/const";
 import { parse as parseCookieHeader } from "cookie";
 import type { Express, Request, Response } from "express";
 import { randomBytes } from "node:crypto";
 import * as db from "../db";
-import { getSessionCookieOptions } from "./cookies";
+import { getSessionCookieName, getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
 import { sdk } from "./sdk";
 import { sendWelcomeAccountEmail } from "../services/emailService.js";
@@ -275,7 +274,7 @@ export function registerOAuthRoutes(app: Express) {
 
       callbackStage = "set_cookie_redirect";
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ENV.sessionTtlMs });
+      res.cookie(getSessionCookieName(), sessionToken, { ...cookieOptions, maxAge: ENV.sessionTtlMs });
       res.clearCookie("oauth_state", { ...cookieOptions, maxAge: -1 });
 
       const decodedState = decodeState(state);

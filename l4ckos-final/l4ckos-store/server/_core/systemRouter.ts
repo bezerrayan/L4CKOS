@@ -1,8 +1,18 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
 import { adminProcedure, publicProcedure, router } from "./trpc";
+import { getCheckoutAvailability, getOperationalConfig } from "./operationalConfig";
+import { getRuntimeMetadata } from "./runtime";
 
 export const systemRouter = router({
+  runtime: publicProcedure.query(() => {
+    const operational = getOperationalConfig();
+    return {
+      ...getRuntimeMetadata(),
+      checkout: getCheckoutAvailability(),
+      maintenanceMode: operational.maintenanceMode,
+    };
+  }),
   health: publicProcedure
     .input(
       z.object({

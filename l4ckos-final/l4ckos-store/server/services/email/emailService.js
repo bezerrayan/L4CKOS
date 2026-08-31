@@ -3,6 +3,7 @@ import { renderEmailTemplate } from "./emailRenderer.js";
 import { emailSubjects } from "../../utils/email/emailSubjects.js";
 import { buildUnsubscribeUrl, ensureMarketingAllowed } from "./emailSubscriptions.js";
 import { renderToStaticMarkup } from "react-dom/server";
+import { securityLog } from "../../_core/security";
 
 function sanitizeText(value) {
   return String(value ?? "").trim();
@@ -10,6 +11,26 @@ function sanitizeText(value) {
 
 function sanitizeEmail(value) {
   return sanitizeText(value).toLowerCase();
+}
+
+function assertStagingRecipientsAllowed(recipients) {
+  const environment = sanitizeText(process.env.APP_ENV || process.env.DEPLOY_ENV).toLowerCase();
+  const inferredStaging = sanitizeText(process.env.VERCEL_ENV).toLowerCase() === "preview"
+    || /^(staging|stage|hml|homolog|homologation)$/i.test(sanitizeText(process.env.RAILWAY_ENVIRONMENT_NAME));
+  if (environment !== "staging" && !inferredStaging) return;
+
+  const allowed = new Set(
+    sanitizeText(process.env.STAGING_EMAIL_ALLOWLIST)
+      .split(",")
+      .map(sanitizeEmail)
+      .filter(Boolean),
+  );
+  const blocked = recipients.map(sanitizeEmail).filter(email => !allowed.has(email));
+  if (blocked.length > 0) {
+    const error = new Error("Staging email recipient is not allowlisted");
+    error.name = "StagingEmailRecipientBlocked";
+    throw error;
+  }
 }
 
 function resolveAppUrl() {
@@ -55,13 +76,26 @@ function buildSubject(subjectKey, payload) {
 }
 
 async function sendEmail({ templateName, subjectKey, subjectPayload, templatePayload, from, to, replyTo, tags }) {
-  const client = getResendClient();
   const recipients = (Array.isArray(to) ? to : [to]).map(sanitizeText).filter(Boolean);
   if (!recipients.length) {
     throw new Error("Email recipients are required");
   }
+  try {
+    assertStagingRecipientsAllowed(recipients);
+  } catch (error) {
+    if (error instanceof Error && error.name === "StagingEmailRecipientBlocked") {
+      securityLog("warn", "email.staging_recipient_blocked", {
+        templateName,
+        recipientCount: recipients.length,
+      });
+      return { skipped: true, reason: "not_allowlisted" };
+    }
+    throw error;
+  }
 
-  const subject = buildSubject(subjectKey, subjectPayload);
+  const environment = sanitizeText(process.env.APP_ENV || process.env.DEPLOY_ENV).toLowerCase();
+  const subjectPrefix = environment === "staging" ? "[STAGING] " : "";
+  const subject = `${subjectPrefix}${buildSubject(subjectKey, subjectPayload)}`;
   const react = renderEmailTemplate(templateName, templatePayload);
   const html = `<!doctype html>${renderToStaticMarkup(react)}`;
   const payload = {
@@ -74,6 +108,7 @@ async function sendEmail({ templateName, subjectKey, subjectPayload, templatePay
 
   if (replyTo) payload.replyTo = replyTo;
 
+  const client = getResendClient();
   const { data, error } = await client.emails.send(payload);
   if (error) {
     const err = new Error(error.message || "Resend request failed");
@@ -475,4 +510,4 @@ export async function sendWaitlistLaunchEmail({ email, couponCode, discountPerce
   });
 }
 
-export { logEmailFailure, normalizeOrderItems, normalizeProducts, resolveAppUrl };
+export { assertStagingRecipientsAllowed, logEmailFailure, normalizeOrderItems, normalizeProducts, resolveAppUrl };

@@ -44,6 +44,11 @@ export const ENV = {
   sessionTtlMs: readSessionTtlMs(),
   forgeApiUrl: readString("BUILT_IN_FORGE_API_URL"),
   forgeApiKey: readString("BUILT_IN_FORGE_API_KEY"),
+  storageNamespace: readString("STORAGE_NAMESPACE"),
+  sessionCookieName: readString("SESSION_COOKIE_NAME", "app_session_id"),
+  sessionCookieDomain: readString("SESSION_COOKIE_DOMAIN"),
+  cookieSecure: readBoolean("COOKIE_SECURE", process.env.NODE_ENV === "production"),
+  cookieSameSite: readString("COOKIE_SAME_SITE", "lax") as "lax" | "strict" | "none",
 };
 
 export function isEmailAllowedForProductionLocalAuth(email: string) {

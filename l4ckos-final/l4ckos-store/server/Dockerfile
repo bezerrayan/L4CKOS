@@ -26,10 +26,20 @@ RUN pnpm build:server
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
+ARG RELEASE_VERSION=unknown
+ARG GIT_COMMIT_SHA=unknown
+ARG DEPLOYED_AT=unknown
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3010
 ENV BACKUP_DIR=/app/backups
+ENV RELEASE_VERSION=$RELEASE_VERSION
+ENV GIT_COMMIT_SHA=$GIT_COMMIT_SHA
+ENV DEPLOYED_AT=$DEPLOYED_AT
+
+LABEL org.opencontainers.image.version=$RELEASE_VERSION
+LABEL org.opencontainers.image.revision=$GIT_COMMIT_SHA
+LABEL org.opencontainers.image.created=$DEPLOYED_AT
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

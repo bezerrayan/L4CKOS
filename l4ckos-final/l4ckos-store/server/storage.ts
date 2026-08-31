@@ -2,10 +2,14 @@
 // Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
 
 import { ENV } from './_core/env';
+import { getOperationalConfig } from './_core/operationalConfig';
 
 type StorageConfig = { baseUrl: string; apiKey: string };
 
 function getStorageConfig(): StorageConfig {
+  if (getOperationalConfig().storageMode !== "remote") {
+    throw new Error("Remote storage is not enabled for this environment");
+  }
   const baseUrl = ENV.forgeApiUrl;
   const apiKey = ENV.forgeApiKey;
 
@@ -46,7 +50,9 @@ function ensureTrailingSlash(value: string): string {
 }
 
 function normalizeKey(relKey: string): string {
-  return relKey.replace(/^\/+/, "");
+  const key = relKey.replace(/^\/+/, "");
+  const namespace = ENV.storageNamespace.replace(/^\/+|\/+$/g, "");
+  return namespace ? `${namespace}/${key}` : key;
 }
 
 function toFormData(

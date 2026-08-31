@@ -7,6 +7,7 @@ import { storagePut } from "../storage";
 import { AuthenticatedRequest, requireAdminUser } from "../_core/httpAuth";
 import { buildApiErrorResponse } from "../_core/appErrors";
 import { securityLog } from "../_core/security";
+import { getOperationalConfig, isOperationalWriteBlocked } from "../_core/operationalConfig";
 
 const router = Router();
 const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024;
@@ -62,6 +63,10 @@ function buildAbsoluteUploadUrl(req: Request, relativePath: string) {
 
 router.post("/", requireAdminUser, async (req, res) => {
   try {
+    if (isOperationalWriteBlocked()) {
+      res.status(503).json(buildApiErrorResponse({ status: 503, code: "MAINTENANCE_MODE", message: "Uploads estão bloqueados durante a manutenção." }));
+      return;
+    }
     const authReq = req as AuthenticatedRequest;
     const user = authReq.authUser;
     if (!user) {
@@ -119,24 +124,31 @@ router.post("/", requireAdminUser, async (req, res) => {
 
         const filename = `${randomUUID()}${sanitizeExtension(originalname)}`;
 
+        const storageMode = getOperationalConfig().storageMode;
+        if (storageMode === "disabled") {
+          res.status(503).json(buildApiErrorResponse({ status: 503, code: "STORAGE_DISABLED", message: "Storage indisponível neste ambiente." }));
+          return;
+        }
+
+        if (storageMode === "local") {
+          const localUrl = await saveLocally(filename, buffer);
+          securityLog("info", "upload.saved_local", { userId: user.id, requestIp: req.ip || "unknown", fileName: filename });
+          res.json({ success: true, url: buildAbsoluteUploadUrl(req, localUrl), filename, storage: "local" });
+          return;
+        }
+
         try {
           const { url } = await storagePut(`uploads/${filename}`, buffer, mimetype);
           securityLog("info", "upload.saved_remote", { userId: user.id, requestIp: req.ip || "unknown", fileName: filename });
           res.json({ success: true, url, filename, storage: "remote" });
           return;
         } catch (storageError) {
-          securityLog("warn", "upload.remote_storage_unavailable", {
+          securityLog("error", "upload.remote_storage_unavailable", {
             userId: user.id,
             requestIp: req.ip || "unknown",
             reason: storageError instanceof Error ? storageError.message : "unknown",
           });
-          const localUrl = await saveLocally(filename, buffer);
-          res.json({
-            success: true,
-            url: buildAbsoluteUploadUrl(req, localUrl),
-            filename,
-            storage: "local",
-          });
+          res.status(503).json(buildApiErrorResponse({ status: 503, code: "STORAGE_UNAVAILABLE", message: "O storage remoto deste ambiente está indisponível." }));
         }
       } catch (error) {
         securityLog("error", "upload.failed", {

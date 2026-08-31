@@ -4,6 +4,7 @@ import { createServer } from "http";
 import net from "net";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -22,9 +23,17 @@ import waitlistRoutes from "../routes/waitlist.routes";
 import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
 import { getBackupPayload } from "../db";
+import { getDb } from "../db";
 import { asaasWebhookHandler } from "../controllers/paymentController";
+import { getOperationalJobStatus, operationalJobs, startOperationalJobScheduler } from "../jobs/operationalJobs";
+import { assertEnvironmentIsolation, validateEnvironmentIsolation } from "./environmentSafety";
+import { isOriginAllowed, readRateLimit } from "./httpPolicy";
+import { canRunJobEndpoint, getOperationalConfig } from "./operationalConfig";
+import { getRuntimeMetadata } from "./runtime";
+import { sql } from "drizzle-orm";
 
 function scheduleDailyBackup() {
+  if (process.env.AUTOMATIC_BACKUPS_ENABLED !== "true" || getOperationalConfig().maintenanceMode) return;
   const dir = process.env.BACKUP_DIR || "backups";
   const intervalMs = 24 * 60 * 60 * 1000;
 
@@ -35,9 +44,9 @@ function scheduleDailyBackup() {
       const fileName = `auto-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
       const filePath = path.join(dir, fileName);
       await writeFile(filePath, JSON.stringify(backup, null, 2), "utf-8");
-      console.log(`[Backup] Created ${fileName}`);
+      securityLog("info", "backup.automatic_created", { fileName });
     } catch (error) {
-      console.error("[Backup] Failed automatic backup", error);
+      securityLog("error", "backup.automatic_failed", { errorType: error instanceof Error ? error.name : "unknown" });
     }
   };
 
@@ -182,6 +191,7 @@ async function listenWithRetry(
 }
 
 async function startServer() {
+  assertEnvironmentIsolation();
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
 
@@ -190,51 +200,112 @@ async function startServer() {
   const isProduction = process.env.NODE_ENV === "production";
   app.disable("x-powered-by");
 
+  app.use((req, res, next) => {
+    const requestId = String(req.headers["x-request-id"] || randomUUID()).slice(0, 128);
+    req.headers["x-request-id"] = requestId;
+    res.setHeader("X-Request-Id", requestId);
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      if (!req.path.startsWith("/api/") || req.path === "/api/health") return;
+      securityLog("info", "http.request_completed", {
+        requestId,
+        correlationId: String(req.headers["x-correlation-id"] || "").slice(0, 191) || undefined,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+    next();
+  });
+
   // Render/Reverse proxies set X-Forwarded-* headers.
   // express-rate-limit requires trust proxy enabled to resolve client IP safely.
   if (isProduction) {
     app.set("trust proxy", 1);
   }
 
-  const allowedOrigins = (process.env.CORS_ORIGINS || "")
-    .split(",")
-    .map(item => item.trim())
-    .filter(Boolean);
-
-  if (!isProduction && allowedOrigins.length === 0) {
-    allowedOrigins.push("http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:5173");
-  }
-
-  function isAllowed(origin?: string) {
-    if (!origin) return true; // healthcheck / server-to-server
-
-    try {
-      const url = new URL(origin);
-
-      if (!isProduction && (url.hostname === "localhost" || url.hostname === "127.0.0.1")) {
-        return true;
-      }
-
-      return allowedOrigins.some(allowed => {
-        const allowedUrl = new URL(allowed);
-        return url.host === allowedUrl.host; // ignora protocolo, barra final e porta padrÃ£o
-      });
-    } catch {
-      return false;
-    }
-  }
   const hasGoogleClientId = Boolean(process.env.GOOGLE_CLIENT_ID?.trim());
   const hasGoogleClientSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim());
   const hasGoogleRedirectUri = Boolean(process.env.GOOGLE_REDIRECT_URI?.trim());
-  console.log(
-    `[OAuth Env] clientId=${hasGoogleClientId} clientSecret=${hasGoogleClientSecret} redirectUri=${hasGoogleRedirectUri}`
-  );
+  securityLog("info", "startup.oauth_configuration", { hasGoogleClientId, hasGoogleClientSecret, hasGoogleRedirectUri });
 
   app.get("/health", (_req, res) => {
     res.status(200).json({
       ok: true,
       service: "backend",
+      ...getRuntimeMetadata(),
       uptime: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.get("/version", (_req, res) => {
+    res.status(200).json({ service: "backend", ...getRuntimeMetadata() });
+  });
+
+  app.get("/ready", async (_req, res) => {
+    const jobStatus = getOperationalJobStatus();
+    const components: Record<string, { status: string; check: string }> = {
+      database: { status: "down", check: "live" },
+      schema: { status: "down", check: "compatibility" },
+      asaas: { status: process.env.ASAAS_API_KEY && process.env.ASAAS_API_URL ? "configured" : "unconfigured", check: "configuration" },
+      resend: { status: process.env.RESEND_API_KEY ? "configured" : "unconfigured", check: "configuration" },
+      jobs: {
+        status: !jobStatus.enabled ? "disabled" : jobStatus.schedulerMode === "external" ? "external" : jobStatus.schedulerStarted ? "up" : "starting",
+        check: "process",
+      },
+      environment: {
+        status: validateEnvironmentIsolation().length === 0 ? "up" : "down",
+        check: "isolation",
+      },
+      storage: {
+        status: getOperationalConfig().storageMode,
+        check: "configuration",
+      },
+    };
+
+    try {
+      const db = await getDb();
+      if (db) {
+        await db.execute(sql`SELECT 1`);
+        components.database.status = "up";
+        const schemaResult = await db.execute(sql`
+          SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName, IS_NULLABLE AS isNullable
+          FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND (
+            (TABLE_NAME = 'orders' AND COLUMN_NAME IN ('checkoutAttemptId','fulfillmentStatus','correlationId')) OR
+            (TABLE_NAME = 'payments' AND COLUMN_NAME IN ('externalReference','paidAmount','refundedAmount','netAmount')) OR
+            (TABLE_NAME = 'notificationOutbox' AND COLUMN_NAME IN ('dedupeKey','leaseExpiresAt')) OR
+            (TABLE_NAME = 'productImages' AND COLUMN_NAME = 'color') OR
+            (TABLE_NAME = 'promoBanners' AND COLUMN_NAME IN ('imageUrl','mobileImageUrl','imageAlt','linkUrl')) OR
+            (TABLE_NAME = 'waitlist_emails' AND COLUMN_NAME = 'created_at')
+          )
+        `);
+        const rows = schemaResult[0] as unknown as Array<{ tableName: string; columnName: string; isNullable: "YES" | "NO" }>;
+        const found = new Set(rows.map(row => `${row.tableName}.${row.columnName}`));
+        const required = [
+          "orders.checkoutAttemptId", "orders.fulfillmentStatus", "orders.correlationId",
+          "payments.externalReference", "payments.paidAmount", "payments.refundedAmount", "payments.netAmount",
+          "notificationOutbox.dedupeKey", "notificationOutbox.leaseExpiresAt", "productImages.color",
+          "promoBanners.imageUrl", "promoBanners.mobileImageUrl", "promoBanners.imageAlt", "promoBanners.linkUrl",
+          "waitlist_emails.created_at",
+        ];
+        const waitlistColumn = rows.find(row => row.tableName === "waitlist_emails" && row.columnName === "created_at");
+        if (required.every(column => found.has(column)) && waitlistColumn?.isNullable === "NO") {
+          components.schema.status = "up";
+        }
+      }
+    } catch {
+      components.database.status = "down";
+    }
+
+    const ready = components.database.status === "up" && components.schema.status === "up" && components.environment.status === "up";
+    res.status(ready ? 200 : 503).json({
+      ok: ready,
+      service: "backend",
+      ...getRuntimeMetadata(),
+      components,
       timestamp: new Date().toISOString(),
     });
   });
@@ -270,13 +341,22 @@ async function startServer() {
     }),
   );
 
+  app.use("/api", (req, res, next) => {
+    const origin = req.headers.origin;
+    if (!origin || isOriginAllowed(origin)) {
+      next();
+      return;
+    }
+    securityLog("warn", "http.cors_blocked", { origin, requestId: req.headers["x-request-id"] });
+    res.status(403).json({ error: "Origin not allowed by CORS" });
+  });
+
   app.use(
     "/api",
     cors({
       origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
-        if (isAllowed(origin)) return callback(null, true);
-        console.error("CORS BLOCKED:", origin);
-        return callback(new Error("Origin not allowed by CORS"));
+        if (isOriginAllowed(origin)) return callback(null, true);
+        return callback(null, false);
       },
       credentials: true,
     }),
@@ -286,7 +366,7 @@ async function startServer() {
     "/api",
     rateLimit({
       windowMs: 15 * 60 * 1000,
-      max: isProduction ? 300 : 1200,
+      max: readRateLimit("RATE_LIMIT_MAX", isProduction ? 300 : 1200),
       standardHeaders: true,
       legacyHeaders: false,
     }),
@@ -295,7 +375,7 @@ async function startServer() {
   // Tighter limit for authentication endpoints to reduce brute force attempts.
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: isProduction ? 20 : 80,
+    max: readRateLimit("AUTH_RATE_LIMIT_MAX", isProduction ? 20 : 80),
     standardHeaders: true,
     legacyHeaders: false,
     skipSuccessfulRequests: true,
@@ -309,7 +389,7 @@ async function startServer() {
 
   const publicWriteLimiter = rateLimit({
     windowMs: 10 * 60 * 1000,
-    max: isProduction ? 20 : 80,
+    max: readRateLimit("PUBLIC_WRITE_RATE_LIMIT_MAX", isProduction ? 20 : 80),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests. Try again later." },
@@ -320,7 +400,7 @@ async function startServer() {
   // Additional protection for admin-only API routes.
   const adminApiLimiter = rateLimit({
     windowMs: 10 * 60 * 1000,
-    max: isProduction ? 120 : 400,
+    max: readRateLimit("ADMIN_RATE_LIMIT_MAX", isProduction ? 120 : 400),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many admin requests. Try again later." },
@@ -381,7 +461,7 @@ async function startServer() {
     }
 
     const origin = req.headers.origin;
-    if (isAllowed(origin)) {
+    if (isOriginAllowed(origin)) {
       next();
       return;
     }
@@ -457,6 +537,30 @@ async function startServer() {
     }
   });
 
+  app.all("/api/internal/jobs/:job", async (req, res) => {
+    const configuredSecret = String(process.env.CRON_SECRET || "").trim();
+    const authorization = String(req.headers.authorization || "");
+    if (!configuredSecret || authorization !== `Bearer ${configuredSecret}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    if (!canRunJobEndpoint()) {
+      res.status(503).json({ error: "Operational jobs are disabled or maintenance mode is active" });
+      return;
+    }
+    const job = String(req.params.job || "") as keyof typeof operationalJobs;
+    if (!Object.prototype.hasOwnProperty.call(operationalJobs, job)) {
+      res.status(404).json({ error: "Unknown job" });
+      return;
+    }
+    try {
+      const result = await operationalJobs[job]();
+      res.json({ ok: true, job, result });
+    } catch {
+      res.status(500).json({ ok: false, job });
+    }
+  });
+
   // Backward-compatible alias for legacy webhook URL.
   // Canonical webhook endpoint is /api/webhooks/asaas.
   app.post("/webhook/asaas", asaasWebhookHandler);
@@ -505,10 +609,14 @@ async function startServer() {
   if (!isProduction && port !== scannedPort) {
     console.log(`Port ${scannedPort} is busy, using port ${port} instead`);
   }
-  console.log(`Server running on http://${host}:${port}/`);
+  securityLog("info", "startup.server_listening", { host, port, ...getRuntimeMetadata() });
 
   scheduleDailyBackup();
+  startOperationalJobScheduler();
 }
 
-startServer().catch(console.error);
+startServer().catch(error => {
+  securityLog("error", "startup.failed", { errorType: error instanceof Error ? error.name : "unknown", reason: error instanceof Error ? error.message : "unknown" });
+  process.exitCode = 1;
+});
 

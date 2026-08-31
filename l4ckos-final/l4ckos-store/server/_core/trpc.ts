@@ -4,6 +4,7 @@ import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { ENV } from "./env";
 import { getPublicAppError } from "./appErrors";
+import { isOperationalWriteBlocked } from "./operationalConfig";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -52,6 +53,9 @@ export const adminProcedure = t.procedure.use(
 
     if (!ctx.user || ctx.user.role !== 'admin' || !isAllowedAdminEmail(ctx.user.email)) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    }
+    if (opts.type === "mutation" && isOperationalWriteBlocked()) {
+      throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Ações administrativas estão bloqueadas durante a manutenção." });
     }
 
     return next({

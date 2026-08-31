@@ -1,4 +1,5 @@
 type SecuritySeverity = "info" | "warn" | "error";
+import { getRuntimeMetadata } from "./runtime";
 
 function maskIp(ip: string | undefined | null) {
   const value = String(ip ?? "").trim();
@@ -19,6 +20,24 @@ function redactValue(value: unknown): unknown {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
+function maskEmail(value: unknown) {
+  const email = String(value ?? "").trim();
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return "[redacted]";
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
+function redactDetail(key: string, value: unknown): unknown {
+  const normalized = key.toLowerCase();
+  if (normalized.includes("ip")) return maskIp(String(value ?? ""));
+  if (normalized.includes("secret") || normalized.includes("password") || normalized.includes("authorization") || normalized.includes("cookie") || normalized.includes("apikey") || normalized.includes("api_key")) return "[redacted]";
+  if (normalized.includes("token")) return redactValue(value);
+  if (normalized.includes("cpf") || normalized.includes("cnpj") || normalized.includes("card") || normalized.includes("payload")) return "[redacted]";
+  if (normalized.includes("email")) return Array.isArray(value) ? value.map(maskEmail) : maskEmail(value);
+  if (normalized.includes("phone")) return `***${String(value ?? "").replace(/\D/g, "").slice(-4)}`;
+  return value;
+}
+
 export function securityLog(
   severity: SecuritySeverity,
   event: string,
@@ -26,17 +45,10 @@ export function securityLog(
 ) {
   const payload = {
     at: new Date().toISOString(),
+    ...getRuntimeMetadata(),
     event,
     ...Object.fromEntries(
-      Object.entries(details).map(([key, value]) => {
-        if (key.toLowerCase().includes("ip")) return [key, maskIp(String(value ?? ""))];
-        if (key.toLowerCase().includes("token")) return [key, redactValue(value)];
-        if (key.toLowerCase().includes("secret")) return [key, "[redacted]"];
-        if (key.toLowerCase().includes("password")) return [key, "[redacted]"];
-        if (key.toLowerCase().includes("authorization")) return [key, "[redacted]"];
-        if (key.toLowerCase().includes("cookie")) return [key, "[redacted]"];
-        return [key, value];
-      }),
+      Object.entries(details).map(([key, value]) => [key, redactDetail(key, value)]),
     ),
   };
 
