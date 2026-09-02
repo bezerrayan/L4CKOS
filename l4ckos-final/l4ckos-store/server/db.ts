@@ -441,8 +441,8 @@ export async function createOrUpdateProductReview(input: {
   rating: number;
   comment?: string;
 }) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  throw new Error("REVIEW_UPSERT_DISABLED_USE_REVIEW_CREATE");
+/*
 
   const existing = await db
     .select()
@@ -471,6 +471,35 @@ export async function createOrUpdateProductReview(input: {
 
   const insertedId = Number((result as any)?.[0]?.insertId ?? 0);
   return { updated: false, id: insertedId } as const;
+*/
+}
+
+export function isVerifiedReviewPayment(payment: { status: string; confirmedAt: Date | null; receivedAt: Date | null } | undefined) {
+  return Boolean(payment && ((payment.status === "confirmed" && payment.confirmedAt) || (payment.status === "received" && (payment.receivedAt || payment.confirmedAt))));
+}
+
+async function reviewPurchase(tx: any, userId: number, reservationId: number) {
+  const [reservation] = await tx.select().from(stockReservations).where(eq(stockReservations.id, reservationId)).limit(1);
+  if (!reservation || reservation.userId !== userId || reservation.status !== "consumed") return null;
+  const [order] = await tx.select().from(orders).where(eq(orders.id, reservation.orderId)).limit(1);
+  const [item] = reservation.orderItemId ? await tx.select().from(orderItems).where(eq(orderItems.id, reservation.orderItemId)).limit(1) : [];
+  const [payment] = await tx.select().from(payments).where(eq(payments.orderId, reservation.orderId)).limit(1);
+  if (!order || order.userId !== userId || order.fulfillmentStatus !== "delivered" || !item || reservation.orderItemId !== item.id || reservation.orderId !== item.orderId || reservation.productId !== item.productId || (reservation.variantId !== null && item.variantId !== null && reservation.variantId !== item.variantId) || !isVerifiedReviewPayment(payment)) return null;
+  const [review] = await tx.select({ id: productReviews.id }).from(productReviews).where(eq(productReviews.stockReservationId, reservationId)).limit(1);
+  return { reservation, order, item, alreadyReviewed: Boolean(review) };
+}
+
+export async function getReviewEligibility(userId: number, productId?: number) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  const rows = await db.select().from(stockReservations).where(eq(stockReservations.userId, userId));
+  const result = [] as any[];
+  for (const row of rows) { const purchase = await reviewPurchase(db, userId, row.id); if (purchase && (!productId || purchase.item.productId === productId)) result.push({ eligible: !purchase.alreadyReviewed, alreadyReviewed: purchase.alreadyReviewed, stockReservationId: row.id, orderId: purchase.order.id, productId: purchase.item.productId }); }
+  return result;
+}
+
+export async function createVerifiedProductReview(input: { userId: number; stockReservationId: number; rating: number; comment?: string; sizePerception?: "small"|"true_to_size"|"large" }) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  try { return await db.transaction(async tx => { const purchase = await reviewPurchase(tx, input.userId, input.stockReservationId); if (!purchase) throw new Error("REVIEW_NOT_ELIGIBLE"); if (purchase.alreadyReviewed) throw new Error("ALREADY_REVIEWED"); const result = await tx.insert(productReviews).values({ userId: input.userId, productId: purchase.item.productId, orderId: purchase.order.id, stockReservationId: input.stockReservationId, rating: input.rating, comment: input.comment?.trim() || null, sizePerception: input.sizePerception, verifiedPurchase: 1 }); return { id: Number((result as any)[0]?.insertId || 0), verifiedPurchase: 1 }; }); } catch (error: any) { if (error?.code === "ER_DUP_ENTRY" || error?.errno === 1062) throw new Error("ALREADY_REVIEWED"); throw error; }
 }
 
 export async function createProduct(product: InsertProduct) {
