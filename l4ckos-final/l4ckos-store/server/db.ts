@@ -374,6 +374,18 @@ export async function getProductVariantsByIds(ids: number[]) {
   return await db.select().from(productVariants).where(inArray(productVariants.id, uniqueIds));
 }
 
+export function buildProductImageList(imageRows: Array<typeof productImages.$inferSelect>) {
+  return imageRows.map(item => ({
+    imageUrl: item.imageUrl,
+    imageThumbnailUrl: item.imageThumbnailUrl ?? null,
+    imageDetailUrl: item.imageDetailUrl ?? null,
+    imageBannerUrl: item.imageBannerUrl ?? null,
+    color: item.color ?? null,
+    alt: item.alt ?? null,
+    order: item.order,
+  })).filter(item => item.imageUrl);
+}
+
 export async function getProductByIdWithDetails(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -395,12 +407,7 @@ export async function getProductByIdWithDetails(id: number) {
   return {
     ...productRows[0],
     imageUrl: productRows[0].imageUrl || imageRows[0]?.imageUrl || null,
-    images: imageRows.map(item => ({
-      imageUrl: item.imageUrl,
-      color: item.color ?? null,
-      alt: item.alt ?? null,
-      order: item.order,
-    })).filter(item => item.imageUrl),
+    images: buildProductImageList(imageRows),
     variants: variantRows,
   };
 }
@@ -1991,7 +1998,14 @@ export async function resolveInventoryException(input: { orderId: number; actorU
 
 export async function replaceProductImages(
   productId: number,
-  imageUrls: Array<string | { imageUrl: string; color?: string | null; alt?: string | null }>,
+  imageUrls: Array<string | {
+    imageUrl: string;
+    imageThumbnailUrl?: string | null;
+    imageDetailUrl?: string | null;
+    imageBannerUrl?: string | null;
+    color?: string | null;
+    alt?: string | null;
+  }>,
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -2001,6 +2015,9 @@ export async function replaceProductImages(
       imageUrls.map((item, index) => ({
         productId,
         imageUrl: typeof item === "string" ? item : item.imageUrl,
+        imageThumbnailUrl: typeof item === "string" ? null : item.imageThumbnailUrl ?? null,
+        imageDetailUrl: typeof item === "string" ? null : item.imageDetailUrl ?? null,
+        imageBannerUrl: typeof item === "string" ? null : item.imageBannerUrl ?? null,
         color: typeof item === "string" ? null : item.color ?? null,
         alt: typeof item === "string" ? null : item.alt ?? null,
         order: index,

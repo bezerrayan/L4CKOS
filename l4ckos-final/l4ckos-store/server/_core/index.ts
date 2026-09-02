@@ -278,7 +278,8 @@ async function startServer() {
             (TABLE_NAME = 'orders' AND COLUMN_NAME IN ('checkoutAttemptId','fulfillmentStatus','correlationId')) OR
             (TABLE_NAME = 'payments' AND COLUMN_NAME IN ('externalReference','paidAmount','refundedAmount','netAmount')) OR
             (TABLE_NAME = 'notificationOutbox' AND COLUMN_NAME IN ('dedupeKey','leaseExpiresAt')) OR
-            (TABLE_NAME = 'productImages' AND COLUMN_NAME = 'color') OR
+            (TABLE_NAME = 'products' AND COLUMN_NAME IN ('imageThumbnailUrl','imageDetailUrl','imageBannerUrl')) OR
+            (TABLE_NAME = 'productImages' AND COLUMN_NAME IN ('color','imageThumbnailUrl','imageDetailUrl','imageBannerUrl')) OR
             (TABLE_NAME = 'promoBanners' AND COLUMN_NAME IN ('imageUrl','mobileImageUrl','imageAlt','linkUrl')) OR
             (TABLE_NAME = 'waitlist_emails' AND COLUMN_NAME = 'created_at')
           )
@@ -288,7 +289,9 @@ async function startServer() {
         const required = [
           "orders.checkoutAttemptId", "orders.fulfillmentStatus", "orders.correlationId",
           "payments.externalReference", "payments.paidAmount", "payments.refundedAmount", "payments.netAmount",
-          "notificationOutbox.dedupeKey", "notificationOutbox.leaseExpiresAt", "productImages.color",
+          "notificationOutbox.dedupeKey", "notificationOutbox.leaseExpiresAt",
+          "products.imageThumbnailUrl", "products.imageDetailUrl", "products.imageBannerUrl",
+          "productImages.color", "productImages.imageThumbnailUrl", "productImages.imageDetailUrl", "productImages.imageBannerUrl",
           "promoBanners.imageUrl", "promoBanners.mobileImageUrl", "promoBanners.imageAlt", "promoBanners.linkUrl",
           "waitlist_emails.created_at",
         ];

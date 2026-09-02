@@ -180,6 +180,9 @@ export const adminRouter = router({
         description: z.string().optional(),
         fullDescription: z.string().optional(),
         imageUrl: z.string().optional(),
+        imageThumbnailUrl: z.string().nullable().optional(),
+        imageDetailUrl: z.string().nullable().optional(),
+        imageBannerUrl: z.string().nullable().optional(),
         optionColors: z.array(z.string().min(1).max(60)).optional().default([]),
         optionSizes: z.array(z.string().min(1).max(60)).optional().default([]),
         sizeType: z.enum(["alpha", "numeric", "custom"]).optional().default("alpha"),
@@ -187,6 +190,9 @@ export const adminRouter = router({
         images: z.array(
           z.object({
             imageUrl: z.string().url(),
+            imageThumbnailUrl: z.string().url().nullable().optional(),
+            imageDetailUrl: z.string().url().nullable().optional(),
+            imageBannerUrl: z.string().url().nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
           }),
         ).optional().default([]),
@@ -216,7 +222,14 @@ export const adminRouter = router({
       const result = await createProduct(productData);
       const insertedId = Number((result as any)?.[0]?.insertId ?? 0);
       if (insertedId > 0) {
-        const allImages: Array<string | { imageUrl: string; color?: string | null; alt?: string | null }> = [...images];
+        const allImages: Array<string | {
+          imageUrl: string;
+          imageThumbnailUrl?: string | null;
+          imageDetailUrl?: string | null;
+          imageBannerUrl?: string | null;
+          color?: string | null;
+          alt?: string | null;
+        }> = [...images];
         if (productData.imageUrl) allImages.unshift(productData.imageUrl);
         await replaceProductImages(insertedId, allImages);
         await replaceProductVariants(insertedId, variants);
@@ -241,6 +254,9 @@ export const adminRouter = router({
         description: z.string().optional(),
         fullDescription: z.string().optional(),
         imageUrl: z.string().optional(),
+        imageThumbnailUrl: z.string().nullable().optional(),
+        imageDetailUrl: z.string().nullable().optional(),
+        imageBannerUrl: z.string().nullable().optional(),
         optionColors: z.array(z.string().min(1).max(60)).optional(),
         optionSizes: z.array(z.string().min(1).max(60)).optional(),
         sizeType: z.enum(["alpha", "numeric", "custom"]).optional(),
@@ -248,6 +264,9 @@ export const adminRouter = router({
         images: z.array(
           z.object({
             imageUrl: z.string().url(),
+            imageThumbnailUrl: z.string().url().nullable().optional(),
+            imageDetailUrl: z.string().url().nullable().optional(),
+            imageBannerUrl: z.string().url().nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
           }),
         ).optional(),
