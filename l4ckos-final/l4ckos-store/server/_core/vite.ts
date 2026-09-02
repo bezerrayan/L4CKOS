@@ -5,8 +5,6 @@ import { type Server } from "http";
 import { nanoid } from "nanoid";
 import path from "path";
 import { fileURLToPath } from "node:url";
-import { createServer as createViteServer } from "vite";
-import viteConfig from "../../vite.config";
 
 if (typeof crypto.hash !== "function") {
   crypto.hash = ((algorithm: string, data: crypto.BinaryLike, outputEncoding: crypto.BinaryToTextEncoding = "hex") =>
@@ -16,6 +14,13 @@ if (typeof crypto.hash !== "function") {
 const CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export async function setupVite(app: Express, server: Server) {
+  const vitePackage = "vite";
+  const viteConfigPath = "../../vite.config";
+  const [{ createServer: createViteServer }, { default: viteConfig }] = await Promise.all([
+    import(vitePackage),
+    import(viteConfigPath),
+  ]);
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
