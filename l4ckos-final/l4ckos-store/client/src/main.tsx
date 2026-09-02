@@ -5,6 +5,7 @@ import { httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "./lib/trpc";
 import { apiUrl } from "./const";
+import { csrfFetch } from "./lib/csrf";
 // Providers
 import { CartProvider } from "./contexts/CartContext";
 import { FavoritesProvider } from "./contexts/FavoritesContext";
@@ -35,8 +36,8 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: apiUrl("/api/trpc"),
       transformer: superjson,
-      fetch(url, options) {
-        return fetch(url, {
+      async fetch(url, options) {
+        return csrfFetch(url, {
           ...options,
           credentials: "include",
         });

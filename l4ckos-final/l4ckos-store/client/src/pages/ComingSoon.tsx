@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { Instagram, Mail, MessageCircle } from "lucide-react";
 import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import logoMarkDark from "../images/l4k-mark-dark-transparent.png";
 
 type Countdown = { days: string; hours: string; minutes: string; seconds: string };
@@ -81,7 +82,7 @@ export default function ComingSoon() {
 
     setLoading(true);
     try {
-      const response = await fetch(apiUrl("/api/waitlist"), {
+      const response = await csrfFetch(apiUrl("/api/waitlist"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: normalizedEmail }),

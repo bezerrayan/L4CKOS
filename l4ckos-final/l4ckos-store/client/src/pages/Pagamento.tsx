@@ -12,6 +12,7 @@ import { useCreateAsaasCharge } from "../hooks/useOrders";
 import { useUser } from "../contexts/UserContext";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
 
@@ -239,7 +240,7 @@ export default function Pagamento() {
     }
 
     try {
-      const response = await fetch(apiUrl("/api/shipping/quote"), {
+      const response = await csrfFetch(apiUrl("/api/shipping/quote"), {
         method: "POST",
         credentials: "include",
         headers: {

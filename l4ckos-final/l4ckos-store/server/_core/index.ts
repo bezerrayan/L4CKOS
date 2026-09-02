@@ -30,6 +30,7 @@ import { assertEnvironmentIsolation, validateEnvironmentIsolation } from "./envi
 import { isOriginAllowed, readRateLimit } from "./httpPolicy";
 import { canRunJobEndpoint, getOperationalConfig } from "./operationalConfig";
 import { getRuntimeMetadata } from "./runtime";
+import { csrfEndpoint, csrfMiddleware } from "./csrf";
 import { sql } from "drizzle-orm";
 
 function scheduleDailyBackup() {
@@ -372,6 +373,10 @@ async function startServer() {
     }),
   );
 
+  // This stays behind the RC origin/CORS gate and global API limiter. Its
+  // cookie is host-only and intentionally readable only by this API origin.
+  app.get("/api/csrf", csrfEndpoint);
+
   // Tighter limit for authentication endpoints to reduce brute force attempts.
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -468,6 +473,9 @@ async function startServer() {
 
     res.status(403).json({ error: "CSRF origin check failed" });
   });
+  // Origin validation precedes CSRF so a forbidden origin never reaches token
+  // validation. The middleware itself exempts only the real Asaas webhook.
+  app.use(csrfMiddleware);
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   app.get("/api/cep/:cep", async (req, res) => {
