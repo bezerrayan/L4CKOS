@@ -280,6 +280,8 @@ async function startServer() {
             (TABLE_NAME = 'notificationOutbox' AND COLUMN_NAME IN ('dedupeKey','leaseExpiresAt')) OR
             (TABLE_NAME = 'products' AND COLUMN_NAME IN ('imageThumbnailUrl','imageDetailUrl','imageBannerUrl')) OR
             (TABLE_NAME = 'productImages' AND COLUMN_NAME IN ('color','imageThumbnailUrl','imageDetailUrl','imageBannerUrl')) OR
+            (TABLE_NAME = 'productReviews' AND COLUMN_NAME IN ('orderId','stockReservationId','sizePerception','imageUrl','imageStatus','moderationStatus','verifiedPurchase','moderatedBy','moderatedAt')) OR
+            (TABLE_NAME = 'productReviewUploads' AND COLUMN_NAME IN ('token','userId','productId','imageUrl','expiresAt','claimedAt','createdAt')) OR
             (TABLE_NAME = 'promoBanners' AND COLUMN_NAME IN ('imageUrl','mobileImageUrl','imageAlt','linkUrl')) OR
             (TABLE_NAME = 'waitlist_emails' AND COLUMN_NAME = 'created_at')
           )
@@ -292,6 +294,8 @@ async function startServer() {
           "notificationOutbox.dedupeKey", "notificationOutbox.leaseExpiresAt",
           "products.imageThumbnailUrl", "products.imageDetailUrl", "products.imageBannerUrl",
           "productImages.color", "productImages.imageThumbnailUrl", "productImages.imageDetailUrl", "productImages.imageBannerUrl",
+          "productReviews.orderId", "productReviews.stockReservationId", "productReviews.sizePerception", "productReviews.imageUrl", "productReviews.imageStatus", "productReviews.moderationStatus", "productReviews.verifiedPurchase", "productReviews.moderatedBy", "productReviews.moderatedAt",
+          "productReviewUploads.token", "productReviewUploads.userId", "productReviewUploads.productId", "productReviewUploads.imageUrl", "productReviewUploads.expiresAt", "productReviewUploads.claimedAt", "productReviewUploads.createdAt",
           "promoBanners.imageUrl", "promoBanners.mobileImageUrl", "promoBanners.imageAlt", "promoBanners.linkUrl",
           "waitlist_emails.created_at",
         ];

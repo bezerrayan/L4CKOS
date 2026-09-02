@@ -341,15 +341,47 @@ export type InsertProductImage = typeof productImages.$inferInsert;
 export const productReviews = mysqlTable("productReviews", {
   id: int("id").autoincrement().primaryKey(),
   productId: int("productId").notNull(),
+  // These are stored references only. Future eligibility derives financial
+  // proof from the hardened payment/reservation ledger, never from this row.
+  orderId: int("orderId"),
+  stockReservationId: int("stockReservationId"),
   userId: int("userId").notNull(),
   rating: int("rating").notNull(),
+  sizePerception: mysqlEnum("sizePerception", ["small", "true_to_size", "large"]),
   comment: text("comment"),
+  imageUrl: varchar("imageUrl", { length: 500 }),
+  imageStatus: mysqlEnum("imageStatus", ["none", "pending", "approved", "rejected"]).default("none").notNull(),
+  moderationStatus: mysqlEnum("moderationStatus", ["published", "hidden_spam", "hidden_offensive"]).default("published").notNull(),
+  verifiedPurchase: int("verifiedPurchase").default(0).notNull(),
+  moderatedBy: int("moderatedBy"),
+  moderatedAt: timestamp("moderatedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => [
+  index("productReviews_public_idx").on(table.productId, table.verifiedPurchase, table.moderationStatus, table.createdAt),
+  uniqueIndex("productReviews_stockReservationId_unique").on(table.stockReservationId),
+]);
 
 export type ProductReview = typeof productReviews.$inferSelect;
 export type InsertProductReview = typeof productReviews.$inferInsert;
+
+// Tokens reserve a review image URL for a user/product pair. Upload and claim
+// behavior is intentionally deferred to a later phase.
+export const productReviewUploads = mysqlTable("productReviewUploads", {
+  token: varchar("token", { length: 64 }).primaryKey(),
+  userId: int("userId").notNull(),
+  productId: int("productId").notNull(),
+  imageUrl: varchar("imageUrl", { length: 500 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  claimedAt: timestamp("claimedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  index("productReviewUploads_user_product_idx").on(table.userId, table.productId),
+  index("productReviewUploads_expiry_idx").on(table.expiresAt),
+]);
+
+export type ProductReviewUpload = typeof productReviewUploads.$inferSelect;
+export type InsertProductReviewUpload = typeof productReviewUploads.$inferInsert;
 
 // Reserva temporaria de estoque no checkout
 export const stockReservations = mysqlTable("stockReservations", {
