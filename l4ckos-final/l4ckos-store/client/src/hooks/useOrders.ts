@@ -52,9 +52,12 @@ export function useOrderDetail(orderId?: number) {
     retry: false,
     refetchOnWindowFocus: true,
     refetchInterval: query => {
-      const data = query.state.data as { status?: string } | undefined;
-      const status = String(data?.status ?? "");
-      return status === "pending" || status === "processing" ? 8000 : false;
+      const data = query.state.data as { payment?: { status?: string } | null; fulfillmentStatus?: string } | undefined;
+      const paymentStatus = String(data?.payment?.status ?? "");
+      const fulfillmentStatus = String(data?.fulfillmentStatus ?? "");
+      const paymentNeedsUpdate = ["pending", "overdue", "failed"].includes(paymentStatus);
+      const fulfillmentNeedsUpdate = ["awaiting_payment", "ready", "processing"].includes(fulfillmentStatus);
+      return paymentNeedsUpdate || fulfillmentNeedsUpdate ? 8000 : false;
     },
   });
 }
