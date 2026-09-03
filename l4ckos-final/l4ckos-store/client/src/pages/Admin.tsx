@@ -17,6 +17,14 @@ import {
   AdminStatsGrid,
   AdminSurface,
 } from "../components/admin/AdminUI";
+import { AdminDashboard } from "../components/admin/dashboard/AdminDashboard";
+import { AdminProductsUI } from "../components/admin/products/AdminProductsUI";
+import { AdminOrdersUI } from "../components/admin/orders/AdminOrdersUI";
+import { AdminCustomersUI } from "../components/admin/customers/AdminCustomersUI";
+import { AdminCouponsUI } from "../components/admin/coupons/AdminCouponsUI";
+import { AdminPromotionsUI } from "../components/admin/promotions/AdminPromotionsUI";
+import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
+import { AdminSystemUI } from "../components/admin/system/AdminSystemUI";
 
 type Section =
   | "overview"
@@ -502,15 +510,6 @@ export default function Admin() {
     onError: error => showToast({ message: error.message, duration: 3200 }),
   });
 
-  const manualPaymentMutation = trpc.admin.manualPaymentConfirm.useMutation({
-    onSuccess: () => {
-      showToast({ message: "Pagamento manual registrado com auditoria", duration: 2600 });
-      void ordersQuery.refetch();
-      void inventoryExceptionsQuery.refetch();
-    },
-    onError: error => showToast({ message: error.message, duration: 3200 }),
-  });
-
   const waitlistLaunchSendMutation = trpc.admin.waitlistLaunchSend.useMutation({
     onSuccess: data => {
       setLaunchEmailResult({
@@ -689,7 +688,8 @@ export default function Admin() {
       </div>
 
       {section === "overview" && (
-        <div style={styles.dashboardStack}>
+        <AdminDashboard>
+          <div style={styles.dashboardStack}>
           <AdminStatsGrid
             style={{
               gridTemplateColumns: isMobile
@@ -800,11 +800,13 @@ export default function Admin() {
               </div>
             )}
           </AdminSurface>
-        </div>
+          </div>
+        </AdminDashboard>
       )}
 
       {section === "customers" && (
-        <AdminSurface
+        <AdminCustomersUI>
+          <AdminSurface
           title="Clientes"
           description="Gerencie perfis, permissões e sinais operacionais dos usuários cadastrados."
         >
@@ -852,11 +854,13 @@ export default function Admin() {
               </table>
             </div>
           )}
-        </AdminSurface>
+          </AdminSurface>
+        </AdminCustomersUI>
       )}
 
       {section === "products" && (
-        <div style={styles.card}>
+        <AdminProductsUI>
+          <div style={styles.card}>
           <h2 style={styles.sectionTitle}>Produtos</h2>
           <div style={styles.inlineRow}>
             <input
@@ -1609,10 +1613,12 @@ export default function Admin() {
               </tbody>
             </table>
           </div>
-        </div>
+          </div>
+        </AdminProductsUI>
       )}
 
       {section === "orders" && (
+        <AdminOrdersUI>
         <AdminSurface
           title="Pedidos"
           description="Gerencie o fluxo de pedidos com uma visão compacta e um painel lateral para detalhes operacionais."
@@ -1741,15 +1747,6 @@ export default function Admin() {
                             <option value="">Ação operacional…</option>
                             {adminFulfillmentActions.map(status => <option key={status} value={status}>{getOrderStatusLabel(status)}</option>)}
                           </select>
-                          {row.payment?.status === "pending" || row.payment?.status === "overdue" || row.payment?.status === "failed" ? (
-                            <button style={styles.smallBtn} onClick={() => {
-                              const reason = window.prompt("Justificativa do pagamento manual (mín. 10 caracteres):");
-                              if (!reason) return;
-                              const evidence = window.prompt("Evidência/origem (recibo, caixa, referência):");
-                              if (!evidence) return;
-                              manualPaymentMutation.mutate({ orderId: row.id, amount: Number(row.payment?.amount ?? row.totalPrice), reason, evidence });
-                            }}>Pagamento manual</button>
-                          ) : null}
                           <button
                             style={styles.smallBtn}
                             onClick={() => {
@@ -1823,9 +1820,11 @@ export default function Admin() {
             </div>
           )}
         </AdminSurface>
+        </AdminOrdersUI>
       )}
 
       {section === "promos" && (
+        <AdminPromotionsUI>
         <div style={styles.card}>
           <h2 style={styles.sectionTitle}>Banners promocionais da Home</h2>
           <p style={{ ...styles.muted, textAlign: "left" }}>
@@ -2179,9 +2178,11 @@ export default function Admin() {
             </div>
           )}
         </div>
+        </AdminPromotionsUI>
       )}
 
       {section === "coupons" && (
+        <AdminCouponsUI>
         <div style={styles.card}>
           <h2 style={styles.sectionTitle}>Cupons e Descontos</h2>
           <div style={styles.formGrid}>
@@ -2320,9 +2321,11 @@ export default function Admin() {
             ) : null}
           </div>
         </div>
+        </AdminCouponsUI>
       )}
 
       {section === "reports" && (
+        <AdminSettingsUI>
         <AdminSurface
           title="Relatórios"
           description="Exporte o consolidado de vendas por período para análise externa ou conferência operacional."
@@ -2351,9 +2354,11 @@ export default function Admin() {
             </button>
           </div>
         </AdminSurface>
+        </AdminSettingsUI>
       )}
 
       {section === "audit" && (
+        <AdminSystemUI>
         <AdminSurface
           title="Logs de auditoria"
           description="Últimos registros administrativos para rastreabilidade, conferência e apoio à investigação."
@@ -2385,9 +2390,11 @@ export default function Admin() {
             </div>
           )}
         </AdminSurface>
+        </AdminSystemUI>
       )}
 
       {section === "backup" && (
+        <AdminSystemUI>
         <AdminSurface
           title="Backup e restauração"
           description="Use esta área com cautela. A restauração substitui dados atuais e deve ser feita apenas em casos controlados."
@@ -2429,6 +2436,7 @@ export default function Admin() {
             </div>
           )}
         </AdminSurface>
+        </AdminSystemUI>
       )}
     </div>
   );
