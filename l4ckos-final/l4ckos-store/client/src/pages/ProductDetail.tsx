@@ -93,7 +93,10 @@ export default function ProductDetail() {
         name: productQuery.data.name,
         description: productQuery.data.description || "",
         price: normalizePrice(Number(productQuery.data.price)),
-        image: resolveProductImageUrl(productQuery.data.imageUrl),
+        image: resolveProductImageUrl((productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
+        imageThumbnailUrl: resolveProductImageUrl((productQuery.data as any).imageThumbnailUrl || productQuery.data.imageUrl),
+        imageDetailUrl: resolveProductImageUrl((productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
+        imageBannerUrl: resolveProductImageUrl((productQuery.data as any).imageBannerUrl || (productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
         category: productQuery.data.category,
         stock: Number(productQuery.data.stock ?? 0),
         optionColors: parseJsonList((productQuery.data as any).optionColors),
@@ -102,7 +105,8 @@ export default function ProductDetail() {
         images:
           Array.isArray((productQuery.data as any).images) && (productQuery.data as any).images.length > 0
             ? ((productQuery.data as any).images as Array<any>).map((img) => ({
-                imageUrl: resolveProductImageUrl(typeof img === "string" ? img : img?.imageUrl),
+              imageUrl: resolveProductImageUrl(typeof img === "string" ? img : img?.imageDetailUrl || img?.imageUrl),
+              imageThumbnailUrl: resolveProductImageUrl(typeof img === "string" ? img : img?.imageThumbnailUrl || img?.imageUrl),
                 color: typeof img === "string" ? null : String(img?.color ?? "").trim() || null,
               }))
             : [],
@@ -342,7 +346,7 @@ export default function ProductDetail() {
                   } as CSSProperties}
                 >
                   <img
-                    src={image.imageUrl}
+                    src={(image as any).imageThumbnailUrl || image.imageUrl}
                     alt={`Foto ${idx + 1}`}
                     style={styles.thumbImage as CSSProperties}
                     onError={(event) => {

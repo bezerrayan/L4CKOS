@@ -1,6 +1,8 @@
 ﻿import { useNavigate, useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
 import type { Product } from "../types/product";
+import { Heart } from "lucide-react";
+import { useFavorites } from "../contexts/FavoritesContext";
 import { getCategoryLabel } from "../lib/productCategories";
 import { retryImageWithVersion } from "../lib/images";
 import camisaFallback from "../images/camisa.png";
@@ -12,6 +14,8 @@ type Props = {
 export default function ProductCard({ product }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
+  const favorited = isFavorited(product.id);
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
@@ -21,7 +25,7 @@ export default function ProductCard({ product }: Props) {
     if ((product.stock ?? 0) <= 0) return { text: "INDISPONÍVEL", color: "#5b1d1d" };
     if ((product.stock ?? 0) <= 3) return { text: "ESTOQUE REDUZIDO", color: "#6b3e0b" };
     if (product.category?.trim()) return { text: getCategoryLabel(product.category).toUpperCase(), color: "#4a5568" };
-    return { text: "DESTAQUE", color: "#555555" };
+    return null;
   };
 
   const badge = getBadgeInfo();
@@ -51,14 +55,26 @@ export default function ProductCard({ product }: Props) {
     >
       <div style={styles.imageContainer as CSSProperties}>
         <img
-          src={product.image}
+          className="l4-product-media-image"
+          src={product.imageThumbnailUrl || product.image}
           style={styles.image as CSSProperties}
           alt={product.name}
           onError={(event) => {
             retryImageWithVersion(event, product.image, camisaFallback, product.id);
           }}
         />
-        <div style={{ ...styles.badge, background: badge.color } as CSSProperties}>{badge.text}</div>
+        {badge ? <div style={{ ...styles.badge, background: badge.color } as CSSProperties}>{badge.text}</div> : null}
+        <button
+          type="button"
+          aria-label={favorited ? `Remover ${product.name} dos favoritos` : `Adicionar ${product.name} aos favoritos`}
+          aria-pressed={favorited}
+          style={{ ...styles.favoriteButton, ...(favorited ? styles.favoriteButtonActive : {}) } as CSSProperties}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (favorited) removeFromFavorites(product.id);
+            else addToFavorites(product);
+          }}
+        ><Heart size={17} fill={favorited ? "currentColor" : "none"} aria-hidden="true" /></button>
         <div style={styles.designOverlay as CSSProperties}>
           <div style={styles.overlayContent as CSSProperties}>
             {(product.stock ?? 0) > 0 ? "Clique para ver detalhes" : "Indisponível no momento"}
@@ -144,6 +160,10 @@ const styles = {
     opacity: 0,
     transition: "opacity 0.3s ease",
   },
+  favoriteButton: {
+    position: "absolute", top: 12, left: 12, width: 36, height: 36, borderRadius: "50%", border: "1px solid #3a3a3a", background: "rgba(8,8,8,0.82)", color: "#f0ede8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2,
+  },
+  favoriteButtonActive: { background: "#e8002a", borderColor: "#ff4966", color: "#fff" },
   overlayContent: {
     color: "white",
     fontSize: 12,
