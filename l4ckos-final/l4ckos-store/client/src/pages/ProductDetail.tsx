@@ -15,6 +15,8 @@ import { trpc } from "../lib/trpc";
 import camisaFallback from "../images/camisa.png";
 import { getCategoryLabel } from "../lib/productCategories";
 import { resolveCatalogImageUrl, retryImageWithVersion } from "../lib/images";
+import { ProductReviews } from "../components/reviews/ProductReviews";
+import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -568,6 +570,8 @@ export default function ProductDetail() {
           )}
         </div>
       </div>
+      <ProductReviews productId={product.id} />
+      <ReviewPurchaseArea productId={product.id} />
     </div>
   );
 }
