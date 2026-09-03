@@ -1,5 +1,6 @@
 ﻿import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
@@ -25,6 +26,7 @@ import { AdminCouponsUI } from "../components/admin/coupons/AdminCouponsUI";
 import { AdminPromotionsUI } from "../components/admin/promotions/AdminPromotionsUI";
 import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 import { AdminSystemUI } from "../components/admin/system/AdminSystemUI";
+import { AdminReviewsPanel, type AdminReview, type AdminReviewFilters } from "../components/admin/reviews/AdminReviewsPanel";
 
 type Section =
   | "overview"
@@ -33,6 +35,7 @@ type Section =
   | "promos"
   | "orders"
   | "coupons"
+  | "reviews"
   | "reports"
   | "audit"
   | "backup";
@@ -299,6 +302,9 @@ export default function Admin() {
   const utils = trpc.useUtils();
 
   const [section, setSection] = useState<Section>("overview");
+  const [reviewFilters, setReviewFilters] = useState<AdminReviewFilters>({ moderationStatus: "", imageStatus: "", verifiedPurchase: "", productId: "" });
+  const [reviewCursor, setReviewCursor] = useState<number | undefined>();
+  const [reviewItems, setReviewItems] = useState<AdminReview[]>([]);
   const [orderFilterStatus, setOrderFilterStatus] = useState<string>("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
@@ -419,6 +425,27 @@ export default function Admin() {
   const couponsQuery = trpc.admin.couponsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const auditQuery = trpc.admin.auditList.useQuery({ limit: 200 }, { enabled: isAuthenticated && isAdmin });
   const backupsQuery = trpc.admin.backupsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
+  const reviewInput = useMemo(() => {
+    const productId = Number(reviewFilters.productId);
+    return {
+      ...(reviewFilters.moderationStatus ? { moderationStatus: reviewFilters.moderationStatus } : {}),
+      ...(reviewFilters.imageStatus ? { imageStatus: reviewFilters.imageStatus } : {}),
+      ...(reviewFilters.verifiedPurchase ? { verifiedPurchase: reviewFilters.verifiedPurchase === "verified" } : {}),
+      ...(Number.isInteger(productId) && productId > 0 ? { productId } : {}),
+      ...(reviewCursor ? { cursor: reviewCursor } : {}),
+      limit: 30,
+    };
+  }, [reviewCursor, reviewFilters]);
+  const reviewsQuery = trpc.admin.reviewsList.useQuery(reviewInput, { enabled: isAuthenticated && isAdmin });
+
+  useEffect(() => {
+    if (!reviewsQuery.data) return;
+    const page = reviewsQuery.data.items as AdminReview[];
+    setReviewItems(current => reviewCursor
+      ? [...current, ...page.filter(review => !current.some(existing => existing.id === review.id))]
+      : page,
+    );
+  }, [reviewCursor, reviewsQuery.data]);
 
   const setRoleMutation = trpc.admin.userSetRole.useMutation({
     onSuccess: () => {
@@ -522,6 +549,31 @@ export default function Admin() {
       showToast({ message: data.message, duration: 3200 });
     },
     onError: error => showToast({ message: error.message, duration: 3200 }),
+  });
+
+  const reviewModerateMutation = trpc.admin.reviewModerate.useMutation({
+    onSuccess: () => {
+      showToast({ message: "Moderação atualizada", duration: 2200 });
+      setReviewCursor(undefined);
+      setReviewItems([]);
+      void utils.admin.reviewsList.invalidate();
+    },
+    onError: error => {
+      if ((error as any)?.data?.code === "CONFLICT") {
+        showToast({ message: "Esta avaliação foi alterada por outro administrador. A lista foi atualizada.", duration: 3400 });
+        setReviewCursor(undefined);
+        setReviewItems([]);
+        void utils.admin.reviewsList.invalidate();
+        return;
+      }
+      const messages: Record<string, string> = {
+        UNAUTHORIZED: "Sua sessão não autoriza esta operação.",
+        FORBIDDEN: "Você não tem permissão para moderar avaliações.",
+        NOT_FOUND: "Avaliação não encontrada.",
+        BAD_REQUEST: "A ação de moderação não é válida para esta avaliação.",
+      };
+      showToast({ message: messages[(error as any)?.data?.code] || "Não foi possível atualizar a moderação.", duration: 3200 });
+    },
   });
 
   const createPromoBannerMutation = trpc.admin.promoBannerCreate.useMutation({
@@ -673,6 +725,7 @@ export default function Admin() {
           { key: "promos", label: "Promoções" },
           { key: "orders", label: "Pedidos" },
           { key: "coupons", label: "Cupons" },
+          { key: "reviews", label: "Avaliações" },
           { key: "reports", label: "Relatórios" },
           { key: "audit", label: "Auditoria" },
           { key: "backup", label: "Backup" },
@@ -2322,6 +2375,31 @@ export default function Admin() {
           </div>
         </div>
         </AdminCouponsUI>
+      )}
+
+      {section === "reviews" && (
+        <AdminReviewsPanel
+          reviews={reviewItems}
+          filters={reviewFilters}
+          loading={reviewsQuery.isLoading}
+          loadingMore={reviewsQuery.isFetching && Boolean(reviewCursor)}
+          hasMore={Boolean(reviewsQuery.data?.nextCursor)}
+          pendingReviewId={reviewModerateMutation.isPending ? reviewModerateMutation.variables?.reviewId : undefined}
+          onFiltersChange={next => {
+            setReviewFilters(next);
+            setReviewCursor(undefined);
+            setReviewItems([]);
+          }}
+          onLoadMore={() => {
+            if (reviewsQuery.data?.nextCursor) setReviewCursor(reviewsQuery.data.nextCursor);
+          }}
+          onModerate={(review, update) => reviewModerateMutation.mutate({
+            reviewId: review.id,
+            ...update,
+            expectedModerationStatus: review.moderationStatus,
+            expectedImageStatus: review.imageStatus,
+          })}
+        />
       )}
 
       {section === "reports" && (
