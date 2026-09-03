@@ -2,6 +2,8 @@ import { Suspense, lazy } from "react";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 import Footer from "./components/Footer";
 import Header from "./components/Header";
+import CartDrawer from "./components/CartDrawer";
+import CookiePreferences from "./components/CookiePreferences";
 import { useUser } from "./contexts/UserContext";
 import { useIsMobile } from "./hooks/useIsMobile";
 
@@ -123,6 +125,8 @@ function AppRoutes() {
       </div>
 
       <Footer />
+      <CartDrawer />
+      <CookiePreferences />
     </>
   );
 }

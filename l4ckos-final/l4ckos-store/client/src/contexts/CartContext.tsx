@@ -16,6 +16,9 @@ type CartContextType = {
   removeFromCart: (productId: number, selectedOptions?: SelectedOptions) => void;
   updateQuantity: (productId: number, quantity: number, selectedOptions?: SelectedOptions) => void;
   clearCart: () => void;
+  isCartDrawerOpen: boolean;
+  openCartDrawer: () => void;
+  closeCartDrawer: () => void;
 };
 
 // ============= CRIAR CONTEXTO =============
@@ -43,6 +46,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       return [];
     }
   });
+  const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
 
   const normalizeOptions = (selectedOptions?: SelectedOptions) => {
     if (!selectedOptions) return "";
@@ -118,6 +122,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems([]);
   }, []);
 
+  const openCartDrawer = useCallback(() => setIsCartDrawerOpen(true), []);
+  const closeCartDrawer = useCallback(() => setIsCartDrawerOpen(false), []);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -141,6 +148,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     removeFromCart,
     updateQuantity,
     clearCart,
+    isCartDrawerOpen,
+    openCartDrawer,
+    closeCartDrawer,
   };
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

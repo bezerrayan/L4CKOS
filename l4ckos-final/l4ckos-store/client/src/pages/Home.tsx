@@ -69,7 +69,7 @@ export default function Home() {
         id: item.id,
         name: item.name,
         priceCents: Number(item.price ?? 0),
-        imageUrl: resolveProductImageUrl(item.imageUrl),
+        imageUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
         category: item.category,
       })),
     [productsQuery.data],
@@ -79,8 +79,7 @@ export default function Home() {
     <div className="l4-home">
       <div className="l4-home-announce">
         <span className="l4-home-announce-track">
-          PAGAMENTO SEGURO - CONSULTE FRETE E PRAZO NO CHECKOUT - NOVOS ITENS EM DESTAQUE - ATENDIMENTO PELOS CANAIS OFICIAIS
-          - PAGAMENTO SEGURO - CONSULTE FRETE E PRAZO NO CHECKOUT - NOVOS ITENS EM DESTAQUE - ATENDIMENTO PELOS CANAIS OFICIAIS
+          <strong>L4CKOS</strong><span>Loja oficial</span><span>Built for Adventure</span><span>Identidade em movimento</span><span>Drops autorais</span>
         </span>
       </div>
 
@@ -88,24 +87,20 @@ export default function Home() {
         <div className="l4-home-hero-grid" />
         <div className="l4-home-hero-bg" />
         <div className="l4-home-hero-content">
-          <div className="l4-home-tag">Drop 01 - Disponível agora</div>
+          <div className="l4-home-tag">L4CKOS — LOJA OFICIAL</div>
           <h1 className="l4-home-title">
-            <span>BEM-VINDO</span>
+            <span>BUILT FOR</span>
             <br />
-            <span className="outline">A NOSSA</span>
-            <br />
-            <span className="accent">LOJA</span>
+            <span className="accent">ADVENTURE</span>
           </h1>
           <p className="l4-home-subtitle">
-            Peças e equipamentos selecionados para quem vive trilha, campo, rotina escoteira e movimento outdoor com identidade.
+            Peças criadas para quem carrega identidade no cotidiano e espírito de aventura por onde passa.
           </p>
           <div className="l4-home-hero-cta">
             <Link to="/produtos" className="l4-btn-primary">
-              Explorar catálogo
+              EXPLORAR PRODUTOS
             </Link>
-            <a href="#l4-products" className="l4-btn-outline">
-              Ver destaques
-            </a>
+            <Link to="/sobre" className="l4-btn-outline">CONHECER A L4CKOS</Link>
           </div>
         </div>
         <PromoCarousel />

@@ -101,6 +101,9 @@
   text-transform: uppercase;
 }
 
+.l4-footer-link-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.l4-footer-link-button:hover { color: #f0ede8; }
+
 @media (max-width: 980px) {
   .l4-footer {
     padding: 36px 14px 18px;
