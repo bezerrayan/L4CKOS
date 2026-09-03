@@ -34,6 +34,8 @@ import {
   updateProduct,
   updateCoupon,
   updateUserRole,
+  getAdminProductReviews,
+  moderateProductReview,
 } from "../db";
 import { ENV } from "../_core/env";
 import { TRPCError } from "@trpc/server";
@@ -66,6 +68,8 @@ const orderStatusSchema = z.enum([
   "cancelled",
 ]);
 const backupFileNameSchema = z.string().trim().regex(/^[A-Za-z0-9._-]+\.json$/);
+const reviewModerationStatusSchema = z.enum(["published", "hidden_spam", "hidden_offensive"]);
+const reviewImageStatusSchema = z.enum(["none", "pending", "approved", "rejected"]);
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -91,6 +95,37 @@ async function getAudienceEmails(audience: "waitlist" | "allUsers" | "vipUsers" 
 }
 
 export const adminRouter = router({
+  reviewsList: adminProcedure
+    .input(z.object({
+      moderationStatus: reviewModerationStatusSchema.optional(),
+      imageStatus: reviewImageStatusSchema.optional(),
+      productId: z.number().int().positive().optional(),
+      verifiedPurchase: z.boolean().optional(),
+      cursor: z.number().int().positive().optional(),
+      limit: z.number().int().min(1).max(100).default(30),
+    }).optional())
+    .query(({ input }) => getAdminProductReviews({ limit: input?.limit ?? 30, ...input })),
+
+  reviewModerate: adminProcedure
+    .input(z.object({
+      reviewId: z.number().int().positive(),
+      moderationStatus: reviewModerationStatusSchema.optional(),
+      imageStatus: z.enum(["approved", "rejected"]).optional(),
+      expectedModerationStatus: reviewModerationStatusSchema,
+      expectedImageStatus: reviewImageStatusSchema,
+    }).refine(input => Boolean(input.moderationStatus || input.imageStatus), { message: "Informe uma ação de moderação." }))
+    .mutation(async ({ ctx, input }) => {
+      try { return await moderateProductReview({ ...input, actorUserId: ctx.user.id }); }
+      catch (error) {
+        const code = error instanceof Error ? error.message : "";
+        if (code === "REVIEW_NOT_FOUND") throw new TRPCError({ code: "NOT_FOUND", message: "Avaliação não encontrada." });
+        if (code === "REVIEW_STATE_CONFLICT") throw new TRPCError({ code: "CONFLICT", message: "A avaliação foi alterada por outro administrador. Atualize a lista." });
+        if (code === "REVIEW_IMAGE_NOT_PRESENT") throw new TRPCError({ code: "BAD_REQUEST", message: "Esta avaliação não possui imagem para moderar." });
+        if (code === "REVIEW_MODERATION_INVALID") throw new TRPCError({ code: "BAD_REQUEST", message: "Informe uma ação de moderação." });
+        throw error;
+      }
+    }),
+
   dashboard: adminProcedure.query(async () => {
     const [kpis, users, products, orders] = await Promise.all([
       getDashboardKpis(),

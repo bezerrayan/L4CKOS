@@ -420,20 +420,91 @@ export async function getProductReviews(productId: number) {
   const reviews = await db
     .select({
       id: productReviews.id,
-      productId: productReviews.productId,
-      userId: productReviews.userId,
       rating: productReviews.rating,
       comment: productReviews.comment,
+      sizePerception: productReviews.sizePerception,
+      imageUrl: productReviews.imageUrl,
+      imageStatus: productReviews.imageStatus,
       createdAt: productReviews.createdAt,
-      updatedAt: productReviews.updatedAt,
       userName: users.name,
     })
     .from(productReviews)
     .leftJoin(users, eq(users.id, productReviews.userId))
-    .where(eq(productReviews.productId, productId))
+    .where(and(
+      eq(productReviews.productId, productId),
+      eq(productReviews.verifiedPurchase, 1),
+      eq(productReviews.moderationStatus, "published"),
+    ))
     .orderBy(desc(productReviews.id));
 
-  return reviews;
+  return reviews.map(review => ({
+    id: review.id,
+    rating: review.rating,
+    comment: review.comment,
+    sizePerception: review.sizePerception,
+    imageUrl: review.imageStatus === "approved" ? review.imageUrl : null,
+    createdAt: review.createdAt,
+    userName: String(review.userName ?? "").trim().split(/\s+/)[0] || "Cliente L4CKOS",
+  }));
+}
+
+type ReviewModerationStatus = "published" | "hidden_spam" | "hidden_offensive";
+type ReviewImageStatus = "none" | "pending" | "approved" | "rejected";
+
+export async function getAdminProductReviews(input: {
+  moderationStatus?: ReviewModerationStatus;
+  imageStatus?: ReviewImageStatus;
+  productId?: number;
+  verifiedPurchase?: boolean;
+  cursor?: number;
+  limit: number;
+}) {
+  const db = await getDb();
+  if (!db) return { items: [], nextCursor: null };
+  const clauses: any[] = [];
+  if (input.moderationStatus) clauses.push(eq(productReviews.moderationStatus, input.moderationStatus));
+  if (input.imageStatus) clauses.push(eq(productReviews.imageStatus, input.imageStatus));
+  if (input.productId) clauses.push(eq(productReviews.productId, input.productId));
+  if (input.verifiedPurchase !== undefined) clauses.push(eq(productReviews.verifiedPurchase, input.verifiedPurchase ? 1 : 0));
+  if (input.cursor) clauses.push(lt(productReviews.id, input.cursor));
+  const rows = await db.select({
+    id: productReviews.id, productId: productReviews.productId, productName: products.name,
+    userId: productReviews.userId, userName: users.name, orderId: productReviews.orderId,
+    stockReservationId: productReviews.stockReservationId, rating: productReviews.rating,
+    comment: productReviews.comment, sizePerception: productReviews.sizePerception,
+    verifiedPurchase: productReviews.verifiedPurchase, moderationStatus: productReviews.moderationStatus,
+    imageUrl: productReviews.imageUrl, imageStatus: productReviews.imageStatus,
+    moderatedBy: productReviews.moderatedBy, moderatedAt: productReviews.moderatedAt,
+    createdAt: productReviews.createdAt, updatedAt: productReviews.updatedAt,
+  }).from(productReviews).leftJoin(products, eq(products.id, productReviews.productId)).leftJoin(users, eq(users.id, productReviews.userId))
+    .where(clauses.length ? and(...clauses) : undefined).orderBy(desc(productReviews.id)).limit(input.limit + 1);
+  const hasMore = rows.length > input.limit;
+  const items = rows.slice(0, input.limit);
+  return { items, nextCursor: hasMore ? items.at(-1)?.id ?? null : null };
+}
+
+export async function moderateProductReview(input: {
+  reviewId: number; actorUserId: number; moderationStatus?: ReviewModerationStatus;
+  imageStatus?: "approved" | "rejected"; expectedModerationStatus: ReviewModerationStatus;
+  expectedImageStatus: ReviewImageStatus;
+}) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  if (!input.moderationStatus && !input.imageStatus) throw new Error("REVIEW_MODERATION_INVALID");
+  return db.transaction(async tx => {
+    const [review] = await tx.select().from(productReviews).where(eq(productReviews.id, input.reviewId)).limit(1);
+    if (!review) throw new Error("REVIEW_NOT_FOUND");
+    if (review.moderationStatus !== input.expectedModerationStatus || review.imageStatus !== input.expectedImageStatus) throw new Error("REVIEW_STATE_CONFLICT");
+    if (input.imageStatus && !review.imageUrl) throw new Error("REVIEW_IMAGE_NOT_PRESENT");
+    const before = { moderationStatus: review.moderationStatus, imageStatus: review.imageStatus };
+    const after = { moderationStatus: input.moderationStatus ?? review.moderationStatus, imageStatus: input.imageStatus ?? review.imageStatus };
+    const result = await tx.update(productReviews).set({ ...after, moderatedBy: input.actorUserId, moderatedAt: new Date() })
+      .where(and(eq(productReviews.id, input.reviewId), eq(productReviews.moderationStatus, input.expectedModerationStatus), eq(productReviews.imageStatus, input.expectedImageStatus)));
+    if (affectedRows(result) !== 1) throw new Error("REVIEW_STATE_CONFLICT");
+    const changes = { moderationStatus: input.moderationStatus, imageStatus: input.imageStatus };
+    const action = input.imageStatus ? `review.image_${input.imageStatus}` : `review.${input.moderationStatus}`;
+    await tx.insert(auditLogs).values({ actorUserId: input.actorUserId, actorType: "admin", action: "review.moderated", entity: "productReview", entityId: String(input.reviewId), beforeState: JSON.stringify(before), afterState: JSON.stringify(after), metadata: JSON.stringify({ action, changes }) });
+    return { id: review.id, ...after, moderatedBy: input.actorUserId };
+  });
 }
 
 export async function createOrUpdateProductReview(input: {
