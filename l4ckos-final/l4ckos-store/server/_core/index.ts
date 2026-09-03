@@ -3,6 +3,7 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import helmet from "helmet";
@@ -16,6 +17,7 @@ import { serveStatic, setupVite } from "./vite";
 import { validateEnvOnStartup } from "./env";
 import { securityLog } from "./security";
 import uploadRouter from "../routers/upload";
+import reviewUploadRouter from "../routers/reviewUpload";
 import paymentRoutes from "../routes/paymentRoutes";
 import webhookRoutes from "../routes/webhookRoutes";
 import shippingRoutes from "../routes/shippingRoutes";
@@ -191,7 +193,7 @@ async function listenWithRetry(
   throw new Error(`No available port found starting from ${preferredPort}`);
 }
 
-async function startServer() {
+export async function createApp() {
   assertEnvironmentIsolation();
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
@@ -408,6 +410,13 @@ async function startServer() {
   });
   app.use("/api/contact", publicWriteLimiter);
   app.use("/api/waitlist", publicWriteLimiter);
+  app.use("/api/review-images", rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: readRateLimit("REVIEW_IMAGE_RATE_LIMIT_MAX", isProduction ? 12 : 50),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Muitos envios de imagem. Tente novamente mais tarde." },
+  }));
 
   // Additional protection for admin-only API routes.
   const adminApiLimiter = rateLimit({
@@ -581,6 +590,7 @@ async function startServer() {
   app.post("/webhook/asaas", asaasWebhookHandler);
   // REST API (upload)
   app.use("/api/upload", uploadRouter);
+  app.use("/api/review-images", reviewUploadRouter);
   app.use(
     "/uploads",
     (req, res, next) => {
@@ -606,6 +616,11 @@ async function startServer() {
       createContext,
     })
   );
+  return { app, server, isProduction };
+}
+
+async function startServer() {
+  const { app, server, isProduction } = await createApp();
   // development mode uses Vite, production mode uses static files
   if (!isProduction) {
     await setupVite(app, server);
@@ -630,8 +645,10 @@ async function startServer() {
   startOperationalJobScheduler();
 }
 
-startServer().catch(error => {
-  securityLog("error", "startup.failed", { errorType: error instanceof Error ? error.name : "unknown", reason: error instanceof Error ? error.message : "unknown" });
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer().catch(error => {
+    securityLog("error", "startup.failed", { errorType: error instanceof Error ? error.name : "unknown", reason: error instanceof Error ? error.message : "unknown" });
+    process.exitCode = 1;
+  });
+}
 

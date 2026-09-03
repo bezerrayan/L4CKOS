@@ -12,6 +12,7 @@ import {
   productImages,
   productVariants,
   productReviews,
+  productReviewUploads,
   coupons,
   auditLogs,
   localAuthUsers,
@@ -497,9 +498,14 @@ export async function getReviewEligibility(userId: number, productId?: number) {
   return result;
 }
 
-export async function createVerifiedProductReview(input: { userId: number; stockReservationId: number; rating: number; comment?: string; sizePerception?: "small"|"true_to_size"|"large" }) {
+export async function registerProductReviewUpload(input: { token: string; userId: number; productId: number; imageUrl: string; expiresAt: Date }) {
   const db = await getDb(); if (!db) throw new Error("Database not available");
-  try { return await db.transaction(async tx => { const purchase = await reviewPurchase(tx, input.userId, input.stockReservationId); if (!purchase) throw new Error("REVIEW_NOT_ELIGIBLE"); if (purchase.alreadyReviewed) throw new Error("ALREADY_REVIEWED"); const result = await tx.insert(productReviews).values({ userId: input.userId, productId: purchase.item.productId, orderId: purchase.order.id, stockReservationId: input.stockReservationId, rating: input.rating, comment: input.comment?.trim() || null, sizePerception: input.sizePerception, verifiedPurchase: 1 }); return { id: Number((result as any)[0]?.insertId || 0), verifiedPurchase: 1 }; }); } catch (error: any) { let current = error; for (let depth = 0; current && depth < 4; depth += 1, current = current.cause) { if (current.code === "ER_DUP_ENTRY" || current.errno === 1062) throw new Error("ALREADY_REVIEWED"); } throw error; }
+  await db.insert(productReviewUploads).values(input);
+}
+
+export async function createVerifiedProductReview(input: { userId: number; stockReservationId: number; rating: number; comment?: string; sizePerception?: "small"|"true_to_size"|"large"; reviewImageToken?: string }) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  try { return await db.transaction(async tx => { const purchase = await reviewPurchase(tx, input.userId, input.stockReservationId); if (!purchase) throw new Error("REVIEW_NOT_ELIGIBLE"); if (purchase.alreadyReviewed) throw new Error("ALREADY_REVIEWED"); let imageUrl: string | null = null; if (input.reviewImageToken) { const [upload] = await tx.select().from(productReviewUploads).where(and(eq(productReviewUploads.token, input.reviewImageToken), eq(productReviewUploads.userId, input.userId), eq(productReviewUploads.productId, purchase.item.productId), isNull(productReviewUploads.claimedAt), gte(productReviewUploads.expiresAt, new Date()))).limit(1); if (!upload) throw new Error("REVIEW_IMAGE_TOKEN_INVALID"); const claim = await tx.update(productReviewUploads).set({ claimedAt: new Date() }).where(and(eq(productReviewUploads.token, input.reviewImageToken), eq(productReviewUploads.userId, input.userId), eq(productReviewUploads.productId, purchase.item.productId), isNull(productReviewUploads.claimedAt), gte(productReviewUploads.expiresAt, new Date()))); const affected = Number((claim as any)[0]?.affectedRows ?? (claim as any).affectedRows ?? 0); if (affected !== 1) throw new Error("REVIEW_IMAGE_TOKEN_INVALID"); imageUrl = upload.imageUrl; } const result = await tx.insert(productReviews).values({ userId: input.userId, productId: purchase.item.productId, orderId: purchase.order.id, stockReservationId: input.stockReservationId, rating: input.rating, comment: input.comment?.trim() || null, sizePerception: input.sizePerception, imageUrl, imageStatus: imageUrl ? "pending" : "none", verifiedPurchase: 1 }); return { id: Number((result as any)[0]?.insertId || 0), verifiedPurchase: 1 }; }); } catch (error: any) { let current = error; for (let depth = 0; current && depth < 4; depth += 1, current = current.cause) { if (current.code === "ER_DUP_ENTRY" || current.errno === 1062) throw new Error("ALREADY_REVIEWED"); } throw error; }
 }
 
 export async function createProduct(product: InsertProduct) {

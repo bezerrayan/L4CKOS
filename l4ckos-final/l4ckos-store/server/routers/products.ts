@@ -93,7 +93,7 @@ export const productsRouter = router({
     .mutation(async () => { throw new Error("REVIEW_UPSERT_DISABLED_USE_REVIEW_CREATE"); }),
 
   reviewEligibility: protectedProcedure.input(z.object({ productId: z.number().int().positive().optional() }).optional()).query(async ({ input, ctx }) => getReviewEligibility(ctx.user.id, input?.productId)),
-  reviewCreate: protectedProcedure.input(z.object({ stockReservationId: z.number().int().positive(), rating: z.number().int().min(1).max(5), comment: z.string().max(1000).optional(), sizePerception: z.enum(["small","true_to_size","large"]).optional() })).mutation(async ({ input, ctx }) => createVerifiedProductReview({ ...input, userId: ctx.user.id })),
+  reviewCreate: protectedProcedure.input(z.object({ stockReservationId: z.number().int().positive(), rating: z.number().int().min(1).max(5), comment: z.string().max(1000).optional(), sizePerception: z.enum(["small","true_to_size","large"]).optional(), reviewImageToken: z.string().min(40).max(64).regex(/^[A-Za-z0-9_-]+$/).optional() })).mutation(async ({ input, ctx }) => createVerifiedProductReview({ ...input, userId: ctx.user.id })),
 
   // Criar novo produto (apenas admin)
   create: adminProcedure
