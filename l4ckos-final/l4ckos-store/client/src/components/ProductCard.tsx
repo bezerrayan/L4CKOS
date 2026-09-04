@@ -53,7 +53,7 @@ export default function ProductCard({ product }: Props) {
         (card as HTMLElement).style.transform = "translateY(0)";
       }}
     >
-      <div style={styles.imageContainer as CSSProperties}>
+      <div className="l4-product-media-surface" style={styles.imageContainer as CSSProperties}>
         <img
           className="l4-product-media-image"
           src={product.imageThumbnailUrl || product.image}

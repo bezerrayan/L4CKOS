@@ -1,6 +1,6 @@
 ﻿/**
  * Pagina do checkout - envio e pagamento
- * 
+ *
  */
 
 import { Link } from "react-router-dom";
@@ -15,6 +15,9 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
+import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
+import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
+import "./Pagamento.css";
 
 type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 
@@ -36,6 +39,20 @@ type ShippingOption = {
   price: number;
   minDays: number;
   maxDays: number;
+};
+
+type SavedCheckoutAddress = {
+  id: string;
+  label: string;
+  recipient: string;
+  zipCode: string;
+  street: string;
+  number: string;
+  complement?: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  isDefault: boolean;
 };
 
 const checkoutHighlights = [
@@ -70,7 +87,6 @@ function addBusinessDays(startDate: Date, daysToAdd: number) {
 }
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "l4ckos:checkout-attempt";
-
 function getCheckoutAttemptId(signature: string) {
   try {
     const stored = JSON.parse(sessionStorage.getItem(CHECKOUT_ATTEMPT_STORAGE_KEY) || "null") as { signature?: string; id?: string } | null;
@@ -81,31 +97,45 @@ function getCheckoutAttemptId(signature: string) {
   return id;
 }
 
+function buildShippingOptions(_cep: string, _subtotal: number, _itemCount: number): ShippingOption[] {
+  return [
+    {
+      id: "local-plano-piloto",
+      label: "Entrega local - Plano Piloto",
+      description: "Agendamento local no Plano Piloto (Brasilia - DF)",
+      price: 0,
+      minDays: 1,
+      maxDays: 2,
+    },
+  ];
+}
+
 function getOrderStatusLabel(status?: string | null) {
   switch (status) {
-    case "paid":
+    case "confirmed":
+    case "received":
+    case "partially_refunded":
       return "Pagamento confirmado";
-    case "processing":
-      return "Pedido em separação";
-    case "shipped":
-      return "Pedido enviado";
-    case "delivered":
-      return "Pedido entregue";
-    case "canceled":
-      return "Pedido cancelado";
+    case "failed":
+    case "overdue":
+      return "Pagamento pendente";
     default:
       return "Aguardando pagamento";
   }
 }
 
 export default function Pagamento() {
-  const isMobile = useIsMobile();
+  // O resumo passa a ser compacto no mesmo ponto em que o layout deixa as duas colunas.
+  const isMobile = useIsMobile(900);
   const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
   const runtimeQuery = trpc.system.runtime.useQuery();
   const checkoutAvailability = runtimeQuery.data?.checkout;
   const clearedOrdersRef = useRef<Set<number>>(new Set());
+  const lastCepLookupRef = useRef<string | null>(null);
+  const loadedSavedAddressRef = useRef(false);
+  const checkoutTrackedRef = useRef(false);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -116,7 +146,9 @@ export default function Pagamento() {
   const [addressState, setAddressState] = useState("");
   const [addressNumber, setAddressNumber] = useState("");
   const [addressComplement, setAddressComplement] = useState("");
+  const [selectedSavedAddressId, setSelectedSavedAddressId] = useState("");
   const [addressLoading, setAddressLoading] = useState(false);
+  const [shippingLoading, setShippingLoading] = useState(false);
   const [cep, setCep] = useState("");
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
   const [selectedShippingId, setSelectedShippingId] = useState<ShippingOption["id"] | null>(null);
@@ -127,15 +159,21 @@ export default function Pagamento() {
   const [couponError, setCouponError] = useState("");
   const [couponDiscount, setCouponDiscount] = useState(0);
   const [appliedCouponCode, setAppliedCouponCode] = useState<string | null>(null);
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [isCouponOpen, setIsCouponOpen] = useState(false);
   const canShowTechnicalShippingError = import.meta.env.DEV || user?.role === "admin";
 
   const validateCoupon = trpc.orders.validateCoupon.useMutation();
+  const profileQuery = trpc.profile.get.useQuery(undefined, {
+    enabled: isAuthenticated,
+    refetchOnWindowFocus: false,
+  });
   const paymentOrderQuery = trpc.orders.detail.useQuery(paymentData?.orderId ?? 0, {
     enabled: Boolean(paymentData?.orderId),
     refetchInterval: data => {
       const status = (data as any)?.payment?.status;
       if (!status) return 10000;
-      return status === "confirmed" || status === "received" || status === "partially_refunded" ? false : 10000;
+      return ["confirmed", "received", "partially_refunded"].includes(String(status)) ? false : 10000;
     },
   });
 
@@ -143,6 +181,11 @@ export default function Pagamento() {
     () => shippingOptions.find(option => option.id === selectedShippingId) ?? null,
     [shippingOptions, selectedShippingId],
   );
+  const savedAddresses = useMemo<SavedCheckoutAddress[]>(() => (profileQuery.data?.addresses ?? []).map(address => ({
+    id: String(address.id), label: address.label, recipient: address.recipient, zipCode: address.zipCode,
+    street: address.street, number: address.number, complement: address.complement, neighborhood: address.neighborhood,
+    city: address.city, state: address.state, isDefault: address.isDefault,
+  })), [profileQuery.data?.addresses]);
   const paymentStatus = (paymentOrderQuery.data as any)?.payment?.status as string | undefined;
   const isPaymentConfirmed =
     paymentStatus === "confirmed" || paymentStatus === "received" || paymentStatus === "partially_refunded";
@@ -160,12 +203,54 @@ export default function Pagamento() {
 
   const orderBaseTotal = cart.total + (selectedShipping?.price ?? 0);
   const orderTotal = Math.max(0, Number((orderBaseTotal - couponDiscount).toFixed(2)));
+  const hasCompleteCheckoutData = Boolean(
+    isAuthenticated &&
+    customerName.trim() &&
+    customerEmail.trim() &&
+    cpfCnpj.trim() &&
+    sanitizeCep(cep).length === 8 &&
+    addressStreet.trim() &&
+    addressNumber.trim() &&
+    addressNeighborhood.trim() &&
+    addressCity.trim() &&
+    addressState.trim() &&
+    selectedShipping,
+  );
 
   useEffect(() => {
     if (!user) return;
     setCustomerName(user.name || "");
     setCustomerEmail(user.email || "");
   }, [user]);
+
+  useEffect(() => {
+    if (cart.items.length === 0 || checkoutTrackedRef.current) return;
+    checkoutTrackedRef.current = true;
+  }, [cart.itemCount, cart.items.length]);
+
+  const applySavedAddress = (address: SavedCheckoutAddress) => {
+    setSelectedSavedAddressId(address.id);
+    setCep(sanitizeCep(address.zipCode));
+    setAddressStreet(address.street);
+    setAddressNumber(address.number);
+    setAddressComplement(address.complement ?? "");
+    setAddressNeighborhood(address.neighborhood);
+    setAddressCity(address.city);
+    setAddressState(address.state);
+  };
+
+  useEffect(() => {
+    if (loadedSavedAddressRef.current || savedAddresses.length === 0) return;
+    if (cep || addressStreet || addressNumber || addressNeighborhood || addressCity || addressState) {
+      loadedSavedAddressRef.current = true;
+      return;
+    }
+    const preferredAddress = savedAddresses.find(address => address.isDefault) ?? savedAddresses[0];
+    if (preferredAddress) applySavedAddress(preferredAddress);
+    loadedSavedAddressRef.current = true;
+    // Carrega somente o endereço salvo inicial; alterações posteriores continuam manuais.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedAddresses]);
 
   useEffect(() => {
     if (!paymentData?.orderId || !isPaymentConfirmed || clearedOrdersRef.current.has(paymentData.orderId)) {
@@ -177,13 +262,21 @@ export default function Pagamento() {
   }, [clearCart, isPaymentConfirmed, paymentData?.orderId]);
 
   useEffect(() => {
-    if (couponDiscount <= 0) return;
+    if (!appliedCouponCode) return;
     const normalizedCode = couponCode.trim().toUpperCase();
     if (!normalizedCode || normalizedCode !== appliedCouponCode) {
       setCouponDiscount(0);
       setAppliedCouponCode(null);
     }
-  }, [cart.total, selectedShipping?.price]);
+  }, [appliedCouponCode, couponCode]);
+
+  useEffect(() => {
+    if (!appliedCouponCode) return;
+    setCouponDiscount(0);
+    setAppliedCouponCode(null);
+    setCouponError("O pedido foi alterado. Aplique o cupom novamente.");
+    setIsCouponOpen(true);
+  }, [cart.itemCount, cart.total, selectedShipping?.price]);
 
   useEffect(() => {
     const normalizedCep = sanitizeCep(cep);
@@ -228,9 +321,9 @@ export default function Pagamento() {
     await navigator.clipboard.writeText(value);
   };
 
-  const handleCalculateShipping = async () => {
+  const handleCalculateShipping = async (cepValue = cep) => {
     setShippingError("");
-    const normalizedCep = sanitizeCep(cep);
+    const normalizedCep = sanitizeCep(cepValue);
 
     if (normalizedCep.length !== 8) {
       setShippingOptions([]);
@@ -239,6 +332,7 @@ export default function Pagamento() {
       return;
     }
 
+    setShippingLoading(true);
     try {
       const response = await csrfFetch(apiUrl("/api/shipping/quote"), {
         method: "POST",
@@ -263,9 +357,9 @@ export default function Pagamento() {
         providerError?: string;
         source?: "melhor-envio" | "fallback-local" | "mixed";
       };
-      const options = data.options ?? [];
+      const options = data.options?.length ? data.options : buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
       setShippingOptions(options);
-      setSelectedShippingId(options[0]?.id ?? null);
+      setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options[0]?.id ?? null);
       const sanitizedProviderError = (data.providerError || "")
         .replace(/\s*\|\s*/g, "; ")
         .replace(/\s+/g, " ")
@@ -281,9 +375,12 @@ export default function Pagamento() {
         : "";
       setShippingError(detailedWarning);
     } catch {
-      setShippingOptions([]);
-      setSelectedShippingId(null);
-      setShippingError("Não foi possível obter uma opção de frete segura para este CEP. Tente novamente mais tarde.");
+      const fallbackOptions = buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
+      setShippingOptions(fallbackOptions);
+      setSelectedShippingId(fallbackOptions[0]?.id ?? null);
+      setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+    } finally {
+      setShippingLoading(false);
     }
   };
 
@@ -295,6 +392,7 @@ export default function Pagamento() {
       return;
     }
 
+    lastCepLookupRef.current = normalizedCep;
     setAddressLoading(true);
     try {
       const response = await fetch(apiUrl(`/api/cep/${normalizedCep}`), {
@@ -318,20 +416,38 @@ export default function Pagamento() {
         return;
       }
 
-      setAddressStreet(data.logradouro || "");
-      setAddressNeighborhood(data.bairro || "");
-      setAddressCity(data.localidade || "");
-      setAddressState(data.uf || "");
-      await handleCalculateShipping();
+      setAddressStreet(current => data.logradouro || current);
+      setAddressNeighborhood(current => data.bairro || current);
+      setAddressCity(current => data.localidade || current);
+      setAddressState(current => data.uf || current);
+      await handleCalculateShipping(normalizedCep);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível consultar o CEP.");
       const message = parsed.message;
       setShippingError(message.includes("Load failed") ? "Não foi possível consultar o CEP agora." : message);
-      await handleCalculateShipping();
+      await handleCalculateShipping(normalizedCep);
     } finally {
       setAddressLoading(false);
     }
   };
+
+  useEffect(() => {
+    const normalizedCep = sanitizeCep(cep);
+    if (normalizedCep.length !== 8) {
+      lastCepLookupRef.current = null;
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (lastCepLookupRef.current === normalizedCep) return;
+      lastCepLookupRef.current = normalizedCep;
+      void handleLookupCep();
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+    // A consulta deve ocorrer somente quando o CEP informado mudar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cep]);
 
   const handleApplyCoupon = async () => {
     setCouponError("");
@@ -347,7 +463,6 @@ export default function Pagamento() {
         code: normalized,
         items: cart.items.map(item => ({
           productId: item.product.id,
-          variantId: item.variantId ?? null,
           quantity: item.quantity,
         })),
         shipping: {
@@ -370,6 +485,10 @@ export default function Pagamento() {
 
     if (checkoutAvailability && !checkoutAvailability.available) {
       setPaymentError(checkoutAvailability.message || "O checkout está temporariamente indisponível.");
+      return;
+    }
+
+    if (paymentData || createAsaasCharge.isPending) {
       return;
     }
 
@@ -434,20 +553,155 @@ export default function Pagamento() {
       });
 
       setPaymentData(result);
-      sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível gerar a cobrança.");
       setPaymentError(parsed.message);
     }
   };
 
+  if (cart.items.length > 0) {
+    const summaryExpanded = !isMobile || isSummaryOpen;
+    return (
+      <div className="l4-checkout-page">
+        <header className="l4-checkout-header">
+          <Link to="/" className="l4-checkout-brand" aria-label="L4CKOS, voltar ao início">
+            <img src={logoMainDark} alt="L4CKOS" />
+          </Link>
+          <div className="l4-checkout-secure"><LockKeyhole size={15} aria-hidden="true" /> Compra segura</div>
+          <div className="l4-checkout-form-intro"><p>Checkout</p><h1>Finalize seu pedido</h1><span>Preencha os dados abaixo para concluir sua compra.</span></div>
+          <ol className="l4-checkout-progress" aria-label="Etapas da compra">
+            <li> Sacola</li><li className="is-active">Checkout</li><li>Confirmação</li>
+          </ol>
+        </header>
+
+        <div className="l4-checkout-layout">
+          <aside className="l4-checkout-summary">
+            <button
+              type="button"
+              className="l4-checkout-summary-toggle"
+              onClick={() => setIsSummaryOpen(value => !value)}
+              aria-expanded={summaryExpanded}
+              aria-controls="checkout-order-summary"
+            >
+              <span><strong>Resumo do pedido</strong><small>{cart.itemCount} {cart.itemCount === 1 ? "item" : "itens"}</small></span>
+              <strong>{formatPrice(orderTotal)}</strong>
+              <ChevronDown size={18} className={summaryExpanded ? "is-open" : ""} aria-hidden="true" />
+            </button>
+            {summaryExpanded ? (
+              <div id="checkout-order-summary" className="l4-checkout-summary-content">
+                <div className="l4-checkout-summary-items">
+                  {cart.items.map(item => (
+                    <article key={getItemKey(item.product.id, item.selectedOptions)} className="l4-checkout-summary-item">
+                      <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={item.product.imageThumbnailUrl || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
+                      <div>
+                        <div className="l4-checkout-item-title"><h3>{item.product.name}</h3><strong>{formatPrice(item.product.price * item.quantity)}</strong></div>
+                        {item.selectedOptions ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}
+                        <div className="l4-checkout-item-controls">
+                          <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
+                          <span>{item.quantity}</span>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
+                          <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <dl className="l4-checkout-totals">
+                  <div><dt>Subtotal</dt><dd>{formatPrice(cart.total)}</dd></div>
+                  <div><dt>Frete</dt><dd>{selectedShipping ? formatPrice(selectedShipping.price) : "Calcular"}</dd></div>
+                  {couponDiscount > 0 ? <div><dt>Desconto</dt><dd>-{formatPrice(couponDiscount)}</dd></div> : null}
+                  <div className="l4-checkout-grand-total"><dt>Total</dt><dd>{formatPrice(orderTotal)}</dd></div>
+                </dl>
+                <Link to="/carrinho" className="l4-checkout-edit-cart">Editar sacola</Link>
+              </div>
+            ) : null}
+          </aside>
+
+          <main className="l4-checkout-form-panel">
+            <section className="l4-checkout-section" aria-labelledby="checkout-contact-title">
+              <div className="l4-checkout-section-heading"><span>01</span><div><h2 id="checkout-contact-title">Contato</h2><p>Informe seus dados para continuarmos.</p></div></div>
+              <div className="l4-checkout-fields">
+                <label className="l4-checkout-contact-name">Nome completo<input value={customerName} onChange={event => setCustomerName(event.target.value)} autoComplete="name" /></label>
+                <label>E-mail<input type="email" value={customerEmail} onChange={event => setCustomerEmail(event.target.value)} autoComplete="email" /></label>
+                <label>CPF ou CNPJ<input value={cpfCnpj} onChange={event => setCpfCnpj(event.target.value)} inputMode="numeric" autoComplete="off" /></label>
+              </div>
+            </section>
+
+            <section className="l4-checkout-section" aria-labelledby="checkout-shipping-title">
+              <div className="l4-checkout-section-heading"><span>02</span><div><h2 id="checkout-shipping-title">Entrega</h2><p>Calcule o frete e preencha o endereço.</p></div></div>
+              {savedAddresses.length > 0 ? <div className="l4-checkout-saved-address">
+                <label>Endereço salvo
+                  <select value={selectedSavedAddressId} onChange={event => {
+                    const address = savedAddresses.find(item => item.id === event.target.value);
+                    setSelectedSavedAddressId(event.target.value);
+                    if (address) applySavedAddress(address);
+                  }}>
+                    <option value="">Preencher outro endereço</option>
+                    {savedAddresses.map(address => <option key={address.id} value={address.id}>{address.label}{address.isDefault ? " (principal)" : ""} — {address.street}, {address.number}</option>)}
+                  </select>
+                </label>
+                <p>Você pode trocar o endereço salvo ou editar os campos abaixo.</p>
+              </div> : null}
+              <div className="l4-checkout-cep-row">
+                <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
+                <button type="button" onClick={handleLookupCep} disabled={sanitizeCep(cep).length !== 8 || addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
+              </div>
+              <div id="checkout-shipping-status" className="l4-checkout-live" aria-live="polite">{addressLoading ? <p>Consultando endereço...</p> : shippingLoading ? <p>Calculando modalidades de entrega...</p> : shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
+              <div className="l4-checkout-fields l4-checkout-address-fields">
+                <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => setAddressStreet(event.target.value)} autoComplete="address-line1" /></label>
+                <label>Número<input value={addressNumber} onChange={event => setAddressNumber(event.target.value)} autoComplete="address-line2" /></label>
+                <label>Complemento <em>opcional</em><input value={addressComplement} onChange={event => setAddressComplement(event.target.value)} /></label>
+                <label>Bairro<input value={addressNeighborhood} onChange={event => setAddressNeighborhood(event.target.value)} autoComplete="address-level3" /></label>
+                <label>Cidade<input value={addressCity} onChange={event => setAddressCity(event.target.value)} autoComplete="address-level2" /></label>
+                <label>UF<input value={addressState} onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} /></label>
+              </div>
+              {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options" aria-busy={shippingLoading}>
+                {shippingOptions.map(option => <button key={option.id} type="button" className={selectedShippingId === option.id ? "is-selected" : ""} onClick={() => setSelectedShippingId(option.id)}>
+                  <span><strong>{option.label}</strong><small>{option.description} · {option.minDays} a {option.maxDays} dias úteis</small></span><strong>{formatPrice(option.price)}</strong>
+                </button>)}
+              </div> : null}
+              {selectedShipping ? <p className="l4-checkout-delivery-note">Previsão: <strong>{estimatedDateRange}</strong>, após a aprovação do pagamento.</p> : null}
+            </section>
+
+            <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
+              <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
+              <div className="l4-checkout-payment-methods">
+                {(["PIX", "CARD", "BOLETO"] as CheckoutMethod[]).map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => setCheckoutMethod(method)} aria-pressed={checkoutMethod === method}>
+                  <span className="l4-checkout-payment-icon" aria-hidden="true">{method === "PIX" ? <QrCode size={18} /> : method === "CARD" ? <CreditCard size={18} /> : <Barcode size={18} />}</span><span><strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small></span>
+                </button>)}
+              </div>
+              <p className="l4-checkout-payment-hint">{checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
+            </section>
+
+            <section className="l4-checkout-coupon">
+              <button type="button" onClick={() => setIsCouponOpen(value => !value)} aria-expanded={isCouponOpen}><span>Possui cupom de desconto?</span><ChevronDown size={17} className={isCouponOpen ? "is-open" : ""} /></button>
+              {isCouponOpen ? <div><label>Cupom<input value={couponCode} onChange={event => setCouponCode(event.target.value.toUpperCase())} placeholder="Digite o código" /></label><button type="button" onClick={() => void handleApplyCoupon()} disabled={validateCoupon.isPending}>{validateCoupon.isPending ? "Validando..." : "Aplicar"}</button>{appliedCouponCode ? <p aria-live="polite">Cupom {appliedCouponCode} aplicado.</p> : null}{couponError ? <p className="is-error" aria-live="polite">{couponError}</p> : null}</div> : null}
+            </section>
+
+            <section className="l4-checkout-finish">
+              <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
+              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData) || runtimeQuery.isLoading || checkoutAvailability?.available === false}>{checkoutAvailability?.available === false ? "Checkout indisponível" : createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
+              {!hasCompleteCheckoutData && !paymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
+              <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
+              {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
+            </section>
+
+            {paymentData ? <section className="l4-checkout-charge" aria-live="polite">
+              <strong>Cobrança {paymentData.method} gerada para o pedido #{paymentData.orderId}</strong>
+              {paymentData.method === "PIX" && paymentData.pixQrCode ? <img src={getPixQrCodeSource(paymentData.pixQrCode)} alt="QR Code PIX" /> : null}
+              {paymentData.method === "PIX" && paymentData.pixCopyPaste ? <><textarea readOnly value={paymentData.pixCopyPaste} /><button type="button" onClick={() => void handleCopyText(paymentData.pixCopyPaste)}>Copiar código PIX</button></> : null}
+              {paymentData.method === "BOLETO" && paymentData.digitableLine ? <><textarea readOnly value={paymentData.digitableLine} /><button type="button" onClick={() => void handleCopyText(paymentData.digitableLine)}>Copiar linha digitável</button></> : null}
+              {paymentData.invoiceUrl ? <a href={paymentData.invoiceUrl} target="_blank" rel="noreferrer">Abrir fatura no Asaas</a> : null}
+              {paymentData.method === "BOLETO" && paymentData.bankSlipUrl ? <a href={paymentData.bankSlipUrl} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
+            </section> : null}
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
-      {checkoutAvailability && !checkoutAvailability.available ? (
-        <div role="status" style={{ margin: "0 auto 24px", maxWidth: 1180, padding: "14px 18px", border: "1px solid #d4a72c", background: "#fff8dc", color: "#5f4700", borderRadius: 10 }}>
-          {checkoutAvailability.message}
-        </div>
-      ) : null}
       {/* Header */}
       <div style={{ ...styles.header, marginBottom: isMobile ? 28 : styles.header.marginBottom, paddingBottom: isMobile ? 20 : styles.header.paddingBottom }}>
         <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>
@@ -464,7 +718,7 @@ export default function Pagamento() {
           {paymentData
             ? `Pedido #${paymentData.orderId} em acompanhamento`
             : cart.items.length === 0
-            ? "Seu carrinho está vazio."
+            ? "Sua sacola está vazia."
             : `${cart.items.length} item${cart.items.length !== 1 ? "s" : ""} para finalizar`}
         </p>
       </div>
@@ -486,8 +740,9 @@ export default function Pagamento() {
                 isMobile ? (
                   <div key={getItemKey(item.product.id, item.selectedOptions)} style={styles.mobileCard}>
                     <div style={styles.mobileTopRow}>
-                      <div style={styles.mobileImageWrap}>
+                      <div className="l4-product-media-surface l4-product-media-surface--thumb" style={styles.mobileImageWrap}>
                         <img
+                          className="l4-product-media-image"
                           src={item.product.image}
                           alt={item.product.name}
                           style={styles.mobileImage}
@@ -499,7 +754,7 @@ export default function Pagamento() {
 
                       <div style={styles.mobileInfoCol}>
                         <h3 style={styles.mobileItemName}>{item.product.name}</h3>
-                        <p style={styles.mobileItemSub}>Materiais Escoteiros</p>
+                        <p style={styles.mobileItemSub}>Produtos L4CKOS</p>
                         {item.selectedOptions && (
                           <p style={styles.mobileItemSub}>{formatSelectedOptions(item.selectedOptions)}</p>
                         )}
@@ -559,8 +814,9 @@ export default function Pagamento() {
                         gap: styles.cartItem.gap,
                       }}
                     >
-                      <div style={styles.itemImageContainer}>
+                      <div className="l4-product-media-surface l4-product-media-surface--thumb" style={styles.itemImageContainer}>
                         <img
+                          className="l4-product-media-image"
                           src={item.product.image}
                           alt={item.product.name}
                           style={styles.itemImage}
@@ -572,7 +828,7 @@ export default function Pagamento() {
 
                       <div style={styles.itemDetails}>
                         <h3 style={styles.itemName}>{item.product.name}</h3>
-                        <p style={styles.itemCategory}>Materiais Escoteiros</p>
+                        <p style={styles.itemCategory}>Produtos L4CKOS</p>
                         {item.selectedOptions && (
                           <p style={styles.itemOptions}>{formatSelectedOptions(item.selectedOptions)}</p>
                         )}
@@ -870,9 +1126,9 @@ export default function Pagamento() {
                 onClick={() => {
                   void handleCheckout();
                 }}
-                disabled={createAsaasCharge.isPending || runtimeQuery.isLoading || checkoutAvailability?.available === false}
+                disabled={createAsaasCharge.isPending}
               >
-                {checkoutAvailability?.available === false ? "Checkout indisponível" : createAsaasCharge.isPending ? "Gerando cobrança..." : "Finalizar compra"}
+                {createAsaasCharge.isPending ? "Gerando cobrança..." : "Finalizar compra"}
               </button>
 
               <p style={styles.checkoutSupportText}>
@@ -981,7 +1237,7 @@ export default function Pagamento() {
               ) : null}
 
               <Link to="/carrinho" style={styles.continueShopping}>
-                Voltar ao Carrinho
+                Voltar à sacola
               </Link>
             </div>
 
@@ -1045,7 +1301,7 @@ export default function Pagamento() {
               <circle cx="19" cy="20" r="1"></circle>
             </svg>
           </div>
-          <h2 style={styles.emptyTitle}>Seu carrinho está vazio</h2>
+          <h2 style={styles.emptyTitle}>Sua sacola está vazia</h2>
           <p style={styles.emptyText}>
             Adicione alguns produtos para começar suas compras.
           </p>
@@ -1128,7 +1384,9 @@ const styles: Record<string, CSSProperties> = {
   mobileImage: {
     width: "100%",
     height: "100%",
-    objectFit: "cover",
+    objectFit: "contain",
+    objectPosition: "center",
+    background: "#080808",
   },
   mobileInfoCol: {
     flex: 1,
@@ -1223,7 +1481,9 @@ const styles: Record<string, CSSProperties> = {
   itemImage: {
     width: "100%",
     height: 100,
-    objectFit: "cover",
+    objectFit: "contain",
+    objectPosition: "center",
+    background: "#080808",
   },
   itemDetails: {
     paddingLeft: 8,
@@ -1750,8 +2010,4 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 16,
   },
 };
-
-
-
-
 

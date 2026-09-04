@@ -308,6 +308,7 @@ export default function ProductDetail() {
       >
         <div style={styles.leftColumn as CSSProperties}>
           <div
+            className="l4-product-media-surface"
             style={{
               ...styles.imageContainer,
               padding: isMobile ? 12 : styles.imageContainer.padding,
@@ -315,6 +316,7 @@ export default function ProductDetail() {
             } as CSSProperties}
           >
             <img
+              className="l4-product-media-image"
               src={selectedImage || product.image}
               alt={product.name}
               style={styles.productImage as CSSProperties}
@@ -338,6 +340,7 @@ export default function ProductDetail() {
                 <button
                   key={`${image.imageUrl}-${idx}`}
                   type="button"
+                  className="l4-product-media-surface l4-product-media-surface--thumb"
                   onClick={() => setSelectedImage(image.imageUrl)}
                   style={{
                     ...styles.thumbButton,
@@ -348,6 +351,7 @@ export default function ProductDetail() {
                   } as CSSProperties}
                 >
                   <img
+                    className="l4-product-media-image"
                     src={(image as any).imageThumbnailUrl || image.imageUrl}
                     alt={`Foto ${idx + 1}`}
                     style={styles.thumbImage as CSSProperties}
@@ -608,7 +612,7 @@ const styles: Record<string, CSSProperties> = {
   },
   imageContainer: {
     width: "100%",
-    background: "#f5f5f5",
+    background: "#080808",
     borderRadius: 12,
     overflow: "hidden",
     padding: 20,
@@ -631,11 +635,11 @@ const styles: Record<string, CSSProperties> = {
     width: 70,
     height: 70,
     borderRadius: 8,
-    border: "2px solid #d1d5db",
+    border: "2px solid #2b2b2b",
     overflow: "hidden",
     padding: 0,
     cursor: "pointer",
-    background: "#ffffff",
+    background: "#080808",
   },
   thumbButtonActive: {
     border: "2px solid #1a1a1a",
