@@ -15,6 +15,8 @@ import { trpc } from "../lib/trpc";
 import camisaFallback from "../images/camisa.png";
 import { getCategoryLabel } from "../lib/productCategories";
 import { resolveCatalogImageUrl, retryImageWithVersion } from "../lib/images";
+import { apiUrl } from "../const";
+import { csrfFetch } from "../lib/csrf";
 import { ProductReviews } from "../components/reviews/ProductReviews";
 import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
 
@@ -40,6 +42,24 @@ const purchaseHighlights = [
   "Frete e prazo são calculados conforme CEP e disponibilidade.",
   "Trocas e devoluções seguem a política publicada no site.",
 ];
+
+type ShippingOption = {
+  id: string;
+  label: string;
+  description: string;
+  price: number;
+  minDays: number;
+  maxDays: number;
+};
+
+function sanitizeCep(value: string) {
+  return value.replace(/\D/g, "").slice(0, 8);
+}
+
+function formatCep(value: string) {
+  const digits = sanitizeCep(value);
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits;
+}
 
 function normalizePrice(value: number) {
   return value / 100;
@@ -75,7 +95,7 @@ export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { addToCart } = useCart();
+  const { addToCart, closeCartDrawer } = useCart();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const { showToast } = useToast();
 
@@ -84,6 +104,10 @@ export default function ProductDetail() {
   const [quantity, setQuantity] = useState(1);
   const [showSelectionWarning, setShowSelectionWarning] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [cep, setCep] = useState("");
+  const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
+  const [shippingError, setShippingError] = useState("");
+  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
 
   const productId = id ? parseInt(id) : null;
   const productQuery = trpc.products.getById.useQuery(productId ?? 0, {
@@ -217,13 +241,15 @@ export default function ProductDetail() {
   );
   const hasVariants = product.variants.length > 0;
   const effectiveStock = hasVariants ? Number(selectedVariant?.stock ?? 0) : product.stock;
+  const effectivePrice = selectedVariant?.price ?? product.price;
+  const isProductUnavailable = !hasVariants && product.stock <= 0;
   const selectionsComplete = (!requiresColor || Boolean(selectedColor)) && (!requiresSize || Boolean(selectedSize));
   const canAddToCart = Boolean(selectionsComplete && effectiveStock > 0 && (!hasVariants || selectedVariant));
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-  }).format(product.price);
+  }).format(effectivePrice);
   if (requiresColor && !selectedColor) missingSelections.push("cor");
   if (requiresSize && !selectedSize) missingSelections.push("tamanho");
 
@@ -255,15 +281,68 @@ export default function ProductDetail() {
       ...(selectedColor ? [["cor", selectedColor]] : []),
       ...(selectedSize ? [["tamanho", selectedSize]] : []),
     ]);
-    addToCart(selectedVariant?.price ? { ...product, price: selectedVariant.price } : product, quantity, selectedOptions, selectedVariant?.id ?? null);
-    showToast({
-      message: `${product.name} adicionado ao carrinho (${quantity}x).`,
-      actionLabel: "Ver carrinho",
-      action: () => navigate("/carrinho"),
-      duration: 4500,
-    });
+    addToCart({ ...product, price: effectivePrice }, quantity, selectedOptions, selectedVariant?.id ?? null);
     setShowSelectionWarning(false);
     setQuantity(1);
+  };
+
+  const handleBuyNow = () => {
+    if (effectiveStock <= 0) {
+      showToast({ message: "Este produto está indisponível no momento.", duration: 3500 });
+      return;
+    }
+    if (!selectionsComplete) {
+      setShowSelectionWarning(true);
+      showToast({ message: `Selecione ${missingSelections.join(" e ")} antes de comprar.`, duration: 3500 });
+      return;
+    }
+    if (hasVariants && !selectedVariant) {
+      setShowSelectionWarning(true);
+      showToast({ message: "Esta combinação de cor e tamanho não está disponível.", duration: 3500 });
+      return;
+    }
+
+    const selectedOptions = Object.fromEntries([
+      ...(selectedColor ? [["cor", selectedColor]] : []),
+      ...(selectedSize ? [["tamanho", selectedSize]] : []),
+    ]);
+    addToCart({ ...product, price: effectivePrice }, quantity, selectedOptions, selectedVariant?.id ?? null);
+    setShowSelectionWarning(false);
+    closeCartDrawer();
+    navigate("/checkout");
+  };
+
+  const handleCalculateShipping = async () => {
+    const normalizedCep = sanitizeCep(cep);
+    setShippingError("");
+    if (normalizedCep.length !== 8) {
+      setShippingOptions([]);
+      setShippingError("Informe um CEP válido com 8 dígitos.");
+      return;
+    }
+
+    setIsCalculatingShipping(true);
+    try {
+      const response = await csrfFetch(apiUrl("/api/shipping/quote"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cep: normalizedCep,
+          itemCount: quantity,
+          subtotal: Number((effectivePrice * quantity).toFixed(2)),
+        }),
+      });
+      const data = (await response.json()) as { options?: ShippingOption[]; error?: string; message?: string; warning?: string };
+      if (!response.ok) throw new Error(data.error || data.message || "Não foi possível calcular o frete.");
+      setShippingOptions(data.options || []);
+      setShippingError(data.warning || "");
+    } catch (error) {
+      setShippingOptions([]);
+      setShippingError(error instanceof Error ? error.message : "Não foi possível calcular o frete.");
+    } finally {
+      setIsCalculatingShipping(false);
+    }
   };
 
   const handleAddToFavorites = () => {
@@ -313,6 +392,8 @@ export default function ProductDetail() {
               ...styles.imageContainer,
               padding: isMobile ? 12 : styles.imageContainer.padding,
               borderRadius: isMobile ? 16 : styles.imageContainer.borderRadius,
+              aspectRatio: isMobile ? "1 / 1" : styles.imageContainer.aspectRatio,
+              maxHeight: isMobile ? 560 : 720,
             } as CSSProperties}
           >
             <img
@@ -395,9 +476,45 @@ export default function ProductDetail() {
 
           <div style={styles.priceSection as CSSProperties}>
             <h2 style={{ ...styles.price, fontSize: isMobile ? 30 : styles.price.fontSize } as CSSProperties}>{formattedPrice}</h2>
-            <p style={styles.priceNote as CSSProperties}>
-              Frete e prazo calculados no checkout, conforme CEP e disponibilidade.
-            </p>
+            {product.description ? <p style={styles.priceDescription as CSSProperties}>{product.description}</p> : null}
+          </div>
+
+          <div style={styles.shippingEstimator as CSSProperties}>
+            <div>
+              <strong style={styles.shippingEstimatorTitle as CSSProperties}>Calcule o frete</strong>
+              <p style={styles.shippingEstimatorHint as CSSProperties}>Veja prazo e valor para o seu CEP antes de comprar.</p>
+            </div>
+            <div style={styles.shippingInputRow as CSSProperties}>
+              <input
+                value={formatCep(cep)}
+                onChange={(event) => setCep(sanitizeCep(event.target.value))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleCalculateShipping();
+                }}
+                placeholder="Seu CEP"
+                inputMode="numeric"
+                autoComplete="postal-code"
+                aria-label="CEP para calcular frete"
+                style={styles.shippingInput as CSSProperties}
+              />
+              <button type="button" onClick={handleCalculateShipping} disabled={isCalculatingShipping} style={styles.shippingCalcButton as CSSProperties}>
+                {isCalculatingShipping ? "Calculando..." : "Calcular"}
+              </button>
+            </div>
+            {shippingError ? <p style={styles.shippingMessage as CSSProperties}>{shippingError}</p> : null}
+            {shippingOptions.length > 0 ? (
+              <div style={styles.shippingResults as CSSProperties}>
+                {shippingOptions.map((option) => (
+                  <div key={option.id} style={styles.shippingResult as CSSProperties}>
+                    <div style={styles.shippingResultInfo as CSSProperties}>
+                      <strong>{option.label}</strong>
+                      <span style={styles.shippingResultDeadline as CSSProperties}>{option.minDays} a {option.maxDays} dias úteis</span>
+                    </div>
+                    <strong>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(option.price)}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div style={styles.trustPanel as CSSProperties}>
@@ -414,27 +531,36 @@ export default function ProductDetail() {
           <div style={styles.sectionBlock as CSSProperties}>
             <h3 style={styles.sectionTitle as CSSProperties}>Cores disponíveis</h3>
             <div style={styles.colorGrid as CSSProperties}>
-              {colorOptions.map((color) => (
-                <button
-                  key={color.name}
-                  onClick={() => setSelectedColor(color.name)}
-                  style={{
-                    ...styles.colorOption,
-                    background: color.hex,
-                    border: selectedColor === color.name
-                      ? "3px solid #1a1a1a"
-                      : "2px solid #e0e0e0",
-                  } as CSSProperties}
-                  title={color.name}
-                >
-                  {selectedColor === color.name && (
-                    <span style={styles.colorCheckmark as CSSProperties}>✓</span>
-                  )}
-                </button>
-              ))}
+              {colorOptions.map((color) => {
+                const isSelected = selectedColor === color.name;
+                const isLightColor = ["#ffffff", "#fff", "#f5f5f5", "#d1d5db"].includes(color.hex.toLowerCase());
+                return (
+                  <button
+                    key={color.name}
+                    type="button"
+                    onClick={() => setSelectedColor(color.name)}
+                    aria-pressed={isSelected}
+                    aria-label={`Selecionar cor ${color.name}`}
+                    style={{
+                      ...styles.colorOption,
+                      background: color.hex,
+                      border: isSelected ? "3px solid #e8002a" : "2px solid #4b5563",
+                      boxShadow: isSelected
+                        ? "0 0 0 4px rgba(232, 0, 42, 0.28), 0 0 0 7px rgba(240, 237, 232, 0.16)"
+                        : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
+                      transform: isSelected ? "translateY(-2px) scale(1.04)" : "none",
+                    } as CSSProperties}
+                    title={color.name}
+                  >
+                    {isSelected && (
+                      <span style={{ ...styles.colorCheckmark, color: isLightColor ? "#080808" : "#ffffff", textShadow: isLightColor ? "0 1px 0 rgba(255,255,255,0.55)" : "0 1px 5px rgba(0,0,0,0.85)" } as CSSProperties}>✓</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
-              Selecionado: <strong>{selectedColor || "Nenhuma cor"}</strong>
+              Selecionado: <strong style={selectedColor ? styles.selectedValue : undefined}>{selectedColor || "Nenhuma cor"}</strong>
             </p>
           </div>
 
@@ -450,11 +576,16 @@ export default function ProductDetail() {
               {sizeOptions.map((size) => (
                 <button
                   key={size}
+                  type="button"
                   onClick={() => setSelectedSize(size)}
+                  aria-pressed={selectedSize === size}
                   style={{
                     ...styles.sizeOption,
-                    background: selectedSize === size ? "#1a1a1a" : "white",
-                    color: selectedSize === size ? "white" : "#1a1a1a",
+                    background: selectedSize === size ? "#e8002a" : "#111111",
+                    color: selectedSize === size ? "#ffffff" : "#f0ede8",
+                    border: selectedSize === size ? "2px solid #ff4966" : styles.sizeOption.border,
+                    boxShadow: selectedSize === size ? "0 0 0 4px rgba(232, 0, 42, 0.22), inset 0 -2px 0 rgba(0,0,0,0.22)" : "none",
+                    transform: selectedSize === size ? "translateY(-2px)" : "none",
                   } as CSSProperties}
                 >
                   {size}
@@ -462,7 +593,7 @@ export default function ProductDetail() {
               ))}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
-              Selecionado: <strong>{selectedSize || "Nenhum tamanho"}</strong>
+              Selecionado: <strong style={selectedSize ? styles.selectedValue : undefined}>{selectedSize || "Nenhum tamanho"}</strong>
             </p>
           </div>
 
@@ -472,26 +603,26 @@ export default function ProductDetail() {
               <button
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={product.stock <= 0}
+                disabled={effectiveStock <= 0}
               >
                 -
               </button>
               <input
                 type="number"
                 min="1"
-                 max={product.stock > 0 ? product.stock : 1}
+                 max={effectiveStock > 0 ? effectiveStock : 1}
                 value={quantity}
                  onChange={(e) =>
                    setQuantity(
-                     Math.min(product.stock > 0 ? product.stock : 1, Math.max(1, parseInt(e.target.value) || 1))
+                     Math.min(effectiveStock > 0 ? effectiveStock : 1, Math.max(1, parseInt(e.target.value) || 1))
                    )
                  }
                 style={styles.quantityInput as CSSProperties}
               />
               <button
-                onClick={() => setQuantity(Math.min(product.stock > 0 ? product.stock : 1, quantity + 1))}
+                onClick={() => setQuantity(Math.min(effectiveStock > 0 ? effectiveStock : 1, quantity + 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={product.stock <= 0}
+                disabled={effectiveStock <= 0}
               >
                 +
               </button>
@@ -516,29 +647,36 @@ export default function ProductDetail() {
             } as CSSProperties}
           >
             <button
-              onClick={handleAddToCart}
-              style={styles.addToCartBtn as CSSProperties}
-              disabled={product.stock <= 0}
+              onClick={handleBuyNow}
+              style={styles.buyNowBtn as CSSProperties}
+              disabled={isProductUnavailable}
               onMouseEnter={(e) => {
-                if (product.stock <= 0) return;
+                if (isProductUnavailable) return;
                 const btn = e.currentTarget as HTMLElement;
                 btn.style.transform = "scale(1.02)";
                 btn.style.boxShadow = "0 12px 24px rgba(26,26,26,0.3)";
               }}
               onMouseLeave={(e) => {
-                if (product.stock <= 0) return;
+                if (isProductUnavailable) return;
                 const btn = e.currentTarget as HTMLElement;
                 btn.style.transform = "scale(1)";
                 btn.style.boxShadow = "0 4px 12px rgba(26,26,26,0.2)";
               }}
             >
-              {product.stock > 0 ? "Adicionar ao carrinho" : "Indisponível"}
+              {isProductUnavailable ? "Indisponível" : "Comprar agora"}
+            </button>
+            <button
+              onClick={handleAddToCart}
+              style={styles.addToCartBtn as CSSProperties}
+              disabled={isProductUnavailable}
+            >
+              Adicionar à sacola
             </button>
           </div>
 
           {showSelectionWarning && !canAddToCart && (
             <p style={styles.selectionWarning as CSSProperties}>
-              Selecione {missingSelections.join(" e ")} antes de adicionar ao carrinho.
+              Selecione {missingSelections.join(" e ")} antes de continuar.
             </p>
           )}
 
@@ -552,21 +690,14 @@ export default function ProductDetail() {
             </Link>
           </div>
 
-          <div style={styles.descriptionSection as CSSProperties}>
-            <h3 style={styles.sectionTitle as CSSProperties}>Descrição do produto</h3>
-            <p style={styles.description as CSSProperties}>
-              {product.description}
-            </p>
-          </div>
-
-          {product.stock >= 0 && (
+          {effectiveStock >= 0 && (
             <div style={styles.stockInfo as CSSProperties}>
               <span style={{
-                color: product.stock > 5 ? "#86efac" : product.stock > 0 ? "#facc15" : "#f87171"
+                color: effectiveStock > 5 ? "#86efac" : effectiveStock > 0 ? "#facc15" : "#f87171"
               }}>
-                {product.stock > 5
+                {effectiveStock > 5
                   ? "Disponível para compra"
-                  : product.stock > 0
+                  : effectiveStock > 0
                     ? "Estoque reduzido"
                     : "Indisponível no momento"}
               </span>
@@ -616,7 +747,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     overflow: "hidden",
     padding: 20,
-    aspectRatio: "1",
+    aspectRatio: "4 / 5",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -647,7 +778,9 @@ const styles: Record<string, CSSProperties> = {
   thumbImage: {
     width: "100%",
     height: "100%",
-    objectFit: "cover",
+    objectFit: "contain",
+    objectPosition: "center",
+    display: "block",
   },
   rightColumn: {
     paddingTop: 12,
@@ -696,7 +829,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#666",
   },
   priceSection: {
-    marginBottom: 32,
+    marginBottom: 20,
   },
   price: {
     fontSize: 36,
@@ -705,12 +838,70 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     marginBottom: 8,
   },
-  priceNote: {
-    fontSize: 13,
-    color: "#9ca3af",
+  priceDescription: {
     margin: 0,
-    fontWeight: 600,
+    color: "#d1d5db",
+    fontSize: 14,
+    lineHeight: 1.6,
   },
+  shippingEstimator: {
+    marginBottom: 28,
+    padding: "16px 18px",
+    borderRadius: 10,
+    background: "#111111",
+    border: "1px solid #2a2a2a",
+  },
+  shippingEstimatorTitle: {
+    display: "block",
+    color: "#f0ede8",
+    fontSize: 14,
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.4px",
+  },
+  shippingEstimatorHint: {
+    margin: "5px 0 14px",
+    color: "#c8c1ba",
+    fontSize: 13,
+    lineHeight: 1.45,
+  },
+  shippingInputRow: { display: "flex", gap: 10 },
+  shippingInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: "11px 12px",
+    border: "1px solid #3a3a3a",
+    borderRadius: 8,
+    color: "#f0ede8",
+    background: "#080808",
+    fontSize: 14,
+  },
+  shippingCalcButton: {
+    border: "none",
+    borderRadius: 8,
+    padding: "11px 16px",
+    background: "#f0ede8",
+    color: "#111111",
+    fontWeight: 800,
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  shippingMessage: { margin: "12px 0 0", color: "#facc15", fontSize: 12, lineHeight: 1.45 },
+  shippingResults: { display: "grid", gap: 8, marginTop: 12 },
+  shippingResult: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "10px 12px",
+    background: "#080808",
+    border: "1px solid #2a2a2a",
+    borderRadius: 8,
+    color: "#f0ede8",
+    fontSize: 13,
+  },
+  shippingResultInfo: { display: "grid", gap: 3 },
+  shippingResultDeadline: { color: "#c8c1ba", fontSize: 12 },
   trustPanel: {
     marginBottom: 28,
     padding: "18px 18px 16px",
@@ -755,20 +946,22 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
   },
   colorOption: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: 8,
     cursor: "pointer",
-    transition: "all 0.2s ease",
+    transition: "border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    flex: "0 0 auto",
   },
   colorCheckmark: {
     color: "#ffffff",
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
     textShadow: "0 0 4px rgba(0,0,0,0.5)",
+    lineHeight: 1,
   },
   sizeGrid: {
     display: "grid",
@@ -778,17 +971,26 @@ const styles: Record<string, CSSProperties> = {
   },
   sizeOption: {
     padding: 12,
-    border: "2px solid #e0e0e0",
+    border: "2px solid #333333",
     borderRadius: 8,
     cursor: "pointer",
-    fontWeight: 700,
-    fontSize: 13,
-    transition: "all 0.2s ease",
+    fontWeight: 900,
+    fontSize: 14,
+    minHeight: 48,
+    transition: "border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease",
   },
   selectedLabel: {
     fontSize: 13,
-    color: "#9ca3af",
+    color: "#c8c1ba",
     margin: 0,
+  },
+  selectedValue: {
+    color: "#ffffff",
+    background: "rgba(232, 0, 42, 0.18)",
+    border: "1px solid rgba(232, 0, 42, 0.42)",
+    borderRadius: 6,
+    padding: "3px 7px",
+    marginLeft: 4,
   },
   quantityControl: {
     display: "flex",
@@ -832,6 +1034,19 @@ const styles: Record<string, CSSProperties> = {
     background: "transparent",
     borderTop: "none",
     boxShadow: "none",
+  },
+  buyNowBtn: {
+    flex: 1,
+    padding: "14px 24px",
+    background: "#f0ede8",
+    color: "#111111",
+    border: "none",
+    borderRadius: 8,
+    fontSize: 15,
+    fontWeight: 800,
+    cursor: "pointer",
+    transition: "all 0.3s ease",
+    boxShadow: "0 4px 12px rgba(240,237,232,0.14)",
   },
   addToCartBtn: {
     flex: 1,

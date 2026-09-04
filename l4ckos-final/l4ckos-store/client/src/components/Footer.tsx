@@ -1,5 +1,5 @@
 ﻿import { Link } from "react-router-dom";
-import { Instagram, Mail, MessageCircle } from "lucide-react";
+import { Instagram, Mail } from "lucide-react";
 import { openCookiePreferences } from "./CookiePreferences";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Footer.css";
@@ -19,10 +19,6 @@ export default function Footer() {
             <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
               <Instagram size={14} />
               <span>Instagram</span>
-            </a>
-            <a href="https://wa.me/5561998030913" target="_blank" rel="noreferrer" aria-label="WhatsApp L4ckos">
-              <MessageCircle size={14} />
-              <span>WhatsApp</span>
             </a>
             <a href="mailto:contato@l4ckos.com.br" aria-label="E-mail L4ckos">
               <Mail size={14} />
@@ -47,7 +43,6 @@ export default function Footer() {
             <li><Link to="/meus-pedidos">Meus pedidos</Link></li>
             <li><Link to="/acompanhar-pedido">Rastrear pedido</Link></li>
             <li><Link to="/trocas-e-devolucoes">Trocas e devoluções</Link></li>
-            <li><Link to="/faqs">FAQ</Link></li>
             <li><Link to="/contato">Contato</Link></li>
           </ul>
         </div>

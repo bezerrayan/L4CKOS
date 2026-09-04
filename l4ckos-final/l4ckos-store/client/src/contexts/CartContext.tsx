@@ -86,6 +86,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       // Senão, adiciona novo
       return [...prev, { product, variantId: variantId ?? null, quantity, selectedOptions, addedAt: new Date() }];
     });
+    setIsCartDrawerOpen(true);
   }, []);
 
   // 📌 Remover produto do carrinho
