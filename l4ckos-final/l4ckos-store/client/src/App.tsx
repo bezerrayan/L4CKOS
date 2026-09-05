@@ -113,6 +113,7 @@ function AppRoutes() {
             <Route path="/meus-pedidos/:id" element={<PedidoDetalhe />} />
             <Route path="/acompanhar-pedido" element={<AcompanharPedido />} />
             <Route path="/admin" element={<AdminRoute />} />
+            <Route path="/gestao" element={<AdminRoute />} />
             <Route path="/sobre" element={<Sobre />} />
             <Route path="/contato" element={<Contato />} />
             <Route path="/faqs" element={<FAQs />} />

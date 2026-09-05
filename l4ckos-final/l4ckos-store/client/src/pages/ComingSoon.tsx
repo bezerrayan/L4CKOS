@@ -237,7 +237,7 @@ export default function ComingSoon() {
             (c) 2026 <em>L4CKOS</em>
           </div>
           <div className="socials">
-            <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
+            <a href="https://www.instagram.com/l4ckosstore/" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
               <Instagram size={14} />
               <span>Instagram</span>
             </a>

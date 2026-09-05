@@ -38,7 +38,8 @@ type Section =
   | "reviews"
   | "reports"
   | "audit"
-  | "backup";
+  | "backup"
+  | "settings";
 
 const orderStatuses = ["pending", "paid", "processing", "shipped", "delivered", "cancelled"] as const;
 const adminFulfillmentActions = ["processing", "shipped", "delivered", "cancelled"] as const;
@@ -724,11 +725,12 @@ export default function Admin() {
           { key: "products", label: "Produtos" },
           { key: "promos", label: "Promoções" },
           { key: "orders", label: "Pedidos" },
-          { key: "coupons", label: "Cupons" },
           { key: "reviews", label: "Avaliações" },
+          { key: "coupons", label: "Cupons" },
           { key: "reports", label: "Relatórios" },
           { key: "audit", label: "Auditoria" },
           { key: "backup", label: "Backup" },
+          { key: "settings", label: "Configurações" },
         ].map(tab => (
           <button
             key={tab.key}
@@ -741,7 +743,22 @@ export default function Admin() {
       </div>
 
       {section === "overview" && (
-        <AdminDashboard>
+        <AdminDashboard
+          dashboardData={dashboardQuery.data}
+          isMobile={isMobile}
+          isCompact={isCompactAdmin}
+          orders={orders}
+          products={products}
+          promoBanners={promoBannersQuery.data ?? []}
+          coupons={couponsQuery.data ?? []}
+          recentAudit={recentAudit}
+          quickActions={quickActions}
+          ordersLoading={ordersQuery.isLoading}
+          productsLoading={productsQuery.isLoading}
+          inventoryExceptions={inventoryExceptionsQuery.data?.length ?? 0}
+          onViewOrder={orderId => { setSelectedOrderId(orderId); setSection("orders"); }}
+          onViewProduct={product => { setProductSearch(product.name ?? String(product.id)); setSection("products"); }}
+        >
           <div style={styles.dashboardStack}>
           <AdminStatsGrid
             style={{
@@ -2515,6 +2532,30 @@ export default function Admin() {
           )}
         </AdminSurface>
         </AdminSystemUI>
+      )}
+
+      {section === "settings" && (
+        <AdminSettingsUI>
+          <AdminSurface
+            title="Configurações"
+            description="Central informativa. Configurações de infraestrutura, credenciais e pagamentos permanecem exclusivamente no ambiente seguro."
+          >
+            <div style={styles.dashboardColumns}>
+              <div style={styles.systemStatusList}>
+                <strong style={styles.sectionTitle}>Operação disponível no painel</strong>
+                <button style={styles.smallBtn} onClick={() => setSection("products")}>Catálogo, estoque e variantes</button>
+                <button style={styles.smallBtn} onClick={() => setSection("promos")}>Banners e promoções</button>
+                <button style={styles.smallBtn} onClick={() => setSection("coupons")}>Cupons</button>
+                <button style={styles.smallBtn} onClick={() => setSection("orders")}>Pedidos e rastreio</button>
+              </div>
+              <div style={styles.systemStatusList}>
+                <strong style={styles.sectionTitle}>Limites de segurança</strong>
+                <span style={styles.muted}>Pagamentos, webhooks, credenciais, banco, OAuth e e-mail não são editáveis pelo painel.</span>
+                <span style={styles.muted}>Ações administrativas continuam registradas em auditoria; confirmação manual de pagamento não é exposta na UI.</span>
+              </div>
+            </div>
+          </AdminSurface>
+        </AdminSettingsUI>
       )}
     </div>
   );

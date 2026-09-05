@@ -16,7 +16,7 @@ export default function Footer() {
             Marca brasileira independente que une identidade urbana, movimento e espírito de aventura.
           </p>
           <div className="l4-footer-socials" aria-label="Redes sociais">
-            <a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
+            <a href="https://www.instagram.com/l4ckosstore/" target="_blank" rel="noreferrer" aria-label="Instagram L4ckos">
               <Instagram size={14} />
               <span>Instagram</span>
             </a>
@@ -51,7 +51,7 @@ export default function Footer() {
           <h4>Marca</h4>
           <ul>
             <li><Link to="/sobre">Sobre a L4CKOS</Link></li>
-            <li><a href="https://instagram.com/l4ckos" target="_blank" rel="noreferrer">Instagram</a></li>
+            <li><a href="https://www.instagram.com/l4ckosstore/" target="_blank" rel="noreferrer">Instagram</a></li>
           </ul>
         </div>
 

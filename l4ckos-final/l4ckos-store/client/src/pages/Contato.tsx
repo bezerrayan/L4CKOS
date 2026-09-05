@@ -3,6 +3,8 @@
  */
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Clock, Mail } from "lucide-react";
 import { useToast } from "../contexts/ToastContext";
 import type { CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -14,14 +16,20 @@ function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 }
 
+const allowedSubjects = ["produto", "pedido_pagamento", "entrega_rastreamento", "troca_devolucao", "privacidade", "parcerias", "outro"] as const;
+type ContactSubject = typeof allowedSubjects[number];
+const getSafeSubject = (value: string | null): ContactSubject => allowedSubjects.includes(value as ContactSubject) ? value as ContactSubject : "produto";
+
 export default function Contato() {
   const isMobile = useIsMobile();
+  const [searchParams] = useSearchParams();
   const { showToast } = useToast();
+  const initialSubject = getSafeSubject(searchParams.get("assunto"));
   const [formData, setFormData] = useState({
     nome: "",
     email: "",
     telefone: "",
-    assunto: "duvida",
+    assunto: initialSubject,
     mensagem: "",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -73,6 +81,7 @@ export default function Contato() {
         body: JSON.stringify({
           name: formData.nome,
           email: normalizedEmail,
+          phone: formData.telefone,
           subject: formData.assunto,
           message: formData.mensagem,
         }),
@@ -95,7 +104,7 @@ export default function Contato() {
         nome: "",
         email: "",
         telefone: "",
-        assunto: "duvida",
+        assunto: "produto",
         mensagem: "",
       });
     } catch (error) {
@@ -139,7 +148,7 @@ export default function Contato() {
           <h2 style={styles.sectionTitle}>Canais de Atendimento</h2>
 
           <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>@</div>
+            <div style={styles.infoIcon as CSSProperties}><Mail size={20} aria-hidden="true" /></div>
             <div>
               <h3 style={styles.infoTitle}>E-mail</h3>
               <p style={styles.infoText}>contato@l4ckos.com.br</p>
@@ -148,31 +157,11 @@ export default function Contato() {
           </div>
 
           <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>W</div>
-            <div>
-              <h3 style={styles.infoTitle}>WhatsApp</h3>
-              <p style={styles.infoText}>+55 (61) 99803-0913</p>
-              <p style={styles.infoCaption}>Atendimento direto para orientações e acompanhamento.</p>
-            </div>
-          </div>
-
-          <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>◷</div>
+            <div style={styles.infoIcon as CSSProperties}><Clock size={20} aria-hidden="true" /></div>
             <div>
               <h3 style={styles.infoTitle}>Prazo de resposta</h3>
               <p style={styles.infoText}>Atendimento em dias úteis</p>
-              <p style={styles.infoCaption}>Buscamos responder em até 1 dia útil.</p>
-            </div>
-          </div>
-
-          <div style={styles.infoCard as CSSProperties}>
-            <div style={styles.infoIcon as CSSProperties}>◎</div>
-            <div>
-              <h3 style={styles.infoTitle}>Cobertura</h3>
-              <p style={styles.infoText}>Atendimento online em todo o Brasil</p>
-              <p style={styles.infoCaption}>
-                Para agilizar o suporte, informe o número do pedido quando aplicável.
-              </p>
+              <p style={styles.infoCaption}>Buscamos responder em até 2 dias úteis.</p>
             </div>
           </div>
         </div>
@@ -182,7 +171,7 @@ export default function Contato() {
 
           <form onSubmit={handleSubmit} style={styles.form as CSSProperties}>
             {formError ? (
-              <div style={styles.formAlert as CSSProperties}>
+              <div style={styles.formAlert as CSSProperties} role="alert" aria-live="polite">
                 <strong style={styles.formAlertTitle as CSSProperties}>{formError.message}</strong>
                 {formError.details.length > 0 ? (
                   <ul style={styles.formAlertList as CSSProperties}>
@@ -235,7 +224,7 @@ export default function Contato() {
                 name="telefone"
                 value={formData.telefone}
                 onChange={handleChange}
-                placeholder="(61) 99803-0913"
+                placeholder="Opcional"
                 style={styles.input as CSSProperties}
                 disabled={isSubmitting}
               />
@@ -253,12 +242,12 @@ export default function Contato() {
                 style={styles.input as CSSProperties}
                 disabled={isSubmitting}
               >
-                <option value="duvida">Dúvida sobre produtos</option>
-                <option value="pedido">Dúvida sobre pedido</option>
-                <option value="entrega">Dúvida sobre entrega</option>
-                <option value="devolucao">Trocas e devoluções</option>
-                <option value="sugestao">Sugestão</option>
-                <option value="reclamacao">Reclamação</option>
+                <option value="produto">Dúvida sobre produto</option>
+                <option value="pedido_pagamento">Pedido e pagamento</option>
+                <option value="entrega_rastreamento">Entrega e rastreamento</option>
+                <option value="troca_devolucao">Troca ou devolução</option>
+                <option value="privacidade">Privacidade e dados pessoais</option>
+                <option value="parcerias">Parcerias</option>
                 <option value="outro">Outro assunto</option>
               </select>
             </div>
@@ -289,13 +278,13 @@ export default function Contato() {
                 if (!isSubmitting) {
                   (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
                   (e.currentTarget as HTMLElement).style.boxShadow =
-                    "0 8px 20px rgba(26,26,26,0.2)";
+                  "0 8px 20px rgba(232,0,42,0.28)";
                 }
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
                 (e.currentTarget as HTMLElement).style.boxShadow =
-                  "0 4px 12px rgba(26,26,26,0.1)";
+                  "0 4px 12px rgba(232,0,42,0.18)";
               }}
             >
               {isSubmitting ? "Enviando..." : "Enviar mensagem"}
@@ -439,7 +428,7 @@ const styles: Record<string, CSSProperties> = {
   },
   submitButton: {
     padding: "14px 32px",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    background: "#e8002a",
     color: "white",
     border: "none",
     borderRadius: 8,
