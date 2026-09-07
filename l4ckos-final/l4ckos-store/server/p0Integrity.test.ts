@@ -5,10 +5,17 @@ import {
   claimPaymentCreation,
   completePaymentCreation,
   createCheckoutOrderAtomically,
+  getDashboardKpis,
+  getProductByIdWithDetails,
+  getProducts,
+  getProductsAdmin,
   getCheckoutByAttempt,
   markNotificationFailed,
   markPaymentCreationUnknown,
   processAsaasPaymentEvent,
+  releaseExpiredStockReservations,
+  replaceProductVariants,
+  updateProduct,
 } from "./db";
 import { buildCheckoutFingerprint } from "./services/checkoutIntegrity";
 import { quoteShippingDetailed } from "./services/shippingService";
@@ -25,7 +32,7 @@ async function cleanDatabase() {
   }
 }
 
-async function seedProduct(options: { stock?: number; variant?: boolean } = {}) {
+async function seedProduct(options: { stock?: number; variant?: boolean; variantStock?: number } = {}) {
   const stock = options.stock ?? 1;
   const [userResult] = await connection.query<any>("INSERT INTO users (openId, name, email) VALUES (?, ?, ?)", [`p0-user-${crypto.randomUUID()}`, "Cliente P0", "p0@example.test"]);
   const [productResult] = await connection.query<any>("INSERT INTO products (name, category, price, stock, optionColors, optionSizes) VALUES (?, ?, ?, ?, ?, ?)", ["Camiseta original", "vestuario", 9990, stock, options.variant ? JSON.stringify(["Verde"]) : null, options.variant ? JSON.stringify(["M"]) : null]);
@@ -33,7 +40,7 @@ async function seedProduct(options: { stock?: number; variant?: boolean } = {}) 
   const productId = Number(productResult.insertId);
   let variantId: number | null = null;
   if (options.variant) {
-    const [variantResult] = await connection.query<any>("INSERT INTO productVariants (productId, name, sku, size, color, optionKey, price, stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [productId, "Camiseta Verde M", "CAM-VERDE-M", "M", "Verde", "size:m|color:verde", 10990, stock]);
+    const [variantResult] = await connection.query<any>("INSERT INTO productVariants (productId, name, sku, size, color, optionKey, price, stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [productId, "Camiseta Verde M", "CAM-VERDE-M", "M", "Verde", "size:m|color:verde", 10990, options.variantStock ?? stock]);
     variantId = Number(variantResult.insertId);
   }
   return { userId, productId, variantId };
@@ -231,6 +238,77 @@ describe.runIf(canRunDatabaseTests)("P0 order/payment integrity (MySQL integrati
     await Promise.allSettled([createCheckoutOrderAtomically(checkoutInput(seed)), createCheckoutOrderAtomically(checkoutInput(seed))]);
     const [rows] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
     expect(rows[0].stock).toBeGreaterThanOrEqual(0);
+  });
+
+  it("7b. variante é a fonte de verdade e sincroniza o agregado do produto", async () => {
+    const seed = await seedProduct({ stock: 0, variant: true, variantStock: 1 });
+    await expect(createCheckoutOrderAtomically(checkoutInput(seed))).resolves.toMatchObject({ reused: false });
+    const [variants] = await connection.query<any[]>("SELECT stock FROM productVariants WHERE id = ?", [seed.variantId]);
+    const [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(variants[0].stock).toBe(0);
+    expect(products[0].stock).toBe(0);
+  });
+
+  it("7c. concorrência da última unidade de variante não faz oversell", async () => {
+    const seed = await seedProduct({ stock: 0, variant: true, variantStock: 1 });
+    const results = await Promise.allSettled([
+      createCheckoutOrderAtomically(checkoutInput(seed)),
+      createCheckoutOrderAtomically(checkoutInput(seed)),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    const [variants] = await connection.query<any[]>("SELECT stock FROM productVariants WHERE id = ?", [seed.variantId]);
+    const [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(variants[0].stock).toBe(0);
+    expect(products[0].stock).toBe(0);
+  });
+
+  it("7d. liberação de reserva restaura variante e agregado de forma coerente", async () => {
+    const seed = await seedProduct({ stock: 0, variant: true, variantStock: 2 });
+    const checkout = await createCheckoutOrderAtomically(checkoutInput(seed));
+    await connection.query("UPDATE stockReservations SET expiresAt = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE orderId = ?", [checkout.order.id]);
+    await releaseExpiredStockReservations(new Date());
+    const [variants] = await connection.query<any[]>("SELECT stock FROM productVariants WHERE id = ?", [seed.variantId]);
+    const [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(variants[0].stock).toBe(2);
+    expect(products[0].stock).toBe(2);
+  });
+
+  it("7e. leituras públicas e admin derivam estoque variantado mesmo com agregado legado stale", async () => {
+    const seed = await seedProduct({ stock: 0, variant: true, variantStock: 6 });
+    const [catalogProduct] = (await getProducts()).filter(product => product.id === seed.productId);
+    const detail = await getProductByIdWithDetails(seed.productId);
+    const [adminProduct] = (await getProductsAdmin()).filter(product => product.id === seed.productId);
+    const dashboard = await getDashboardKpis();
+    expect(catalogProduct?.stock).toBe(6);
+    expect(detail?.stock).toBe(6);
+    expect(adminProduct?.stock).toBe(6);
+    expect(dashboard.lowStockCount).toBe(0);
+  });
+
+  it("7f. substituição administrativa de variantes mantém o agregado coerente em todas as transições", async () => {
+    const seed = await seedProduct({ stock: 9 });
+    await replaceProductVariants(seed.productId, [
+      { name: "Azul P", sku: "AZ-P", color: "Azul", size: "P", stock: 2 },
+      { name: "Azul M", sku: "AZ-M", color: "Azul", size: "M", stock: 3 },
+    ]);
+    let [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(products[0].stock).toBe(5);
+
+    await updateProduct(seed.productId, { stock: 999 });
+    [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(products[0].stock).toBe(5);
+
+    await replaceProductVariants(seed.productId, [
+      { name: "Preto G", sku: "PT-G", color: "Preto", size: "G", stock: 0 },
+    ]);
+    [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(products[0].stock).toBe(0);
+
+    await replaceProductVariants(seed.productId, []);
+    await updateProduct(seed.productId, { stock: 7 });
+    [products] = await connection.query<any[]>("SELECT stock FROM products WHERE id = ?", [seed.productId]);
+    expect(products[0].stock).toBe(7);
   });
 
   it("8. checkout idêntico repetido retorna mesmo pedido", async () => {

@@ -318,13 +318,13 @@ export default function Pagamento() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart.total, cart.itemCount]);
 
-  const getItemKey = (productId: number, selectedOptions?: Record<string, string>) => {
-    if (!selectedOptions) return `${productId}`;
+  const getItemKey = (productId: number, selectedOptions?: Record<string, string>, variantId?: number | null) => {
+    if (!selectedOptions) return `${productId}-${variantId ?? "base"}`;
     const optionString = Object.entries(selectedOptions)
       .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
       .map(([key, value]) => `${key}:${value}`)
       .join("|");
-    return `${productId}-${optionString}`;
+    return `${productId}-${variantId ?? "base"}-${optionString}`;
   };
 
   const formatSelectedOptions = (selectedOptions?: Record<string, string>) => {
@@ -644,16 +644,16 @@ export default function Pagamento() {
               <div id="checkout-order-summary" className="l4-checkout-summary-content">
                 <div className="l4-checkout-summary-items">
                   {cart.items.map(item => (
-                    <article key={getItemKey(item.product.id, item.selectedOptions)} className="l4-checkout-summary-item">
+                    <article key={getItemKey(item.product.id, item.selectedOptions, item.variantId)} className="l4-checkout-summary-item">
                       <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={item.product.imageThumbnailUrl || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
                       <div>
                         <div className="l4-checkout-item-title"><h3>{item.product.name}</h3><strong>{formatPrice(item.product.price * item.quantity)}</strong></div>
                         {item.selectedOptions ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}
                         <div className="l4-checkout-item-controls">
-                          <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions, item.variantId)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
                           <span>{item.quantity}</span>
-                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
-                          <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variantId)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
+                          <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variantId)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
                         </div>
                       </div>
                     </article>
@@ -827,7 +827,8 @@ export default function Pagamento() {
                             updateQuantity(
                               item.product.id,
                               Math.max(1, item.quantity - 1),
-                              item.selectedOptions
+                              item.selectedOptions,
+                              item.variantId
                             )
                           }
                         >
@@ -837,7 +838,7 @@ export default function Pagamento() {
                         <button
                           style={styles.mobileQtyBtn}
                           onClick={() =>
-                            updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)
+                            updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variantId)
                           }
                         >
                           +
@@ -846,7 +847,7 @@ export default function Pagamento() {
 
                       <button
                         style={styles.mobileRemoveBtn}
-                        onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
+                        onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variantId)}
                         title="Remover item"
                       >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{color: "#9b9b9b"}}>
@@ -859,7 +860,7 @@ export default function Pagamento() {
                     </div>
                   </div>
                 ) : (
-                  <div key={getItemKey(item.product.id, item.selectedOptions)} style={styles.cartItemScroller}>
+                  <div key={getItemKey(item.product.id, item.selectedOptions, item.variantId)} style={styles.cartItemScroller}>
                     <div
                       style={{
                         ...styles.cartItem,
@@ -899,7 +900,8 @@ export default function Pagamento() {
                               updateQuantity(
                                 item.product.id,
                                 Math.max(1, item.quantity - 1),
-                                item.selectedOptions
+                                item.selectedOptions,
+                                item.variantId
                               )
                             }
                           >
@@ -913,7 +915,8 @@ export default function Pagamento() {
                               updateQuantity(
                                 item.product.id,
                                 parseInt(e.target.value) || 1,
-                                item.selectedOptions
+                                item.selectedOptions,
+                                item.variantId
                               )
                             }
                             style={styles.quantityInput}
@@ -921,7 +924,7 @@ export default function Pagamento() {
                           <button
                             style={styles.quantityBtn}
                             onClick={() =>
-                              updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)
+                              updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variantId)
                             }
                           >
                             +
@@ -938,7 +941,7 @@ export default function Pagamento() {
 
                       <button
                         style={styles.removeBtn}
-                        onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
+                        onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variantId)}
                         title="Remover item"
                       >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{color: "#9b9b9b"}}>

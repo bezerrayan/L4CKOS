@@ -8,6 +8,7 @@ import {
   getCheckoutByAttempt,
   getProductsByIds,
   getProductVariantsByIds,
+  getProductVariantsByProductIds,
   getPaymentById,
   getOrderByIdAndUser,
   getOrderReservationItems,
@@ -66,9 +67,14 @@ async function resolveOrderPricing(input: {
 }) {
   const productIds = input.items.map(item => item.productId);
   const variantIds = input.items.map(item => item.variantId).filter((id): id is number => Boolean(id));
-  const [products, variants] = await Promise.all([getProductsByIds(productIds), getProductVariantsByIds(variantIds)]);
+  const [products, variants, variantsForProducts] = await Promise.all([
+    getProductsByIds(productIds),
+    getProductVariantsByIds(variantIds),
+    getProductVariantsByProductIds(productIds),
+  ]);
   const productsById = new Map(products.map(product => [product.id, product]));
   const variantsById = new Map(variants.map(variant => [variant.id, variant]));
+  const productsWithVariants = new Set(variantsForProducts.map(variant => variant.productId));
 
   let itemsSubtotalCents = 0;
   for (const item of input.items) {
@@ -78,6 +84,9 @@ async function resolveOrderPricing(input: {
     }
 
     const variant = item.variantId ? variantsById.get(item.variantId) : undefined;
+    if (productsWithVariants.has(product.id) && !variant) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `Selecione uma variante de ${product.name}` });
+    }
     if (item.variantId && (!variant || variant.productId !== product.id)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: `Variante inválida para ${product.name}` });
     }

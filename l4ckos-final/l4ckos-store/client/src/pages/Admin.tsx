@@ -963,7 +963,7 @@ export default function Admin() {
               <span style={styles.categoryPreviewHint}>Essa categoria define onde o produto aparece para o cliente na vitrine e nas páginas dedicadas.</span>
             </div>
             <input style={styles.input} placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct(prev => ({ ...prev, price: e.target.value }))} />
-            <input style={styles.input} placeholder="Estoque disponível" value={newProduct.stock} onChange={e => setNewProduct(prev => ({ ...prev, stock: e.target.value }))} />
+            <input style={styles.input} placeholder="Estoque disponível (somente sem variantes)" value={newProduct.stock} disabled={Boolean(newProduct.variantsCsv.trim())} title={newProduct.variantsCsv.trim() ? "O estoque total é calculado a partir das variantes." : undefined} onChange={e => setNewProduct(prev => ({ ...prev, stock: e.target.value }))} />
             <div style={mediumFieldStyle}>
               <input style={styles.input} placeholder="Cores (CSV: preto, branco, verde)" value={newProduct.colorsCsv} onChange={e => setNewProduct(prev => ({ ...prev, colorsCsv: e.target.value }))} />
               <div style={styles.quickPickRow}>
@@ -1119,7 +1119,7 @@ export default function Admin() {
                 >
                   Gerar variantes
                 </button>
-                <span style={styles.mediaHint}>Gera combinações a partir das cores e tamanhos informados.</span>
+              <span style={styles.mediaHint}>Gera combinações a partir das cores e tamanhos; o estoque total será a soma das variantes.</span>
               </div>
               <span style={styles.mediaHint}>Exemplo: Camiseta P|CAM-P|89.90|10; Camiseta M|CAM-M|89.90|8</span>
             </div>
@@ -1167,7 +1167,7 @@ export default function Admin() {
                 name: newProduct.name.trim(),
                 category: normalizeCategoryValue(newProduct.category),
                 price,
-                stock: Number.isFinite(stock) && stock >= 0 ? stock : 0,
+                stock: variants.length > 0 ? variants.reduce((total, variant) => total + variant.stock, 0) : (Number.isFinite(stock) && stock >= 0 ? stock : 0),
                 imageUrl: normalizeAdminImageValue(newProduct.imageUrl) || undefined,
                 optionColors,
                 optionSizes,
@@ -1279,7 +1279,7 @@ export default function Admin() {
                   <span style={styles.categoryPreviewHint}>Essa categoria será usada na navegação da loja e no filtro que o cliente vê.</span>
                 </div>
                 <input style={styles.input} placeholder="Preço (R$)" value={editProduct.price} onChange={e => setEditProduct(prev => ({ ...prev, price: e.target.value }))} />
-                <input style={styles.input} placeholder="Estoque disponível" value={editProduct.stock} onChange={e => setEditProduct(prev => ({ ...prev, stock: e.target.value }))} />
+                <input style={styles.input} placeholder="Estoque disponível (somente sem variantes)" value={editProduct.stock} disabled={Boolean(editProduct.variantsCsv.trim())} title={editProduct.variantsCsv.trim() ? "O estoque total é calculado a partir das variantes." : undefined} onChange={e => setEditProduct(prev => ({ ...prev, stock: e.target.value }))} />
                 <div style={mediumFieldStyle}>
                   <input style={styles.input} placeholder="Cores (CSV: preto, branco, verde)" value={editProduct.colorsCsv} onChange={e => setEditProduct(prev => ({ ...prev, colorsCsv: e.target.value }))} />
                   <div style={styles.quickPickRow}>
@@ -1435,7 +1435,7 @@ export default function Admin() {
                     >
                       Gerar variantes
                     </button>
-                    <span style={styles.mediaHint}>Monta a base das variantes para você só revisar SKU, preço e estoque.</span>
+                    <span style={styles.mediaHint}>Monta a base das variantes para você revisar SKU, preço e estoque por combinação.</span>
                   </div>
                   <span style={styles.mediaHint}>Exemplo: Camiseta P|CAM-P|89.90|10; Camiseta M|CAM-M|89.90|8</span>
                 </div>
@@ -1486,7 +1486,7 @@ export default function Admin() {
                       name: editProduct.name.trim(),
                       category: normalizeCategoryValue(editProduct.category),
                       price,
-                      stock: Number.isFinite(stock) && stock >= 0 ? stock : 0,
+                      stock: variants.length > 0 ? variants.reduce((total, variant) => total + variant.stock, 0) : (Number.isFinite(stock) && stock >= 0 ? stock : 0),
                       imageUrl: normalizeAdminImageValue(editProduct.imageUrl) || undefined,
                       optionColors,
                       optionSizes,
@@ -1562,6 +1562,8 @@ export default function Admin() {
                               : {}),
                         }}
                         value={quickProductEdits[row.id]?.stock ?? String(row.stock)}
+                        disabled={(row.variants?.length ?? 0) > 0}
+                        title={(row.variants?.length ?? 0) > 0 ? "Estoque agregado das variantes; edite as combinações no formulário." : undefined}
                         onChange={e => {
                           const value = e.target.value;
                           setQuickProductEdits(prev => ({
@@ -1604,7 +1606,7 @@ export default function Admin() {
                             return;
                           }
                           quickUpdateProductMutation.mutate(
-                            { id: row.id, price, stock },
+                            { id: row.id, price, ...((row.variants?.length ?? 0) === 0 ? { stock } : {}) },
                             {
                               onSuccess: () => {
                                 setQuickProductEdits(prev => {

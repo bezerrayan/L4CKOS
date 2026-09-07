@@ -248,8 +248,12 @@ export const adminRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const { images, variants, optionColors, optionSizes, sizeType, ...rest } = input;
+      const canonicalStock = variants.length > 0
+        ? variants.reduce((total, variant) => total + variant.stock, 0)
+        : rest.stock;
       const productData = {
         ...rest,
+        ...(canonicalStock !== undefined ? { stock: canonicalStock } : {}),
         optionColors: optionColors.length > 0 ? JSON.stringify(optionColors) : null,
         optionSizes: optionSizes.length > 0 ? JSON.stringify(optionSizes) : null,
         sizeType,
@@ -331,9 +335,12 @@ export const adminRouter = router({
           : {}),
         ...(sizeType !== undefined ? { sizeType } : {}),
       };
-      await updateProduct(id, data);
+      // Removing all variants turns the product back into a standalone-stock
+      // product; do that first so the explicit product stock becomes canonical.
+      if (variants && variants.length === 0) await replaceProductVariants(id, []);
+      await updateProduct(id, variants && variants.length > 0 ? { ...data, stock: undefined } : data);
       if (images) await replaceProductImages(id, images);
-      if (variants) await replaceProductVariants(id, variants);
+      if (variants && variants.length > 0) await replaceProductVariants(id, variants);
       await createAuditLog({
         actorUserId: ctx.user.id,
         action: "product.update",

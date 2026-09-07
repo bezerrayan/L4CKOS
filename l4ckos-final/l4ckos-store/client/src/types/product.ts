@@ -10,4 +10,11 @@ export type Product = {
   category?: string;
   stock?: number;
   rating?: number;
+  variants?: Array<{
+    id: number;
+    stock?: number | null;
+    size?: string | null;
+    color?: string | null;
+    price?: number | null;
+  }>;
 };

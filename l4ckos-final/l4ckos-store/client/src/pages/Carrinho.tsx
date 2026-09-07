@@ -4,18 +4,19 @@ import { formatPrice } from "../lib/utils";
 import type { CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import camisaFallback from "../images/camisa.png";
+import { getItemAvailableStock } from "../lib/cartStock";
 
 export default function Carrinho() {
   const isMobile = useIsMobile();
   const { cart, removeFromCart, updateQuantity } = useCart();
 
-  const getItemKey = (productId: number, selectedOptions?: Record<string, string>) => {
-    if (!selectedOptions) return `${productId}`;
+  const getItemKey = (productId: number, selectedOptions?: Record<string, string>, variantId?: number | null) => {
+    if (!selectedOptions) return `${productId}-${variantId ?? "base"}`;
     const optionString = Object.entries(selectedOptions)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}:${v}`)
       .join("|");
-    return `${productId}-${optionString}`;
+    return `${productId}-${variantId ?? "base"}-${optionString}`;
   };
 
   const formatSelectedOptions = (selectedOptions?: Record<string, string>) => {
@@ -52,9 +53,11 @@ export default function Carrinho() {
       ) : (
         <div style={{ ...styles.layout, gridTemplateColumns: isMobile ? "1fr" : "1fr 340px" }}>
           <div style={styles.itemsList}>
-            {cart.items.map((item) => (
-              <div
-                key={getItemKey(item.product.id, item.selectedOptions)}
+            {cart.items.map((item) => {
+              const maximum = getItemAvailableStock(item.product, item.variantId);
+              const isAtMaximum = item.quantity >= maximum;
+              return <div
+                key={getItemKey(item.product.id, item.selectedOptions, item.variantId)}
                 style={{
                   ...styles.itemCard,
                   gridTemplateColumns: isMobile ? "64px 1fr auto" : "80px 1fr auto auto",
@@ -96,21 +99,24 @@ export default function Carrinho() {
                     <div style={styles.qtyWrap}>
                       <button
                         style={styles.qtyButton}
-                        onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)}
+                        onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions, item.variantId)}
                       >
                         -
                       </button>
                       <span style={styles.qtyValue}>{item.quantity}</span>
                       <button
-                        style={styles.qtyButton}
-                        onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)}
+                        onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variantId)}
+                        disabled={isAtMaximum}
+                        title={isAtMaximum ? "Estoque máximo atingido" : undefined}
+                        aria-label="Aumentar quantidade"
+                        style={{ ...styles.qtyButton, opacity: isAtMaximum ? 0.45 : 1, cursor: isAtMaximum ? "not-allowed" : "pointer" }}
                       >
                         +
                       </button>
                     </div>
                     <button
                       style={styles.removeIconButton}
-                      onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
+                      onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variantId)}
                       title="Remover item"
                       aria-label="Remover item"
                     >
@@ -123,8 +129,8 @@ export default function Carrinho() {
                     </button>
                   </div>
                 </div>
-              </div>
-            ))}
+              </div>;
+            })}
           </div>
 
           {!isMobile ? (

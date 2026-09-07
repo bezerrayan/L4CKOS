@@ -19,6 +19,12 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import { ProductReviews } from "../components/reviews/ProductReviews";
 import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
+import {
+  findSelectedVariant,
+  hasAvailableVariant,
+  isColorAvailable,
+  isSizeAvailable,
+} from "../lib/variantAvailability";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -235,14 +241,11 @@ export default function ProductDetail() {
   const sizeOptions = product.optionSizes ?? [];
   const requiresColor = colorOptions.length > 0 || product.variants.some(variant => Boolean(variant.color));
   const requiresSize = sizeOptions.length > 0 || product.variants.some(variant => Boolean(variant.size));
-  const selectedVariant = product.variants.find(variant =>
-    (!variant.color || normalizeColorToken(variant.color) === normalizeColorToken(selectedColor)) &&
-    (!variant.size || normalizeColorToken(variant.size) === normalizeColorToken(selectedSize)),
-  );
   const hasVariants = product.variants.length > 0;
+  const selectedVariant = findSelectedVariant(product.variants, selectedColor, selectedSize);
   const effectiveStock = hasVariants ? Number(selectedVariant?.stock ?? 0) : product.stock;
   const effectivePrice = selectedVariant?.price ?? product.price;
-  const isProductUnavailable = !hasVariants && product.stock <= 0;
+  const isProductUnavailable = hasVariants ? !hasAvailableVariant(product.variants) : product.stock <= 0;
   const selectionsComplete = (!requiresColor || Boolean(selectedColor)) && (!requiresSize || Boolean(selectedSize));
   const canAddToCart = Boolean(selectionsComplete && effectiveStock > 0 && (!hasVariants || selectedVariant));
   const missingSelections: string[] = [];
@@ -533,13 +536,19 @@ export default function ProductDetail() {
             <div style={styles.colorGrid as CSSProperties}>
               {colorOptions.map((color) => {
                 const isSelected = selectedColor === color.name;
+                const isAvailable = !hasVariants || isColorAvailable(product.variants, color.name, selectedSize);
                 const isLightColor = ["#ffffff", "#fff", "#f5f5f5", "#d1d5db"].includes(color.hex.toLowerCase());
                 return (
                   <button
                     key={color.name}
                     type="button"
-                    onClick={() => setSelectedColor(color.name)}
+                    onClick={() => {
+                      setSelectedColor(color.name);
+                      setQuantity(1);
+                    }}
+                    disabled={!isAvailable}
                     aria-pressed={isSelected}
+                    aria-disabled={!isAvailable}
                     aria-label={`Selecionar cor ${color.name}`}
                     style={{
                       ...styles.colorOption,
@@ -549,6 +558,8 @@ export default function ProductDetail() {
                         ? "0 0 0 4px rgba(232, 0, 42, 0.28), 0 0 0 7px rgba(240, 237, 232, 0.16)"
                         : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
                       transform: isSelected ? "translateY(-2px) scale(1.04)" : "none",
+                      opacity: isAvailable ? 1 : 0.36,
+                      cursor: isAvailable ? "pointer" : "not-allowed",
                     } as CSSProperties}
                     title={color.name}
                   >
@@ -573,12 +584,18 @@ export default function ProductDetail() {
                 gap: isMobile ? 10 : styles.sizeGrid.gap,
               } as CSSProperties}
             >
-              {sizeOptions.map((size) => (
-                <button
+              {sizeOptions.map((size) => {
+                const isAvailable = !hasVariants || isSizeAvailable(product.variants, size, selectedColor);
+                return <button
                   key={size}
                   type="button"
-                  onClick={() => setSelectedSize(size)}
+                  onClick={() => {
+                    setSelectedSize(size);
+                    setQuantity(1);
+                  }}
+                  disabled={!isAvailable}
                   aria-pressed={selectedSize === size}
+                  aria-disabled={!isAvailable}
                   style={{
                     ...styles.sizeOption,
                     background: selectedSize === size ? "#e8002a" : "#111111",
@@ -586,11 +603,13 @@ export default function ProductDetail() {
                     border: selectedSize === size ? "2px solid #ff4966" : styles.sizeOption.border,
                     boxShadow: selectedSize === size ? "0 0 0 4px rgba(232, 0, 42, 0.22), inset 0 -2px 0 rgba(0,0,0,0.22)" : "none",
                     transform: selectedSize === size ? "translateY(-2px)" : "none",
+                    opacity: isAvailable ? 1 : 0.4,
+                    cursor: isAvailable ? "pointer" : "not-allowed",
                   } as CSSProperties}
                 >
                   {size}
                 </button>
-              ))}
+              })}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
               Selecionado: <strong style={selectedSize ? styles.selectedValue : undefined}>{selectedSize || "Nenhum tamanho"}</strong>

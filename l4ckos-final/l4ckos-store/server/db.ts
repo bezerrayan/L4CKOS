@@ -337,6 +337,7 @@ export async function getProducts() {
   if (!db) return [];
   const productRows = await db.select().from(products);
   const imageRows = await db.select().from(productImages);
+  const variantRows = await db.select().from(productVariants);
 
   const firstImageByProduct = new Map<number, string>();
   for (const item of imageRows) {
@@ -344,8 +345,14 @@ export async function getProducts() {
     firstImageByProduct.set(item.productId, item.imageUrl);
   }
 
+  const aggregateByProduct = new Map<number, number>();
+  for (const variant of variantRows) {
+    aggregateByProduct.set(variant.productId, (aggregateByProduct.get(variant.productId) ?? 0) + Math.max(0, Number(variant.stock ?? 0)));
+  }
+
   return productRows.map(product => ({
     ...product,
+    stock: aggregateByProduct.has(product.id) ? aggregateByProduct.get(product.id)! : product.stock,
     imageUrl: product.imageUrl || firstImageByProduct.get(product.id) || null,
   }));
 }
@@ -354,7 +361,12 @@ export async function getProductById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  if (result.length === 0) return undefined;
+  const variantRows = await db.select().from(productVariants).where(eq(productVariants.productId, id));
+  return {
+    ...result[0],
+    stock: variantRows.length ? variantRows.reduce((sum, variant) => sum + Math.max(0, Number(variant.stock ?? 0)), 0) : result[0].stock,
+  };
 }
 
 export async function getProductsByIds(ids: number[]) {
@@ -364,7 +376,18 @@ export async function getProductsByIds(ids: number[]) {
   const uniqueIds = Array.from(new Set(ids.filter(id => Number.isInteger(id) && id > 0)));
   if (uniqueIds.length === 0) return [];
 
-  return await db.select().from(products).where(inArray(products.id, uniqueIds));
+  const [productRows, variantRows] = await Promise.all([
+    db.select().from(products).where(inArray(products.id, uniqueIds)),
+    db.select().from(productVariants).where(inArray(productVariants.productId, uniqueIds)),
+  ]);
+  const aggregateByProduct = new Map<number, number>();
+  for (const variant of variantRows) {
+    aggregateByProduct.set(variant.productId, (aggregateByProduct.get(variant.productId) ?? 0) + Math.max(0, Number(variant.stock ?? 0)));
+  }
+  return productRows.map(product => ({
+    ...product,
+    stock: aggregateByProduct.has(product.id) ? aggregateByProduct.get(product.id)! : product.stock,
+  }));
 }
 
 export async function getProductVariantsByIds(ids: number[]) {
@@ -373,6 +396,14 @@ export async function getProductVariantsByIds(ids: number[]) {
   const uniqueIds = Array.from(new Set(ids.filter(id => Number.isInteger(id) && id > 0)));
   if (uniqueIds.length === 0) return [];
   return await db.select().from(productVariants).where(inArray(productVariants.id, uniqueIds));
+}
+
+export async function getProductVariantsByProductIds(ids: number[]) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+  const uniqueIds = Array.from(new Set(ids.filter(id => Number.isInteger(id) && id > 0)));
+  if (uniqueIds.length === 0) return [];
+  return await db.select().from(productVariants).where(inArray(productVariants.productId, uniqueIds));
 }
 
 export function buildProductImageList(imageRows: Array<typeof productImages.$inferSelect>) {
@@ -407,6 +438,7 @@ export async function getProductByIdWithDetails(id: number) {
 
   return {
     ...productRows[0],
+    stock: variantRows.length ? variantRows.reduce((sum, variant) => sum + Math.max(0, Number(variant.stock ?? 0)), 0) : productRows[0].stock,
     imageUrl: productRows[0].imageUrl || imageRows[0]?.imageUrl || null,
     images: buildProductImageList(imageRows),
     variants: variantRows,
@@ -589,7 +621,18 @@ export async function createProduct(product: InsertProduct) {
 export async function updateProduct(id: number, product: Partial<InsertProduct>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await db.update(products).set(product).where(eq(products.id, id));
+  const next = { ...product };
+  if (next.stock !== undefined) {
+    const variants = await db.select({ id: productVariants.id })
+      .from(productVariants)
+      .where(eq(productVariants.productId, id))
+      .limit(1);
+    // Variant stock is canonical. Ignore attempts to overwrite its aggregate.
+    if (variants.length > 0) delete next.stock;
+  }
+  return Object.keys(next).length > 0
+    ? await db.update(products).set(next).where(eq(products.id, id))
+    : undefined;
 }
 
 export async function deleteProduct(id: number) {
@@ -749,6 +792,30 @@ function affectedRows(result: unknown) {
   return Number((candidate as any)?.affectedRows ?? 0);
 }
 
+/** `products.stock` is only a synchronized aggregate when variants exist. */
+async function syncProductAggregateFromVariants(tx: any, productId: number) {
+  await tx.execute(sql`SELECT id FROM products WHERE id = ${productId} FOR UPDATE`);
+  const variants = await tx.select({ stock: productVariants.stock })
+    .from(productVariants)
+    .where(eq(productVariants.productId, productId));
+  const aggregate = variants.reduce((total: number, variant: { stock: number | null }) => total + Math.max(0, Number(variant.stock ?? 0)), 0);
+  await tx.update(products).set({ stock: aggregate }).where(eq(products.id, productId));
+  return aggregate;
+}
+
+async function releaseReservationInventory(tx: any, reservation: typeof stockReservations.$inferSelect) {
+  if (reservation.variantId) {
+    await tx.update(productVariants)
+      .set({ stock: sql`${productVariants.stock} + ${reservation.quantity}` })
+      .where(eq(productVariants.id, reservation.variantId));
+    await syncProductAggregateFromVariants(tx, reservation.productId);
+    return;
+  }
+  await tx.update(products)
+    .set({ stock: sql`${products.stock} + ${reservation.quantity}` })
+    .where(eq(products.id, reservation.productId));
+}
+
 export async function getCheckoutByAttempt(checkoutAttemptId: string, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -799,6 +866,9 @@ export async function createCheckoutOrderAtomically(input: AtomicCheckoutInput) 
       const normalizedItems = [...grouped.values()].sort(
         (a, b) => a.productId - b.productId || Number(a.variantId ?? 0) - Number(b.variantId ?? 0),
       );
+      for (const productId of [...new Set(normalizedItems.map(item => item.productId))]) {
+        await tx.execute(sql`SELECT id FROM products WHERE id = ${productId} FOR UPDATE`);
+      }
       const productRows = await tx.select().from(products).where(inArray(products.id, normalizedItems.map(item => item.productId)));
       const productsById = new Map(productRows.map(product => [product.id, product]));
       if (productsById.size !== new Set(normalizedItems.map(item => item.productId)).size) {
@@ -887,13 +957,14 @@ export async function createCheckoutOrderAtomically(input: AtomicCheckoutInput) 
             .set({ stock: sql`${productVariants.stock} - ${snapshot.item.quantity}` })
             .where(and(eq(productVariants.id, snapshot.variant.id), gte(productVariants.stock, snapshot.item.quantity)));
           if (affectedRows(variantUpdate) !== 1) throw new Error("INSUFFICIENT_VARIANT_STOCK");
+          await syncProductAggregateFromVariants(tx, snapshot.product.id);
+        } else {
+          const productUpdate = await tx
+            .update(products)
+            .set({ stock: sql`${products.stock} - ${snapshot.item.quantity}` })
+            .where(and(eq(products.id, snapshot.product.id), gte(products.stock, snapshot.item.quantity)));
+          if (affectedRows(productUpdate) !== 1) throw new Error("INSUFFICIENT_PRODUCT_STOCK");
         }
-
-        const productUpdate = await tx
-          .update(products)
-          .set({ stock: sql`${products.stock} - ${snapshot.item.quantity}` })
-          .where(and(eq(products.id, snapshot.product.id), gte(products.stock, snapshot.item.quantity)));
-        if (affectedRows(productUpdate) !== 1) throw new Error("INSUFFICIENT_PRODUCT_STOCK");
 
         const itemInsert = await tx.insert(orderItems).values({
           orderId,
@@ -1065,8 +1136,7 @@ export async function releaseExpiredStockReservations(now = new Date(), batchSiz
         }
         const claimed = await tx.update(stockReservations).set({ status: "expired" }).where(and(eq(stockReservations.id, candidate.id), eq(stockReservations.status, "active"), lte(stockReservations.expiresAt, now)));
         if (affectedRows(claimed) !== 1) return;
-        await tx.update(products).set({ stock: sql`${products.stock} + ${candidate.quantity}` }).where(eq(products.id, candidate.productId));
-        if (candidate.variantId) await tx.update(productVariants).set({ stock: sql`${productVariants.stock} + ${candidate.quantity}` }).where(eq(productVariants.id, candidate.variantId));
+        await releaseReservationInventory(tx, candidate);
         await tx.insert(auditLogs).values({ actorUserId: null, actorType: "system", action: "reservation_expired", entity: "stockReservation", entityId: String(candidate.id), orderId: candidate.orderId, paymentId: payment?.id ?? null, event: "reservation_expiry", correlationId: payment?.externalReference ?? null, beforeState: JSON.stringify({ status: "active" }), afterState: JSON.stringify({ status: "expired" }) });
         const remainingRows = await tx.select({ total: sql<number>`count(*)` }).from(stockReservations).where(and(eq(stockReservations.orderId, candidate.orderId), eq(stockReservations.status, "active")));
         if (order && Number(remainingRows[0]?.total ?? 0) === 0) {
@@ -1306,8 +1376,7 @@ export async function processAsaasPaymentEvent(input: {
           for (const reservation of reservations.filter(row => row.status === "active")) {
             const claimed = await tx.update(stockReservations).set({ status: "released" }).where(and(eq(stockReservations.id, reservation.id), eq(stockReservations.status, "active")));
             if (affectedRows(claimed) !== 1) continue;
-            await tx.update(products).set({ stock: sql`${products.stock} + ${reservation.quantity}` }).where(eq(products.id, reservation.productId));
-            if (reservation.variantId) await tx.update(productVariants).set({ stock: sql`${productVariants.stock} + ${reservation.quantity}` }).where(eq(productVariants.id, reservation.variantId));
+            await releaseReservationInventory(tx, reservation);
           }
           nextFulfillment = "inventory_exception";
           nextIssue = "PAYMENT_CONFIRMED_WITHOUT_STOCK";
@@ -1320,8 +1389,7 @@ export async function processAsaasPaymentEvent(input: {
           for (const reservation of consumed) {
             const claimed = await tx.update(stockReservations).set({ status: "restocked" }).where(and(eq(stockReservations.id, reservation.id), eq(stockReservations.status, "consumed")));
             if (affectedRows(claimed) !== 1) continue;
-            await tx.update(products).set({ stock: sql`${products.stock} + ${reservation.quantity}` }).where(eq(products.id, reservation.productId));
-            if (reservation.variantId) await tx.update(productVariants).set({ stock: sql`${productVariants.stock} + ${reservation.quantity}` }).where(eq(productVariants.id, reservation.variantId));
+            await releaseReservationInventory(tx, reservation);
           }
           nextFulfillment = "cancelled";
           nextIssue = "FULL_REFUND_BEFORE_PROCESSING";
@@ -1338,8 +1406,7 @@ export async function processAsaasPaymentEvent(input: {
         for (const reservation of active) {
           const claimed = await tx.update(stockReservations).set({ status: "released" }).where(and(eq(stockReservations.id, reservation.id), eq(stockReservations.status, "active")));
           if (affectedRows(claimed) !== 1) continue;
-          await tx.update(products).set({ stock: sql`${products.stock} + ${reservation.quantity}` }).where(eq(products.id, reservation.productId));
-          if (reservation.variantId) await tx.update(productVariants).set({ stock: sql`${productVariants.stock} + ${reservation.quantity}` }).where(eq(productVariants.id, reservation.variantId));
+          await releaseReservationInventory(tx, reservation);
         }
         if (order.couponId && !order.couponReleasedAt) {
           await tx.update(coupons).set({ usedCount: sql`greatest(${coupons.usedCount} - 1, 0)` }).where(eq(coupons.id, order.couponId));
@@ -1525,6 +1592,11 @@ export async function reserveStockForOrder(input: {
       if (productRow.length === 0) {
         throw new Error(`Produto ${item.productId} nao encontrado.`);
       }
+      const variantRows = await tx.select({ id: productVariants.id })
+        .from(productVariants)
+        .where(eq(productVariants.productId, item.productId))
+        .limit(1);
+      if (variantRows.length > 0) throw new Error("VARIANT_REQUIRED");
 
       const [reservedRow] = await tx
         .select({
@@ -1575,12 +1647,19 @@ export async function consumeStockReservationsForOrder(orderId: number) {
       );
 
     for (const reservation of activeReservations) {
-      await tx
-        .update(products)
-        .set({
-          stock: sql`${products.stock} - ${reservation.quantity}`,
-        })
-        .where(eq(products.id, reservation.productId));
+      if (reservation.variantId) {
+        const variantUpdate = await tx.update(productVariants)
+          .set({ stock: sql`${productVariants.stock} - ${reservation.quantity}` })
+          .where(and(eq(productVariants.id, reservation.variantId), gte(productVariants.stock, reservation.quantity)));
+        if (affectedRows(variantUpdate) !== 1) throw new Error("INSUFFICIENT_VARIANT_STOCK");
+        await syncProductAggregateFromVariants(tx, reservation.productId);
+      } else {
+        const productUpdate = await tx
+          .update(products)
+          .set({ stock: sql`${products.stock} - ${reservation.quantity}` })
+          .where(and(eq(products.id, reservation.productId), gte(products.stock, reservation.quantity)));
+        if (affectedRows(productUpdate) !== 1) throw new Error("INSUFFICIENT_PRODUCT_STOCK");
+      }
     }
 
     await tx
@@ -2018,8 +2097,7 @@ export async function setOrderAdminData(
       for (const reservation of active) {
         const claimed = await tx.update(stockReservations).set({ status: "released" }).where(and(eq(stockReservations.id, reservation.id), eq(stockReservations.status, "active")));
         if (affectedRows(claimed) !== 1) continue;
-        await tx.update(products).set({ stock: sql`${products.stock} + ${reservation.quantity}` }).where(eq(products.id, reservation.productId));
-        if (reservation.variantId) await tx.update(productVariants).set({ stock: sql`${productVariants.stock} + ${reservation.quantity}` }).where(eq(productVariants.id, reservation.variantId));
+        await releaseReservationInventory(tx, reservation);
       }
       if (order.couponId && !order.couponReleasedAt) {
         await tx.update(coupons).set({ usedCount: sql`greatest(${coupons.usedCount} - 1, 0)` }).where(eq(coupons.id, order.couponId));
@@ -2086,6 +2164,8 @@ export async function resolveInventoryException(input: { orderId: number; actorU
         if (item.variantId) {
           const updated = await tx.update(productVariants).set({ stock: sql`${productVariants.stock} - ${item.quantity}` }).where(and(eq(productVariants.id, item.variantId), gte(productVariants.stock, item.quantity)));
           if (affectedRows(updated) !== 1) throw new Error("INSUFFICIENT_VARIANT_STOCK");
+          await syncProductAggregateFromVariants(tx, item.productId);
+          continue;
         }
         const updated = await tx.update(products).set({ stock: sql`${products.stock} - ${item.quantity}` }).where(and(eq(products.id, item.productId), gte(products.stock, item.quantity)));
         if (affectedRows(updated) !== 1) throw new Error("INSUFFICIENT_PRODUCT_STOCK");
@@ -2138,22 +2218,25 @@ export async function replaceProductVariants(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(productVariants).where(eq(productVariants.productId, productId));
-  if (variants.length > 0) {
-    await db.insert(productVariants).values(
-      variants.map(variant => ({
-        productId,
-        name: variant.name,
-        sku: variant.sku ?? null,
-        size: variant.size?.trim() || null,
-        color: variant.color?.trim() || null,
-        optionKey: buildVariantOptionKey(variant.size, variant.color),
-        price: variant.price ?? null,
-        stock: variant.stock,
-      })),
-    );
-    await db.update(products).set({ stock: variants.reduce((sum, variant) => sum + variant.stock, 0) }).where(eq(products.id, productId));
-  }
+  await db.transaction(async tx => {
+    await tx.execute(sql`SELECT id FROM products WHERE id = ${productId} FOR UPDATE`);
+    await tx.delete(productVariants).where(eq(productVariants.productId, productId));
+    if (variants.length > 0) {
+      await tx.insert(productVariants).values(
+        variants.map(variant => ({
+          productId,
+          name: variant.name,
+          sku: variant.sku ?? null,
+          size: variant.size?.trim() || null,
+          color: variant.color?.trim() || null,
+          optionKey: buildVariantOptionKey(variant.size, variant.color),
+          price: variant.price ?? null,
+          stock: variant.stock,
+        })),
+      );
+      await syncProductAggregateFromVariants(tx, productId);
+    }
+  });
 }
 
 export async function getProductsAdmin() {
@@ -2179,6 +2262,9 @@ export async function getProductsAdmin() {
 
   return productRows.map(product => ({
     ...product,
+    stock: variantsMap.get(product.id)?.length
+      ? variantsMap.get(product.id)!.reduce((sum, variant) => sum + Math.max(0, Number(variant.stock ?? 0)), 0)
+      : product.stock,
     imageUrl: product.imageUrl || imagesMap.get(product.id)?.[0]?.imageUrl || null,
     images: imagesMap.get(product.id) ?? [],
     variants: variantsMap.get(product.id) ?? [],
@@ -2435,10 +2521,15 @@ export async function getDashboardKpis() {
     .from(orders)
     .where(eq(orders.fulfillmentStatus, "awaiting_payment"));
 
-  const [lowStockRow] = await db
-    .select({ total: sql<number>`count(*)` })
-    .from(products)
-    .where(lte(products.stock, 5));
+  const [productRows, variantRows] = await Promise.all([
+    db.select({ id: products.id, stock: products.stock }).from(products),
+    db.select({ productId: productVariants.productId, stock: productVariants.stock }).from(productVariants),
+  ]);
+  const aggregateByProduct = new Map<number, number>();
+  for (const variant of variantRows) {
+    aggregateByProduct.set(variant.productId, (aggregateByProduct.get(variant.productId) ?? 0) + Math.max(0, Number(variant.stock ?? 0)));
+  }
+  const lowStockTotal = productRows.filter(product => Number(aggregateByProduct.has(product.id) ? aggregateByProduct.get(product.id)! : product.stock ?? 0) <= 5).length;
 
   const [ordersTodayRow] = await db
     .select({ total: sql<number>`count(*)` })
@@ -2448,7 +2539,7 @@ export async function getDashboardKpis() {
   return {
     salesToday: Number(salesTodayRow?.total ?? 0),
     pendingOrders: Number(pendingRow?.total ?? 0),
-    lowStockCount: Number(lowStockRow?.total ?? 0),
+    lowStockCount: lowStockTotal,
     ordersToday: Number(ordersTodayRow?.total ?? 0),
   };
 }

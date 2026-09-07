@@ -7,14 +7,15 @@ import React, { createContext, useContext, useState, ReactNode, useCallback, use
 import type { CartItem, Cart, SelectedOptions } from "../types/cart";
 import type { Product } from "../types/product";
 import { calculateCartTotal, calculateItemCount } from "../types/cart";
+import { clampCartQuantity, getCartItemIdentity, reconcileCartItems } from "../lib/cartStock";
 
 // ============= TIPOS =============
 
 type CartContextType = {
   cart: Cart;
   addToCart: (product: Product, quantity: number, selectedOptions?: SelectedOptions, variantId?: number | null) => void;
-  removeFromCart: (productId: number, selectedOptions?: SelectedOptions) => void;
-  updateQuantity: (productId: number, quantity: number, selectedOptions?: SelectedOptions) => void;
+  removeFromCart: (productId: number, selectedOptions?: SelectedOptions, variantId?: number | null) => void;
+  updateQuantity: (productId: number, quantity: number, selectedOptions?: SelectedOptions, variantId?: number | null) => void;
   clearCart: () => void;
   isCartDrawerOpen: boolean;
   openCartDrawer: () => void;
@@ -41,24 +42,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
       }
 
       const parsed = JSON.parse(raw) as CartItem[];
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? reconcileCartItems(parsed) : [];
     } catch {
       return [];
     }
   });
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
-
-  const normalizeOptions = (selectedOptions?: SelectedOptions) => {
-    if (!selectedOptions) return "";
-    return JSON.stringify(
-      Object.keys(selectedOptions)
-        .sort()
-        .reduce((acc, key) => {
-          acc[key] = selectedOptions[key];
-          return acc;
-        }, {} as SelectedOptions)
-    );
-  };
 
   const cart: Cart = {
     items,
@@ -69,53 +58,54 @@ export function CartProvider({ children }: { children: ReactNode }) {
   // 📌 Adicionar produto ao carrinho
   const addToCart = useCallback((product: Product, quantity: number = 1, selectedOptions?: SelectedOptions, variantId?: number | null) => {
     setItems((prev) => {
-      const currentOptionsKey = normalizeOptions(selectedOptions);
+      const currentIdentity = getCartItemIdentity(product.id, variantId, selectedOptions);
       const existing = prev.find(
-        (item) => item.product.id === product.id && (item.variantId ?? null) === (variantId ?? null) && normalizeOptions(item.selectedOptions) === currentOptionsKey
+        (item) => getCartItemIdentity(item.product.id, item.variantId, item.selectedOptions) === currentIdentity
       );
       
+      const requestedQuantity = clampCartQuantity(product, variantId, quantity);
+      if (requestedQuantity <= 0) return prev;
+
       if (existing) {
-        // Se já existe, aumenta a quantidade
         return prev.map((item) =>
-          item.product.id === product.id && (item.variantId ?? null) === (variantId ?? null) && normalizeOptions(item.selectedOptions) === currentOptionsKey
-            ? { ...item, quantity: item.quantity + quantity }
+          getCartItemIdentity(item.product.id, item.variantId, item.selectedOptions) === currentIdentity
+            ? { ...item, product, quantity: clampCartQuantity(product, variantId, item.quantity + requestedQuantity) }
             : item
         );
       }
-      
-      // Senão, adiciona novo
-      return [...prev, { product, variantId: variantId ?? null, quantity, selectedOptions, addedAt: new Date() }];
+
+      return [...prev, { product, variantId: variantId ?? null, quantity: requestedQuantity, selectedOptions, addedAt: new Date() }];
     });
     setIsCartDrawerOpen(true);
   }, []);
 
   // 📌 Remover produto do carrinho
-  const removeFromCart = useCallback((productId: number, selectedOptions?: SelectedOptions) => {
-    const currentOptionsKey = normalizeOptions(selectedOptions);
+  const removeFromCart = useCallback((productId: number, selectedOptions?: SelectedOptions, variantId?: number | null) => {
+    const currentIdentity = getCartItemIdentity(productId, variantId, selectedOptions);
     setItems((prev) =>
       prev.filter((item) => {
         if (item.product.id !== productId) return true;
-        if (!selectedOptions) return false;
-        return normalizeOptions(item.selectedOptions) !== currentOptionsKey;
+        if (variantId === undefined && !selectedOptions) return false;
+        return getCartItemIdentity(item.product.id, item.variantId, item.selectedOptions) !== currentIdentity;
       })
     );
   }, []);
 
   // 📌 Atualizar quantidade
-  const updateQuantity = useCallback((productId: number, quantity: number, selectedOptions?: SelectedOptions) => {
+  const updateQuantity = useCallback((productId: number, quantity: number, selectedOptions?: SelectedOptions, variantId?: number | null) => {
     if (quantity <= 0) {
-      removeFromCart(productId, selectedOptions);
+      removeFromCart(productId, selectedOptions, variantId);
       return;
     }
-    const currentOptionsKey = normalizeOptions(selectedOptions);
+    const currentIdentity = getCartItemIdentity(productId, variantId, selectedOptions);
     
-    setItems((prev) =>
-      prev.map((item) =>
-        item.product.id === productId && (!selectedOptions || normalizeOptions(item.selectedOptions) === currentOptionsKey)
-          ? { ...item, quantity }
-          : item
-      )
-    );
+    setItems((prev) => prev.flatMap((item) => {
+      const matches = item.product.id === productId &&
+        ((variantId === undefined && !selectedOptions) || getCartItemIdentity(item.product.id, item.variantId, item.selectedOptions) === currentIdentity);
+      if (!matches) return [item];
+      const nextQuantity = clampCartQuantity(item.product, item.variantId, quantity);
+      return nextQuantity > 0 ? [{ ...item, quantity: nextQuantity }] : [];
+    }));
   }, [removeFromCart]);
 
   // 📌 Limpar carrinho
