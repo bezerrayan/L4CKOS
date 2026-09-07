@@ -95,7 +95,7 @@ try {
   } else if (read("SMOKE_ASAAS_CHARGE_ENABLED") !== "true") {
     record("controlled-checkout", "SKIP", "checkout enabled, but explicit sandbox charge authorization is absent");
   } else {
-    const quote = await fetch(`${baseUrl}/api/shipping/quote`, { method: "POST", headers: { "content-type": "application/json", origin: stagingOrigin }, body: JSON.stringify({ cep: "70000000", itemCount: 1, subtotal: Number(candidate.price) / 100 }) }).then(response => response.json());
+    const quote = await fetch(`${baseUrl}/api/shipping/quote`, { method: "POST", headers: { "content-type": "application/json", origin: stagingOrigin }, body: JSON.stringify({ cep: "70000000", itemCount: 1, subtotal: Number(candidate.price) / 100, address: { city: "Brasilia", state: "DF" } }) }).then(response => response.json());
     const option = quote.options?.[0];
     assert(option?.id, "shipping quote unavailable for controlled checkout");
     await client.orders.createAsaasCharge.mutate({ checkoutAttemptId: crypto.randomUUID(), method: "PIX", items: [{ productId: candidate.id, quantity: 1 }], shipping: { cep: "70000000", optionId: option.id }, shippingAddress: { recipient: "Cliente Staging", zipCode: "70000000", street: "Rua de Teste", number: "100", neighborhood: "Centro de Testes", city: "Brasilia", state: "DF" }, customer: { name: "Cliente Staging", cpfCnpj: read("SMOKE_CUSTOMER_CPF"), email: read("SMOKE_CUSTOMER_EMAIL") } });

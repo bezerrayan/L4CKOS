@@ -9,10 +9,16 @@ type ShippingOption = {
   maxDays: number;
 };
 
+export type ShippingQuoteAddress = {
+  city?: string | null;
+  state?: string | null;
+};
+
 type QuoteInput = {
   cep: string;
   itemCount: number;
   subtotal: number;
+  address?: ShippingQuoteAddress;
 };
 
 export type QuoteShippingResult = {
@@ -57,6 +63,20 @@ export function isExplicitLocalDeliveryCep(cep: string) {
     .map(prefix => prefix.replace(/\D/g, ""))
     .filter(prefix => prefix.length >= 3 && prefix.length <= 8);
   return configuredPrefixes.some(prefix => cep.startsWith(prefix));
+}
+
+function normalizeLocation(value: string | null | undefined) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+export function isExplicitLocalDeliveryAddress(cep: string, address?: ShippingQuoteAddress) {
+  if (!isExplicitLocalDeliveryCep(cep)) return false;
+  if (!address) return false;
+  return String(address.state ?? "").trim().toUpperCase() === "DF" && normalizeLocation(address.city) === "brasilia";
 }
 
 function buildLocalOption(): ShippingOption {
@@ -132,7 +152,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
 
   const options: ShippingOption[] = [];
 
-  if (isExplicitLocalDeliveryCep(cep)) {
+  if (isExplicitLocalDeliveryAddress(cep, input.address)) {
     options.push(buildLocalOption());
   }
 
@@ -185,7 +205,7 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
   }
 
   const localOptions: ShippingOption[] = [];
-  if (isExplicitLocalDeliveryCep(cep)) {
+  if (isExplicitLocalDeliveryAddress(cep, input.address)) {
     localOptions.push(buildLocalOption());
   }
 

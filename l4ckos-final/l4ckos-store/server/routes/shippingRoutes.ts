@@ -8,11 +8,18 @@ shippingRoutes.post("/quote", async (req, res) => {
     const cep = String(req.body?.cep || "");
     const itemCount = Number(req.body?.itemCount || 1);
     const subtotal = Number(req.body?.subtotal || 0);
+    const address = req.body?.address && typeof req.body.address === "object"
+      ? {
+          city: typeof req.body.address.city === "string" ? req.body.address.city : undefined,
+          state: typeof req.body.address.state === "string" ? req.body.address.state : undefined,
+        }
+      : undefined;
 
     const result = await quoteShippingDetailed({
       cep,
       itemCount: Number.isFinite(itemCount) ? itemCount : 1,
       subtotal: Number.isFinite(subtotal) ? subtotal : 0,
+      address,
     });
 
     if (result.providerError) {

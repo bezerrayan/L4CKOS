@@ -552,7 +552,12 @@ it("frete local explícito funciona sem Melhor Envio", async () => {
   delete process.env.MELHOR_ENVIO_TOKEN;
   process.env.LOCAL_DELIVERY_CEP_PREFIXES = "700,701";
   try {
-    const result = await quoteShippingDetailed({ cep: "70000000", itemCount: 1, subtotal: 99.9 });
+    const result = await quoteShippingDetailed({
+      cep: "70000000",
+      itemCount: 1,
+      subtotal: 99.9,
+      address: { city: "Brasília", state: "DF" },
+    });
     expect(result.options.map(option => option.id)).toContain("local-plano-piloto");
   } finally {
     if (originalToken === undefined) delete process.env.MELHOR_ENVIO_TOKEN;

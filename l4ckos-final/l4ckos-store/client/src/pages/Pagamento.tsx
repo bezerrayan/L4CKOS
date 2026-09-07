@@ -15,6 +15,14 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
+import {
+  applyCepLookupToAddress,
+  formatCep,
+  invalidateShippingSelection,
+  sanitizeCep,
+  updateCheckoutShippingAddress,
+  type CheckoutShippingAddress,
+} from "../lib/checkoutShippingAddress";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Pagamento.css";
@@ -61,16 +69,6 @@ const checkoutHighlights = [
   "Se precisar ajustar algo, o suporte atende pelos canais oficiais da loja.",
 ];
 
-function sanitizeCep(value: string) {
-  return value.replace(/\D/g, "").slice(0, 8);
-}
-
-function formatCep(value: string) {
-  const digits = sanitizeCep(value);
-  if (digits.length <= 5) return digits;
-  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-}
-
 function addBusinessDays(startDate: Date, daysToAdd: number) {
   const date = new Date(startDate);
   let addedDays = 0;
@@ -97,19 +95,6 @@ function getCheckoutAttemptId(signature: string) {
   return id;
 }
 
-function buildShippingOptions(_cep: string, _subtotal: number, _itemCount: number): ShippingOption[] {
-  return [
-    {
-      id: "local-plano-piloto",
-      label: "Entrega local - Plano Piloto",
-      description: "Agendamento local no Plano Piloto (Brasilia - DF)",
-      price: 0,
-      minDays: 1,
-      maxDays: 2,
-    },
-  ];
-}
-
 function getOrderStatusLabel(status?: string | null) {
   switch (status) {
     case "confirmed":
@@ -134,6 +119,7 @@ export default function Pagamento() {
   const checkoutAvailability = runtimeQuery.data?.checkout;
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const lastCepLookupRef = useRef<string | null>(null);
+  const shippingRequestRef = useRef(0);
   const loadedSavedAddressRef = useRef(false);
   const checkoutTrackedRef = useRef(false);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
@@ -162,6 +148,41 @@ export default function Pagamento() {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isCouponOpen, setIsCouponOpen] = useState(false);
   const canShowTechnicalShippingError = import.meta.env.DEV || user?.role === "admin";
+
+  const getEffectiveShippingAddress = (overrides: Partial<CheckoutShippingAddress> = {}): CheckoutShippingAddress => ({
+    cep,
+    street: addressStreet,
+    number: addressNumber,
+    complement: addressComplement,
+    neighborhood: addressNeighborhood,
+    city: addressCity,
+    state: addressState,
+    ...overrides,
+  });
+
+  const invalidateShippingQuote = () => {
+    shippingRequestRef.current += 1;
+    const next = invalidateShippingSelection<ShippingOption>();
+    setShippingOptions(next.options);
+    setSelectedShippingId(next.selectedId);
+    setShippingError(next.error);
+  };
+
+  const editAddress = (field: keyof CheckoutShippingAddress, value: string) => {
+    const nextAddress = updateCheckoutShippingAddress(getEffectiveShippingAddress(), field, value);
+    setSelectedSavedAddressId("");
+    invalidateShippingQuote();
+    if (field === "cep") {
+      lastCepLookupRef.current = null;
+    }
+    setCep(nextAddress.cep);
+    setAddressStreet(nextAddress.street);
+    setAddressNumber(nextAddress.number);
+    setAddressComplement(nextAddress.complement);
+    setAddressNeighborhood(nextAddress.neighborhood);
+    setAddressCity(nextAddress.city);
+    setAddressState(nextAddress.state);
+  };
 
   const validateCoupon = trpc.orders.validateCoupon.useMutation();
   const profileQuery = trpc.profile.get.useQuery(undefined, {
@@ -229,14 +250,26 @@ export default function Pagamento() {
   }, [cart.itemCount, cart.items.length]);
 
   const applySavedAddress = (address: SavedCheckoutAddress) => {
+    const nextAddress: CheckoutShippingAddress = {
+      cep: sanitizeCep(address.zipCode),
+      street: address.street,
+      number: address.number,
+      complement: address.complement ?? "",
+      neighborhood: address.neighborhood,
+      city: address.city,
+      state: address.state,
+    };
+    invalidateShippingQuote();
+    lastCepLookupRef.current = nextAddress.cep;
     setSelectedSavedAddressId(address.id);
-    setCep(sanitizeCep(address.zipCode));
-    setAddressStreet(address.street);
-    setAddressNumber(address.number);
-    setAddressComplement(address.complement ?? "");
-    setAddressNeighborhood(address.neighborhood);
-    setAddressCity(address.city);
-    setAddressState(address.state);
+    setCep(nextAddress.cep);
+    setAddressStreet(nextAddress.street);
+    setAddressNumber(nextAddress.number);
+    setAddressComplement(nextAddress.complement);
+    setAddressNeighborhood(nextAddress.neighborhood);
+    setAddressCity(nextAddress.city);
+    setAddressState(nextAddress.state);
+    void handleCalculateShipping(nextAddress);
   };
 
   useEffect(() => {
@@ -321,13 +354,18 @@ export default function Pagamento() {
     await navigator.clipboard.writeText(value);
   };
 
-  const handleCalculateShipping = async (cepValue = cep) => {
+  const handleCalculateShipping = async (addressOverride?: CheckoutShippingAddress) => {
+    const effectiveAddress = addressOverride ?? getEffectiveShippingAddress();
+    const normalizedCep = sanitizeCep(effectiveAddress.cep);
+    const requestId = ++shippingRequestRef.current;
     setShippingError("");
-    const normalizedCep = sanitizeCep(cepValue);
 
     if (normalizedCep.length !== 8) {
-      setShippingOptions([]);
-      setSelectedShippingId(null);
+      if (requestId === shippingRequestRef.current) {
+        const next = invalidateShippingSelection<ShippingOption>();
+        setShippingOptions(next.options);
+        setSelectedShippingId(next.selectedId);
+      }
       setShippingError("Informe um CEP válido com 8 dígitos.");
       return;
     }
@@ -344,6 +382,13 @@ export default function Pagamento() {
           cep: normalizedCep,
           itemCount: cart.itemCount,
           subtotal: Number((cart.total / 100).toFixed(2)),
+          address: {
+            street: effectiveAddress.street.trim(),
+            number: effectiveAddress.number.trim(),
+            neighborhood: effectiveAddress.neighborhood.trim(),
+            city: effectiveAddress.city.trim(),
+            state: effectiveAddress.state.trim().toUpperCase(),
+          },
         }),
       });
 
@@ -357,9 +402,10 @@ export default function Pagamento() {
         providerError?: string;
         source?: "melhor-envio" | "fallback-local" | "mixed";
       };
-      const options = data.options?.length ? data.options : buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
+      if (requestId !== shippingRequestRef.current) return;
+      const options = data.options ?? [];
       setShippingOptions(options);
-      setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options[0]?.id ?? null);
+      setSelectedShippingId(options[0]?.id ?? null);
       const sanitizedProviderError = (data.providerError || "")
         .replace(/\s*\|\s*/g, "; ")
         .replace(/\s+/g, " ")
@@ -373,25 +419,27 @@ export default function Pagamento() {
           ? `${data.warning} (${sanitizedProviderError})`
           : publicWarning
         : "";
-      setShippingError(detailedWarning);
+      setShippingError(detailedWarning || (options.length === 0 ? "Frete indisponível: não foi possível cotar uma entrega segura para este CEP." : ""));
     } catch {
-      const fallbackOptions = buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
-      setShippingOptions(fallbackOptions);
-      setSelectedShippingId(fallbackOptions[0]?.id ?? null);
-      setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+      if (requestId !== shippingRequestRef.current) return;
+      const next = invalidateShippingSelection<ShippingOption>();
+      setShippingOptions(next.options);
+      setSelectedShippingId(next.selectedId);
+      setShippingError("Frete indisponível: não foi possível cotar uma entrega segura para este CEP.");
     } finally {
-      setShippingLoading(false);
+      if (requestId === shippingRequestRef.current) setShippingLoading(false);
     }
   };
 
   const handleLookupCep = async () => {
-    setShippingError("");
     const normalizedCep = sanitizeCep(cep);
     if (normalizedCep.length !== 8) {
+      invalidateShippingQuote();
       setShippingError("Informe um CEP válido com 8 dígitos.");
       return;
     }
 
+    invalidateShippingQuote();
     lastCepLookupRef.current = normalizedCep;
     setAddressLoading(true);
     try {
@@ -416,16 +464,21 @@ export default function Pagamento() {
         return;
       }
 
-      setAddressStreet(current => data.logradouro || current);
-      setAddressNeighborhood(current => data.bairro || current);
-      setAddressCity(current => data.localidade || current);
-      setAddressState(current => data.uf || current);
-      await handleCalculateShipping(normalizedCep);
+      const nextAddress = applyCepLookupToAddress(getEffectiveShippingAddress(), normalizedCep, data);
+      setSelectedSavedAddressId("");
+      setCep(nextAddress.cep);
+      setAddressStreet(nextAddress.street);
+      setAddressNeighborhood(nextAddress.neighborhood);
+      setAddressCity(nextAddress.city);
+      setAddressState(nextAddress.state);
+      await handleCalculateShipping(nextAddress);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível consultar o CEP.");
       const message = parsed.message;
       setShippingError(message.includes("Load failed") ? "Não foi possível consultar o CEP agora." : message);
-      await handleCalculateShipping(normalizedCep);
+      const next = invalidateShippingSelection<ShippingOption>();
+      setShippingOptions(next.options);
+      setSelectedShippingId(next.selectedId);
     } finally {
       setAddressLoading(false);
     }
@@ -643,17 +696,17 @@ export default function Pagamento() {
                 <p>Você pode trocar o endereço salvo ou editar os campos abaixo.</p>
               </div> : null}
               <div className="l4-checkout-cep-row">
-                <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
+                <label>CEP<input value={formatCep(cep)} onChange={event => editAddress("cep", event.target.value)} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
                 <button type="button" onClick={handleLookupCep} disabled={sanitizeCep(cep).length !== 8 || addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
               </div>
               <div id="checkout-shipping-status" className="l4-checkout-live" aria-live="polite">{addressLoading ? <p>Consultando endereço...</p> : shippingLoading ? <p>Calculando modalidades de entrega...</p> : shippingError ? <p className="is-error">{shippingError}</p> : null}</div>
               <div className="l4-checkout-fields l4-checkout-address-fields">
-                <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => setAddressStreet(event.target.value)} autoComplete="address-line1" /></label>
-                <label>Número<input value={addressNumber} onChange={event => setAddressNumber(event.target.value)} autoComplete="address-line2" /></label>
-                <label>Complemento <em>opcional</em><input value={addressComplement} onChange={event => setAddressComplement(event.target.value)} /></label>
-                <label>Bairro<input value={addressNeighborhood} onChange={event => setAddressNeighborhood(event.target.value)} autoComplete="address-level3" /></label>
-                <label>Cidade<input value={addressCity} onChange={event => setAddressCity(event.target.value)} autoComplete="address-level2" /></label>
-                <label>UF<input value={addressState} onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} /></label>
+                <label className="l4-checkout-field-wide">Rua<input value={addressStreet} onChange={event => editAddress("street", event.target.value)} autoComplete="address-line1" /></label>
+                <label>Número<input value={addressNumber} onChange={event => editAddress("number", event.target.value)} autoComplete="address-line2" /></label>
+                <label>Complemento <em>opcional</em><input value={addressComplement} onChange={event => editAddress("complement", event.target.value)} /></label>
+                <label>Bairro<input value={addressNeighborhood} onChange={event => editAddress("neighborhood", event.target.value)} autoComplete="address-level3" /></label>
+                <label>Cidade<input value={addressCity} onChange={event => editAddress("city", event.target.value)} autoComplete="address-level2" /></label>
+                <label>UF<input value={addressState} onChange={event => editAddress("state", event.target.value)} autoComplete="address-level1" maxLength={2} /></label>
               </div>
               {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options" aria-busy={shippingLoading}>
                 {shippingOptions.map(option => <button key={option.id} type="button" className={selectedShippingId === option.id ? "is-selected" : ""} onClick={() => setSelectedShippingId(option.id)}>
@@ -952,7 +1005,7 @@ export default function Pagamento() {
                     inputMode="numeric"
                     autoComplete="postal-code"
                     value={formatCep(cep)}
-                    onChange={event => setCep(sanitizeCep(event.target.value))}
+                    onChange={event => editAddress("cep", event.target.value)}
                   />
                   <button type="button" style={styles.shippingCalcButton} onClick={handleLookupCep} disabled={addressLoading}>
                     {addressLoading ? "Calculando..." : "Buscar e calcular"}
@@ -1087,37 +1140,37 @@ export default function Pagamento() {
                   style={styles.checkoutInput}
                   placeholder="Rua"
                   value={addressStreet}
-                  onChange={event => setAddressStreet(event.target.value)}
+                  onChange={event => editAddress("street", event.target.value)}
                 />
                 <input
                   style={styles.checkoutInput}
                     placeholder="Número"
                   value={addressNumber}
-                  onChange={event => setAddressNumber(event.target.value)}
+                  onChange={event => editAddress("number", event.target.value)}
                 />
                 <input
                   style={styles.checkoutInput}
                   placeholder="Complemento (opcional)"
                   value={addressComplement}
-                  onChange={event => setAddressComplement(event.target.value)}
+                  onChange={event => editAddress("complement", event.target.value)}
                 />
                 <input
                   style={styles.checkoutInput}
                   placeholder="Bairro"
                   value={addressNeighborhood}
-                  onChange={event => setAddressNeighborhood(event.target.value)}
+                  onChange={event => editAddress("neighborhood", event.target.value)}
                 />
                 <input
                   style={styles.checkoutInput}
                   placeholder="Cidade"
                   value={addressCity}
-                  onChange={event => setAddressCity(event.target.value)}
+                  onChange={event => editAddress("city", event.target.value)}
                 />
                 <input
                   style={styles.checkoutInput}
                   placeholder="UF"
                   value={addressState}
-                  onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))}
+                  onChange={event => editAddress("state", event.target.value)}
                 />
               </div>
 
@@ -2010,4 +2063,3 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 16,
   },
 };
-

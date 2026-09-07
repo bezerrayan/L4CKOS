@@ -61,6 +61,7 @@ const shippingAddressEditableSchema = z.object({
 async function resolveOrderPricing(input: {
   items: Array<{ productId: number; variantId?: number | null; quantity: number }>;
   shipping: { cep: string; optionId: string };
+  shippingAddress?: { city?: string; state?: string };
   couponCode?: string;
 }) {
   const productIds = input.items.map(item => item.productId);
@@ -91,6 +92,7 @@ async function resolveOrderPricing(input: {
     cep: input.shipping.cep,
     itemCount: input.items.reduce((sum, item) => sum + item.quantity, 0),
     subtotal: Number((itemsSubtotalCents / 100).toFixed(2)),
+    address: input.shippingAddress,
   });
 
   const shippingOption = shippingQuote.options.find(option => option.id === input.shipping.optionId);
@@ -341,6 +343,7 @@ export const ordersRouter = router({
           : await resolveOrderPricing({
               items: input.items,
               shipping: input.shipping,
+              shippingAddress: input.shippingAddress,
               couponCode: input.couponCode,
             });
 
