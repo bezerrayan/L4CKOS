@@ -54,17 +54,17 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <trpc.Provider client={trpcClient} queryClient={queryClient}>
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="light" switchable={true}>
-            <CartProvider>
-              <FavoritesProvider>
-                <UserProvider>
+            <UserProvider>
+              <CartProvider>
+                <FavoritesProvider>
                   <ToastProvider>
                     <DataSyncProvider>
                       <App />
                     </DataSyncProvider>
                   </ToastProvider>
-                </UserProvider>
-              </FavoritesProvider>
-            </CartProvider>
+                </FavoritesProvider>
+              </CartProvider>
+            </UserProvider>
           </ThemeProvider>
         </QueryClientProvider>
       </trpc.Provider>

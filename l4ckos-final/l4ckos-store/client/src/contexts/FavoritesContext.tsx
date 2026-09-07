@@ -3,8 +3,10 @@
  * Fornece: favorites, addToFavorites, removeFromFavorites, isFavorited
  */
 
-import React, { createContext, useContext, useState, ReactNode, useCallback } from "react";
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect } from "react";
 import type { Product } from "../types/product";
+import { useUser } from "./UserContext";
+import { getFavoritesStorageKey, readFavorites, writeFavorites } from "../lib/favoritesStorage";
 
 // ============= TIPOS =============
 
@@ -23,7 +25,22 @@ const FavoritesContext = createContext<FavoritesContextType | undefined>(undefin
 // ============= PROVIDER =============
 
 export function FavoritesProvider({ children }: { children: ReactNode }) {
+  const { user, isAuthenticated } = useUser();
   const [favorites, setFavorites] = useState<Product[]>([]);
+  const storageKey = getFavoritesStorageKey(isAuthenticated ? user?.id : null);
+  const [hydratedStorageKey, setHydratedStorageKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const storage = typeof window === "undefined" ? null : window.localStorage;
+    setFavorites(readFavorites(storage, storageKey));
+    setHydratedStorageKey(storageKey);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (hydratedStorageKey !== storageKey) return;
+    const storage = typeof window === "undefined" ? null : window.localStorage;
+    writeFavorites(storage, storageKey, favorites);
+  }, [favorites, hydratedStorageKey, storageKey]);
 
   // 📌 Adicionar aos favoritos
   const addToFavorites = useCallback((product: Product) => {
