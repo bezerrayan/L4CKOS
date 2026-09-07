@@ -34,7 +34,7 @@ import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 import { AdminSystemUI } from "../components/admin/system/AdminSystemUI";
 import { AdminReviewsPanel, type AdminReview, type AdminReviewFilters } from "../components/admin/reviews/AdminReviewsPanel";
 
-type Section =
+export type AdminSection =
   | "overview"
   | "customers"
   | "products"
@@ -275,7 +275,7 @@ function OverviewIcon({ children }: { children: ReactNode }) {
   );
 }
 
-export default function Admin() {
+export default function Admin({ controlledSection, onSectionChange }: { controlledSection?: AdminSection; onSectionChange?: (section: AdminSection) => void } = {}) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const isCompactAdmin = useIsMobile(1180);
@@ -283,7 +283,15 @@ export default function Admin() {
   const { showToast } = useToast();
   const utils = trpc.useUtils();
 
-  const [section, setSection] = useState<Section>("overview");
+  const [localSection, setLocalSection] = useState<AdminSection>("overview");
+  const section = controlledSection ?? localSection;
+  const setSection = (next: AdminSection) => {
+    if (controlledSection !== undefined) {
+      onSectionChange?.(next);
+      return;
+    }
+    setLocalSection(next);
+  };
   const [reviewFilters, setReviewFilters] = useState<AdminReviewFilters>({ moderationStatus: "", imageStatus: "", verifiedPurchase: "", productId: "" });
   const [reviewCursor, setReviewCursor] = useState<number | undefined>();
   const [reviewItems, setReviewItems] = useState<AdminReview[]>([]);
@@ -721,16 +729,17 @@ export default function Admin() {
 
   return (
     <div style={styles.container}>
-      <AdminPageHeader
-        title="Painel Administrativo"
-        subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
-        actions={[
-          { label: "Ver pedidos", onClick: () => setSection("orders") },
-          { label: "Abrir produtos", onClick: () => setSection("products") },
-        ]}
-      />
+      {controlledSection === undefined ? <>
+        <AdminPageHeader
+          title="Painel Administrativo"
+          subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
+          actions={[
+            { label: "Ver pedidos", onClick: () => setSection("orders") },
+            { label: "Abrir produtos", onClick: () => setSection("products") },
+          ]}
+        />
 
-      <div style={styles.tabs}>
+        <div style={styles.tabs}>
         {[
           { key: "overview", label: "KPIs" },
           { key: "customers", label: "Clientes" },
@@ -747,12 +756,13 @@ export default function Admin() {
           <button
             key={tab.key}
             style={{ ...styles.tabBtn, ...(section === tab.key ? styles.tabBtnActive : {}) }}
-            onClick={() => setSection(tab.key as Section)}
+            onClick={() => setSection(tab.key as AdminSection)}
           >
             {tab.label}
           </button>
         ))}
-      </div>
+        </div>
+      </> : null}
 
       {section === "overview" && (
         <AdminDashboard

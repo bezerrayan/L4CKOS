@@ -1,11 +1,14 @@
 import { Suspense, lazy } from "react";
-import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Footer from "./components/Footer";
 import Header from "./components/Header";
 import CartDrawer from "./components/CartDrawer";
 import CookiePreferences from "./components/CookiePreferences";
 import { useUser } from "./contexts/UserContext";
 import { useIsMobile } from "./hooks/useIsMobile";
+import { AdminShell } from "./components/admin/shell/AdminShell";
+import { LegacyAdminSectionPage } from "./pages/admin/LegacyAdminSectionPage";
+import { AdminRoutePlaceholder } from "./pages/admin/AdminRoutePlaceholder";
 
 const Home = lazy(() => import("./pages/Home"));
 const Produtos = lazy(() => import("./pages/Produtos"));
@@ -18,7 +21,6 @@ const Cadastro = lazy(() => import("./pages/Cadastro"));
 const EsqueciSenha = lazy(() => import("./pages/EsqueciSenha"));
 const RedefinirSenha = lazy(() => import("./pages/RedefinirSenha"));
 const Perfil = lazy(() => import("./pages/Perfil"));
-const Admin = lazy(() => import("./pages/Admin"));
 const Sobre = lazy(() => import("./pages/Sobre"));
 const Contato = lazy(() => import("./pages/Contato"));
 const FAQs = lazy(() => import("./pages/FAQs"));
@@ -60,7 +62,7 @@ function AdminRoute() {
     return <NotFound />;
   }
 
-  return <Admin />;
+  return <AdminShell />;
 }
 
 function AppRoutes() {
@@ -73,6 +75,7 @@ function AppRoutes() {
     .replace(/[^a-z]/g, "");
   const comingSoonEnabled = comingSoonRaw === "true";
   const isCheckoutRoute = location.pathname === "/checkout";
+  const isAdminRoute = location.pathname === "/admin" || location.pathname.startsWith("/gestao");
   const isAdmin = isAuthenticated && user?.role === "admin";
   const comingSoonAllowedRoutes = new Set(["/login", "/cadastro", "/esqueci-senha", "/redefinir-senha"]);
   const isAllowedDuringComingSoon = comingSoonAllowedRoutes.has(location.pathname);
@@ -84,11 +87,11 @@ function AppRoutes() {
 
   return (
     <>
-      {!isCheckoutRoute ? <Header /> : null}
+      {!isCheckoutRoute && !isAdminRoute ? <Header /> : null}
 
       <div
         style={{
-          minHeight: isCheckoutRoute ? "100vh" : isMobile ? "calc(100vh - 150px)" : "calc(100vh - 170px)",
+          minHeight: isCheckoutRoute || isAdminRoute ? "100vh" : isMobile ? "calc(100vh - 150px)" : "calc(100vh - 170px)",
           margin: "0 auto",
           padding: "0",
           width: "100%",
@@ -113,8 +116,30 @@ function AppRoutes() {
             <Route path="/meus-pedidos" element={<MeusPedidos />} />
             <Route path="/meus-pedidos/:id" element={<PedidoDetalhe />} />
             <Route path="/acompanhar-pedido" element={<AcompanharPedido />} />
-            <Route path="/admin" element={<AdminRoute />} />
-            <Route path="/gestao" element={<AdminRoute />} />
+            <Route path="/admin/*" element={<Navigate replace to="/gestao" />} />
+            <Route path="/gestao" element={<AdminRoute />}>
+              <Route index element={<LegacyAdminSectionPage section="overview" />} />
+              <Route path="pedidos" element={<LegacyAdminSectionPage section="orders" />} />
+              <Route path="pedidos/:id" element={<AdminRoutePlaceholder title="Pedido" description="O detalhe dedicado de pedidos será extraído em uma próxima fase. A gestão operacional continua disponível na lista atual." returnTo="/gestao/pedidos" returnLabel="Voltar para pedidos" />} />
+              <Route path="catalogo" element={<Navigate replace to="/gestao/catalogo/produtos" />} />
+              <Route path="catalogo/produtos" element={<LegacyAdminSectionPage section="products" />} />
+              <Route path="catalogo/produtos/novo" element={<LegacyAdminSectionPage section="products" />} />
+              <Route path="catalogo/produtos/:id" element={<AdminRoutePlaceholder title="Produto" description="A edição continua disponível na lista atual de produtos enquanto a página dedicada não é extraída." returnTo="/gestao/catalogo/produtos" returnLabel="Abrir produtos" />} />
+              <Route path="catalogo/estoque" element={<LegacyAdminSectionPage section="products" />} />
+              <Route path="clientes" element={<LegacyAdminSectionPage section="customers" />} />
+              <Route path="clientes/:id" element={<AdminRoutePlaceholder title="Cliente" description="O detalhe de cliente será extraído em fase posterior. As ações atuais continuam na lista de clientes." returnTo="/gestao/clientes" returnLabel="Voltar para clientes" />} />
+              <Route path="marketing" element={<LegacyAdminSectionPage section="promos" />} />
+              <Route path="marketing/promocoes" element={<LegacyAdminSectionPage section="promos" />} />
+              <Route path="marketing/cupons" element={<LegacyAdminSectionPage section="coupons" />} />
+              <Route path="marketing/campanhas" element={<LegacyAdminSectionPage section="coupons" />} />
+              <Route path="avaliacoes" element={<LegacyAdminSectionPage section="reviews" />} />
+              <Route path="relatorios" element={<LegacyAdminSectionPage section="reports" />} />
+              <Route path="operacoes" element={<LegacyAdminSectionPage section="settings" />} />
+              <Route path="operacoes/auditoria" element={<LegacyAdminSectionPage section="audit" />} />
+              <Route path="operacoes/backup" element={<LegacyAdminSectionPage section="backup" />} />
+              <Route path="operacoes/configuracoes" element={<LegacyAdminSectionPage section="settings" />} />
+              <Route path="*" element={<Navigate replace to="/gestao" />} />
+            </Route>
             <Route path="/sobre" element={<Sobre />} />
             <Route path="/contato" element={<Contato />} />
             <Route path="/faqs" element={<FAQs />} />
@@ -126,7 +151,7 @@ function AppRoutes() {
         </Suspense>
       </div>
 
-      {!isCheckoutRoute ? <Footer /> : null}
+      {!isCheckoutRoute && !isAdminRoute ? <Footer /> : null}
       <CartDrawer />
       <CookiePreferences />
     </>
