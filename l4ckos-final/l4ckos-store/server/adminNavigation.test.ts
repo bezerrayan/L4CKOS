@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { adminNavigation, getAdminBreadcrumbs, getAdminPageTitle } from "../client/src/components/admin/shell/adminNavigation";
 
@@ -22,5 +24,16 @@ describe("Admin V2 navigation configuration", () => {
   it("does not make backup a first-level sidebar item", () => {
     expect(adminNavigation.flatMap(group => group.items).some(item => item.label === "Backup")).toBe(false);
     expect(getAdminBreadcrumbs("/gestao/operacoes/backup").map(item => item.label)).toEqual(["Operações", "Backup"]);
+  });
+
+  it("mounts route-owned pages for every extracted admin area and keeps /admin as an alias", () => {
+    const app = readFileSync(resolve(process.cwd(), "client/src/App.tsx"), "utf8");
+    for (const page of ["DashboardPage", "CustomersPage", "OrdersPage", "ProductsPage", "PromotionsPage", "CouponsPage", "ReviewsPage", "ReportsPage", "AuditPage", "BackupPage", "SettingsPage"]) {
+      expect(app).toContain(`element={<${page} />}`);
+    }
+    expect(app).toContain('<Route path="catalogo/produtos" element={<ProductsPage />} />');
+    expect(app).toContain('<Route path="catalogo/produtos/novo" element={<ProductsPage />} />');
+    expect(app).toContain('<Route path="/admin/*" element={<Navigate replace to="/gestao" />} />');
+    expect(app).not.toContain("LegacyAdminSectionPage");
   });
 });

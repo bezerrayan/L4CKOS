@@ -7,8 +7,20 @@ import CookiePreferences from "./components/CookiePreferences";
 import { useUser } from "./contexts/UserContext";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { AdminShell } from "./components/admin/shell/AdminShell";
-import { LegacyAdminSectionPage } from "./pages/admin/LegacyAdminSectionPage";
 import { AdminRoutePlaceholder } from "./pages/admin/AdminRoutePlaceholder";
+import { DashboardPage } from "./pages/admin/DashboardPage";
+import { CustomersPage } from "./pages/admin/CustomersPage";
+import { ReviewsPage } from "./pages/admin/ReviewsPage";
+import { ReportsPage } from "./pages/admin/ReportsPage";
+import { AuditPage } from "./pages/admin/AuditPage";
+import { BackupPage } from "./pages/admin/BackupPage";
+import { SettingsPage } from "./pages/admin/SettingsPage";
+import { MarketingPage } from "./pages/admin/MarketingPage";
+import { OperationsPage } from "./pages/admin/OperationsPage";
+import { CouponsPage } from "./pages/admin/CouponsPage";
+import { PromotionsPage } from "./pages/admin/PromotionsPage";
+import { OrdersPage } from "./pages/admin/OrdersPage";
+import { ProductsPage } from "./pages/admin/ProductsPage";
 
 const Home = lazy(() => import("./pages/Home"));
 const Produtos = lazy(() => import("./pages/Produtos"));
@@ -118,26 +130,26 @@ function AppRoutes() {
             <Route path="/acompanhar-pedido" element={<AcompanharPedido />} />
             <Route path="/admin/*" element={<Navigate replace to="/gestao" />} />
             <Route path="/gestao" element={<AdminRoute />}>
-              <Route index element={<LegacyAdminSectionPage section="overview" />} />
-              <Route path="pedidos" element={<LegacyAdminSectionPage section="orders" />} />
+              <Route index element={<DashboardPage />} />
+              <Route path="pedidos" element={<OrdersPage />} />
               <Route path="pedidos/:id" element={<AdminRoutePlaceholder title="Pedido" description="O detalhe dedicado de pedidos será extraído em uma próxima fase. A gestão operacional continua disponível na lista atual." returnTo="/gestao/pedidos" returnLabel="Voltar para pedidos" />} />
               <Route path="catalogo" element={<Navigate replace to="/gestao/catalogo/produtos" />} />
-              <Route path="catalogo/produtos" element={<LegacyAdminSectionPage section="products" />} />
-              <Route path="catalogo/produtos/novo" element={<LegacyAdminSectionPage section="products" />} />
+              <Route path="catalogo/produtos" element={<ProductsPage />} />
+              <Route path="catalogo/produtos/novo" element={<ProductsPage />} />
               <Route path="catalogo/produtos/:id" element={<AdminRoutePlaceholder title="Produto" description="A edição continua disponível na lista atual de produtos enquanto a página dedicada não é extraída." returnTo="/gestao/catalogo/produtos" returnLabel="Abrir produtos" />} />
-              <Route path="catalogo/estoque" element={<LegacyAdminSectionPage section="products" />} />
-              <Route path="clientes" element={<LegacyAdminSectionPage section="customers" />} />
+              <Route path="catalogo/estoque" element={<AdminRoutePlaceholder title="Estoque" description="A visão operacional de inventário será extraída em uma próxima fase. A edição por variante continua disponível em Produtos." returnTo="/gestao/catalogo/produtos" returnLabel="Abrir produtos" />} />
+              <Route path="clientes" element={<CustomersPage />} />
               <Route path="clientes/:id" element={<AdminRoutePlaceholder title="Cliente" description="O detalhe de cliente será extraído em fase posterior. As ações atuais continuam na lista de clientes." returnTo="/gestao/clientes" returnLabel="Voltar para clientes" />} />
-              <Route path="marketing" element={<LegacyAdminSectionPage section="promos" />} />
-              <Route path="marketing/promocoes" element={<LegacyAdminSectionPage section="promos" />} />
-              <Route path="marketing/cupons" element={<LegacyAdminSectionPage section="coupons" />} />
-              <Route path="marketing/campanhas" element={<LegacyAdminSectionPage section="coupons" />} />
-              <Route path="avaliacoes" element={<LegacyAdminSectionPage section="reviews" />} />
-              <Route path="relatorios" element={<LegacyAdminSectionPage section="reports" />} />
-              <Route path="operacoes" element={<LegacyAdminSectionPage section="settings" />} />
-              <Route path="operacoes/auditoria" element={<LegacyAdminSectionPage section="audit" />} />
-              <Route path="operacoes/backup" element={<LegacyAdminSectionPage section="backup" />} />
-              <Route path="operacoes/configuracoes" element={<LegacyAdminSectionPage section="settings" />} />
+              <Route path="marketing" element={<MarketingPage />} />
+              <Route path="marketing/promocoes" element={<PromotionsPage />} />
+              <Route path="marketing/cupons" element={<CouponsPage />} />
+              <Route path="marketing/campanhas" element={<CouponsPage />} />
+              <Route path="avaliacoes" element={<ReviewsPage />} />
+              <Route path="relatorios" element={<ReportsPage />} />
+              <Route path="operacoes" element={<OperationsPage />} />
+              <Route path="operacoes/auditoria" element={<AuditPage />} />
+              <Route path="operacoes/backup" element={<BackupPage />} />
+              <Route path="operacoes/configuracoes" element={<SettingsPage />} />
               <Route path="*" element={<Navigate replace to="/gestao" />} />
             </Route>
             <Route path="/sobre" element={<Sobre />} />
