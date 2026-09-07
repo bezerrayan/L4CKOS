@@ -143,7 +143,7 @@ function AppRoutes() {
               <Route path="marketing" element={<MarketingPage />} />
               <Route path="marketing/promocoes" element={<PromotionsPage />} />
               <Route path="marketing/cupons" element={<CouponsPage />} />
-              <Route path="marketing/campanhas" element={<CouponsPage />} />
+              <Route path="marketing/campanhas" element={<Navigate replace to="/gestao/marketing/cupons" />} />
               <Route path="avaliacoes" element={<ReviewsPage />} />
               <Route path="relatorios" element={<ReportsPage />} />
               <Route path="operacoes" element={<OperationsPage />} />

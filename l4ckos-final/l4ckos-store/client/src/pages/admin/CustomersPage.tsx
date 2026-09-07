@@ -9,10 +9,6 @@ export function CustomersPage() {
   const { showToast } = useToast();
   const [search, setSearch] = useState("");
   const customersQuery = trpc.admin.usersList.useQuery();
-  const setRoleMutation = trpc.admin.userSetRole.useMutation({
-    onSuccess: () => { showToast({ message: "Role atualizada", duration: 2000 }); void customersQuery.refetch(); },
-    onError: error => showToast({ message: error.message, duration: 2600 }),
-  });
   const setFlagsMutation = trpc.admin.userSetFlags.useMutation({
     onSuccess: () => { showToast({ message: "Cliente atualizado", duration: 2000 }); void customersQuery.refetch(); },
     onError: error => showToast({ message: error.message, duration: 2600 }),
@@ -27,7 +23,7 @@ export function CustomersPage() {
       <input style={{ ...styles.input, minWidth: 260 }} placeholder="Buscar por nome, e-mail ou ID" value={search} onChange={event => setSearch(event.target.value)} />
       <div style={styles.pill}>Total: {customers.length}</div><div style={styles.pill}>VIP: {customers.filter(row => row.isVip).length}</div><div style={styles.pill}>Bloqueados: {customers.filter(row => row.isBlocked).length}</div>
     </div>
-    {customersQuery.isLoading ? <div style={styles.loading}>Carregando clientes...</div> : customers.length === 0 ? <AdminEmptyState title="Nenhum cliente encontrado" description="Quando houver usuários cadastrados, eles aparecerão aqui com seus indicadores principais." /> : <div style={styles.tableWrap}><table style={styles.table}><thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Role</th><th>Pedidos</th><th>VIP</th><th>Bloqueado</th><th>Ações</th></tr></thead><tbody>{customers.map(row => <tr key={row.id}><td>{row.id}</td><td>{row.name || "-"}</td><td>{row.email || "-"}</td><td>{row.role}</td><td>{row.ordersCount}</td><td>{row.isVip ? "Sim" : "Não"}</td><td>{row.isBlocked ? "Sim" : "Não"}</td><td style={styles.actions}><button style={styles.button} onClick={() => setRoleMutation.mutate({ userId: row.id, role: row.role === "admin" ? "user" : "admin" })}>{row.role === "admin" ? "Remover admin" : "Tornar admin"}</button><button style={styles.button} onClick={() => setFlagsMutation.mutate({ userId: row.id, isVip: !row.isVip })}>{row.isVip ? "Remover VIP" : "Marcar VIP"}</button><button style={styles.danger} onClick={() => setFlagsMutation.mutate({ userId: row.id, isBlocked: !row.isBlocked })}>{row.isBlocked ? "Desbloquear" : "Bloquear"}</button></td></tr>)}</tbody></table></div>}
+    {customersQuery.isLoading ? <div style={styles.loading}>Carregando clientes...</div> : customers.length === 0 ? <AdminEmptyState title="Nenhum cliente encontrado" description="Quando houver usuários cadastrados, eles aparecerão aqui com seus indicadores principais." /> : <div style={styles.tableWrap}><table style={styles.table}><thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Role</th><th>Pedidos</th><th>VIP</th><th>Bloqueado</th><th>Ações</th></tr></thead><tbody>{customers.map(row => <tr key={row.id}><td>{row.id}</td><td>{row.name || "-"}</td><td>{row.email || "-"}</td><td>{row.role}</td><td>{row.ordersCount}</td><td>{row.isVip ? "Sim" : "Não"}</td><td>{row.isBlocked ? "Sim" : "Não"}</td><td style={styles.actions}><button style={styles.danger} onClick={() => setFlagsMutation.mutate({ userId: row.id, isBlocked: !row.isBlocked })}>{row.isBlocked ? "Desbloquear" : "Bloquear"}</button></td></tr>)}</tbody></table></div>}
   </AdminSurface></AdminCustomersUI>;
 }
 

@@ -29,6 +29,7 @@ import {
   passwordResetTokens,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { resolveProvisionedUserRole } from "./_core/adminAccess";
 import { buildVariantOptionKey, hasValidStockReservation } from "./services/checkoutIntegrity";
 import {
   ASAAS_EVENT_TO_PAYMENT_STATUS,
@@ -174,19 +175,10 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.lastSignedIn = user.lastSignedIn;
       updateSet.lastSignedIn = user.lastSignedIn;
     }
-    const normalizedEmail = (user.email ?? "").trim().toLowerCase();
-    const canBeAdmin = user.openId === ENV.ownerOpenId || ENV.adminEmails.includes(normalizedEmail);
-
-    if (user.role !== undefined) {
-      const safeRole = user.role === "admin" && !canBeAdmin ? "user" : user.role;
-      values.role = safeRole;
-      updateSet.role = safeRole;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    } else if (user.email && ENV.adminEmails.includes(user.email.trim().toLowerCase())) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
+    const provisionedRole = resolveProvisionedUserRole(user.openId, user.role);
+    if (provisionedRole !== undefined) {
+      values.role = provisionedRole;
+      updateSet.role = provisionedRole;
     }
 
     if (!values.lastSignedIn) {
@@ -1692,17 +1684,9 @@ export async function getAllUsers() {
   return await db.select().from(users);
 }
 
-export async function updateUserRole(userId: number, role: "user" | "admin") {
+export async function updateUserRole(userId: number, role: "user") {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (role === "admin") {
-    const target = await getUserById(userId);
-    const normalizedEmail = String(target?.email ?? "").trim().toLowerCase();
-    const isAllowed = Boolean(normalizedEmail) && ENV.adminEmails.includes(normalizedEmail);
-    if (!isAllowed) {
-      throw new Error("Admin role assignment not allowed for this email");
-    }
-  }
   return await db.update(users).set({ role }).where(eq(users.id, userId));
 }
 

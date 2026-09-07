@@ -119,10 +119,6 @@ function assertSignupInput(input: { name: string; email: string; password: strin
   }
 }
 
-function isAdminEmail(email: string) {
-  return ENV.adminEmails.includes(email.trim().toLowerCase());
-}
-
 function getNormalizedAttemptState(key: string, now: number): LoginAttemptState {
   const current = loginAttemptStore.get(key);
   if (!current) {
@@ -247,17 +243,6 @@ export const appRouter = router({
           });
         }
 
-        if (isAdminEmail(normalizedEmail)) {
-          await upsertUser({
-            openId: `local:${normalizedEmail}`,
-            name: normalizedEmail.split("@")[0] || "Admin",
-            email: normalizedEmail,
-            loginMethod: "local-dev",
-            role: "admin",
-            lastSignedIn: new Date(),
-          });
-        }
-
         const localOpenId = `local:${normalizedEmail}`;
         const inferredName = normalizedEmail.split("@")[0] || "Usuario Local";
         await upsertUser({
@@ -346,14 +331,11 @@ export const appRouter = router({
           });
         }
 
-        const localRole = isAdminEmail(normalizedEmail) ? "admin" : "user";
-
         await upsertUser({
           openId: localOpenId,
           name: normalizedName,
           email: normalizedEmail,
           loginMethod: "local-dev",
-          role: localRole,
           lastSignedIn: new Date(),
         });
 

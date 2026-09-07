@@ -34,6 +34,7 @@ describe("Admin V2 navigation configuration", () => {
     expect(app).toContain('<Route path="catalogo/produtos" element={<ProductsPage />} />');
     expect(app).toContain('<Route path="catalogo/produtos/novo" element={<ProductsPage />} />');
     expect(app).toContain('<Route path="/admin/*" element={<Navigate replace to="/gestao" />} />');
+    expect(app).toContain('<Route path="marketing/campanhas" element={<Navigate replace to="/gestao/marketing/cupons" />} />');
     expect(app).not.toContain("LegacyAdminSectionPage");
   });
 });

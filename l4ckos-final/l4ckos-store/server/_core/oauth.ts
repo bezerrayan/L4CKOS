@@ -226,10 +226,7 @@ export function registerOAuthRoutes(app: Express) {
 
       callbackStage = "upsert_user";
       const normalizedEmail = String(userInfo.email ?? "").trim().toLowerCase();
-      const googleRole =
-        openId === ENV.ownerOpenId || (normalizedEmail && ENV.adminEmails.includes(normalizedEmail))
-          ? "admin"
-          : "user";
+      const googleRole = openId === ENV.ownerOpenId && ENV.ownerOpenId ? "admin" : undefined;
       const existingUser = await db.getUserByOpenId(openId);
 
       await db.upsertUser({
@@ -237,7 +234,7 @@ export function registerOAuthRoutes(app: Express) {
         name: userInfo.name || null,
         email: userInfo.email ?? null,
         loginMethod: "google",
-        role: googleRole,
+        ...(googleRole ? { role: googleRole } : {}),
         lastSignedIn: new Date(),
       });
 

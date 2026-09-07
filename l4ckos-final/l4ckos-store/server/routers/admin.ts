@@ -151,22 +151,12 @@ export const adminRouter = router({
     .input(
       z.object({
         userId: z.number().int().positive(),
-        role: z.enum(["user", "admin"]),
+        // Elevated access is provisioned only by the canonical auth allowlist.
+        // This administrative mutation can revoke a stored role, never grant one.
+        role: z.literal("user"),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      if (input.role === "admin") {
-        const targetUser = await getUserById(input.userId);
-        const normalizedEmail = String(targetUser?.email ?? "").trim().toLowerCase();
-        const allowedAdmin = Boolean(normalizedEmail) && ENV.adminEmails.includes(normalizedEmail);
-        if (!allowedAdmin) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Este e-mail não pode receber permissão de admin.",
-          });
-        }
-      }
-
       await updateUserRole(input.userId, input.role);
       await createAuditLog({
         actorUserId: ctx.user.id,

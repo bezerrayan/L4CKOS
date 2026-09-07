@@ -61,7 +61,6 @@ const exactBreadcrumbs: Record<string, Breadcrumb[]> = {
   "/gestao/marketing": [{ label: "Marketing" }],
   "/gestao/marketing/promocoes": [{ label: "Marketing", to: "/gestao/marketing" }, { label: "Promoções" }],
   "/gestao/marketing/cupons": [{ label: "Marketing", to: "/gestao/marketing" }, { label: "Cupons" }],
-  "/gestao/marketing/campanhas": [{ label: "Marketing", to: "/gestao/marketing" }, { label: "Campanhas" }],
   "/gestao/avaliacoes": [{ label: "Avaliações" }],
   "/gestao/relatorios": [{ label: "Relatórios" }],
   "/gestao/operacoes": [{ label: "Operações" }],
