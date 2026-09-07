@@ -25,6 +25,7 @@ import {
   ProductsSummaryCards,
   type ProductListFilter,
 } from "../components/admin/products/AdminProductsUI";
+import { ProductOptionsInventoryEditor } from "../components/admin/products/ProductOptionsInventoryEditor";
 import { AdminOrdersUI } from "../components/admin/orders/AdminOrdersUI";
 import { AdminCustomersUI } from "../components/admin/customers/AdminCustomersUI";
 import { AdminCouponsUI } from "../components/admin/coupons/AdminCouponsUI";
@@ -189,41 +190,6 @@ function moveImageCsvEntryToCover(currentValue: string, targetUrl: string, curre
   };
 }
 
-function appendCsvToken(currentValue: string, token: string) {
-  const items = currentValue
-    .split(",")
-    .map(item => item.trim())
-    .filter(Boolean);
-  if (!items.includes(token)) items.push(token);
-  return items.join(", ");
-}
-
-function buildVariantDraft(name: string, colorsCsv: string, sizesCsv: string, price: string) {
-  const colors = colorsCsv.split(",").map(item => item.trim()).filter(Boolean);
-  const sizes = sizesCsv.split(",").map(item => item.trim()).filter(Boolean);
-  const basePrice = price.trim();
-  const combinations: string[] = [];
-
-  if (colors.length > 0 && sizes.length > 0) {
-    for (const color of colors) {
-      for (const size of sizes) {
-        combinations.push(`${name} ${color} ${size}|${color.toUpperCase()}-${size.toUpperCase()}|${basePrice}|0`);
-      }
-    }
-    return combinations.join("; ");
-  }
-
-  if (sizes.length > 0) {
-    return sizes.map(size => `${name} ${size}|${size.toUpperCase()}|${basePrice}|0`).join("; ");
-  }
-
-  if (colors.length > 0) {
-    return colors.map(color => `${name} ${color}|${color.toUpperCase()}|${basePrice}|0`).join("; ");
-  }
-
-  return "";
-}
-
 function resolveVariantOptions(name: string, colors: string[], sizes: string[]) {
   const normalizedName = name.trim().toLocaleLowerCase("pt-BR");
   const matches = (option: string) => {
@@ -234,6 +200,16 @@ function resolveVariantOptions(name: string, colors: string[], sizes: string[]) 
     color: colors.find(matches) ?? null,
     size: sizes.find(matches) ?? null,
   };
+}
+
+function getStoredProductOptions(serialized: string | null | undefined, variants: Array<{ color?: string | null; size?: string | null }> | undefined, key: "color" | "size") {
+  try {
+    const parsed = serialized ? JSON.parse(serialized) : [];
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(item => String(item).trim()).filter(Boolean);
+  } catch {
+    // Legacy rows can lack the serialized option list; their variant fields remain canonical for editing.
+  }
+  return [...new Set((variants ?? []).map(variant => String(variant[key] ?? "").trim()).filter(Boolean))];
 }
 
 function getOrderStatusLabel(status: string) {
@@ -985,10 +961,11 @@ export default function Admin() {
           <div style={styles.productAdminHeader}>
             <div>
               <h3 style={styles.productAdminTitle}>Criar produto</h3>
-              <p style={styles.productAdminText}>Preencha as informações principais, organize a categoria e publique o item com uma estrutura mais clara.</p>
+              <p style={styles.productAdminText}>Preencha as informações principais, organize as variações e publique o item com estoque claro por combinação.</p>
             </div>
           </div>
             <div style={styles.formGrid}>
+              <div style={styles.formSectionHeading}><span>Informações básicas</span><small>Dados principais do catálogo</small></div>
               <input style={styles.input} placeholder="Nome do produto" value={newProduct.name} onChange={e => setNewProduct(prev => ({ ...prev, name: e.target.value }))} />
               <select style={styles.select} value={newProduct.category} onChange={e => setNewProduct(prev => ({ ...prev, category: e.target.value }))}>
                 <option value="">Selecione a categoria</option>
@@ -1002,32 +979,10 @@ export default function Admin() {
               <span style={styles.categoryPreviewHint}>Essa categoria define onde o produto aparece para o cliente na vitrine e nas páginas dedicadas.</span>
             </div>
             <input style={styles.input} placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct(prev => ({ ...prev, price: e.target.value }))} />
-            <input style={styles.input} placeholder="Estoque disponível (somente sem variantes)" value={newProduct.stock} disabled={Boolean(newProduct.variantsCsv.trim())} title={newProduct.variantsCsv.trim() ? "O estoque total é calculado a partir das variantes." : undefined} onChange={e => setNewProduct(prev => ({ ...prev, stock: e.target.value }))} />
-            <div style={mediumFieldStyle}>
-              <input style={styles.input} placeholder="Cores (CSV: preto, branco, verde)" value={newProduct.colorsCsv} onChange={e => setNewProduct(prev => ({ ...prev, colorsCsv: e.target.value }))} />
-              <div style={styles.quickPickRow}>
-                {productColorSuggestions.map(color => (
-                  <button key={color} style={styles.quickPickBtn} onClick={() => setNewProduct(prev => ({ ...prev, colorsCsv: appendCsvToken(prev.colorsCsv, color) }))}>
-                    {color}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <select style={styles.select} value={newProduct.sizeType} onChange={e => setNewProduct(prev => ({ ...prev, sizeType: e.target.value }))}>
-              <option value="alpha">Tamanho alfabético (PP, P, M...)</option>
-              <option value="numeric">Tamanho numérico (36, 38, 40...)</option>
-              <option value="custom">Tamanho customizado</option>
-            </select>
-            <div style={mediumFieldStyle}>
-              <input style={styles.input} placeholder="Tamanhos (CSV: PP, P, M, G, GG ou 36, 38, 40)" value={newProduct.sizesCsv} onChange={e => setNewProduct(prev => ({ ...prev, sizesCsv: e.target.value }))} />
-              <div style={styles.quickPickRow}>
-                {(newProduct.sizeType === "numeric" ? numericSizeSuggestions : alphaSizeSuggestions).map(size => (
-                  <button key={size} style={styles.quickPickBtn} onClick={() => setNewProduct(prev => ({ ...prev, sizesCsv: appendCsvToken(prev.sizesCsv, size) }))}>
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <div style={styles.formSectionHeading}><span>Descrição e detalhes</span><small>Apresentação curta do produto</small></div>
+            <input style={{ ...styles.input, gridColumn: "1 / -1" }} placeholder="Descrição curta" value={newProduct.description} onChange={e => setNewProduct(prev => ({ ...prev, description: e.target.value }))} />
+            <ProductOptionsInventoryEditor value={newProduct} onChange={next => setNewProduct(prev => ({ ...prev, ...next }))} colorSuggestions={productColorSuggestions} alphaSizeSuggestions={alphaSizeSuggestions} numericSizeSuggestions={numericSizeSuggestions} />
+            <div style={styles.formSectionHeading}><span>Imagens</span><small>Capa, galeria e associação opcional por cor</small></div>
             <div style={mediumFieldStyle}>
               <input style={styles.input} placeholder="Imagem principal" value={newProduct.imageUrl} onChange={e => setNewProduct(prev => ({ ...prev, imageUrl: e.target.value }))} />
               <div style={styles.mediaActions}>
@@ -1144,25 +1099,6 @@ export default function Admin() {
                 </div>
               ) : null}
             </div>
-            <div style={wideFieldStyle}>
-              <input style={styles.input} placeholder="Variantes (nome|sku|preço|estoque;...)" value={newProduct.variantsCsv} onChange={e => setNewProduct(prev => ({ ...prev, variantsCsv: e.target.value }))} />
-              <div style={styles.mediaActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() =>
-                    setNewProduct(prev => ({
-                      ...prev,
-                      variantsCsv: buildVariantDraft(prev.name.trim() || "Produto", prev.colorsCsv, prev.sizesCsv, prev.price || "0"),
-                    }))
-                  }
-                >
-                  Gerar variantes
-                </button>
-              <span style={styles.mediaHint}>Gera combinações a partir das cores e tamanhos; o estoque total será a soma das variantes.</span>
-              </div>
-              <span style={styles.mediaHint}>Exemplo: Camiseta P|CAM-P|89.90|10; Camiseta M|CAM-M|89.90|8</span>
-            </div>
-            <input style={{ ...styles.input, gridColumn: "1 / -1" }} placeholder="Descrição curta" value={newProduct.description} onChange={e => setNewProduct(prev => ({ ...prev, description: e.target.value }))} />
           </div>
           <div style={styles.productAdminActions}>
           <button
@@ -1247,24 +1183,8 @@ export default function Admin() {
                 }
 
                 setEditingProductId(selected.id);
-                const selectedColors = (() => {
-                  if (!selected.optionColors) return [];
-                  try {
-                    const parsed = JSON.parse(selected.optionColors);
-                    return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                  } catch {
-                    return [];
-                  }
-                })();
-                const selectedSizes = (() => {
-                  if (!selected.optionSizes) return [];
-                  try {
-                    const parsed = JSON.parse(selected.optionSizes);
-                    return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                  } catch {
-                    return [];
-                  }
-                })();
+                const selectedColors = getStoredProductOptions(selected.optionColors, selected.variants, "color");
+                const selectedSizes = getStoredProductOptions(selected.optionSizes, selected.variants, "size");
                 setEditProduct({
                   name: selected.name ?? "",
                   category: selected.category ?? "",
@@ -1305,6 +1225,7 @@ export default function Admin() {
           {editingProductId ? (
             <>
               <div style={styles.formGrid}>
+                <div style={styles.formSectionHeading}><span>Informações básicas</span><small>Dados principais do catálogo</small></div>
                 <input style={styles.input} placeholder="Nome do produto" value={editProduct.name} onChange={e => setEditProduct(prev => ({ ...prev, name: e.target.value }))} />
                 <select style={styles.select} value={editProduct.category} onChange={e => setEditProduct(prev => ({ ...prev, category: e.target.value }))}>
                   <option value="">Selecione a categoria</option>
@@ -1318,32 +1239,10 @@ export default function Admin() {
                   <span style={styles.categoryPreviewHint}>Essa categoria será usada na navegação da loja e no filtro que o cliente vê.</span>
                 </div>
                 <input style={styles.input} placeholder="Preço (R$)" value={editProduct.price} onChange={e => setEditProduct(prev => ({ ...prev, price: e.target.value }))} />
-                <input style={styles.input} placeholder="Estoque disponível (somente sem variantes)" value={editProduct.stock} disabled={Boolean(editProduct.variantsCsv.trim())} title={editProduct.variantsCsv.trim() ? "O estoque total é calculado a partir das variantes." : undefined} onChange={e => setEditProduct(prev => ({ ...prev, stock: e.target.value }))} />
-                <div style={mediumFieldStyle}>
-                  <input style={styles.input} placeholder="Cores (CSV: preto, branco, verde)" value={editProduct.colorsCsv} onChange={e => setEditProduct(prev => ({ ...prev, colorsCsv: e.target.value }))} />
-                  <div style={styles.quickPickRow}>
-                    {productColorSuggestions.map(color => (
-                      <button key={color} style={styles.quickPickBtn} onClick={() => setEditProduct(prev => ({ ...prev, colorsCsv: appendCsvToken(prev.colorsCsv, color) }))}>
-                        {color}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <select style={styles.select} value={editProduct.sizeType} onChange={e => setEditProduct(prev => ({ ...prev, sizeType: e.target.value }))}>
-                  <option value="alpha">Tamanho alfabético (PP, P, M...)</option>
-                  <option value="numeric">Tamanho numérico (36, 38, 40...)</option>
-                  <option value="custom">Tamanho customizado</option>
-                </select>
-                <div style={mediumFieldStyle}>
-                  <input style={styles.input} placeholder="Tamanhos (CSV: PP, P, M, G, GG ou 36, 38, 40)" value={editProduct.sizesCsv} onChange={e => setEditProduct(prev => ({ ...prev, sizesCsv: e.target.value }))} />
-                  <div style={styles.quickPickRow}>
-                    {(editProduct.sizeType === "numeric" ? numericSizeSuggestions : alphaSizeSuggestions).map(size => (
-                      <button key={size} style={styles.quickPickBtn} onClick={() => setEditProduct(prev => ({ ...prev, sizesCsv: appendCsvToken(prev.sizesCsv, size) }))}>
-                        {size}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <div style={styles.formSectionHeading}><span>Descrição e detalhes</span><small>Apresentação curta do produto</small></div>
+                <input style={{ ...styles.input, gridColumn: "1 / -1" }} placeholder="Descrição curta" value={editProduct.description} onChange={e => setEditProduct(prev => ({ ...prev, description: e.target.value }))} />
+                <ProductOptionsInventoryEditor value={editProduct} onChange={next => setEditProduct(prev => ({ ...prev, ...next }))} colorSuggestions={productColorSuggestions} alphaSizeSuggestions={alphaSizeSuggestions} numericSizeSuggestions={numericSizeSuggestions} />
+                <div style={styles.formSectionHeading}><span>Imagens</span><small>Capa, galeria e associação opcional por cor</small></div>
                 <div style={mediumFieldStyle}>
                   <input style={styles.input} placeholder="Imagem principal" value={editProduct.imageUrl} onChange={e => setEditProduct(prev => ({ ...prev, imageUrl: e.target.value }))} />
                   <div style={styles.mediaActions}>
@@ -1460,25 +1359,6 @@ export default function Admin() {
                     </div>
                   ) : null}
                 </div>
-                <div style={wideFieldStyle}>
-                  <input style={styles.input} placeholder="Variantes (nome|sku|preço|estoque;...)" value={editProduct.variantsCsv} onChange={e => setEditProduct(prev => ({ ...prev, variantsCsv: e.target.value }))} />
-                  <div style={styles.mediaActions}>
-                    <button
-                      style={styles.secondaryBtn}
-                      onClick={() =>
-                        setEditProduct(prev => ({
-                          ...prev,
-                          variantsCsv: buildVariantDraft(prev.name.trim() || "Produto", prev.colorsCsv, prev.sizesCsv, prev.price || "0"),
-                        }))
-                      }
-                    >
-                      Gerar variantes
-                    </button>
-                    <span style={styles.mediaHint}>Monta a base das variantes para você revisar SKU, preço e estoque por combinação.</span>
-                  </div>
-                  <span style={styles.mediaHint}>Exemplo: Camiseta P|CAM-P|89.90|10; Camiseta M|CAM-M|89.90|8</span>
-                </div>
-                <input style={{ ...styles.input, gridColumn: "1 / -1" }} placeholder="Descrição curta" value={editProduct.description} onChange={e => setEditProduct(prev => ({ ...prev, description: e.target.value }))} />
               </div>
               <div style={styles.productAdminActions}>
                 <button
@@ -1663,24 +1543,8 @@ export default function Admin() {
                       <button
                         style={styles.smallBtn}
                         onClick={() => {
-                          const rowColors = (() => {
-                            if (!row.optionColors) return [];
-                            try {
-                              const parsed = JSON.parse(row.optionColors);
-                              return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                            } catch {
-                              return [];
-                            }
-                          })();
-                          const rowSizes = (() => {
-                            if (!row.optionSizes) return [];
-                            try {
-                              const parsed = JSON.parse(row.optionSizes);
-                              return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                            } catch {
-                              return [];
-                            }
-                          })();
+                          const rowColors = getStoredProductOptions(row.optionColors, row.variants, "color");
+                          const rowSizes = getStoredProductOptions(row.optionSizes, row.variants, "size");
                           setEditingProductId(row.id);
                           setEditProduct({
                             name: row.name ?? "",
@@ -2830,6 +2694,17 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 14,
     alignItems: "stretch",
+  },
+  formSectionHeading: {
+    gridColumn: "1 / -1",
+    display: "grid",
+    gap: 4,
+    paddingTop: 4,
+    color: "#f8f4ec",
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
   productAdminActions: {
     display: "flex",
