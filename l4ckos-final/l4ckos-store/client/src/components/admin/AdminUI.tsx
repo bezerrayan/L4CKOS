@@ -151,6 +151,61 @@ export function AdminEmptyState({
   );
 }
 
+export function AdminMetricCards({
+  cards,
+}: {
+  cards: Array<{ label: string; value: string | number; tone?: "danger" | "warning" | "success" | "neutral" }>;
+}) {
+  return (
+    <div style={styles.metricGrid}>
+      {cards.map(card => (
+        <div
+          key={card.label}
+          style={{
+            ...styles.metricCard,
+            ...(card.tone === "danger"
+              ? styles.metricCardDanger
+              : card.tone === "warning"
+                ? styles.metricCardWarning
+                : card.tone === "success"
+                  ? styles.metricCardSuccess
+                  : {}),
+          }}
+        >
+          <span style={styles.metricLabel}>{card.label}</span>
+          <strong style={styles.metricValue}>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function AdminFilterPills<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: Array<{ key: T; label: string; count: number }>;
+}) {
+  return (
+    <div style={styles.filterRow}>
+      {options.map(option => (
+        <button
+          key={option.key}
+          type="button"
+          style={{ ...styles.filterButton, ...(value === option.key ? styles.filterButtonActive : {}) }}
+          onClick={() => onChange(option.key)}
+        >
+          <span>{option.label}</span>
+          <strong>{option.count}</strong>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
   headerShell: {
     display: "flex",
@@ -326,5 +381,71 @@ const styles: Record<string, CSSProperties> = {
     color: "#9ca3af",
     fontSize: 14,
     lineHeight: 1.6,
+  },
+  metricGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 135px), 1fr))",
+    gap: 10,
+  },
+  metricCard: {
+    display: "grid",
+    gap: 8,
+    padding: "14px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.075)",
+    background: "#090909",
+    minWidth: 0,
+  },
+  metricCardWarning: {
+    borderColor: "rgba(245,158,11,0.26)",
+    background: "linear-gradient(180deg, rgba(245,158,11,0.075), rgba(245,158,11,0.02)), #090909",
+  },
+  metricCardDanger: {
+    borderColor: "rgba(239,68,68,0.34)",
+    background: "linear-gradient(180deg, rgba(239,68,68,0.085), rgba(239,68,68,0.02)), #090909",
+  },
+  metricCardSuccess: {
+    borderColor: "rgba(34,197,94,0.24)",
+    background: "linear-gradient(180deg, rgba(34,197,94,0.075), rgba(34,197,94,0.02)), #090909",
+  },
+  metricLabel: {
+    color: "#9ca3af",
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.10em",
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    color: "#f8f4ec",
+    fontSize: 24,
+    lineHeight: 1,
+    fontWeight: 900,
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  filterRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  filterButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 38,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "#101010",
+    color: "#d1d5db",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  filterButtonActive: {
+    borderColor: "rgba(239,68,68,0.42)",
+    background: "linear-gradient(180deg, rgba(239,68,68,0.16), rgba(127,29,29,0.12)), #141414",
+    color: "#ffffff",
   },
 };

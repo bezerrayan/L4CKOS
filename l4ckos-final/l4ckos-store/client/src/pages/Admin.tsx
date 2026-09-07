@@ -19,7 +19,12 @@ import {
   AdminSurface,
 } from "../components/admin/AdminUI";
 import { AdminDashboard } from "../components/admin/dashboard/AdminDashboard";
-import { AdminProductsUI } from "../components/admin/products/AdminProductsUI";
+import {
+  AdminProductsUI,
+  ProductsFilters,
+  ProductsSummaryCards,
+  type ProductListFilter,
+} from "../components/admin/products/AdminProductsUI";
 import { AdminOrdersUI } from "../components/admin/orders/AdminOrdersUI";
 import { AdminCustomersUI } from "../components/admin/customers/AdminCustomersUI";
 import { AdminCouponsUI } from "../components/admin/coupons/AdminCouponsUI";
@@ -309,6 +314,7 @@ export default function Admin() {
   const [orderFilterStatus, setOrderFilterStatus] = useState<string>("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
+  const [productFilter, setProductFilter] = useState<ProductListFilter>("all");
   const [orderSearch, setOrderSearch] = useState("");
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
@@ -645,7 +651,7 @@ export default function Admin() {
       })
       .sort((a, b) => b.id - a.id);
   }, [customerSearch, customersQuery.data]);
-  const products = useMemo(() => {
+  const searchedProducts = useMemo(() => {
     const normalizedSearch = productSearch.trim().toLowerCase();
     return [...(productsQuery.data ?? [])]
       .filter(row => {
@@ -655,6 +661,36 @@ export default function Admin() {
       })
       .sort((a, b) => b.id - a.id);
   }, [productSearch, productsQuery.data]);
+  const productSummary = useMemo(() => {
+    const rows = productsQuery.data ?? [];
+    return {
+      total: rows.length,
+      withStock: rows.filter(row => Number(row.stock ?? 0) > 0).length,
+      outOfStock: rows.filter(row => Number(row.stock ?? 0) <= 0).length,
+      lowStock: rows.filter(row => Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length,
+      withoutImage: rows.filter(row => !resolveAdminImageUrl(row.imageUrl)).length,
+      withVariants: rows.filter(row => (row.variants?.length ?? 0) > 0).length,
+    };
+  }, [productsQuery.data]);
+  const productFilterOptions = useMemo(
+    () => [
+      { key: "all" as const, label: "Todos", count: searchedProducts.length },
+      { key: "lowStock" as const, label: "Estoque baixo", count: searchedProducts.filter(row => Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length },
+      { key: "outOfStock" as const, label: "Sem estoque", count: searchedProducts.filter(row => Number(row.stock ?? 0) <= 0).length },
+      { key: "withoutImage" as const, label: "Sem imagem", count: searchedProducts.filter(row => !resolveAdminImageUrl(row.imageUrl)).length },
+      { key: "withVariants" as const, label: "Com variantes", count: searchedProducts.filter(row => (row.variants?.length ?? 0) > 0).length },
+    ],
+    [searchedProducts],
+  );
+  const products = useMemo(() => {
+    return searchedProducts.filter(row => {
+      if (productFilter === "lowStock") return Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5;
+      if (productFilter === "outOfStock") return Number(row.stock ?? 0) <= 0;
+      if (productFilter === "withoutImage") return !resolveAdminImageUrl(row.imageUrl);
+      if (productFilter === "withVariants") return (row.variants?.length ?? 0) > 0;
+      return true;
+    });
+  }, [productFilter, searchedProducts]);
   const orders = useMemo(() => {
     const normalizedSearch = orderSearch.trim().toLowerCase();
     return [...(ordersQuery.data ?? [])]
@@ -930,8 +966,11 @@ export default function Admin() {
 
       {section === "products" && (
         <AdminProductsUI>
-          <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Produtos</h2>
+          <AdminSurface
+            title="Produtos"
+            description="Cadastre, revise estoque, organize imagens e acompanhe a saúde operacional do catálogo."
+          >
+          <ProductsSummaryCards summary={productSummary} />
           <div style={styles.inlineRow}>
             <input
               style={{ ...styles.input, minWidth: 280 }}
@@ -939,10 +978,10 @@ export default function Admin() {
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
             />
-            <div style={styles.summaryPill}>Resultados: {products.length}</div>
-            <div style={styles.summaryPill}>Estoque baixo: {products.filter(row => Number(row.stock ?? 0) <= 5).length}</div>
-            <div style={styles.summaryPill}>Com variantes: {products.filter(row => (row.variants?.length ?? 0) > 0).length}</div>
+            <div style={styles.summaryPill}>Exibindo: {products.length}</div>
+            <div style={styles.summaryPill}>Busca: {searchedProducts.length}</div>
           </div>
+          <ProductsFilters value={productFilter} onChange={setProductFilter} options={productFilterOptions} />
           <div style={styles.productAdminHeader}>
             <div>
               <h3 style={styles.productAdminTitle}>Criar produto</h3>
@@ -1685,7 +1724,7 @@ export default function Admin() {
               </tbody>
             </table>
           </div>
-          </div>
+          </AdminSurface>
         </AdminProductsUI>
       )}
 
