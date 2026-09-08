@@ -1,25 +1,14 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
+import { assertStagingSeedTarget, read, readClientFixtureInput, upsertStagingClientFixture } from "./stagingSeedCommon.mjs";
 
-const read = name => String(process.env[name] ?? "").trim();
-const fail = message => { throw new Error(`STAGING_SEED_REFUSED: ${message}`); };
-
-if (read("APP_ENV") !== "staging") fail("APP_ENV must be staging");
-const databaseUrl = read("DATABASE_URL");
-if (!databaseUrl) fail("DATABASE_URL is required");
-const url = new URL(databaseUrl);
-const databaseName = url.pathname.replace(/^\//, "");
-if (url.hostname !== read("EXPECTED_DATABASE_HOST") || databaseName !== read("EXPECTED_DATABASE_NAME")) fail("database does not match EXPECTED_DATABASE_HOST/NAME");
-if (!/staging/i.test(databaseName)) fail("database name must contain staging");
-if (url.hostname === read("PRODUCTION_DATABASE_HOST") || databaseName === read("PRODUCTION_DATABASE_NAME")) fail("production database target detected");
-
-const clientEmail = read("STAGING_CLIENT_EMAIL").toLowerCase();
+const { databaseUrl, databaseName } = assertStagingSeedTarget();
+const clientFixture = readClientFixtureInput();
 const adminEmail = read("STAGING_ADMIN_EMAIL").toLowerCase();
-const clientPassword = read("STAGING_CLIENT_PASSWORD");
 const adminPassword = read("STAGING_ADMIN_PASSWORD");
-if (!clientEmail.endsWith("@example.test") || !adminEmail.endsWith("@example.test")) fail("seed accounts must use the reserved example.test domain");
-if (clientPassword.length < 12 || adminPassword.length < 12 || clientPassword === adminPassword) fail("provide two distinct passwords with at least 12 characters through the environment");
+if (!adminEmail.endsWith("@example.test")) throw new Error("STAGING_SEED_REFUSED: seed admin account must use the reserved example.test domain");
+if (adminPassword.length < 12 || clientFixture.password === adminPassword) throw new Error("STAGING_SEED_REFUSED: provide two distinct passwords with at least 12 characters through the environment");
 
 const connection = await mysql.createConnection(databaseUrl);
 await connection.beginTransaction();
@@ -62,16 +51,9 @@ async function upsertProduct(product) {
 }
 
 try {
-  const clientId = await upsertUser(clientEmail, "user", "Cliente Staging");
+  await upsertStagingClientFixture(connection, clientFixture);
   const adminId = await upsertUser(adminEmail, "admin", "Admin Staging");
-  await upsertCredential(clientId, clientEmail, clientPassword);
   await upsertCredential(adminId, adminEmail, adminPassword);
-
-  await connection.execute("DELETE FROM userAddresses WHERE userId=? AND label='Endereco sintetico staging'", [clientId]);
-  await connection.execute(
-    "INSERT INTO userAddresses (userId,label,recipient,zipCode,street,number,complement,neighborhood,city,state,isDefault) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
-    [clientId, "Endereco sintetico staging", "Cliente Staging", "70000000", "Rua de Teste", "100", "Ambiente isolado", "Centro de Testes", "Brasilia", "DF"],
-  );
 
   const appUrl = read("APP_URL").replace(/\/+$/, "");
   const common = { description: "Fixture sintético para homologação isolada.", fullDescription: "Dados fictícios. Não representa produto ou cliente real.", category: "staging", sizeType: "alpha" };
@@ -106,7 +88,7 @@ try {
   }
 
   await connection.commit();
-  console.log(JSON.stringify({ ok: true, database: databaseName, accounts: { client: clientEmail, admin: adminEmail }, fixtures: { products: 4, variants: 4, coupon: "STAGING10", banner: 1, address: 1 }, passwords: "supplied through environment; never printed" }, null, 2));
+  console.log(JSON.stringify({ ok: true, database: databaseName, fixtures: { products: 4, variants: 4, coupon: "STAGING10", banner: 1, address: 1 }, passwords: "supplied through environment; never printed" }, null, 2));
 } catch (error) {
   await connection.rollback();
   throw error;

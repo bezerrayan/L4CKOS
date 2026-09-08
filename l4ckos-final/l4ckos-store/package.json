@@ -17,6 +17,7 @@
     "db:push": "drizzle-kit push",
     "staging:provision-db": "node scripts/provision-staging-db.mjs",
     "staging:seed": "node scripts/seed-staging.mjs",
+    "seed:staging:client": "node scripts/seed-staging-client.mjs",
     "staging:migrate": "node scripts/staging-migration-gate.mjs",
     "staging:smoke": "node scripts/smoke-staging.mjs"
   },

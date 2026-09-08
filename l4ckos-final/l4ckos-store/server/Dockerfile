@@ -44,6 +44,9 @@ LABEL org.opencontainers.image.created=$DEPLOYED_AT
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./package.json
+COPY --from=build /app/scripts/seed-staging.mjs ./scripts/seed-staging.mjs
+COPY --from=build /app/scripts/seed-staging-client.mjs ./scripts/seed-staging-client.mjs
+COPY --from=build /app/scripts/stagingSeedCommon.mjs ./scripts/stagingSeedCommon.mjs
 
 RUN mkdir -p /app/uploads /app/backups \
   && chown -R node:node /app
