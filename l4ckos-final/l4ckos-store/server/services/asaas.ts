@@ -25,6 +25,7 @@ type AsaasPaymentResponse = {
 type AsaasPixQrCodeResponse = {
   encodedImage?: string;
   payload?: string;
+  expirationDate?: string;
 };
 
 function getAsaasConfig() {
@@ -67,6 +68,20 @@ async function asaasRequest<T>(path: string, init: AsaasRequestInit = {}) {
   }
 
   return data as T;
+}
+
+export async function getAsaasPixQrCode(paymentId: string) {
+  const normalizedPaymentId = String(paymentId || "").trim();
+  if (!normalizedPaymentId) {
+    throw new Error("Invalid Asaas payment id");
+  }
+
+  const data = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${encodeURIComponent(normalizedPaymentId)}/pixQrCode`);
+  return {
+    encodedImage: data.encodedImage ?? null,
+    payload: data.payload ?? null,
+    expirationDate: data.expirationDate ?? null,
+  };
 }
 
 function getDefaultDueDate(): string {
@@ -116,9 +131,9 @@ export async function createAsaasChargeForOrder(input: {
   let pixCopyPaste = payment.pixCopyPaste ?? null;
 
   if (input.method === "PIX" && (!pixQrCode || !pixCopyPaste) && payment.id) {
-    const pixData = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${payment.id}/pixQrCode`);
-    pixQrCode = pixQrCode || pixData.encodedImage || null;
-    pixCopyPaste = pixCopyPaste || pixData.payload || null;
+    const pixData = await getAsaasPixQrCode(payment.id);
+    pixQrCode = pixQrCode || pixData.encodedImage;
+    pixCopyPaste = pixCopyPaste || pixData.payload;
   }
 
   return {

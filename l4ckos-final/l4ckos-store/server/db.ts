@@ -1092,6 +1092,22 @@ export async function completePaymentCreation(paymentId: number, data: {
   if (payment) await db.insert(auditLogs).values({ actorUserId: null, actorType: "system", action: "external_charge_created", entity: "payment", entityId: String(paymentId), orderId: payment.orderId, paymentId, event: "asaas_charge_created", correlationId: payment.externalReference, afterState: JSON.stringify({ providerPaymentId: data.providerPaymentId, creationStatus: "created" }) });
 }
 
+export async function hydratePaymentPixDetails(paymentId: number, data: { pixQrCode?: string | null; pixCopyPaste?: string | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existingRows = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+  const existing = existingRows[0];
+  if (!existing) return undefined;
+
+  const pixQrCode = existing.pixQrCode ?? data.pixQrCode ?? null;
+  const pixCopyPaste = existing.pixCopyPaste ?? data.pixCopyPaste ?? null;
+  if (pixQrCode === existing.pixQrCode && pixCopyPaste === existing.pixCopyPaste) return existing;
+
+  await db.update(payments).set({ pixQrCode, pixCopyPaste }).where(eq(payments.id, paymentId));
+  const updatedRows = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+  return updatedRows[0];
+}
+
 export async function markPaymentCreationUnknown(paymentId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

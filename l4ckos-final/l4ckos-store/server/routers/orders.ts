@@ -10,6 +10,7 @@ import {
   getProductVariantsByIds,
   getProductVariantsByProductIds,
   getPaymentById,
+  hydratePaymentPixDetails,
   getOrderByIdAndUser,
   getOrderReservationItems,
   getOrderByTrackingCodeAndUser,
@@ -20,7 +21,7 @@ import {
   updateUserAsaasCustomerId,
   updateOrderShippingAddress,
 } from "../db";
-import { createAsaasChargeForOrder } from "../services/asaas";
+import { createAsaasChargeForOrder, getAsaasPixQrCode } from "../services/asaas";
 import { quoteShippingDetailed } from "../services/shippingService";
 import { listAsaasPaymentsByExternalReference } from "../services/asaasService";
 import { buildCheckoutFingerprint } from "../services/checkoutIntegrity";
@@ -370,20 +371,48 @@ export const ordersRouter = router({
         let ledgerPayment = checkout.payment;
         if (!ledgerPayment) throw new Error("PAYMENT_LEDGER_NOT_FOUND");
 
-        const paymentResponse = () => ({
+        const hydratePixForReuse = async (current: NonNullable<typeof ledgerPayment>) => {
+          if (
+            input.method !== "PIX"
+            || String(current.billingType).toUpperCase() !== "PIX"
+            || (current.pixQrCode && current.pixCopyPaste)
+            || !current.providerPaymentId
+          ) {
+            return current;
+          }
+
+          try {
+            const pix = await getAsaasPixQrCode(current.providerPaymentId);
+            return (await hydratePaymentPixDetails(current.id, {
+              pixQrCode: pix.encodedImage,
+              pixCopyPaste: pix.payload,
+            })) ?? current;
+          } catch {
+            securityLog("warn", "orders.asaas_pix_qr_hydration_failed", {
+              userId: ctx.user.id,
+              orderId,
+              paymentId: current.id,
+              reason: "provider_request_failed",
+            });
+            return current;
+          }
+        };
+
+        const paymentResponse = (current = ledgerPayment) => ({
           method: input.method,
-          customerId: ledgerPayment?.providerCustomerId ?? null,
-          paymentId: ledgerPayment?.providerPaymentId ?? null,
-          invoiceUrl: ledgerPayment?.invoiceUrl ?? null,
-          pixQrCode: ledgerPayment?.pixQrCode ?? null,
-          pixCopyPaste: ledgerPayment?.pixCopyPaste ?? null,
-          bankSlipUrl: ledgerPayment?.bankSlipUrl ?? null,
-          digitableLine: ledgerPayment?.digitableLine ?? null,
-          billingType: ledgerPayment?.billingType ?? input.method,
+          customerId: current?.providerCustomerId ?? null,
+          paymentId: current?.providerPaymentId ?? null,
+          invoiceUrl: current?.invoiceUrl ?? null,
+          pixQrCode: current?.pixQrCode ?? null,
+          pixCopyPaste: current?.pixCopyPaste ?? null,
+          bankSlipUrl: current?.bankSlipUrl ?? null,
+          digitableLine: current?.digitableLine ?? null,
+          billingType: current?.billingType ?? input.method,
         });
 
         if (ledgerPayment.creationStatus === "created" && ledgerPayment.providerPaymentId) {
-          return { orderId, ...paymentResponse(), reused: true };
+          ledgerPayment = await hydratePixForReuse(ledgerPayment);
+          return { orderId, ...paymentResponse(ledgerPayment), reused: true };
         }
 
         const claimed = await claimPaymentCreation(ledgerPayment.id);
@@ -392,7 +421,8 @@ export const ordersRouter = router({
             await new Promise(resolve => setTimeout(resolve, 250));
             ledgerPayment = await getPaymentById(ledgerPayment.id);
             if (ledgerPayment?.creationStatus === "created" && ledgerPayment.providerPaymentId) {
-              return { orderId, ...paymentResponse(), reused: true };
+              ledgerPayment = await hydratePixForReuse(ledgerPayment);
+              return { orderId, ...paymentResponse(ledgerPayment), reused: true };
             }
           }
           throw new Error("PAYMENT_CREATION_IN_PROGRESS");
@@ -452,6 +482,8 @@ export const ordersRouter = router({
           digitableLine: payment.digitableLine,
         });
         claimedPaymentId = null;
+        ledgerPayment = (await getPaymentById(ledgerPayment.id)) ?? ledgerPayment;
+        ledgerPayment = await hydratePixForReuse(ledgerPayment);
         if (!ctx.user.asaasCustomerId && payment.customerId) {
           await updateUserAsaasCustomerId(ctx.user.id, payment.customerId);
         }
@@ -481,7 +513,7 @@ export const ordersRouter = router({
 
         return {
           orderId,
-          ...payment,
+          ...paymentResponse(ledgerPayment),
           reused: checkout.reused,
         };
       } catch (error) {

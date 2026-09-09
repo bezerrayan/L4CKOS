@@ -67,11 +67,12 @@ function checkoutInput(seed: Awaited<ReturnType<typeof seedProduct>>, overrides:
   };
 }
 
-async function createAsaasMock(mode: "success" | "fail-before-create" | "timeout-after-create") {
+async function createAsaasMock(mode: "success" | "fail-before-create" | "timeout-after-create" | "timeout-after-create-qr-fail") {
   const state = {
     customerPosts: 0,
     paymentPosts: 0,
     paymentGets: 0,
+    qrGets: 0,
     failureInjected: false,
     charges: new Map<string, any>(),
   };
@@ -86,6 +87,21 @@ async function createAsaasMock(mode: "success" | "fail-before-create" | "timeout
       const reference = url.searchParams.get("externalReference") || "";
       const payment = state.charges.get(reference);
       send(200, { data: payment ? [payment] : [] });
+      return;
+    }
+    if (req.method === "GET" && /^\/v3\/payments\/[^/]+\/pixQrCode$/.test(url.pathname)) {
+      state.qrGets += 1;
+      if (mode === "timeout-after-create-qr-fail") {
+        send(503, { errors: [{ description: "falha local ao buscar QR" }] });
+        return;
+      }
+      const paymentId = url.pathname.split("/")[3];
+      const payment = [...state.charges.values()].find(candidate => candidate.id === paymentId);
+      if (!payment) {
+        send(404, { message: "payment not found" });
+        return;
+      }
+      send(200, { encodedImage: "local-qr", payload: "local-pix-copy", expirationDate: "2099-01-01T00:00:00Z" });
       return;
     }
     if (req.method === "POST" && url.pathname === "/v3/customers") {
@@ -115,7 +131,7 @@ async function createAsaasMock(mode: "success" | "fail-before-create" | "timeout
         status: "PENDING",
       };
       state.charges.set(String(body.externalReference || ""), payment);
-      if (!state.failureInjected && mode === "timeout-after-create") {
+      if (!state.failureInjected && (mode === "timeout-after-create" || mode === "timeout-after-create-qr-fail")) {
         state.failureInjected = true;
         res.socket?.destroy();
         return;
@@ -161,10 +177,10 @@ function createCheckoutCaller(userId: number) {
   return appRouter.createCaller(ctx);
 }
 
-function externalCheckoutInput(seed: Awaited<ReturnType<typeof seedProduct>>) {
+function externalCheckoutInput(seed: Awaited<ReturnType<typeof seedProduct>>, overrides: { method?: "PIX" | "BOLETO" | "CARD" } = {}) {
   return {
     checkoutAttemptId: crypto.randomUUID(),
-    method: "PIX" as const,
+    method: overrides.method ?? "PIX",
     items: [{ productId: seed.productId, variantId: seed.variantId, quantity: 1 }],
     shipping: { cep: "70000000", optionId: "local-plano-piloto" },
     shippingAddress: { recipient: "Cliente P0", zipCode: "70000000", street: "Rua Teste", number: "1", neighborhood: "Centro", city: "Brasília", state: "DF" },
@@ -591,13 +607,77 @@ describe.runIf(canRunDatabaseTests)("P0 order/payment integrity (MySQL integrati
 
       const retry = await caller.orders.createAsaasCharge(input);
       const [orders] = await connection.query<any[]>("SELECT id FROM orders WHERE checkoutAttemptId = ?", [input.checkoutAttemptId]);
-      const [payments] = await connection.query<any[]>("SELECT providerPaymentId, externalReference, creationStatus FROM payments WHERE orderId = ?", [retry.orderId]);
+      const [payments] = await connection.query<any[]>("SELECT providerPaymentId, externalReference, creationStatus, pixQrCode, pixCopyPaste FROM payments WHERE orderId = ?", [retry.orderId]);
       expect(orders).toHaveLength(1);
       expect(payments).toHaveLength(1);
       expect(payments[0]).toMatchObject({ providerPaymentId: "pay-local-1", creationStatus: "created" });
       expect(payments[0].externalReference).toBe(`L4CKOS-ORDER-${retry.orderId}`);
+      expect(retry).toMatchObject({ pixQrCode: "local-qr", pixCopyPaste: "local-pix-copy" });
+      expect(payments[0]).toMatchObject({ pixQrCode: "local-qr", pixCopyPaste: "local-pix-copy" });
       expect(mock.state.paymentPosts).toBe(1);
       expect(mock.state.paymentGets).toBeGreaterThanOrEqual(2);
+      expect(mock.state.qrGets).toBe(1);
+
+      const repeated = await caller.orders.createAsaasCharge(input);
+      expect(repeated).toMatchObject({ orderId: retry.orderId, pixQrCode: "local-qr", pixCopyPaste: "local-pix-copy", reused: true });
+      expect(mock.state.paymentPosts).toBe(1);
+      expect(mock.state.qrGets).toBe(1);
+    } finally {
+      await mock.close();
+      if (oldApiUrl === undefined) delete process.env.ASAAS_API_URL; else process.env.ASAAS_API_URL = oldApiUrl;
+      if (oldApiKey === undefined) delete process.env.ASAAS_API_KEY; else process.env.ASAAS_API_KEY = oldApiKey;
+      if (oldShippingToken === undefined) delete process.env.MELHOR_ENVIO_TOKEN; else process.env.MELHOR_ENVIO_TOKEN = oldShippingToken;
+    }
+  });
+
+  it("reuso de cobrança não-PIX não consulta o endpoint de QR", async () => {
+    const mock = await createAsaasMock("timeout-after-create");
+    const oldApiUrl = process.env.ASAAS_API_URL;
+    const oldApiKey = process.env.ASAAS_API_KEY;
+    const oldShippingToken = process.env.MELHOR_ENVIO_TOKEN;
+    process.env.ASAAS_API_URL = mock.baseUrl;
+    process.env.ASAAS_API_KEY = "sandbox-local-key";
+    delete process.env.MELHOR_ENVIO_TOKEN;
+    try {
+      const seed = await seedProduct({ stock: 1 });
+      const caller = createCheckoutCaller(seed.userId);
+      const input = externalCheckoutInput(seed, { method: "BOLETO" });
+      await expect(caller.orders.createAsaasCharge(input)).rejects.toThrow();
+
+      const retry = await caller.orders.createAsaasCharge(input);
+      expect(retry).toMatchObject({ method: "BOLETO", pixQrCode: null, pixCopyPaste: null });
+      expect(mock.state.paymentPosts).toBe(1);
+      expect(mock.state.qrGets).toBe(0);
+    } finally {
+      await mock.close();
+      if (oldApiUrl === undefined) delete process.env.ASAAS_API_URL; else process.env.ASAAS_API_URL = oldApiUrl;
+      if (oldApiKey === undefined) delete process.env.ASAAS_API_KEY; else process.env.ASAAS_API_KEY = oldApiKey;
+      if (oldShippingToken === undefined) delete process.env.MELHOR_ENVIO_TOKEN; else process.env.MELHOR_ENVIO_TOKEN = oldShippingToken;
+    }
+  });
+
+  it("falha ao hidratar QR mantém a cobrança existente, a reserva e o fallback da fatura", async () => {
+    const mock = await createAsaasMock("timeout-after-create-qr-fail");
+    const oldApiUrl = process.env.ASAAS_API_URL;
+    const oldApiKey = process.env.ASAAS_API_KEY;
+    const oldShippingToken = process.env.MELHOR_ENVIO_TOKEN;
+    process.env.ASAAS_API_URL = mock.baseUrl;
+    process.env.ASAAS_API_KEY = "sandbox-local-key";
+    delete process.env.MELHOR_ENVIO_TOKEN;
+    try {
+      const seed = await seedProduct({ stock: 1 });
+      const caller = createCheckoutCaller(seed.userId);
+      const input = externalCheckoutInput(seed);
+      await expect(caller.orders.createAsaasCharge(input)).rejects.toThrow();
+
+      const retry = await caller.orders.createAsaasCharge(input);
+      const [payments] = await connection.query<any[]>("SELECT status, pixQrCode, pixCopyPaste FROM payments WHERE orderId = ?", [retry.orderId]);
+      const [reservations] = await connection.query<any[]>("SELECT status FROM stockReservations WHERE orderId = ?", [retry.orderId]);
+      expect(retry).toMatchObject({ invoiceUrl: "http://asaas.local/invoice", pixQrCode: null, pixCopyPaste: null });
+      expect(payments[0]).toMatchObject({ status: "pending", pixQrCode: null, pixCopyPaste: null });
+      expect(reservations).toEqual([{ status: "active" }]);
+      expect(mock.state.paymentPosts).toBe(1);
+      expect(mock.state.qrGets).toBe(1);
     } finally {
       await mock.close();
       if (oldApiUrl === undefined) delete process.env.ASAAS_API_URL; else process.env.ASAAS_API_URL = oldApiUrl;
