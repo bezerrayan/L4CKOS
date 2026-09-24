@@ -23,6 +23,7 @@ import {
   updateCheckoutShippingAddress,
   type CheckoutShippingAddress,
 } from "../lib/checkoutShippingAddress";
+import { getCheckoutValidationMessage, getMissingCheckoutFields } from "../lib/checkoutValidation";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Pagamento.css";
@@ -224,19 +225,21 @@ export default function Pagamento() {
 
   const orderBaseTotal = cart.total + (selectedShipping?.price ?? 0);
   const orderTotal = Math.max(0, Number((orderBaseTotal - couponDiscount).toFixed(2)));
-  const hasCompleteCheckoutData = Boolean(
-    isAuthenticated &&
-    customerName.trim() &&
-    customerEmail.trim() &&
-    cpfCnpj.trim() &&
-    sanitizeCep(cep).length === 8 &&
-    addressStreet.trim() &&
-    addressNumber.trim() &&
-    addressNeighborhood.trim() &&
-    addressCity.trim() &&
-    addressState.trim() &&
-    selectedShipping,
-  );
+  const missingCheckoutFields = getMissingCheckoutFields({
+    isAuthenticated,
+    customerName,
+    customerEmail,
+    cpfCnpj,
+    cep,
+    street: addressStreet,
+    number: addressNumber,
+    neighborhood: addressNeighborhood,
+    city: addressCity,
+    state: addressState,
+    hasSelectedShipping: Boolean(selectedShipping),
+  });
+  const hasCompleteCheckoutData = missingCheckoutFields.length === 0;
+  const checkoutValidationMessage = getCheckoutValidationMessage(missingCheckoutFields);
 
   useEffect(() => {
     if (!user) return;
@@ -734,7 +737,7 @@ export default function Pagamento() {
             <section className="l4-checkout-finish">
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
               <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData) || runtimeQuery.isLoading || checkoutAvailability?.available === false}>{checkoutAvailability?.available === false ? "Checkout indisponível" : createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
-              {!hasCompleteCheckoutData && !paymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
+              {!hasCompleteCheckoutData && !paymentData && checkoutValidationMessage ? <p className="l4-checkout-validation-note" aria-live="polite">{checkoutValidationMessage}</p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
               {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
             </section>
