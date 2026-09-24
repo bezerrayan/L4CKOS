@@ -7,7 +7,9 @@ import React, { createContext, useContext, useState, ReactNode, useCallback, use
 import type { CartItem, Cart, SelectedOptions } from "../types/cart";
 import type { Product } from "../types/product";
 import { calculateCartTotal, calculateItemCount } from "../types/cart";
-import { clampCartQuantity, getCartItemIdentity, reconcileCartItems } from "../lib/cartStock";
+import { clampCartQuantity, getCartItemIdentity } from "../lib/cartStock";
+import { getCartStorageKey, readCart, writeCart } from "../lib/cartStorage";
+import { useUser } from "./UserContext";
 
 // ============= TIPOS =============
 
@@ -25,38 +27,38 @@ type CartContextType = {
 // ============= CRIAR CONTEXTO =============
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
-const CART_STORAGE_KEY = "loja-escoteira:cart";
 
 // ============= PROVIDER =============
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-
-    try {
-      const raw = window.localStorage.getItem(CART_STORAGE_KEY);
-      if (!raw) {
-        return [];
-      }
-
-      const parsed = JSON.parse(raw) as CartItem[];
-      return Array.isArray(parsed) ? reconcileCartItems(parsed) : [];
-    } catch {
-      return [];
-    }
-  });
+  const { user, isAuthenticated, isLoading } = useUser();
+  const userId = isAuthenticated ? user?.id : null;
+  const storageKey = getCartStorageKey(userId);
+  const isIdentityReady = !isLoading && (!isAuthenticated || Boolean(userId));
+  const [items, setItems] = useState<CartItem[]>([]);
+  const [hydratedStorageKey, setHydratedStorageKey] = useState<string | null>(null);
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
+  const canUseCurrentCart = isIdentityReady && hydratedStorageKey === storageKey;
+  const visibleItems = canUseCurrentCart ? items : [];
 
   const cart: Cart = {
-    items,
-    total: calculateCartTotal(items),
-    itemCount: calculateItemCount(items),
+    items: visibleItems,
+    total: calculateCartTotal(visibleItems),
+    itemCount: calculateItemCount(visibleItems),
   };
+
+  useEffect(() => {
+    if (!isIdentityReady) return;
+
+    const storage = typeof window === "undefined" ? null : window.localStorage;
+    setItems(readCart(storage, storageKey));
+    setHydratedStorageKey(storageKey);
+    setIsCartDrawerOpen(false);
+  }, [isIdentityReady, storageKey]);
 
   // 📌 Adicionar produto ao carrinho
   const addToCart = useCallback((product: Product, quantity: number = 1, selectedOptions?: SelectedOptions, variantId?: number | null) => {
+    if (!canUseCurrentCart) return;
     setItems((prev) => {
       const currentIdentity = getCartItemIdentity(product.id, variantId, selectedOptions);
       const existing = prev.find(
@@ -77,10 +79,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
       return [...prev, { product, variantId: variantId ?? null, quantity: requestedQuantity, selectedOptions, addedAt: new Date() }];
     });
     setIsCartDrawerOpen(true);
-  }, []);
+  }, [canUseCurrentCart]);
 
   // 📌 Remover produto do carrinho
   const removeFromCart = useCallback((productId: number, selectedOptions?: SelectedOptions, variantId?: number | null) => {
+    if (!canUseCurrentCart) return;
     const currentIdentity = getCartItemIdentity(productId, variantId, selectedOptions);
     setItems((prev) =>
       prev.filter((item) => {
@@ -89,10 +92,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
         return getCartItemIdentity(item.product.id, item.variantId, item.selectedOptions) !== currentIdentity;
       })
     );
-  }, []);
+  }, [canUseCurrentCart]);
 
   // 📌 Atualizar quantidade
   const updateQuantity = useCallback((productId: number, quantity: number, selectedOptions?: SelectedOptions, variantId?: number | null) => {
+    if (!canUseCurrentCart) return;
     if (quantity <= 0) {
       removeFromCart(productId, selectedOptions, variantId);
       return;
@@ -106,32 +110,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const nextQuantity = clampCartQuantity(item.product, item.variantId, quantity);
       return nextQuantity > 0 ? [{ ...item, quantity: nextQuantity }] : [];
     }));
-  }, [removeFromCart]);
+  }, [canUseCurrentCart, removeFromCart]);
 
   // 📌 Limpar carrinho
   const clearCart = useCallback(() => {
+    if (!canUseCurrentCart) return;
     setItems([]);
-  }, []);
+  }, [canUseCurrentCart]);
 
   const openCartDrawer = useCallback(() => setIsCartDrawerOpen(true), []);
   const closeCartDrawer = useCallback(() => setIsCartDrawerOpen(false), []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      if (items.length === 0) {
-        window.localStorage.removeItem(CART_STORAGE_KEY);
-        return;
-      }
-
-      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items));
-    } catch {
-      // Ignore storage errors to avoid breaking checkout flow.
-    }
-  }, [items]);
+    if (!canUseCurrentCart) return;
+    const storage = typeof window === "undefined" ? null : window.localStorage;
+    writeCart(storage, storageKey, items);
+  }, [canUseCurrentCart, items, storageKey]);
 
   const value: CartContextType = {
     cart,
