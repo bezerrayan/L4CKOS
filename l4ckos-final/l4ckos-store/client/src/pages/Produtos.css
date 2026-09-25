@@ -1,5 +1,5 @@
-.l4-products-page { padding-top: clamp(34px, 5vw, 72px) !important; padding-bottom: clamp(56px, 7vw, 96px) !important; }
-.l4-products-page__header { position: relative; margin-bottom: 38px; padding: 0 0 28px; border-bottom: 1px solid rgba(240, 237, 232, 0.13); }
+.l4-products-page { padding-top: clamp(28px, 3.5vw, 56px) !important; padding-bottom: clamp(56px, 7vw, 96px) !important; }
+.l4-products-page__header { position: relative; margin-bottom: 30px; padding: 0 0 24px; border-bottom: 1px solid rgba(240, 237, 232, 0.13); }
 .l4-products-page__header::after { position: absolute; right: 8%; bottom: -1px; width: min(30vw, 310px); height: 1px; background: linear-gradient(90deg, transparent, rgba(232, 0, 42, 0.9), transparent); content: ""; }
 .l4-products-page__eyebrow { display: block; margin-bottom: 12px; color: #f04a62; font-family: "Space Mono", monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.2em; }
 .l4-products-page__header h1 { margin: 0 0 12px; color: #f0ede8; font-size: clamp(34px, 4vw, 52px); font-weight: 900; letter-spacing: -0.05em; line-height: 0.95; text-transform: uppercase; }
@@ -14,7 +14,7 @@
 .l4-products-category-chip:hover, .l4-products-category-chip:focus-visible { border-color: rgba(240, 74, 98, 0.76) !important; color: #fff; outline: none; transform: translateY(-1px); }
 .l4-products-category-chip.is-active { border-color: #e8002a !important; background: #e8002a; color: #fff; box-shadow: 0 8px 20px rgba(232, 0, 42, 0.2); }
 .l4-products-category-chip.is-active span { color: #ffe1e6; }
-.l4-products-search { display: flex; gap: 12px; align-items: center; max-width: 690px; min-height: 54px; margin-bottom: 36px; padding: 0 16px; border: 1px solid #303035; border-radius: 12px; background: #111113; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.l4-products-search { display: flex; gap: 12px; align-items: center; max-width: 690px; min-height: 54px; margin-bottom: 28px; padding: 0 16px; border: 1px solid #303035; border-radius: 12px; background: #111113; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025); transition: border-color 180ms ease, box-shadow 180ms ease; }
 .l4-products-search:focus-within { border-color: rgba(232, 0, 42, 0.78); box-shadow: 0 0 0 3px rgba(232, 0, 42, 0.13); }
 .l4-products-search > svg { flex: 0 0 auto; color: #8f8d92; }
 .l4-products-search input { width: 100%; min-width: 0; padding: 0 !important; border: 0 !important; outline: 0; background: transparent !important; box-shadow: none !important; font-size: 15px; }
