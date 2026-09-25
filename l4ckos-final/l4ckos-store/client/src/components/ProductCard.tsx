@@ -1,209 +1,52 @@
-﻿import { useNavigate, useLocation } from "react-router-dom";
-import type { CSSProperties } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import type { Product } from "../types/product";
 import { Heart } from "lucide-react";
 import { useFavorites } from "../contexts/FavoritesContext";
 import { getCategoryLabel } from "../lib/productCategories";
 import { retryImageWithVersion } from "../lib/images";
 import camisaFallback from "../images/camisa.png";
+import "./ProductCard.css";
 
-type Props = {
-  product: Product;
-};
+type Props = { product: Product };
 
 export default function ProductCard({ product }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const favorited = isFavorited(product.id);
-  const formattedPrice = new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(product.price);
-
-  const getBadgeInfo = () => {
-    if ((product.stock ?? 0) <= 0) return { text: "INDISPONÍVEL", color: "#5b1d1d" };
-    if ((product.stock ?? 0) <= 3) return { text: "ESTOQUE REDUZIDO", color: "#6b3e0b" };
-    if (product.category?.trim()) return { text: getCategoryLabel(product.category).toUpperCase(), color: "#4a5568" };
-    return null;
-  };
-
-  const badge = getBadgeInfo();
+  const formattedPrice = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(product.price);
+  const badge = (product.stock ?? 0) <= 0
+    ? { text: "INDISPONÍVEL", tone: "unavailable" }
+    : (product.stock ?? 0) <= 3
+      ? { text: "ESTOQUE REDUZIDO", tone: "low" }
+      : product.category?.trim()
+        ? { text: getCategoryLabel(product.category).toUpperCase(), tone: "category" }
+        : null;
+  const goToProduct = () => navigate(`/produto/${product.id}`, { state: { from: location.pathname } });
 
   return (
-    <div
-      style={styles.card as CSSProperties}
-      onClick={() => navigate(`/produto/${product.id}`, { state: { from: location.pathname } })}
-      onMouseEnter={(e) => {
-        const card = e.currentTarget;
-        const img = card.querySelector("img") as HTMLImageElement;
-        const overlay = card.querySelector("[class*='designOverlay']") as HTMLElement;
-        if (img) img.style.transform = "scale(1.08)";
-        if (overlay) overlay.style.opacity = "1";
-        (card as HTMLElement).style.boxShadow = "0 20px 40px rgba(26,26,26,0.15)";
-        (card as HTMLElement).style.transform = "translateY(-8px)";
-      }}
-      onMouseLeave={(e) => {
-        const card = e.currentTarget;
-        const img = card.querySelector("img") as HTMLImageElement;
-        const overlay = card.querySelector("[class*='designOverlay']") as HTMLElement;
-        if (img) img.style.transform = "scale(1)";
-        if (overlay) overlay.style.opacity = "0";
-        (card as HTMLElement).style.boxShadow = "0 4px 6px rgba(0,0,0,0.07)";
-        (card as HTMLElement).style.transform = "translateY(0)";
-      }}
-    >
-      <div className="l4-product-media-surface" style={styles.imageContainer as CSSProperties}>
-        <img
-          className="l4-product-media-image"
-          src={product.imageThumbnailUrl || product.image}
-          style={styles.image as CSSProperties}
-          alt={product.name}
-          onError={(event) => {
-            retryImageWithVersion(event, product.image, camisaFallback, product.id);
-          }}
-        />
-        {badge ? <div style={{ ...styles.badge, background: badge.color } as CSSProperties}>{badge.text}</div> : null}
+    <article className="l4-product-card" onClick={goToProduct}>
+      <div className="l4-product-card__media l4-product-media-surface">
+        <img className="l4-product-card__image l4-product-media-image" src={product.imageThumbnailUrl || product.image} alt={product.name} onError={(event) => retryImageWithVersion(event, product.image, camisaFallback, product.id)} />
+        {badge ? <span className={`l4-product-card__badge l4-product-card__badge--${badge.tone}`}>{badge.text}</span> : null}
         <button
           type="button"
           aria-label={favorited ? `Remover ${product.name} dos favoritos` : `Adicionar ${product.name} aos favoritos`}
           aria-pressed={favorited}
-          style={{ ...styles.favoriteButton, ...(favorited ? styles.favoriteButtonActive : {}) } as CSSProperties}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (favorited) removeFromFavorites(product.id);
-            else addToFavorites(product);
-          }}
-        ><Heart size={17} fill={favorited ? "currentColor" : "none"} aria-hidden="true" /></button>
-        <div style={styles.designOverlay as CSSProperties}>
-          <div style={styles.overlayContent as CSSProperties}>
-            {(product.stock ?? 0) > 0 ? "Clique para ver detalhes" : "Indisponível no momento"}
-          </div>
-        </div>
-      </div>
-
-      <div style={styles.content as CSSProperties}>
-        <h3 style={styles.name as CSSProperties}>{product.name}</h3>
-        <p style={styles.price as CSSProperties}>{formattedPrice}</p>
-        <p style={styles.helper as CSSProperties}>
-          {(product.stock ?? 0) > 0
-            ? "Consulte variações, disponibilidade e prazo na página do produto."
-            : "Este item está temporariamente indisponível."}
-        </p>
-        <button
-          style={styles.button as CSSProperties}
-          onClick={(e) => {
-            e.stopPropagation();
-            navigate(`/produto/${product.id}`, { state: { from: location.pathname } });
-          }}
-          onMouseEnter={(e) => {
-            const btn = e.currentTarget as HTMLElement;
-            btn.style.boxShadow = "0 8px 16px rgba(26,26,26,0.3)";
-            btn.style.transform = "scale(1.02)";
-          }}
-          onMouseLeave={(e) => {
-            const btn = e.currentTarget as HTMLElement;
-            btn.style.boxShadow = "none";
-            btn.style.transform = "scale(1)";
-          }}
+          className={`l4-product-card__favorite ${favorited ? "is-active" : ""}`}
+          onClick={(event) => { event.stopPropagation(); if (favorited) removeFromFavorites(product.id); else addToFavorites(product); }}
         >
-          Ver detalhes
+          <Heart size={15} fill={favorited ? "currentColor" : "none"} aria-hidden="true" />
+          <span>{favorited ? "Salvo" : "Salvar"}</span>
         </button>
+        <div className="l4-product-card__overlay" aria-hidden="true">{(product.stock ?? 0) > 0 ? "Clique para ver detalhes" : "Indisponível no momento"}</div>
       </div>
-    </div>
+      <div className="l4-product-card__content">
+        <h3>{product.name}</h3>
+        <p className="l4-product-card__price">{formattedPrice}</p>
+        <p className="l4-product-card__helper">{(product.stock ?? 0) > 0 ? "Consulte variações, disponibilidade e prazo na página do produto." : "Este item está temporariamente indisponível."}</p>
+        <button type="button" className="l4-product-card__cta" onClick={(event) => { event.stopPropagation(); goToProduct(); }}>Ver detalhes</button>
+      </div>
+    </article>
   );
 }
-
-const styles = {
-  card: {
-    background: "#111111",
-    borderRadius: 12,
-    overflow: "hidden",
-    boxShadow: "0 8px 20px rgba(0,0,0,0.28)",
-    transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-    cursor: "pointer",
-    border: "1px solid #2b2b2b",
-  },
-  imageContainer: {
-    position: "relative",
-    overflow: "hidden",
-    background: "#161616",
-  },
-  image: {
-    width: "100%",
-    height: 240,
-    objectFit: "cover",
-    transition: "transform 0.4s ease",
-  },
-  badge: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    color: "white",
-    padding: "4px 12px",
-    borderRadius: 20,
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: "0.5px",
-  },
-  designOverlay: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: "60px",
-    background: "linear-gradient(to top, rgba(26, 26, 26, 0.85), transparent)",
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
-    padding: "12px",
-    opacity: 0,
-    transition: "opacity 0.3s ease",
-  },
-  favoriteButton: {
-    position: "absolute", top: 12, left: 12, width: 36, height: 36, borderRadius: "50%", border: "1px solid #3a3a3a", background: "rgba(8,8,8,0.82)", color: "#f0ede8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2,
-  },
-  favoriteButtonActive: { background: "#e8002a", borderColor: "#ff4966", color: "#fff" },
-  overlayContent: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: 600,
-    textAlign: "center",
-    letterSpacing: "0.5px",
-  },
-  content: {
-    padding: "20px",
-  },
-  name: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: "#f0ede8",
-    margin: "0 0 8px 0",
-    lineHeight: 1.3,
-  },
-  price: {
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#f0ede8",
-    margin: "0 0 8px 0",
-  },
-  helper: {
-    fontSize: 12,
-    lineHeight: 1.5,
-    color: "#9ca3af",
-    margin: "0 0 16px 0",
-  },
-  button: {
-    width: "100%",
-    padding: "12px",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #343434 100%)",
-    color: "white",
-    border: "none",
-    borderRadius: 8,
-    fontWeight: 700,
-    cursor: "pointer",
-    transition: "all 0.3s ease",
-    fontSize: 14,
-    letterSpacing: "0.3px",
-  },
-};
