@@ -10,7 +10,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
+import { serveStatic } from "./static";
 import { ENV, validateEnvOnStartup } from "./env";
 import { securityLog } from "./security";
 import { getAllowedMethodsForApiPath, methodNotAllowed, sendApiError, sendApiRouteNotFound } from "./httpApi";
@@ -541,6 +541,7 @@ async function startServer() {
   });
   // development mode uses Vite, production mode uses static files
   if (!isProduction) {
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     serveStatic(app);

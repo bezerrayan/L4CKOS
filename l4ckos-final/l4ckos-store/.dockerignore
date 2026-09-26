@@ -4,6 +4,7 @@ dist
 build
 coverage
 .git
+.npmrc
 .github
 .vscode
 .idea
