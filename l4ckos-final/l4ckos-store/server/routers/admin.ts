@@ -29,7 +29,7 @@ import {
   replaceProductImages,
   replaceProductVariants,
   restoreBackupPayload,
-  setOrderAdminData,
+  updateOrderAndReserveDeliveredEmailEvents,
   setUserFlags,
   moderateProductReview,
   updateProduct,
@@ -53,17 +53,15 @@ import {
   sendLoyaltyCouponEmail,
   sendNewDropAnnouncementEmail,
   sendNewProductsAnnouncementEmail,
-  sendOrderDeliveredEmail,
   sendPaymentApprovedEmail,
   sendOrderPreparingEmail,
   sendPaymentNotFinishedEmail,
   sendPromotionEmail,
-  sendReviewRequestEmail,
   sendShippingEmail,
   sendWaitlistLaunchEmail,
 } from "../services/emailService.js";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
-import { getReviewRequestScheduledAt } from "../utils/email/reviewRequestSchedule";
+import { dispatchOrderEmailEvent } from "../services/orderEmailDelivery";
 
 const orderStatusSchema = z.enum([
   "pending",
@@ -521,11 +519,11 @@ export const adminRouter = router({
           message: "Confirme o pagamento pelo botão próprio antes de avançar o pedido.",
         });
       }
-      await setOrderAdminData(input.orderId, {
+      const transition = await updateOrderAndReserveDeliveredEmailEvents(input.orderId, {
         status: input.status,
         trackingCode: input.trackingCode,
       });
-      const updatedOrder = await getOrderById(input.orderId);
+      const updatedOrder = transition.updatedOrder;
       const user = updatedOrder ? await getUserById(updatedOrder.userId) : undefined;
       const appBaseUrl = String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "");
 
@@ -547,21 +545,26 @@ export const adminRouter = router({
               trackingUrl: `${appBaseUrl}/acompanhar-pedido?pedido=${updatedOrder.id}`,
             });
           } else if (input.status === "delivered") {
-            await sendOrderDeliveredEmail({
-              customerEmail: user.email,
-              customerName: user.name || "Cliente",
-              orderNumber: String(updatedOrder.id),
-              orderUrl: `${appBaseUrl}/meus-pedidos/${updatedOrder.id}`,
-            });
-            await sendReviewRequestEmail({
-              customerEmail: user.email,
-              customerName: user.name || "Cliente",
-              orderNumber: String(updatedOrder.id),
-              reviewUrl: `${appBaseUrl}/meus-pedidos/${updatedOrder.id}`,
-              scheduledAt: getReviewRequestScheduledAt(),
-            });
+            // Attempt both durable events on each real transition to delivered.
+            // The database claim decides whether an event is pending/failed and
+            // can be processed; sent events and concurrent claims are no-ops.
+            for (const eventType of ["order_delivered_email", "review_request_email"] as const) {
+              await dispatchOrderEmailEvent({
+                orderId: updatedOrder.id,
+                eventType,
+                customerEmail: user.email,
+                customerName: user.name || "Cliente",
+                appBaseUrl,
+              });
+            }
           }
-        } catch {}
+        } catch (error) {
+          console.error("[OrderEmailEvent] unexpected dispatch error", {
+            orderId: updatedOrder.id,
+            name: error instanceof Error ? error.name : "UnknownError",
+            message: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
       }
       await createAuditLog({
         actorUserId: ctx.user.id,

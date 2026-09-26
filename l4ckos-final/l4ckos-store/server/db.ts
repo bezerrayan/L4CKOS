@@ -26,6 +26,7 @@ import {
   emailUnsubscribes,
   passwordResetTokens,
   asaasWebhookEvents,
+  orderEmailEvents,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import {
@@ -1842,6 +1843,96 @@ export async function setOrderAdminData(
       ...(data.trackingCode !== undefined ? { trackingCode: data.trackingCode } : {}),
     })
     .where(eq(orders.id, orderId));
+}
+
+export type OrderEmailEventType = "order_delivered_email" | "review_request_email";
+
+export function orderEmailIdempotencyKey(orderId: number, eventType: OrderEmailEventType) {
+  return `order-${orderId}-${eventType}`;
+}
+
+/**
+ * Persists the delivery transition and its outbox events under the same row
+ * lock.  The unique key is the concurrency boundary: repeated/concurrent
+ * delivered transitions cannot reserve a second logical email event.
+ */
+export async function updateOrderAndReserveDeliveredEmailEvents(
+  orderId: number,
+  data: { status?: "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled"; trackingCode?: string | null },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db.transaction(async tx => {
+    const rows = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1).for("update");
+    const previousOrder = rows[0];
+    if (!previousOrder) throw new Error("Order not found");
+
+    await tx.update(orders).set({
+      ...(data.status ? { status: data.status } : {}),
+      ...(data.trackingCode !== undefined ? { trackingCode: data.trackingCode } : {}),
+    }).where(eq(orders.id, orderId));
+
+    const reservedEventTypes: OrderEmailEventType[] = [];
+    if (data.status === "delivered" && previousOrder.status !== "delivered") {
+      for (const eventType of ["order_delivered_email", "review_request_email"] as const) {
+        try {
+          await tx.insert(orderEmailEvents).values({
+            orderId,
+            eventType,
+            idempotencyKey: orderEmailIdempotencyKey(orderId, eventType),
+          });
+          reservedEventTypes.push(eventType);
+        } catch (error) {
+          if (!isDuplicateKeyError(error)) throw error;
+        }
+      }
+    }
+
+    const updated = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    return { previousOrder, updatedOrder: updated[0], reservedEventTypes };
+  });
+}
+
+export async function claimOrderEmailEvent(orderId: number, eventType: OrderEmailEventType) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - 15 * 60 * 1000);
+  const result = await db.update(orderEmailEvents).set({
+    status: "processing",
+    processingAt: now,
+    attemptCount: sql`${orderEmailEvents.attemptCount} + 1`,
+    lastError: null,
+  }).where(and(
+    eq(orderEmailEvents.orderId, orderId),
+    eq(orderEmailEvents.eventType, eventType),
+    sql`(${orderEmailEvents.status} IN ('pending', 'failed') OR (${orderEmailEvents.status} = 'processing' AND ${orderEmailEvents.processingAt} < ${staleBefore}))`,
+  ));
+  return Number((result as { affectedRows?: number }).affectedRows ?? 0) === 1;
+}
+
+export async function markOrderEmailEventSent(input: { orderId: number; eventType: OrderEmailEventType; providerMessageId?: string | null; scheduledAt?: Date | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(orderEmailEvents).set({
+    status: "sent",
+    providerMessageId: input.providerMessageId ?? null,
+    scheduledAt: input.scheduledAt ?? null,
+    sentAt: new Date(),
+    failedAt: null,
+    lastError: null,
+  }).where(and(eq(orderEmailEvents.orderId, input.orderId), eq(orderEmailEvents.eventType, input.eventType)));
+}
+
+export async function markOrderEmailEventFailed(input: { orderId: number; eventType: OrderEmailEventType; error: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(orderEmailEvents).set({
+    status: "failed",
+    failedAt: new Date(),
+    lastError: input.error.slice(0, 500),
+  }).where(and(eq(orderEmailEvents.orderId, input.orderId), eq(orderEmailEvents.eventType, input.eventType)));
 }
 
 async function safeOptionalSelect<T>(label: string, query: () => Promise<T[]>, warnings?: string[]) {

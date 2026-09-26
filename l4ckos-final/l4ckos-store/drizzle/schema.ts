@@ -160,6 +160,29 @@ export const orderItems = mysqlTable("orderItems", {
 export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertOrderItem = typeof orderItems.$inferInsert;
 
+// Outbox persistente para notificações que pertencem a um pedido. A chave
+// única impede que uma transição repetida volte a criar o mesmo evento.
+export const orderEmailEvents = mysqlTable("orderEmailEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  orderId: int("orderId").notNull(),
+  eventType: mysqlEnum("eventType", ["order_delivered_email", "review_request_email"]).notNull(),
+  status: mysqlEnum("status", ["pending", "processing", "sent", "failed"]).default("pending").notNull(),
+  idempotencyKey: varchar("idempotencyKey", { length: 191 }).notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  providerMessageId: varchar("providerMessageId", { length: 191 }),
+  attemptCount: int("attemptCount").default(0).notNull(),
+  processingAt: timestamp("processingAt"),
+  sentAt: timestamp("sentAt"),
+  failedAt: timestamp("failedAt"),
+  lastError: varchar("lastError", { length: 500 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  orderEventUnique: uniqueIndex("orderEmailEvents_order_event_unique").on(table.orderId, table.eventType),
+}));
+
+export type OrderEmailEvent = typeof orderEmailEvents.$inferSelect;
+
 // Carrinho
 export const cartItems = mysqlTable("cartItems", {
   id: int("id").autoincrement().primaryKey(),

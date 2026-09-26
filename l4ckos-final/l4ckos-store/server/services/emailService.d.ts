@@ -124,6 +124,7 @@ export function sendOrderDeliveredEmail(payload: {
   customerName?: string;
   orderNumber: string;
   orderUrl?: string;
+  idempotencyKey?: string;
 }): Promise<unknown>;
 
 export function sendReviewRequestEmail(payload: {
@@ -132,6 +133,7 @@ export function sendReviewRequestEmail(payload: {
   orderNumber: string;
   reviewUrl?: string;
   scheduledAt?: string;
+  idempotencyKey?: string;
 }): Promise<unknown>;
 
 export function sendAbandonedCartReminder1Email(payload: {

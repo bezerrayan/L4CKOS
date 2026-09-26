@@ -64,6 +64,7 @@ async function sendEmail({
   replyTo,
   tags,
   scheduledAt,
+  idempotencyKey,
 }) {
   const client = getResendClient();
   const recipients = (Array.isArray(to) ? to : [to]).map(sanitizeText).filter(Boolean);
@@ -85,7 +86,9 @@ async function sendEmail({
   if (replyTo) payload.replyTo = replyTo;
   if (scheduledAt) payload.scheduledAt = scheduledAt;
 
-  const { data, error } = await client.emails.send(payload);
+  const { data, error } = idempotencyKey
+    ? await client.emails.send(payload, { idempotencyKey })
+    : await client.emails.send(payload);
   if (error) {
     const err = new Error(error.message || "Resend request failed");
     err.name = "ResendError";
@@ -320,7 +323,7 @@ export async function sendShippingEmail({ customerEmail, customerName, orderNumb
   });
 }
 
-export async function sendOrderDeliveredEmail({ customerEmail, customerName, orderNumber, orderUrl }) {
+export async function sendOrderDeliveredEmail({ customerEmail, customerName, orderNumber, orderUrl, idempotencyKey }) {
   return sendEmail({
     templateName: "orderDelivered",
     subjectKey: "orderDelivered",
@@ -329,6 +332,7 @@ export async function sendOrderDeliveredEmail({ customerEmail, customerName, ord
     from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
+    idempotencyKey,
   });
 }
 
@@ -338,6 +342,7 @@ export async function sendReviewRequestEmail({
   orderNumber,
   reviewUrl,
   scheduledAt,
+  idempotencyKey,
 }) {
   return sendMarketingEmail({
     templateName: "reviewRequest",
@@ -346,6 +351,7 @@ export async function sendReviewRequestEmail({
     templatePayload: { name: customerName, orderNumber, reviewUrl },
     email: customerEmail,
     scheduledAt,
+    idempotencyKey,
   });
 }
 
