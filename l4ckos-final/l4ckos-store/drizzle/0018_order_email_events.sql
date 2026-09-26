@@ -13,5 +13,6 @@ CREATE TABLE IF NOT EXISTS `orderEmailEvents` (
   `lastError` varchar(500) NULL,
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
   CONSTRAINT `orderEmailEvents_order_event_unique` UNIQUE (`orderId`, `eventType`)
 );
