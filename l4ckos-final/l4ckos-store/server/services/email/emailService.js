@@ -54,7 +54,17 @@ function buildSubject(subjectKey, payload) {
   return typeof entry === "function" ? entry(payload ?? {}) : entry;
 }
 
-async function sendEmail({ templateName, subjectKey, subjectPayload, templatePayload, from, to, replyTo, tags }) {
+async function sendEmail({
+  templateName,
+  subjectKey,
+  subjectPayload,
+  templatePayload,
+  from,
+  to,
+  replyTo,
+  tags,
+  scheduledAt,
+}) {
   const client = getResendClient();
   const recipients = (Array.isArray(to) ? to : [to]).map(sanitizeText).filter(Boolean);
   if (!recipients.length) {
@@ -73,6 +83,7 @@ async function sendEmail({ templateName, subjectKey, subjectPayload, templatePay
   };
 
   if (replyTo) payload.replyTo = replyTo;
+  if (scheduledAt) payload.scheduledAt = scheduledAt;
 
   const { data, error } = await client.emails.send(payload);
   if (error) {
@@ -91,7 +102,17 @@ async function sendEmail({ templateName, subjectKey, subjectPayload, templatePay
   return data;
 }
 
-async function sendMarketingEmail({ templateName, subjectKey, subjectPayload, templatePayload, email, from, replyTo, tags }) {
+async function sendMarketingEmail({
+  templateName,
+  subjectKey,
+  subjectPayload,
+  templatePayload,
+  email,
+  from,
+  replyTo,
+  tags,
+  scheduledAt,
+}) {
   const normalizedEmail = sanitizeEmail(email);
   if (!normalizedEmail) {
     throw new Error("Marketing email recipient is required");
@@ -114,6 +135,7 @@ async function sendMarketingEmail({ templateName, subjectKey, subjectPayload, te
     to: normalizedEmail,
     replyTo: replyTo || getDefaultReplyTo(),
     tags,
+    scheduledAt,
   });
 }
 
@@ -310,13 +332,20 @@ export async function sendOrderDeliveredEmail({ customerEmail, customerName, ord
   });
 }
 
-export async function sendReviewRequestEmail({ customerEmail, customerName, orderNumber, reviewUrl }) {
+export async function sendReviewRequestEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  reviewUrl,
+  scheduledAt,
+}) {
   return sendMarketingEmail({
     templateName: "reviewRequest",
     subjectKey: "reviewRequest",
     subjectPayload: { orderNumber },
     templatePayload: { name: customerName, orderNumber, reviewUrl },
     email: customerEmail,
+    scheduledAt,
   });
 }
 

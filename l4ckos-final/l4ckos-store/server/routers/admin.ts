@@ -63,6 +63,7 @@ import {
   sendWaitlistLaunchEmail,
 } from "../services/emailService.js";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
+import { getReviewRequestScheduledAt } from "../utils/email/reviewRequestSchedule";
 
 const orderStatusSchema = z.enum([
   "pending",
@@ -557,6 +558,7 @@ export const adminRouter = router({
               customerName: user.name || "Cliente",
               orderNumber: String(updatedOrder.id),
               reviewUrl: `${appBaseUrl}/meus-pedidos/${updatedOrder.id}`,
+              scheduledAt: getReviewRequestScheduledAt(),
             });
           }
         } catch {}

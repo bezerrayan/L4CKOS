@@ -131,6 +131,7 @@ export function sendReviewRequestEmail(payload: {
   customerName?: string;
   orderNumber: string;
   reviewUrl?: string;
+  scheduledAt?: string;
 }): Promise<unknown>;
 
 export function sendAbandonedCartReminder1Email(payload: {
