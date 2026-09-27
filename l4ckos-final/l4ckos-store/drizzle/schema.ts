@@ -172,6 +172,8 @@ export const orderEmailEvents = mysqlTable("orderEmailEvents", {
   providerMessageId: varchar("providerMessageId", { length: 191 }),
   attemptCount: int("attemptCount").default(0).notNull(),
   processingAt: timestamp("processingAt"),
+  // Lease token held by the worker that owns this processing attempt.
+  processingToken: varchar("processingToken", { length: 64 }),
   sentAt: timestamp("sentAt"),
   failedAt: timestamp("failedAt"),
   lastError: varchar("lastError", { length: 500 }),

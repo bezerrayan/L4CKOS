@@ -5,12 +5,13 @@ const sent = vi.hoisted(() => vi.fn());
 const failed = vi.hoisted(() => vi.fn());
 const delivered = vi.hoisted(() => vi.fn());
 const review = vi.hoisted(() => vi.fn());
+const idempotencyKey = vi.hoisted(() => vi.fn((orderId: number, type: string) => `order-${orderId}-${type}`));
 
 vi.mock("../db", () => ({
   claimOrderEmailEvent: claim,
   markOrderEmailEventSent: sent,
   markOrderEmailEventFailed: failed,
-  orderEmailIdempotencyKey: (orderId: number, type: string) => `order-${orderId}-${type}`,
+  orderEmailIdempotencyKey: idempotencyKey,
 }));
 vi.mock("./emailService.js", () => ({
   sendOrderDeliveredEmail: delivered,
@@ -29,7 +30,9 @@ const base = {
 describe("order email outbox dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    claim.mockResolvedValue(true);
+    claim.mockResolvedValue({ eventId: 99, claimToken: "claim-1", attemptCount: 1, reclaimed: false });
+    sent.mockResolvedValue(true);
+    failed.mockResolvedValue(true);
     delivered.mockResolvedValue({ id: "delivery_1" });
     review.mockResolvedValue({ id: "review_1" });
   });
@@ -43,10 +46,11 @@ describe("order email outbox dispatch", () => {
     expect(sent).toHaveBeenCalledTimes(2);
     expect(delivered).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "order-42-order_delivered_email" }));
     expect(review).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "order-42-review_request_email" }));
+    expect(sent).toHaveBeenCalledWith(expect.objectContaining({ claimToken: "claim-1" }));
   });
 
   it("does not duplicate sent events after delivered → paid → delivered", async () => {
-    claim.mockResolvedValue(false);
+    claim.mockResolvedValue(null);
     await dispatchOrderEmailEvent({ ...base, eventType: "order_delivered_email" });
     await dispatchOrderEmailEvent({ ...base, eventType: "review_request_email" });
 
@@ -58,9 +62,9 @@ describe("order email outbox dispatch", () => {
   it("allows only one concurrent claimant for an event", async () => {
     let claimed = false;
     claim.mockImplementation(async () => {
-      if (claimed) return false;
+      if (claimed) return null;
       claimed = true;
-      return true;
+      return { eventId: 99, claimToken: "claim-1", attemptCount: 1, reclaimed: false };
     });
     await Promise.all([
       dispatchOrderEmailEvent({ ...base, eventType: "order_delivered_email" }),
@@ -79,8 +83,42 @@ describe("order email outbox dispatch", () => {
     expect(failed).toHaveBeenCalledWith(expect.objectContaining({
       orderId: 42,
       eventType: "order_delivered_email",
+      claimToken: "claim-1",
       error: "provider unavailable",
     }));
+  });
+
+  it("persists a sanitized failure for a synchronous error after the claim", async () => {
+    idempotencyKey.mockImplementationOnce(() => {
+      throw new Error("bad recipient person@example.test");
+    });
+
+    const result = await dispatchOrderEmailEvent({ ...base, eventType: "order_delivered_email" });
+
+    expect(result).toEqual({ dispatched: false, reason: "provider_failed" });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({
+      claimToken: "claim-1",
+      error: "bad recipient [redacted-email]",
+    }));
+  });
+
+  it("records a stale reclaim without allowing a second provider dispatch", async () => {
+    claim.mockResolvedValueOnce({ eventId: 99, claimToken: "claim-2", attemptCount: 2, reclaimed: true });
+
+    await dispatchOrderEmailEvent({ ...base, eventType: "order_delivered_email" });
+
+    expect(delivered).toHaveBeenCalledOnce();
+    expect(sent).toHaveBeenCalledWith(expect.objectContaining({ claimToken: "claim-2" }));
+  });
+
+  it("does not overwrite a newer lease after provider acceptance", async () => {
+    sent.mockResolvedValueOnce(false);
+
+    const result = await dispatchOrderEmailEvent({ ...base, eventType: "order_delivered_email" });
+
+    expect(result).toEqual({ dispatched: false, reason: "lease_lost" });
+    expect(failed).not.toHaveBeenCalled();
   });
 
   it("keeps review scheduling approximately five minutes ahead", async () => {

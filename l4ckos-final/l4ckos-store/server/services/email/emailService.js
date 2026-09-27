@@ -115,6 +115,7 @@ async function sendMarketingEmail({
   replyTo,
   tags,
   scheduledAt,
+  idempotencyKey,
 }) {
   const normalizedEmail = sanitizeEmail(email);
   if (!normalizedEmail) {
@@ -139,6 +140,7 @@ async function sendMarketingEmail({
     replyTo: replyTo || getDefaultReplyTo(),
     tags,
     scheduledAt,
+    idempotencyKey,
   });
 }
 

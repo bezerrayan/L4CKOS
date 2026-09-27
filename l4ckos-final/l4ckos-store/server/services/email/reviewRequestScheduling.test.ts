@@ -38,6 +38,7 @@ describe("review request email delivery", () => {
       orderNumber: "42",
       reviewUrl: "https://l4ckos.com.br/meus-pedidos/42",
       scheduledAt,
+      idempotencyKey: "order-42-review_request_email",
     });
 
     expect(resendSendMock).toHaveBeenCalledOnce();
@@ -46,6 +47,7 @@ describe("review request email delivery", () => {
         to: ["cliente@example.com"],
         scheduledAt,
       }),
+      { idempotencyKey: "order-42-review_request_email" },
     );
   });
 });

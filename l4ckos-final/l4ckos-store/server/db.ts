@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   InsertUser,
   users,
@@ -146,6 +146,15 @@ function isDuplicateKeyError(error: unknown) {
     ? String((error as { code?: unknown }).code)
     : "";
   return code === "ER_DUP_ENTRY" || code === "SQLITE_CONSTRAINT_UNIQUE";
+}
+
+function affectedRows(result: unknown) {
+  const header = Array.isArray(result) ? result[0] : result;
+  return Number(
+    typeof header === "object" && header !== null && "affectedRows" in header
+      ? (header as { affectedRows?: unknown }).affectedRows ?? 0
+      : 0,
+  );
 }
 
 export function resetInMemoryAsaasWebhookEventsForTests() {
@@ -1882,6 +1891,17 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
             eventType,
             idempotencyKey: orderEmailIdempotencyKey(orderId, eventType),
           });
+          const events = await tx
+            .select({ id: orderEmailEvents.id })
+            .from(orderEmailEvents)
+            .where(and(eq(orderEmailEvents.orderId, orderId), eq(orderEmailEvents.eventType, eventType)))
+            .limit(1);
+          console.info("[OrderEmailEvent] event reserved", {
+            orderId,
+            eventId: events[0]?.id ?? null,
+            eventType,
+            attemptCount: 0,
+          });
           reservedEventTypes.push(eventType);
         } catch (error) {
           if (!isDuplicateKeyError(error)) throw error;
@@ -1894,45 +1914,89 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
   });
 }
 
+export const ORDER_EMAIL_PROCESSING_LEASE_MS = 15 * 60 * 1000;
+
 export async function claimOrderEmailEvent(orderId: number, eventType: OrderEmailEventType) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = new Date();
-  const staleBefore = new Date(now.getTime() - 15 * 60 * 1000);
-  const result = await db.update(orderEmailEvents).set({
-    status: "processing",
-    processingAt: now,
-    attemptCount: sql`${orderEmailEvents.attemptCount} + 1`,
-    lastError: null,
-  }).where(and(
-    eq(orderEmailEvents.orderId, orderId),
-    eq(orderEmailEvents.eventType, eventType),
-    sql`(${orderEmailEvents.status} IN ('pending', 'failed') OR (${orderEmailEvents.status} = 'processing' AND ${orderEmailEvents.processingAt} < ${staleBefore}))`,
-  ));
-  return Number((result as { affectedRows?: number }).affectedRows ?? 0) === 1;
+  const staleBefore = new Date(now.getTime() - ORDER_EMAIL_PROCESSING_LEASE_MS);
+
+  return await db.transaction(async tx => {
+    const rows = await tx
+      .select({
+        id: orderEmailEvents.id,
+        status: orderEmailEvents.status,
+        attemptCount: orderEmailEvents.attemptCount,
+        processingAt: orderEmailEvents.processingAt,
+      })
+      .from(orderEmailEvents)
+      .where(and(eq(orderEmailEvents.orderId, orderId), eq(orderEmailEvents.eventType, eventType)))
+      .limit(1)
+      .for("update");
+    const event = rows[0];
+    if (!event) return null;
+
+    const reclaimed = event.status === "processing" && !!event.processingAt && event.processingAt < staleBefore;
+    const claimable = event.status === "pending" || event.status === "failed" || reclaimed;
+    if (!claimable) return null;
+
+    const claimToken = randomUUID();
+    await tx.update(orderEmailEvents).set({
+      status: "processing",
+      processingAt: now,
+      processingToken: claimToken,
+      attemptCount: event.attemptCount + 1,
+      lastError: null,
+      failedAt: null,
+    }).where(eq(orderEmailEvents.id, event.id));
+
+    return {
+      eventId: event.id,
+      claimToken,
+      attemptCount: event.attemptCount + 1,
+      reclaimed,
+    };
+  });
 }
 
-export async function markOrderEmailEventSent(input: { orderId: number; eventType: OrderEmailEventType; providerMessageId?: string | null; scheduledAt?: Date | null }) {
+export async function markOrderEmailEventSent(input: { orderId: number; eventType: OrderEmailEventType; claimToken: string; providerMessageId?: string | null; scheduledAt?: Date | null }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(orderEmailEvents).set({
+  const result = await db.update(orderEmailEvents).set({
     status: "sent",
     providerMessageId: input.providerMessageId ?? null,
     scheduledAt: input.scheduledAt ?? null,
     sentAt: new Date(),
+    processingAt: null,
+    processingToken: null,
     failedAt: null,
     lastError: null,
-  }).where(and(eq(orderEmailEvents.orderId, input.orderId), eq(orderEmailEvents.eventType, input.eventType)));
+  }).where(and(
+    eq(orderEmailEvents.orderId, input.orderId),
+    eq(orderEmailEvents.eventType, input.eventType),
+    eq(orderEmailEvents.status, "processing"),
+    eq(orderEmailEvents.processingToken, input.claimToken),
+  ));
+  return affectedRows(result) === 1;
 }
 
-export async function markOrderEmailEventFailed(input: { orderId: number; eventType: OrderEmailEventType; error: string }) {
+export async function markOrderEmailEventFailed(input: { orderId: number; eventType: OrderEmailEventType; claimToken: string; error: string }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(orderEmailEvents).set({
+  const result = await db.update(orderEmailEvents).set({
     status: "failed",
+    processingAt: null,
+    processingToken: null,
     failedAt: new Date(),
     lastError: input.error.slice(0, 500),
-  }).where(and(eq(orderEmailEvents.orderId, input.orderId), eq(orderEmailEvents.eventType, input.eventType)));
+  }).where(and(
+    eq(orderEmailEvents.orderId, input.orderId),
+    eq(orderEmailEvents.eventType, input.eventType),
+    eq(orderEmailEvents.status, "processing"),
+    eq(orderEmailEvents.processingToken, input.claimToken),
+  ));
+  return affectedRows(result) === 1;
 }
 
 async function safeOptionalSelect<T>(label: string, query: () => Promise<T[]>, warnings?: string[]) {
