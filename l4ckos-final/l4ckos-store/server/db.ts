@@ -141,11 +141,16 @@ function hashWebhookPayload(payload: unknown) {
   return createHash("sha256").update(JSON.stringify(payload ?? null), "utf8").digest("hex");
 }
 
-function isDuplicateKeyError(error: unknown) {
-  const code = typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : "";
-  return code === "ER_DUP_ENTRY" || code === "SQLITE_CONSTRAINT_UNIQUE";
+export function isDuplicateKeyError(error: unknown) {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const code = "code" in current ? String((current as { code?: unknown }).code ?? "") : "";
+    if (code === "ER_DUP_ENTRY" || code === "SQLITE_CONSTRAINT_UNIQUE") return true;
+    current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
 }
 
 function affectedRows(result: unknown) {
@@ -1861,6 +1866,40 @@ export function orderEmailIdempotencyKey(orderId: number, eventType: OrderEmailE
 }
 
 /**
+ * Inserts the one durable event for an order/type pair. A duplicate of this
+ * exact insert is the expected idempotency path; no existing row is updated.
+ */
+export async function reserveOrderEmailEvent(tx: any, orderId: number, eventType: OrderEmailEventType) {
+  let reserved = true;
+  try {
+    await tx.insert(orderEmailEvents).values({
+      orderId,
+      eventType,
+      idempotencyKey: orderEmailIdempotencyKey(orderId, eventType),
+    });
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) throw error;
+    reserved = false;
+  }
+
+  const events = await tx
+    .select({ id: orderEmailEvents.id })
+    .from(orderEmailEvents)
+    .where(and(eq(orderEmailEvents.orderId, orderId), eq(orderEmailEvents.eventType, eventType)))
+    .limit(1);
+  const eventId = events[0]?.id ?? null;
+  if (reserved) {
+    console.info("[OrderEmailEvent] event reserved", {
+      orderId,
+      eventId,
+      eventType,
+      attemptCount: 0,
+    });
+  }
+  return { reserved, eventId };
+}
+
+/**
  * Persists the delivery transition and its outbox events under the same row
  * lock.  The unique key is the concurrency boundary: repeated/concurrent
  * delivered transitions cannot reserve a second logical email event.
@@ -1885,27 +1924,8 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
     const reservedEventTypes: OrderEmailEventType[] = [];
     if (data.status === "delivered" && previousOrder.status !== "delivered") {
       for (const eventType of ["order_delivered_email", "review_request_email"] as const) {
-        try {
-          await tx.insert(orderEmailEvents).values({
-            orderId,
-            eventType,
-            idempotencyKey: orderEmailIdempotencyKey(orderId, eventType),
-          });
-          const events = await tx
-            .select({ id: orderEmailEvents.id })
-            .from(orderEmailEvents)
-            .where(and(eq(orderEmailEvents.orderId, orderId), eq(orderEmailEvents.eventType, eventType)))
-            .limit(1);
-          console.info("[OrderEmailEvent] event reserved", {
-            orderId,
-            eventId: events[0]?.id ?? null,
-            eventType,
-            attemptCount: 0,
-          });
-          reservedEventTypes.push(eventType);
-        } catch (error) {
-          if (!isDuplicateKeyError(error)) throw error;
-        }
+        const reservation = await reserveOrderEmailEvent(tx, orderId, eventType);
+        if (reservation.reserved) reservedEventTypes.push(eventType);
       }
     }
 
