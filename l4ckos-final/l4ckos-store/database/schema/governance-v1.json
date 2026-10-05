@@ -1,0 +1,450 @@
+{
+  "version": 1,
+  "fingerprint": "47462fe9f093c89f83444b2b849ecf488ae7de04557a79e11286bf48484f693b",
+  "schema": {
+    "algorithmVersion": 1,
+    "tables": [
+      {
+        "name": "_l4ckos_schema_executions",
+        "type": "BASE TABLE",
+        "engine": "InnoDB",
+        "collation": "utf8mb4_unicode_ci",
+        "options": "",
+        "columns": [
+          {
+            "name": "id",
+            "position": 1,
+            "type": "int",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "auto_increment",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": 10,
+            "numericScale": 0,
+            "datetimePrecision": null
+          },
+          {
+            "name": "operation",
+            "position": 2,
+            "type": "varchar(191)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 191,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "checksum",
+            "position": 3,
+            "type": "char(64)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 64,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "applicationCommit",
+            "position": 4,
+            "type": "char(40)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 40,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "state",
+            "position": 5,
+            "type": "enum('STARTED','FAILED','COMPLETED')",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 9,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "completedStatements",
+            "position": 6,
+            "type": "int unsigned",
+            "nullable": false,
+            "defaultValue": "0",
+            "extra": "",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": 10,
+            "numericScale": 0,
+            "datetimePrecision": null
+          },
+          {
+            "name": "preFingerprint",
+            "position": 7,
+            "type": "char(64)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 64,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "observedFingerprint",
+            "position": 8,
+            "type": "char(64)",
+            "nullable": true,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 64,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "errorCode",
+            "position": 9,
+            "type": "varchar(80)",
+            "nullable": true,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 80,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "startedAt",
+            "position": 10,
+            "type": "timestamp(3)",
+            "nullable": false,
+            "defaultValue": "CURRENT_TIMESTAMP(3)",
+            "extra": "",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": 3
+          },
+          {
+            "name": "finishedAt",
+            "position": 11,
+            "type": "timestamp(3)",
+            "nullable": true,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": 3
+          }
+        ],
+        "indexes": [
+          {
+            "primary": true,
+            "unique": true,
+            "type": "BTREE",
+            "visible": true,
+            "columns": [
+              {
+                "name": "id",
+                "direction": "A",
+                "prefixLength": null,
+                "expression": null
+              }
+            ]
+          },
+          {
+            "primary": false,
+            "unique": false,
+            "type": "BTREE",
+            "visible": true,
+            "columns": [
+              {
+                "name": "state",
+                "direction": "A",
+                "prefixLength": null,
+                "expression": null
+              }
+            ]
+          }
+        ],
+        "foreignKeys": [],
+        "checks": []
+      },
+      {
+        "name": "_l4ckos_schema_migrations",
+        "type": "BASE TABLE",
+        "engine": "InnoDB",
+        "collation": "utf8mb4_unicode_ci",
+        "options": "",
+        "columns": [
+          {
+            "name": "id",
+            "position": 1,
+            "type": "int",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "auto_increment",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": 10,
+            "numericScale": 0,
+            "datetimePrecision": null
+          },
+          {
+            "name": "name",
+            "position": 2,
+            "type": "varchar(191)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 191,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "kind",
+            "position": 3,
+            "type": "enum('BASELINE','MIGRATION','RECONCILIATION')",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 14,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "checksum",
+            "position": 4,
+            "type": "char(64)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 64,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "applicationCommit",
+            "position": 5,
+            "type": "char(40)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 40,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "description",
+            "position": 6,
+            "type": "varchar(500)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 500,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "preFingerprint",
+            "position": 7,
+            "type": "char(64)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 64,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "postFingerprint",
+            "position": 8,
+            "type": "char(64)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 64,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "manifestVersion",
+            "position": 9,
+            "type": "int",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": 10,
+            "numericScale": 0,
+            "datetimePrecision": null
+          },
+          {
+            "name": "runnerVersion",
+            "position": 10,
+            "type": "varchar(32)",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": "utf8mb4",
+            "collation": "utf8mb4_unicode_ci",
+            "length": 32,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": null
+          },
+          {
+            "name": "appliedAt",
+            "position": 11,
+            "type": "timestamp(3)",
+            "nullable": false,
+            "defaultValue": "CURRENT_TIMESTAMP(3)",
+            "extra": "",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": null,
+            "numericScale": null,
+            "datetimePrecision": 3
+          },
+          {
+            "name": "executionDurationMs",
+            "position": 12,
+            "type": "int unsigned",
+            "nullable": false,
+            "defaultValue": null,
+            "extra": "",
+            "generationExpression": "",
+            "charset": null,
+            "collation": null,
+            "length": null,
+            "numericPrecision": 10,
+            "numericScale": 0,
+            "datetimePrecision": null
+          }
+        ],
+        "indexes": [
+          {
+            "primary": true,
+            "unique": true,
+            "type": "BTREE",
+            "visible": true,
+            "columns": [
+              {
+                "name": "id",
+                "direction": "A",
+                "prefixLength": null,
+                "expression": null
+              }
+            ]
+          },
+          {
+            "primary": false,
+            "unique": true,
+            "type": "BTREE",
+            "visible": true,
+            "columns": [
+              {
+                "name": "name",
+                "direction": "A",
+                "prefixLength": null,
+                "expression": null
+              }
+            ]
+          }
+        ],
+        "foreignKeys": [],
+        "checks": [
+          {
+            "clause": "regexp_like(`applicationCommit`,_utf8mb4\\'^[a-f0-9]{40}$\\')",
+            "enforced": true
+          },
+          {
+            "clause": "regexp_like(`checksum`,_utf8mb4\\'^[a-f0-9]{64}$\\')",
+            "enforced": true
+          }
+        ]
+      }
+    ],
+    "unsupported": {
+      "triggers": 0,
+      "routines": 0,
+      "events": 0
+    }
+  }
+}

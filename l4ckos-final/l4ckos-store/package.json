@@ -14,7 +14,11 @@
     "check:server": "tsc --noEmit --project tsconfig.server.json",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit push"
+    "db:push": "tsx scripts/database-push.ts",
+    "db:schema:fingerprint": "tsx scripts/database-schema.ts fingerprint",
+    "db:bootstrap": "tsx scripts/database-schema.ts bootstrap",
+    "db:baseline": "tsx scripts/database-schema.ts baseline",
+    "db:migrate": "tsx scripts/database-schema.ts migrate"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

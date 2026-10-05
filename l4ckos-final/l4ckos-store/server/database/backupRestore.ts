@@ -69,10 +69,17 @@ async function queryRows(connection: Connection, sql: string, values: unknown[] 
 }
 async function inventory(connection: Connection) {
   const objects = await queryRows(connection, "SELECT TABLE_NAME AS name, TABLE_TYPE AS type, ENGINE AS engine FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() ORDER BY TABLE_NAME");
-  const names = objects.map(row => String(row.name));
+  const internalNames = ["_l4ckos_schema_migrations", "_l4ckos_schema_executions"];
+  if (objects.some(row => internalNames.includes(String(row.name)))) {
+    const { validateGovernance } = await import("../../database/schema/governance");
+    await validateGovernance(connection);
+  }
+  // Governance is independently prepared/validated, never overwritten by a data restore.
+  const businessObjects = objects.filter(row => !internalNames.includes(String(row.name)));
+  const names = businessObjects.map(row => String(row.name));
   if (names.some(name => classifyTable(name) === "UNKNOWN")) fail("UNKNOWN_TABLE");
   if (REQUIRED_TABLES.some(name => !names.includes(name))) fail("MISSING_REQUIRED_TABLE");
-  if (objects.some(row => row.type !== "BASE TABLE" || row.engine !== "InnoDB")) fail("NON_TRANSACTIONAL_OBJECT");
+  if (businessObjects.some(row => row.type !== "BASE TABLE" || row.engine !== "InnoDB")) fail("NON_TRANSACTIONAL_OBJECT");
   const schema: Record<string, string> = {};
   for (const name of TABLE_ORDER.filter(name => names.includes(name))) {
     const row = (await queryRows(connection, `SHOW CREATE TABLE ${identifier(name)}`))[0];

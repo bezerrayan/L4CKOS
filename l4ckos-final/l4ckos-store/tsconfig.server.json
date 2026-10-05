@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["server/**/*", "shared/**/*"],
+  "include": ["server/**/*", "shared/**/*", "database/**/*.ts", "scripts/database-schema.ts", "scripts/database-push.ts"],
   "exclude": [
     "node_modules",
     "build",

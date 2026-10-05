@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "tables": [
+    {
+      "path": "database/governance/executions.sql",
+      "checksum": "dc15dc9b95f6be41cf985dcc7631855831efa61ed216edd423f444688d8592a3"
+    },
+    {
+      "path": "database/governance/ledger.sql",
+      "checksum": "96d5facc6f733612f6ec3e820ab0c11aaee97d7ca4032b4ee65f1fbf9195ee5e"
+    }
+  ]
+}
