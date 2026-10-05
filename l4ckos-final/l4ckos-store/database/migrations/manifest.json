@@ -1,4 +1,18 @@
 {
   "version": 2,
-  "migrations": []
+  "migrations": [],
+  "unbaselined": {
+    "expectedInitialFingerprint": "09f647cdda027984d3425bef6ccee9cb3496a648602515b0930465b7b02d9efe",
+    "reconciliations": [
+      {
+        "name": "0020_reconcile_asaas_webhook_events",
+        "kind": "RECONCILIATION",
+        "path": "database/migrations/0020_reconcile_asaas_webhook_events.sql",
+        "checksum": "cad11dda08787cf7935390a1531002627f7a2894455ad250357b0ec1fa050423",
+        "description": "Create missing Asaas webhook event ledger on reconciled existing databases; no historical backfill",
+        "expectedPreFingerprint": "09f647cdda027984d3425bef6ccee9cb3496a648602515b0930465b7b02d9efe",
+        "expectedPostFingerprint": "f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d"
+      }
+    ]
+  }
 }

@@ -100,9 +100,9 @@ Bootstrap repetido é recusado; não usar IF NOT EXISTS para esconder schema par
 
 ## Nova linhagem / runner v2
 
-`database/migrations/manifest.json` é a única descoberta autorizada. Atualmente
-`migrations: []`: nenhuma 0020 foi criada. Fixtures de testes na mesma árvore
-não são descobertas. Paths devem ficar dentro de database/migrations, inclusive
+`database/migrations/manifest.json` é a única descoberta autorizada. O bloco
+`unbaselined.reconciliations` contém somente a 0020; `migrations: []` continua
+sem migrations ordinárias. Fixtures de testes na mesma árvore não são descobertas. Paths devem ficar dentro de database/migrations, inclusive
 após resolver symlinks; caminhos legados/escapes são rejeitados.
 
 Cada entrada tem name, kind, path, checksum exato, description,
@@ -147,24 +147,61 @@ automática de recovery não faz parte desta etapa.
 O runner suporta **somente quando declarado explicitamente no novo manifesto**
 um bloco `unbaselined`, com expectedInitialFingerprint reconhecido e lista
 ordenada `reconciliations`. Ela deve partir do estado auditado versionado (ou
-canônico para teste local) e alcançar o canônico. Default vazio não concede
-esse caminho e não inicializa governança num banco arbitrário.
+canônico para teste local) e alcançar o canônico. O manifesto oficial aceita
+somente o pre-state exato da 0020 e não inicializa governança num banco arbitrário.
 
-Fluxo futuro sujeito a autorização específica:
+### 0020 — primeira RECONCILIATION da nova linhagem
 
-1. Confirmar staging isolado e novo inventário metadata read-only.
-2. Comparar com pre-contrato revisado; provar backup completo/restore e isolamento.
-3. Revisar artefato 0020, checksums e bloco unbaselined, sem SQL legado.
-4. Inicializar governança, executar somente reconciliação manifestada e validar
-   postFingerprint; registrar RECONCILIATION realmente executada.
-5. Só após igualdade canônica, aceitar/registrar BASELINE; depois migrations comuns.
+Arquivo: `database/migrations/0020_reconcile_asaas_webhook_events.sql`.
+Nome: `0020_reconcile_asaas_webhook_events`; kind: `RECONCILIATION`.
+DDL byte a byte igual ao CREATE do bootstrap canônico: somente asaasWebhookEvents,
+PK int AUTO_INCREMENT, eventId varchar(191) UNIQUE, campos nullable preservados,
+status processing/processed/failed, timestamps/defaults, InnoDB e utf8mb4_unicode_ci.
+Strict CREATE, sem IF NOT EXISTS. Não há INSERT/UPDATE/DELETE de negócio nem
+backfill: a tabela nasce vazia; histórico de webhooks não é inventado.
+
+```text
+preFingerprint:  09f647cdda027984d3425bef6ccee9cb3496a648602515b0930465b7b02d9efe
+postFingerprint: f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d
+SQL SHA-256:     cad11dda08787cf7935390a1531002627f7a2894455ad250357b0ec1fa050423
+```
+
+O pre-state local é derivado explicitamente dos CREATEs aprovados do bootstrap,
+excluindo somente asaasWebhookEvents; não executa legacy. O teste comprova que
+todas as outras estruturas permanecem idênticas após 0020. Tabela já existente,
+tabela desconhecida ou qualquer outro drift falha antes de criar governança/DDL.
+Um byte alterado de SQL invalida o checksum antes de execução.
+
+Com aceite explícito do contrato canônico, o runner local adquire lock, verifica
+pre-state, cria/valida governança, executa somente 0020 e exige o postFingerprint
+canônico antes de gravar RECONCILIATION. Em seguida aceita automaticamente o
+BASELINE canônico: descrição POST RECONCILIATION, schema existente reconciliado,
+canonical-v1 validado como ponto inicial confiável; sem afirmação de execução
+legacy. `db:baseline` posterior retorna ALREADY_BASELINED. Reexecutar `db:migrate`
+valida checksums/cadeia/fingerprint e retorna UP_TO_DATE, sem DDL ou duplicatas.
 
 Fresh bootstrap pula o bloco existing-only **sem registrar** sua execução.
-Histórico existing pode começar por RECONCILIATION e depois BASELINE; histórico
-fresh começa por BASELINE. Ambas as cadeias convergem ao mesmo contrato para
-migrations comuns. Esse modelo evita baseline falso do estado pré-0020 e não
-presume execuções legadas. O teste do caminho unbaselined usa SELECT 1 sintético,
-sem criar/aplicar 0020. O manifesto de produção desta etapa continua vazio.
+Histórico existing começa por RECONCILIATION e depois BASELINE; histórico fresh
+começa por BASELINE. Ambas as cadeias convergem ao mesmo contrato para migrations
+comuns. Falha/acknowledgement incerto após CREATE mantém evidência FAILED/STARTED,
+sem registrar sucesso nem baseline e bloqueando retry com RECOVERY_REQUIRED.
+
+Ordem futura **sujeita a autorização específica**, ainda sem aplicação remota:
+
+1. Preflight: reconfirmar projeto/ID/environment/service e MySQL exclusivo de
+   staging, versão, existência da tabela/governança e metadata read-only atual.
+   Fingerprint atual deve ser **exatamente** o preFingerprint; diferença é NO-GO.
+2. Backup operacional imediatamente antes da escrita, com restore comprovado e
+   preservação de ledger/trilha quando existentes. Nenhum backup remoto foi
+   autorizado nesta etapa de preparação da 0020.
+3. Reconciliation: executar o SQL/checksum revisado, sob lock e sem legacy/backfill.
+4. Validate: exigir contrato/fingerprint canônico e registrar execução verdadeira.
+5. Baseline: aceitar canonical-v1 como início confiável da governança, depois da
+   reconciliação e validação (no runner local, passo automático sob o mesmo lock).
+6. Smoke: validar runtime e contrato de webhook, dentro do escopo autorizado.
+
+Read-only preflight não autoriza escrita, criação de ledger, baseline ou deploy.
+Não adaptar automaticamente a migration caso a inspeção atual revele drift.
 
 Os guards implementados permanecem local-only: autorização remota e confirmação
 de alvo precisarão de uma etapa própria, sem remover controles genericamente.

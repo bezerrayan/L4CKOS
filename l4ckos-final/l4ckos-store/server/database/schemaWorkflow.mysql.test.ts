@@ -65,8 +65,10 @@ describe("local schema safety and reviewed artifacts", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).not.toContain("do-not-log");
   });
-  it("uses only an explicit empty new lineage and rejects legacy paths", async () => {
-    expect((await loadLineage()).entries).toEqual([]);
+  it("uses only an explicit new lineage and rejects legacy paths", async () => {
+    const lineage = await loadLineage();
+    expect(lineage.entries).toEqual([]);
+    expect(lineage.reconciliations.map(e => e.name)).toEqual(["0020_reconcile_asaas_webhook_events"]);
     const contract = await readContract();
     const invalid = { version: 2 as const, migrations: [{ name: "test_escape", kind: "MIGRATION" as const, path: "drizzle/0001_tired_bruce_banner.sql", checksum: "a".repeat(64), description: "test", expectedPreFingerprint: contract.fingerprint, expectedPostFingerprint: contract.fingerprint }] };
     await expect(loadLineage(invalid)).rejects.toThrow("UNAPPROVED_ARTIFACT_PATH");
@@ -218,7 +220,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 schema / ledge
     expect((await migrateDatabase(c, ctx, manifest)).applied).toEqual(["test_reconciliation"]);
     expect((await ledgerRows(c)).map(r => r.kind)).toEqual(["RECONCILIATION", "BASELINE"]);
     expect((await migrateDatabase(c, ctx, manifest)).status).toBe("UP_TO_DATE");
-    await expect(migrateDatabase(c, ctx)).rejects.toThrow("BASELINE_REQUIRED");
+    await expect(migrateDatabase(c, ctx)).rejects.toThrow("LEDGER_CHECKSUM_OR_CHAIN_MISMATCH");
   });
   it("partial implicit-commit DDL leaves evidence, no success ledger and blocks blind retry", async () => {
     const { c, ctx } = await database("partial"); await bootstrapDatabase(c, ctx);

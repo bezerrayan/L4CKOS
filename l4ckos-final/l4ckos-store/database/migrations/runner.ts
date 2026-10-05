@@ -83,7 +83,7 @@ export async function migrateDatabase(connection: Connection, context: Operation
     const applied: string[] = [];
     if (!history.some(row => row.kind === "BASELINE")) {
       for (const entry of lineage.reconciliations.slice(history.length)) await applyEntry(entry);
-      await appendCanonicalBaseline(connection, context, "POST RECONCILIATION canonical schema inspected; no legacy execution claims");
+      await appendCanonicalBaseline(connection, context, "POST RECONCILIATION: existing schema reconciled; canonical-v1 validated and accepted as initial trusted governance point; no legacy execution claims");
       history = await validateHistory(connection, lineage);
     }
     const baselineIndex = history.findIndex(row => row.kind === "BASELINE");
