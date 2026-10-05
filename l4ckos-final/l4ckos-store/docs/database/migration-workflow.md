@@ -255,3 +255,11 @@ drift/tabelas desconhecidas, UNIQUE/AUTO_INCREMENT/CHECK, legacy isolation,
 checksum SQL/ledger, dois runners concorrentes, falha parcial/postcondition,
 caminho unbaselined e backup/restore de 26 tabelas. Somente bancos criados com
 sucesso pelo teste são removidos; nomes preexistentes nunca são descartados.
+
+## Entrada separada para staging autorizado
+
+O executor restrito PREPARE/APPLY está descrito em [staging-reconciliation.md](staging-reconciliation.md).
+Ele usa capability opaca e o mesmo runner V2, com target fixo, RC limpo/revisado,
+plan selado/expirável e prova real de backup/restore. Não altera os guards dos
+comandos genéricos, não autoriza 0021 nem db:push remoto. Implementação/testes
+locais não autorizam executar os comandos em staging; isso exige review do novo RC.

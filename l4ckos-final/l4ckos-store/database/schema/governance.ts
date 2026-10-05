@@ -7,9 +7,18 @@ import { verifyLocalConnection, SchemaError, type LocalTarget } from "./safety";
 
 export const RUNNER_VERSION = "2.0.0";
 export type OperationContext = LocalTarget & { applicationCommit: string; approvedFingerprint: string; lockTimeoutSeconds?: number };
+import { verifyStagingCapability, type AuthorizedStagingCapability } from "../staging/policy";
+export type LedgerContext = Pick<OperationContext, "applicationCommit" | "approvedFingerprint">;
 const activeConnections = new WeakSet<Connection>();
 export async function withSchemaLock<T>(connection: Connection, context: OperationContext, action: () => Promise<T>) {
   await verifyLocalConnection(connection, context);
+  return locked(connection, context, action);
+}
+export async function withAuthorizedStagingLock<T>(connection: Connection, capability: AuthorizedStagingCapability, action: () => Promise<T>) {
+  const plan = await verifyStagingCapability(connection, capability);
+  return locked(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: plan.expectedPostFingerprint, lockTimeoutSeconds: 1 }, action);
+}
+async function locked<T>(connection: Connection, context: LedgerContext & { lockTimeoutSeconds?: number }, action: () => Promise<T>) {
   if (!/^[a-f0-9]{40}$/.test(context.applicationCommit)) throw new SchemaError("APPLICATION_COMMIT_REQUIRED");
   const timeout = context.lockTimeoutSeconds ?? 1;
   if (!Number.isInteger(timeout) || timeout < 0 || timeout > 10) throw new SchemaError("FINITE_LOCK_TIMEOUT_REQUIRED");
@@ -64,11 +73,11 @@ export async function assertNoRecoveryPending(connection: Connection) {
 export async function ledgerRows(connection: Connection) {
   return rows(connection, "SELECT * FROM _l4ckos_schema_migrations ORDER BY id");
 }
-export async function insertLedger(connection: Connection, context: OperationContext, input: { name: string; kind: "BASELINE" | "MIGRATION" | "RECONCILIATION"; checksum: string; description: string; preFingerprint: string; postFingerprint: string; startedAt: number; manifestVersion: number }) {
+export async function insertLedger(connection: Connection, context: LedgerContext, input: { name: string; kind: "BASELINE" | "MIGRATION" | "RECONCILIATION"; checksum: string; description: string; preFingerprint: string; postFingerprint: string; startedAt: number; manifestVersion: number }) {
   // Intentionally INSERT-only. No UPSERT, UPDATE, DELETE or history repair path.
   await connection.query("INSERT INTO _l4ckos_schema_migrations (name,kind,checksum,applicationCommit,description,preFingerprint,postFingerprint,manifestVersion,runnerVersion,executionDurationMs) VALUES (?,?,?,?,?,?,?,?,?,?)", [input.name, input.kind, input.checksum, context.applicationCommit, input.description, input.preFingerprint, input.postFingerprint, input.manifestVersion, RUNNER_VERSION, Math.max(0, Math.round(performance.now() - input.startedAt))]);
 }
-export async function execution(connection: Connection, context: OperationContext, input: { name: string; checksum: string; preFingerprint: string }, action: (checkpoint: () => Promise<void>, executionId: number) => Promise<void>) {
+export async function execution(connection: Connection, context: LedgerContext, input: { name: string; checksum: string; preFingerprint: string }, action: (checkpoint: () => Promise<void>, executionId: number) => Promise<void>) {
   const [result] = await connection.query<any>("INSERT INTO _l4ckos_schema_executions (operation,checksum,applicationCommit,state,preFingerprint) VALUES (?,?,?,'STARTED',?)", [input.name, input.checksum, context.applicationCommit, input.preFingerprint]);
   const id = result.insertId;
   let completed = 0;
@@ -89,7 +98,7 @@ export async function completeExecution(connection: Connection, id: number, obse
   await connection.query("UPDATE _l4ckos_schema_executions SET state='COMPLETED',observedFingerprint=?,finishedAt=CURRENT_TIMESTAMP(3) WHERE id=? AND state='STARTED'", [observed, id]);
 }
 
-export async function appendCanonicalBaseline(connection: Connection, context: OperationContext, description: string) {
+export async function appendCanonicalBaseline(connection: Connection, context: LedgerContext, description: string) {
   const startedAt = performance.now();
   const contract = await assertCanonical(connection, context.approvedFingerprint);
   await execution(connection, context, { name: "baseline-v1", checksum: contract.checksum, preFingerprint: contract.fingerprint }, async (_checkpoint, id) => {

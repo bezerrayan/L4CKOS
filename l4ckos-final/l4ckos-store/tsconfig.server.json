@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["server/**/*", "shared/**/*", "database/**/*.ts", "scripts/database-schema.ts", "scripts/database-push.ts"],
+  "include": ["server/**/*", "shared/**/*", "database/**/*.ts", "scripts/database-schema.ts", "scripts/database-push.ts", "scripts/staging-reconciliation.ts", "scripts/staging-restore-proof.ts"],
   "exclude": [
     "node_modules",
     "build",

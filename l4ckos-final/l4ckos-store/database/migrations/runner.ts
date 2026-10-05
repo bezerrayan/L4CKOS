@@ -1,9 +1,9 @@
 import type { Connection } from "mysql2/promise";
 import { performance } from "node:perf_hooks";
 import { readArtifact, readContract, readRecognizedExistingContract } from "../schema/artifacts";
-import { readStructuralSchema, structuralHash, sha256 } from "../schema/fingerprint";
+import { readStructuralSchema, structuralHash, sha256, canonical } from "../schema/fingerprint";
 import { SchemaError } from "../schema/safety";
-import { appendCanonicalBaseline, assertNoRecoveryPending, ensureGovernance, completeExecution, execution, insertLedger, ledgerRows, validateGovernance, withSchemaLock, type OperationContext } from "../schema/governance";
+import { appendCanonicalBaseline, assertNoRecoveryPending, ensureGovernance, completeExecution, execution, insertLedger, ledgerRows, validateGovernance, withSchemaLock, type OperationContext, type LedgerContext, withAuthorizedStagingLock } from "../schema/governance";
 
 export type MigrationEntry = {
   name: string; kind: "MIGRATION" | "RECONCILIATION"; checksum: string; path: string;
@@ -70,7 +70,35 @@ function verifyEntry(recorded: Record<string, unknown>, entry: MigrationEntry) {
 }
 /** Only the explicit new manifest is loaded. drizzle SQL/journal is never read. */
 export async function migrateDatabase(connection: Connection, context: OperationContext, manifest?: LineageManifest) {
-  return withSchemaLock(connection, context, async () => {
+  return withSchemaLock(connection, context, () => runMigrationBody(connection, context, manifest));
+}
+import { verifyStagingCapability, MIGRATION, PRE, POST, fail, type AuthorizedStagingCapability } from "../staging/policy";
+export async function reconcileAuthorizedStaging(connection: Connection, capability: AuthorizedStagingCapability) {
+  return withAuthorizedStagingLock(connection, capability, async () => {
+    const plan = await verifyStagingCapability(connection, capability);
+    const lineage = await loadLineage();
+    if (lineage.entries.length || lineage.reconciliations.length !== 1 || lineage.initialFingerprint !== PRE || lineage.contract.fingerprint !== POST || lineage.reconciliations[0].name !== MIGRATION.name || lineage.reconciliations[0].kind !== MIGRATION.kind || lineage.reconciliations[0].checksum !== MIGRATION.checksum) fail("STAGING_MIGRATION_SCOPE_MISMATCH");
+    const current = structuralHash(await readStructuralSchema(connection));
+    const internal = await readStructuralSchema(connection, true);
+    if (current === POST) {
+      const history = await validateHistory(connection, lineage);
+      if (history.length !== 2 || history.some(r => r.applicationCommit !== plan.applicationCommit)) fail("STAGING_REPLAY_HISTORY_MISMATCH");
+      return { status: "ALREADY_APPLIED", applied: [], fingerprint: POST };
+    }
+    if (current !== PRE || internal.tables.length) fail("STAGING_PREWRITE_DRIFT");
+    const { backupDatabase } = await import("../../server/database/backupRestore");
+    const snapshot = await backupDatabase(connection);
+    if (snapshot.schemaFingerprint !== plan.backup.schemaFingerprint ||
+        canonical(Object.fromEntries(Object.entries(snapshot.tables).map(([t,v]) => [t,v.rowCount]))) !== canonical(plan.backup.rowCounts) ||
+        canonical(Object.fromEntries(Object.entries(snapshot.tables).map(([t,v]) => [t,v.checksum]))) !== canonical(plan.backup.rowChecksums)) fail("STAGING_PREWRITE_DATA_CHANGED");
+    await verifyStagingCapability(connection, capability);
+    return runMigrationBody(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: POST }, undefined, async () => {
+      const [counts] = await connection.query<any[]>("SELECT COUNT(*) n FROM asaasWebhookEvents");
+      if (Number(counts[0].n) !== 0) fail("STAGING_WEBHOOK_TABLE_NOT_EMPTY");
+    });
+  });
+}
+async function runMigrationBody(connection: Connection, context: LedgerContext, manifest?: LineageManifest, validatePost?: () => Promise<void>) {
     const lineage = await loadLineage(manifest);
     if (context.approvedFingerprint !== lineage.contract.fingerprint) throw new SchemaError("APPROVED_FINGERPRINT_REQUIRED");
     const internal = await readStructuralSchema(connection, true);
@@ -96,6 +124,7 @@ export async function migrateDatabase(connection: Connection, context: Operation
         for (const statement of entry.statements) { await connection.query(statement); await checkpoint(); }
         const after = structuralHash(await readStructuralSchema(connection));
         if (after !== entry.expectedPostFingerprint) throw new SchemaError("MIGRATION_POSTFINGERPRINT_MISMATCH");
+        await validatePost?.();
         await connection.beginTransaction();
         try {
           await insertLedger(connection, context, { name: entry.name, kind: entry.kind, checksum: entry.checksum, description: entry.description, preFingerprint: before, postFingerprint: after, manifestVersion: 2, startedAt });
@@ -107,5 +136,4 @@ export async function migrateDatabase(connection: Connection, context: Operation
     }
     await validateHistory(connection, lineage);
     return { status: applied.length ? "APPLIED" : "UP_TO_DATE", applied, fingerprint: structuralHash(await readStructuralSchema(connection)) };
-  });
 }
