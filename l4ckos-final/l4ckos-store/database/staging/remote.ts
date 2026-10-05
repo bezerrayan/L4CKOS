@@ -49,7 +49,8 @@ export async function remoteOperation(operation: "inspect" | "backup" | "apply",
   const c = await openBackupConnection(url);
   try {
     if (connectionHash(c) !== identity.connectionHash) fail("STAGING_CONNECTION_IDENTITY_MISMATCH");
-    if (operation === "inspect") return inspectConnection(c);
+    // Await the whole operation before finally closes its shared connection.
+    if (operation === "inspect") return await inspectConnection(c);
     if (operation === "backup") {
       const before = await inspectConnection(c);
       if (before.fingerprint !== PRE || before.secondFingerprint !== PRE || before.webhook || before.internalTables.length) fail("STAGING_PREWRITE_DRIFT");
@@ -60,6 +61,6 @@ export async function remoteOperation(operation: "inspect" | "backup" | "apply",
     }
     if (operation !== "apply" || !plan || !digest) fail("INVALID_STAGING_OPERATION");
     assertPlan(plan);
-    return reconcileConnection(c, identity, plan, digest);
+    return await reconcileConnection(c, identity, plan, digest);
   } finally { await c.end(); }
 }
