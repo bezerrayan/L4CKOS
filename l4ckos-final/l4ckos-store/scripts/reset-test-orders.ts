@@ -220,7 +220,8 @@ async function loadOrders(args: Args) {
         orderId: orderItems.orderId,
         productId: orderItems.productId,
         quantity: orderItems.quantity,
-        price: orderItems.price,
+        unitPrice: orderItems.unitPrice,
+        totalPrice: orderItems.totalPrice,
         createdAt: orderItems.createdAt,
         productName: products.name,
       })
@@ -361,7 +362,8 @@ async function deleteCandidates(candidates: Array<{ order: OrderRow; related: Re
     await tx.delete(orders).where(inArray(orders.id, ids));
     try {
       await tx.insert(auditLogs).values({
-        actorUserId: 0,
+        actorUserId: null,
+        actorType: "system",
         action: "orders.resetTestOrders",
         entity: "orders",
         entityId: ids.join(","),

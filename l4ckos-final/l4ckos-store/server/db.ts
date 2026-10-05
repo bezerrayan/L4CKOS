@@ -1384,6 +1384,7 @@ export async function markOrderPaid(
     if (confirmation.source === "manual") {
       await tx.insert(auditLogs).values({
         actorUserId: confirmation.actorUserId,
+        actorType: "admin",
         action: "order.payment_confirmed_manual",
         entity: "order",
         entityId: String(orderId),
@@ -2348,6 +2349,7 @@ export async function createAuditLog(payload: {
   try {
     await db.insert(auditLogs).values({
       actorUserId: payload.actorUserId,
+      actorType: "admin",
       action: payload.action,
       entity: payload.entity,
       entityId: payload.entityId ?? null,

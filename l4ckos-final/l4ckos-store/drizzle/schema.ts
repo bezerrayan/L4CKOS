@@ -153,7 +153,8 @@ export const orderItems = mysqlTable("orderItems", {
   orderId: int("orderId").notNull(),
   productId: int("productId").notNull(),
   quantity: int("quantity").notNull(),
-  price: int("price").notNull(), // preço no momento da compra
+  unitPrice: int("unitPrice").notNull(), // snapshot unitário em centavos inteiros
+  totalPrice: int("totalPrice"), // total histórico da linha; não recalcular
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -253,7 +254,8 @@ export type InsertPromoBanner = typeof promoBanners.$inferInsert;
 // Auditoria administrativa
 export const auditLogs = mysqlTable("auditLogs", {
   id: int("id").autoincrement().primaryKey(),
-  actorUserId: int("actorUserId").notNull(),
+  actorUserId: int("actorUserId"),
+  actorType: mysqlEnum("actorType", ["admin", "user", "system"]).default("admin").notNull(),
   action: varchar("action", { length: 120 }).notNull(),
   entity: varchar("entity", { length: 120 }).notNull(),
   entityId: varchar("entityId", { length: 120 }),
@@ -379,7 +381,7 @@ export const stockReservations = mysqlTable("stockReservations", {
   userId: int("userId").notNull(),
   productId: int("productId").notNull(),
   quantity: int("quantity").notNull(),
-  status: mysqlEnum("status", ["active", "consumed", "released", "expired"]).default("active").notNull(),
+  status: mysqlEnum("status", ["active", "consumed", "released", "expired", "restocked"]).default("active").notNull(),
   expiresAt: timestamp("expiresAt").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
