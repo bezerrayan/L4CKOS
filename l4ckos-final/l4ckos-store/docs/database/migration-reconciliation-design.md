@@ -381,3 +381,37 @@ homologação; nenhum endpoint financeiro foi chamado nesta análise.
 O design está pronto para revisão de implementação. As perguntas acima limitam
 adoção funcional das extensões e autorização de execução, mas não impedem
 implementar preservação estrutural, adapters locais e testes de convergência.
+
+## 13. Implementação local — etapas 1 e 2
+
+As seções 1–12 preservam o diagnóstico/design original do commit `0ee8987`;
+referências de código, inventários e gaps nelas são **históricos**, não declarações
+sobre o runtime atualizado. Não houve inspeção/escrita remota nesta implementação.
+
+Etapa 1 (`2b3ba04`): unitPrice canônico no ORM, audit nullable/actorType e restocked
+alinhados; backup completo de dados com manifesto/snapshot/checksums e restore
+local transacional, comprovados no MySQL 8.4.11. Metadados auditados completos
+estão versionados em docs/database/audited-physical-schema.json.
+
+Etapa 2: fonte de verdade SQL em database/bootstrap/v1, 26 tabelas target;
+contratos estruturais canônico/auditado separados; fingerprint information_schema
+v1; ledger `_l4ckos_schema_migrations` e trilha `_l4ckos_schema_executions`, ambos
+excluídos explicitamente do hash de negócio e validados à parte. Bootstrap
+fresh registra um BASELINE verdadeiro. Guards e comandos permanecem local-only.
+Legacy 0000–0019/meta ficam intactos; nenhuma 0020 foi criada/executada.
+
+Detalhamento do modelo de execução: manifesto novo pode declarar reconciliações
+**unbaselined**, partindo de fingerprint previamente reconhecido. Sucesso real de
+reconciliação pode anteceder BASELINE canônico no ledger; somente depois de
+validar o alvo é aceito o baseline. Fresh bootstrap não registra reconciliações
+existing-only. Isso concretiza o fluxo existing→reconciliation→canonical→baseline
+sem aceitar como canônico o estado pré-0020 e sem fabricar history legado.
+O manifesto efetivo continua vazio nesta etapa. Falha parcial mantém trilha e
+bloqueia retry; nenhuma promessa de atomicidade DDL ou recovery automático.
+
+Backup v1 continua de dados: exclui explicitamente governança validada e conserva
+o histórico criado pelo bootstrap do destino. Disaster recovery remoto exige
+preservar ledger/trilha em backup operacional separado, além de todos os dados.
+Regras/owners financeiros, proveniência de audits históricos e semântica funcional
+de restocked permanecem pendentes. Veja migration-workflow.md para contratos,
+limites, comandos, checkpoints e prerequisites remotos.

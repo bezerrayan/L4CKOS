@@ -186,3 +186,14 @@ O backup JSON novo é completo para dados do manifesto compatível. Continua sem
 ser o backup MySQL de disaster recovery com DDL, alocadores, privilégios e retenção
 externa exigido antes de uma reconciliação remota. Um GO local para ledger/bootstrap
 não autoriza migration, deploy, staging, produção ou envio externo.
+
+## Integração com governança v2
+
+Fresh bootstrap cria `_l4ckos_schema_migrations` e `_l4ckos_schema_executions`.
+Backup v1 reconhece somente esses nomes internos e valida seu contrato separado;
+eles ficam fora do snapshot de dados/fingerprint de negócio. Restore mantém o
+ledger/trilha próprios do destino: não copia atestação de outro banco nem apaga
+seu BASELINE. Tabelas de negócio ainda precisam estar vazias. Qualquer governança
+incompleta/divergente falha. Para disaster recovery remoto, ledger/trilha também
+precisam de dump operacional separado e restore comprovado. Consulte
+migration-workflow.md; esta integração não autoriza operação remota.
