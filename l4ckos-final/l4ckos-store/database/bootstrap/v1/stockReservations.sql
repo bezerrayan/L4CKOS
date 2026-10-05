@@ -1,0 +1,20 @@
+CREATE TABLE `stockReservations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `orderId` int NOT NULL,
+  `userId` int NOT NULL,
+  `productId` int NOT NULL,
+  `quantity` int NOT NULL,
+  `status` enum('active','consumed','released','expired','restocked') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `expiresAt` timestamp NOT NULL,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  `variantId` int DEFAULT NULL,
+  `orderItemId` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `stockReservations_orderItemId_unique` (`orderItemId`),
+  KEY `stockReservations_order_status_idx` (`orderId`,`status`),
+  KEY `stockReservations_expiry_status_idx` (`expiresAt`,`status`),
+  CONSTRAINT `stock_reservations_order_fk` FOREIGN KEY (`orderId`) REFERENCES `orders` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `stock_reservations_order_item_fk` FOREIGN KEY (`orderItemId`) REFERENCES `orderItems` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `stock_reservations_quantity_positive_chk` CHECK ((`quantity` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

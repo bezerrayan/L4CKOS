@@ -1,0 +1,20 @@
+CREATE TABLE `auditLogs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `actorUserId` int DEFAULT NULL,
+  `action` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entity` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entityId` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `metadata` text COLLATE utf8mb4_unicode_ci,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `actorType` enum('admin','user','system') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'admin',
+  `orderId` int DEFAULT NULL,
+  `paymentId` int DEFAULT NULL,
+  `event` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `correlationId` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `beforeState` text COLLATE utf8mb4_unicode_ci,
+  `afterState` text COLLATE utf8mb4_unicode_ci,
+  PRIMARY KEY (`id`),
+  KEY `auditLogs_order_id_idx` (`orderId`),
+  KEY `auditLogs_payment_id_idx` (`paymentId`),
+  KEY `auditLogs_correlation_id_idx` (`correlationId`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

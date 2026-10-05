@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "source": "audited physical metadata 2026-09-27 + schema.ts/0013 webhook contract; target canonical, not staging current",
+  "tables": [
+    {
+      "table": "users",
+      "path": "database/bootstrap/v1/users.sql",
+      "checksum": "d9e37c78c6355adbb0bd022d3ad02fa70e481ad3e55d75a410f67881d10d41f0"
+    },
+    {
+      "table": "products",
+      "path": "database/bootstrap/v1/products.sql",
+      "checksum": "aabc0d0225868e5bf3167069d8fdfd6eddb35e7dfcd1aa72ada9a67d130fd0f7"
+    },
+    {
+      "table": "productVariants",
+      "path": "database/bootstrap/v1/productVariants.sql",
+      "checksum": "01fd6e1200d6504777194f132d1b3176d4f89044b7ef080d1d722bb6815077a3"
+    },
+    {
+      "table": "productImages",
+      "path": "database/bootstrap/v1/productImages.sql",
+      "checksum": "b5ba084148664237d57c80019990958d2d5c43e16896ca7b558cc7dfd5c1f3c7"
+    },
+    {
+      "table": "coupons",
+      "path": "database/bootstrap/v1/coupons.sql",
+      "checksum": "0b049b154c759c609aab676bfee9cfd9b98ebe3c302bd3bba5985989e125a466"
+    },
+    {
+      "table": "orders",
+      "path": "database/bootstrap/v1/orders.sql",
+      "checksum": "dac57864af20a304790de0c657c505bed66b1d3281850a4ecdb67636e3f4c84d"
+    },
+    {
+      "table": "orderItems",
+      "path": "database/bootstrap/v1/orderItems.sql",
+      "checksum": "c90aafb78faa4a653ab15beec9bad1bac07bfc0576f0a39725ef56fbad669575"
+    },
+    {
+      "table": "payments",
+      "path": "database/bootstrap/v1/payments.sql",
+      "checksum": "828bff9284b0f57289fa6800bbf50f5a6d75ead74ac7ad96f6879a377403429e"
+    },
+    {
+      "table": "paymentEvents",
+      "path": "database/bootstrap/v1/paymentEvents.sql",
+      "checksum": "17579d118cafd467245645c58da1811103e31f2dc9afba4e0860571511ef5b90"
+    },
+    {
+      "table": "notificationOutbox",
+      "path": "database/bootstrap/v1/notificationOutbox.sql",
+      "checksum": "839f079b22044e12b572dcba2a2612ede0b230cf9dbe1946768d992a8af8733c"
+    },
+    {
+      "table": "stockReservations",
+      "path": "database/bootstrap/v1/stockReservations.sql",
+      "checksum": "4f0cf83279aa9e00d67a1cb5ed706ef8d6e9be98394e2c2f9a68bafc7eed4dc1"
+    },
+    {
+      "table": "orderEmailEvents",
+      "path": "database/bootstrap/v1/orderEmailEvents.sql",
+      "checksum": "f2f351f3d56a0ada207c4bd8da38f4bb46b8dd519eb0ae207ce29f027494f128"
+    },
+    {
+      "table": "auditLogs",
+      "path": "database/bootstrap/v1/auditLogs.sql",
+      "checksum": "80449dff69c73bcd6273031c8c14e1ec8c9b6bf89074b6e332d8785d9e8ac5c3"
+    },
+    {
+      "table": "cartItems",
+      "path": "database/bootstrap/v1/cartItems.sql",
+      "checksum": "6548b0cee9077a4da05dd9b73321df39e634413986825afe8300e0f4a8abd954"
+    },
+    {
+      "table": "favorites",
+      "path": "database/bootstrap/v1/favorites.sql",
+      "checksum": "18566ae8691dc1635f0792672984f94340f409bd3e8589f4c425ccd52e98eedf"
+    },
+    {
+      "table": "localAuthUsers",
+      "path": "database/bootstrap/v1/localAuthUsers.sql",
+      "checksum": "4983ecbfcb8f7f79b2e8f5619b8a50172176aa88ed9abb8a154f03a3055ddeb0"
+    },
+    {
+      "table": "passwordResetTokens",
+      "path": "database/bootstrap/v1/passwordResetTokens.sql",
+      "checksum": "14c480eda012cf52cad650bdb73ee2e321fda55e706ca602d9c1c434e0b30739"
+    },
+    {
+      "table": "userProfiles",
+      "path": "database/bootstrap/v1/userProfiles.sql",
+      "checksum": "869194213eb20a12155605061172809a2ffaf9445366ae5c4b90b1a358a3824e"
+    },
+    {
+      "table": "userAddresses",
+      "path": "database/bootstrap/v1/userAddresses.sql",
+      "checksum": "c58d94e2fb8c395203a6ea296c31bb3300a2205ab0c6505f570450cabbb4e0bf"
+    },
+    {
+      "table": "userPaymentMethods",
+      "path": "database/bootstrap/v1/userPaymentMethods.sql",
+      "checksum": "cfb0af415e036dd0a612e0d9ffa5edb83b76f3dc9d85200348fb9ea7178fca25"
+    },
+    {
+      "table": "productReviews",
+      "path": "database/bootstrap/v1/productReviews.sql",
+      "checksum": "5b7df2a2107c6f6d10d7017f108afc4fc5bbb263adb561dafc40575259a7ef1b"
+    },
+    {
+      "table": "productReviewUploads",
+      "path": "database/bootstrap/v1/productReviewUploads.sql",
+      "checksum": "aab89289d9070b2b4fc08349d9a03a69af041163786bb7f03786b9b8c6bc4785"
+    },
+    {
+      "table": "promoBanners",
+      "path": "database/bootstrap/v1/promoBanners.sql",
+      "checksum": "7cdab56ffd0a5b463079b6a5d27d7e13d707dc6e72a33e0b08dc894db426a4c6"
+    },
+    {
+      "table": "waitlist_emails",
+      "path": "database/bootstrap/v1/waitlist_emails.sql",
+      "checksum": "6f8a3095f5887eea87ee6670afd2d006d1e470d493c47d3b87ebc3464882ad6c"
+    },
+    {
+      "table": "emailUnsubscribes",
+      "path": "database/bootstrap/v1/emailUnsubscribes.sql",
+      "checksum": "42de82a62a5a3421165c26c32f8105dee3238413f6adfae896a58a4f5fad9165"
+    },
+    {
+      "table": "asaasWebhookEvents",
+      "path": "database/bootstrap/v1/asaasWebhookEvents.sql",
+      "checksum": "cad11dda08787cf7935390a1531002627f7a2894455ad250357b0ec1fa050423"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+CREATE TABLE `products` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `fullDescription` text COLLATE utf8mb4_unicode_ci,
+  `category` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `price` int NOT NULL,
+  `imageUrl` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `imageThumbnailUrl` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `imageDetailUrl` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `imageBannerUrl` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `stock` int NOT NULL DEFAULT '0',
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  `optionColors` text COLLATE utf8mb4_unicode_ci,
+  `optionSizes` text COLLATE utf8mb4_unicode_ci,
+  `sizeType` enum('alpha','numeric','custom') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'alpha',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `products_stock_nonnegative_chk` CHECK ((`stock` >= 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
