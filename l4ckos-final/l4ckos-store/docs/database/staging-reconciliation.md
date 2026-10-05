@@ -44,7 +44,10 @@ em memória, sem instalar dependências, criar arquivos no runtime ou carregar
 aplicação/providers. O runtime precisa de Node/MySQL2 compatíveis e SSH disponível.
 A resposta do backup é capturada por pipe privado; nunca vai ao terminal/logs.
 SHA-256 calculado na origem é conferido após transferência. A cópia definitiva
-fica fora do repo, em backup.json 0600; nenhum segredo de infraestrutura é incluído.
+fica fora do repo, em backup.json 0600, antes de iniciar a prova de restore.
+Diretório 0700 e arquivo regular owner-validado/O_NOFOLLOW; SHA do arquivo é
+recalculado. Se a prova falhar, o backup privado é preservado, sem plan autorizado.
+Nenhum segredo de infraestrutura é incluído.
 Hashes/tokens de dados da aplicação necessários ao restore permanecem no backup.
 
 A prova automática cria MySQL 8.4 efêmero no Docker **local**, network=none,
@@ -53,6 +56,15 @@ precisa estar disponível previamente. Prepara canonical-v1 menos webhook, resta
 e valida dados, counts/checksums, constraints/referências e fingerprint. Remove
 somente seu container ao final. O Docker daemon local precisa ser acessível.
 Depois reconfirma source/identidade/schema e grava plan.json + seal.json privados.
+
+Restore v1 mantém os checksums originais de DDL/dados/artefato. Para compatibilidade
+de schema, normaliza somente a cláusula redundante CHARACTER SET utf8mb4 junto
+à mesma COLLATE utf8mb4_unicode_ci, fora de strings/identificadores. MySQL pode
+exibir essa cláusula dependendo de como a coluna foi criada; o contrato físico
+é idêntico. Tipos, nullability, defaults, constraints e collations divergentes
+continuam bloqueados. O fingerprint estrutural aprovado também continua obrigatório.
+Falhas expõem apenas fase/código, tabela/ordinal, errno/sqlState, rollback e
+counts/checksums permitidos; nunca mensagem SQL, valores, stderr bruto ou credenciais.
 
 ## Plan e APPLY
 

@@ -1,9 +1,8 @@
-import { randomUUID } from "node:crypto";
 import type { BackupArtifact } from "../../server/database/backupRestore";
 import { canonical, sha256 } from "../schema/fingerprint";
 import { loadLineage } from "../migrations/runner";
 import { assertIdentity, assertPlan, digestPlan, fail, TARGET, MIGRATION, PRE, POST, TTL, type Identity, type Plan } from "./policy";
-import { createPlanFiles, withPlan } from "./store";
+import { createPlanFiles, withPlan, preserveBackup } from "./store";
 
 export type Inspection = { fingerprint: string; secondFingerprint: string; webhook: boolean; internalTables: string[] };
 export type RestoreProof = { fingerprint: string; verified: boolean; rowCounts: Record<string, number> };
@@ -42,16 +41,17 @@ export async function prepareStaging(adapter: StagingAdapter, approvedCommit: st
   const rowCounts = Object.fromEntries(Object.entries(artifact.tables).map(([t,v]) => [t,v.rowCount]));
   if (Object.keys(rowCounts).length !== 25 || "asaasWebhookEvents" in rowCounts) fail("STAGING_BACKUP_INVENTORY_MISMATCH");
   logEvent("backup_created", { tables: 25, artifactSha256: originSha256 });
+  const preserved = await preserveBackup(bytes);
+  logEvent("backup_copied", preserved);
   const proof = await adapter.restoreProof(bytes);
   if (!proof.verified || proof.fingerprint !== PRE || canonical(proof.rowCounts) !== canonical(rowCounts)) fail("STAGING_RESTORE_PROOF_REQUIRED");
   logEvent("restore_verified", { fingerprint: proof.fingerprint });
   assertInspection(await adapter.inspect());
   if (canonical(await adapter.identity()) !== canonical(identity) || await adapter.source() !== approvedCommit) fail("STAGING_PREPARE_CHANGED");
   const created = Date.now();
-  const plan: Plan = { version: 1, planId: randomUUID(), createdAt: new Date(created).toISOString(), expiresAt: new Date(created + TTL).toISOString(), applicationCommit: approvedCommit, target: identity, migration: MIGRATION, expectedPreFingerprint: PRE, observedPreFingerprint: PRE, expectedPostFingerprint: POST,
+  const plan: Plan = { version: 1, planId: preserved.planId, createdAt: new Date(created).toISOString(), expiresAt: new Date(created + TTL).toISOString(), applicationCommit: approvedCommit, target: identity, migration: MIGRATION, expectedPreFingerprint: PRE, observedPreFingerprint: PRE, expectedPostFingerprint: POST,
     backup: { created: true, copiedOffRuntime: true, checksumVerified: true, artifactSha256: originSha256, createdAt: artifact.createdAt, rowCounts, rowChecksums: Object.fromEntries(Object.entries(artifact.tables).map(([t,v]) => [t,v.checksum])), schemaFingerprint: artifact.schemaFingerprint, sourceFingerprint: PRE, restoreVerified: true, restoreFingerprint: proof.fingerprint }, health: { status: 200 }, asaasWebhookEventsBefore: "ABSENT", ledgerStateBefore: "ABSENT" };
   const path = await createPlanFiles(plan, bytes);
-  logEvent("backup_copied", { planId: plan.planId, artifactSha256: originSha256 });
   logEvent("plan_created", { planId: plan.planId, planDigest: digestPlan(plan) });
   return { path, planId: plan.planId, planDigest: digestPlan(plan) };
 }

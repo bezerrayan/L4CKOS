@@ -21,7 +21,7 @@ export type BackupArtifact = {
 
 /** Errors deliberately never include SQL, values, connection options or provider metadata. */
 export class BackupError extends Error {
-  constructor(public readonly code: string) { super(code); }
+  constructor(public readonly code: string, public readonly diagnostic?: Record<string, string | number | boolean | undefined>) { super(code); }
 }
 function fail(code: string): never { throw new BackupError(code); }
 export function canonical(value: unknown): string {
@@ -35,6 +35,13 @@ export const checksum = (value: unknown) => createHash("sha256").update(canonica
 export const rowsChecksum = (rows: Row[]) => checksum(rows.map(canonical).sort());
 const identifier = (name: string) => `\`${name.replace(/`/g, "``")}\``;
 const normalizeSchema = (ddl: string) => ddl.replace(/ AUTO_INCREMENT=\d+/g, "");
+/** MySQL remembers explicit column charset clauses even when COLLATE implies
+ * exactly the same charset. Preserve literals/identifiers and every other token.
+ * Artifact checksums remain over the original, unmodified DDL bytes. */
+export function compatibleSchema(ddl: string) {
+  return ddl.replace(/('(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`)|\bCHARACTER SET (utf8mb4) (?=COLLATE utf8mb4_unicode_ci\b)/g,
+    (text, quoted) => quoted ? text : "");
+}
 function encode(value: unknown): Cell {
   if (Buffer.isBuffer(value)) return { binaryHex: value.toString("hex") };
   if (value === null || typeof value === "string" || (typeof value === "number" && Number.isSafeInteger(value))) return value;
@@ -194,6 +201,7 @@ export async function restoreDatabase(connection: Connection, input: unknown, ta
   validateArtifact(input);
   let transaction = false;
   let locked = false;
+  let phase = "SCHEMA", table: string | undefined, ordinal: number | undefined;
   try {
     // Prevent forged target descriptors when calling the library directly.
     const options = connection.config;
@@ -207,7 +215,14 @@ export async function restoreDatabase(connection: Connection, input: unknown, ta
     if (Number(lock[0].acquired) !== 1) fail("RESTORE_ALREADY_RUNNING");
     locked = true;
     const schema = await inventory(connection);
-    if (checksum(schema) !== input.schemaFingerprint) fail("INCOMPATIBLE_SCHEMA");
+    if (checksum(schema) !== input.schemaFingerprint) {
+      const expected = Object.fromEntries(Object.entries(input.tables).map(([name, t]) => [name, compatibleSchema(t.schema)]));
+      const observed = Object.fromEntries(Object.entries(schema).map(([name, ddl]) => [name, compatibleSchema(ddl)]));
+      if (canonical(expected) !== canonical(observed)) {
+        const different = TABLE_ORDER.find(name => expected[name] !== observed[name]);
+        throw new BackupError("INCOMPATIBLE_SCHEMA", { detail: "RESTORE_SCHEMA_PREPARATION_FAILED", table: different, expectedChecksum: different && input.tables[different] ? input.tables[different].schemaChecksum : undefined, observedChecksum: different && schema[different] ? checksum(schema[different]) : undefined });
+      }
+    }
     const foreignKeys = await queryRows(connection, "SELECT @@SESSION.foreign_key_checks AS enabled");
     if (Number(foreignKeys[0].enabled) !== 1) fail("FK_CHECKS_REQUIRED");
     await connection.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
@@ -218,26 +233,34 @@ export async function restoreDatabase(connection: Connection, input: unknown, ta
       if ((await queryRows(connection, `SELECT * FROM ${identifier(name)} FOR UPDATE`)).length) fail("TARGET_NOT_EMPTY");
     }
     for (const name of TABLE_ORDER.filter(name => schema[name])) {
+      phase = "IMPORT"; table = name; ordinal = 0;
       const columns = (await queryRows(connection, `SHOW FULL COLUMNS FROM ${identifier(name)}`));
       const columnNames = columns.map(c => String(c.Field));
       for (const row of input.tables[name].rows) {
+        ordinal++;
         if (canonical(Object.keys(row).sort()) !== canonical([...columnNames].sort())) fail("ROW_COLUMNS_MISMATCH");
         const writable = columns.filter(c => !/GENERATED/.test(String(c.Extra)) || /DEFAULT_GENERATED/.test(String(c.Extra))).map(c => String(c.Field));
         await connection.query(`INSERT INTO ${identifier(name)} (${writable.map(identifier).join(",")}) VALUES (${writable.map(() => "?").join(",")})`, writable.map(c => decode(row[c])));
       }
     }
+    phase = "REFERENCES"; table = undefined; ordinal = undefined;
     await validateReferences(connection);
+    phase = "VERIFICATION";
     for (const name of Object.keys(schema)) {
+      table = name;
       const rows = await readTable(connection, name);
-      if (rows.length !== input.tables[name].rowCount || rowsChecksum(rows) !== input.tables[name].checksum) fail("RESTORE_VERIFICATION_FAILED");
+      if (rows.length !== input.tables[name].rowCount || rowsChecksum(rows) !== input.tables[name].checksum) throw new BackupError("RESTORE_VERIFICATION_FAILED", { detail: rows.length !== input.tables[name].rowCount ? "RESTORE_ROWCOUNT_FAILED" : "RESTORE_CHECKSUM_FAILED", expectedCount: input.tables[name].rowCount, observedCount: rows.length, expectedChecksum: input.tables[name].checksum, observedChecksum: rowsChecksum(rows) });
     }
     await connection.commit();
     transaction = false;
     return { tables: Object.keys(schema).length, rows: Object.values(input.tables).reduce((sum, table) => sum + table.rowCount, 0) };
   } catch (error) {
+    const rolledBack = transaction;
     if (transaction) await connection.rollback();
-    if (error instanceof BackupError) throw error;
-    return fail("RESTORE_FAILED_ROLLED_BACK");
+    const native = error as { code?: string; errno?: number; sqlState?: string };
+    const diagnostic = { phase, table, ordinal, rolledBack, mysqlCode: typeof native.code === "string" && /^[A-Z_0-9]+$/.test(native.code) ? native.code : undefined, errno: Number.isInteger(native.errno) ? native.errno : undefined, sqlState: typeof native.sqlState === "string" && /^[A-Z0-9]{5}$/.test(native.sqlState) ? native.sqlState : undefined };
+    if (error instanceof BackupError) throw new BackupError(error.code, { ...diagnostic, ...error.diagnostic });
+    throw new BackupError("RESTORE_FAILED_ROLLED_BACK", diagnostic);
   } finally {
     if (locked) await connection.query("SELECT RELEASE_LOCK(CONCAT('l4ckos_restore_', DATABASE()))");
   }

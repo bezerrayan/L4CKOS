@@ -1,6 +1,7 @@
 import { openBackupConnection, assertLocalRestoreTarget } from "../server/database/backupRestore";
 import { quote } from "../database/schema/fingerprint";
 import { restoreProof } from "../database/staging/proof";
+import { restoreDiagnostic } from "../database/staging/restoreDiagnostics";
 async function main() {
   const [url, socketPath, ...extra] = process.argv.slice(2);
   if (extra.length) throw Error();
@@ -15,4 +16,4 @@ async function main() {
   try { console.log(JSON.stringify(await restoreProof(c, { url, socketPath }, Buffer.concat(chunks)))); }
   finally { await c.end(); }
 }
-main().catch(() => { console.error("STAGING_LOCAL_RESTORE_PROOF_FAILED"); process.exitCode = 1; });
+main().catch(error => { console.error(JSON.stringify({ event: "restore_proof_failed", diagnostic: restoreDiagnostic(error) })); process.exitCode = 1; });

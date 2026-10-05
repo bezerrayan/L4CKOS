@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual, createHash } from "node:crypto";
 import { canonical } from "../schema/fingerprint";
 import { assertPlan, digestPlan, sealPlan, fail, type Plan } from "./policy";
 
@@ -45,12 +45,28 @@ export async function createPlanFiles(plan: Plan, backup: Buffer) {
   assertPlan(plan);
   const r = await root(); let dir: FileHandle | undefined;
   try {
-    await mkdir(anchored(r, plan.planId), { mode: 0o700 });
+    let existing = false;
+    try { await mkdir(anchored(r, plan.planId), { mode: 0o700 }); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; existing = true; }
     dir = await directory(anchored(r, plan.planId));
-    await write(dir, "backup.json", backup);
+    if (existing) { if (!(await read(dir, "backup.json", 512 * 1024 * 1024)).equals(backup)) fail("STAGING_BACKUP_CHANGED"); }
+    else await write(dir, "backup.json", backup);
     await write(dir, "plan.json", canonical(plan));
     await write(dir, "seal.json", JSON.stringify({ planDigest: digestPlan(plan), hmac: sealPlan(plan, await key(r)) }));
     return planPath(plan.planId);
+  } finally { await dir?.close(); await r.close(); }
+}
+/** Persist before restore. Failure never removes this diagnostic evidence. */
+export async function preserveBackup(backup: Buffer) {
+  const id = randomUUID(), r = await root(); let dir: FileHandle | undefined;
+  try {
+    await mkdir(anchored(r, id), { mode: 0o700 });
+    dir = await directory(anchored(r, id));
+    await write(dir, "backup.json", backup);
+    const saved = await read(dir, "backup.json", 512 * 1024 * 1024);
+    const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+    if (sha(saved) !== sha(backup)) fail("STAGING_BACKUP_COPY_MISMATCH");
+    return { planId: id, path: `${PLAN_ROOT}/${id}/backup.json`, size: saved.length, sha256: sha(saved), mode: "0600" };
   } finally { await dir?.close(); await r.close(); }
 }
 export async function withPlan<T>(path: string, action: (store: { plan: Plan; digest: string; backup: Buffer; result: () => Promise<any | null>; writeResult: (value: unknown) => Promise<void> }) => Promise<T>, lock = false) {

@@ -2,7 +2,7 @@ import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Connection } from "mysql2/promise";
-import { openBackupConnection, backupDatabase } from "./backupRestore";
+import { openBackupConnection, backupDatabase, compatibleSchema, checksum } from "./backupRestore";
 import { bootstrapArtifacts } from "../../database/schema/artifacts";
 import { quote, rows, sha256, readStructuralSchema, structuralHash } from "../../database/schema/fingerprint";
 import { prepareStaging, applyStaging, type StagingAdapter } from "../../database/staging/executor";
@@ -68,6 +68,23 @@ async function fixture() {
   return { c, adapter, changeCommit: () => { currentCommit = "b".repeat(40); }, changeTarget: () => { currentIdentity = { ...identity, projectName: "l4ckos-production" } as Identity; }, failRestore: () => { restoreValid = false; } };
 }
 describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 staging executor with local identity adapter", () => {
+  it("restores all 25 tables when source DDL inherits charset but canonical DDL spells it explicitly", async () => {
+    const source = await fixture(), target = await database();
+    const artifact = await backupDatabase(source.c);
+    // Synthetic representation fixture: model the exact SHOW CREATE difference
+    // observed on staging, with valid checksums. Real backup bytes are never edited.
+    for (const table of Object.values(artifact.tables)) { table.schema = compatibleSchema(table.schema); table.schemaChecksum = checksum(table.schema); }
+    artifact.schemaFingerprint = checksum(Object.fromEntries(Object.entries(artifact.tables).map(([name,t]) => [name,t.schema])));
+    const { artifactChecksum, ...body } = artifact; artifact.artifactChecksum = checksum(body);
+    const bytes = Buffer.from(JSON.stringify(artifact)), original = sha256(bytes);
+    expect(artifact.tables.users.schema).not.toContain("CHARACTER SET utf8mb4 COLLATE");
+    const proof = await restoreProof(target.c, target.target, bytes);
+    expect(proof.verified).toBe(true); expect(proof.fingerprint).toBe(PRE);
+    expect(Object.keys(proof.rowCounts)).toHaveLength(25);
+    expect(sha256(bytes)).toBe(original);
+    const restored = await backupDatabase(target.c);
+    for (const table of Object.keys(artifact.tables)) expect([restored.tables[table].rowCount, restored.tables[table].checksum]).toEqual([artifact.tables[table].rowCount, artifact.tables[table].checksum]);
+  });
   beforeAll(async () => { process.env.L4CKOS_LOCAL_RESTORE = "1"; root = await openBackupConnection("mysql://root@localhost/mysql", socketPath); });
   afterAll(async () => { for (const c of connections) await c.end(); for (const n of names) await root.query(`DROP DATABASE ${quote(n)}`); await root.end(); });
   it("PREPARE -> real backup/restore -> sealed plan -> APPLY -> real 0020/BASELINE -> audit -> replay", async () => {

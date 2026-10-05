@@ -8,6 +8,7 @@ import { ROOT } from "../schema/artifacts";
 import { canonical, sha256 } from "../schema/fingerprint";
 import { assertIdentity, fail, TARGET, type Identity, type Plan } from "./policy";
 import type { Inspection, StagingAdapter } from "./executor";
+import { RestoreProofError, restoreDiagnostic } from "./restoreDiagnostics";
 
 const RAILWAY = "/home/yan/.railway/bin/railway";
 const cleanEnvironment = () => ({ PATH: `${path.dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`, HOME: homedir(), ...(process.env.SSH_AUTH_SOCK ? { SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK } : {}) });
@@ -136,11 +137,20 @@ export class FixedRailwayAdapter implements StagingAdapter {
         const p = spawnSync("/usr/bin/docker", ["--host", "unix:///var/run/docker.sock", "exec", container, "mysqladmin", "--socket=/var/run/mysqld/mysqld.sock", "ping"], { stdio: "ignore" });
         if (process.status === 0 && process.stdout.trim() === "mysqld" && p.status === 0) { ready = true; break; } await new Promise(r => setTimeout(r, 500));
       }
-      if (!ready) fail("LOCAL_MYSQL_PROOF_UNAVAILABLE");
+      if (!ready) throw new RestoreProofError({ detail: "RESTORE_MYSQL_STARTUP_FAILED" });
       const result = spawnSync(process.execPath, ["--import", "tsx", "scripts/staging-restore-proof.ts", `mysql://root@localhost/${name}`, `${socketDirectory}/mysqld.sock`], { cwd: ROOT, env: { ...cleanEnvironment(), NODE_ENV: "test", L4CKOS_LOCAL_RESTORE: "1" }, input: bytes, encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 120000 });
-      if (result.status !== 0) fail("STAGING_RESTORE_PROOF_REQUIRED");
-      return JSON.parse(result.stdout.trim());
-    } catch { return fail("STAGING_RESTORE_PROOF_REQUIRED"); }
+      if (result.status !== 0) {
+        let diagnostic: Record<string, string | number | boolean> = { detail: "RESTORE_VALIDATION_FAILED" };
+        try { diagnostic = restoreDiagnostic({ diagnostic: JSON.parse(result.stderr.trim()).diagnostic }); } catch { /* Never print raw child output. */ }
+        throw new RestoreProofError(diagnostic);
+      }
+      const proof = JSON.parse(result.stdout.trim());
+      for (const [table, v] of Object.entries(proof.tables || {}) as [string, any][]) if (/^[a-zA-Z0-9_]+$/.test(table) && Number.isSafeInteger(v.expectedRows) && Number.isSafeInteger(v.restoredRows)) console.log(JSON.stringify({ event: "restore_table_validated", table, expectedRows: v.expectedRows, restoredRows: v.restoredRows, checksumVerified: v.checksumVerified === true }));
+      return proof;
+    } catch (error) {
+      console.error(JSON.stringify({ event: "restore_proof_failed", diagnostic: restoreDiagnostic(error) }));
+      return fail("STAGING_RESTORE_PROOF_REQUIRED");
+    }
     finally { if (created) execFileSync("/usr/bin/docker", ["--host", "unix:///var/run/docker.sock", "rm", "-fv", container], { stdio: "ignore" }); }
   }
 }
