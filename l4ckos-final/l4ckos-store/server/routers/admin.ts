@@ -868,19 +868,11 @@ export const adminRouter = router({
 
   backupManual: adminProcedure.mutation(async ({ ctx }) => {
     const backup = await getBackupPayload();
-    let dir = process.env.BACKUP_DIR || "backups";
+    const dir = process.env.BACKUP_DIR || "backups";
     const fileName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-    let filePath = path.join(dir, fileName);
-    try {
-      await mkdir(dir, { recursive: true });
-      await writeFile(filePath, JSON.stringify(backup, null, 2), "utf-8");
-    } catch (error) {
-      if (process.env.BACKUP_DIR) throw error;
-      dir = path.join("/tmp", "l4ckos-backups");
-      filePath = path.join(dir, fileName);
-      await mkdir(dir, { recursive: true });
-      await writeFile(filePath, JSON.stringify(backup, null, 2), "utf-8");
-    }
+    const filePath = path.join(dir, fileName);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(filePath, JSON.stringify(backup, null, 2), { encoding: "utf-8", mode: 0o600, flag: "wx" });
     await createAuditLog({
       actorUserId: ctx.user.id,
       action: "backup.manual",
@@ -909,12 +901,6 @@ export const adminRouter = router({
       const raw = await readFile(filePath, "utf-8");
       const payload = JSON.parse(raw) as Parameters<typeof restoreBackupPayload>[0];
       await restoreBackupPayload(payload);
-      await createAuditLog({
-        actorUserId: ctx.user.id,
-        action: "backup.restore",
-        entity: "backup",
-        entityId: input.fileName,
-      });
       return { success: true } as const;
     }),
 

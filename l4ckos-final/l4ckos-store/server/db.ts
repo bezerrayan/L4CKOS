@@ -2560,121 +2560,21 @@ function extractExecutedRows(result: unknown) {
   return [];
 }
 
-async function dumpTableForBackup(db: Awaited<ReturnType<typeof getDb>>, tableName: string, warnings: string[]) {
-  if (!db) return [];
-  const safeTableName = tableName.replace(/`/g, "``");
-  try {
-    return extractExecutedRows(await db.execute(sql.raw(`select * from \`${safeTableName}\``)));
-  } catch (error) {
-    if (!isMissingDatabaseObjectError(error)) throw error;
-    warnings.push(`${tableName}: ${getDatabaseErrorMessage(error)}`);
-    return [];
-  }
-}
-
+// Dedicated mysql2 connection: all tables share one repeatable-read snapshot.
 export async function getBackupPayload() {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const warnings: string[] = [];
-
-  const [
-    usersRows,
-    productsRows,
-    variantsRows,
-    productImagesRows,
-    ordersRows,
-    orderItemsRows,
-    couponsRows,
-    reviewsRows,
-    reservationsRows,
-    profilesRows,
-    addressesRows,
-    paymentRows,
-    auditRows,
-  ] = await Promise.all([
-    dumpTableForBackup(db, "users", warnings),
-    dumpTableForBackup(db, "products", warnings),
-    dumpTableForBackup(db, "productVariants", warnings),
-    dumpTableForBackup(db, "productImages", warnings),
-    dumpTableForBackup(db, "orders", warnings),
-    dumpTableForBackup(db, "orderItems", warnings),
-    dumpTableForBackup(db, "coupons", warnings),
-    dumpTableForBackup(db, "productReviews", warnings),
-    dumpTableForBackup(db, "stockReservations", warnings),
-    dumpTableForBackup(db, "userProfiles", warnings),
-    dumpTableForBackup(db, "userAddresses", warnings),
-    dumpTableForBackup(db, "userPaymentMethods", warnings),
-    dumpTableForBackup(db, "auditLogs", warnings),
-  ]);
-
-  return {
-    exportedAt: new Date().toISOString(),
-    warnings,
-    data: {
-      users: usersRows,
-      products: productsRows,
-      productVariants: variantsRows,
-      productImages: productImagesRows,
-      orders: ordersRows,
-      orderItems: orderItemsRows,
-      coupons: couponsRows,
-      productReviews: reviewsRows,
-      stockReservations: reservationsRows,
-      userProfiles: profilesRows,
-      userAddresses: addressesRows,
-      userPaymentMethods: paymentRows,
-      auditLogs: auditRows,
-    },
-  };
+  const { backupDatabase, openBackupConnection, BackupError } = await import("./database/backupRestore");
+  if (!process.env.DATABASE_URL) throw new BackupError("DATABASE_CONFIGURATION_REQUIRED");
+  const connection = await openBackupConnection(process.env.DATABASE_URL, process.env.L4CKOS_LOCAL_MYSQL_SOCKET);
+  try { return await backupDatabase(connection); }
+  finally { await connection.end(); }
 }
 
-export async function restoreBackupPayload(payload: {
-  data: {
-    users?: Array<any>;
-    products?: Array<any>;
-    productVariants?: Array<any>;
-    productImages?: Array<any>;
-    orders?: Array<any>;
-    orderItems?: Array<any>;
-    coupons?: Array<any>;
-    productReviews?: Array<any>;
-    stockReservations?: Array<any>;
-    userProfiles?: Array<any>;
-    userAddresses?: Array<any>;
-    userPaymentMethods?: Array<any>;
-    auditLogs?: Array<any>;
-  };
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  await db.delete(orderItems);
-  await db.delete(orders);
-  await db.delete(productVariants);
-  await db.delete(productImages);
-  await db.delete(products);
-  await db.delete(coupons);
-  await db.delete(productReviews);
-  await db.delete(stockReservations);
-  await db.delete(userAddresses);
-  await db.delete(userPaymentMethods);
-  await db.delete(userProfiles);
-  await db.delete(auditLogs);
-  await db.delete(users);
-
-  if (payload.data.users?.length) await db.insert(users).values(payload.data.users);
-  if (payload.data.products?.length) await db.insert(products).values(payload.data.products);
-  if (payload.data.productVariants?.length) await db.insert(productVariants).values(payload.data.productVariants);
-  if (payload.data.productImages?.length) await db.insert(productImages).values(payload.data.productImages);
-  if (payload.data.orders?.length) await db.insert(orders).values(payload.data.orders);
-  if (payload.data.orderItems?.length) await db.insert(orderItems).values(payload.data.orderItems);
-  if (payload.data.coupons?.length) await db.insert(coupons).values(payload.data.coupons);
-  if (payload.data.productReviews?.length) await db.insert(productReviews).values(payload.data.productReviews);
-  if (payload.data.stockReservations?.length)
-    await db.insert(stockReservations).values(payload.data.stockReservations);
-  if (payload.data.userProfiles?.length) await db.insert(userProfiles).values(payload.data.userProfiles);
-  if (payload.data.userAddresses?.length) await db.insert(userAddresses).values(payload.data.userAddresses);
-  if (payload.data.userPaymentMethods?.length)
-    await db.insert(userPaymentMethods).values(payload.data.userPaymentMethods);
-  if (payload.data.auditLogs?.length) await db.insert(auditLogs).values(payload.data.auditLogs);
+export async function restoreBackupPayload(payload: unknown) {
+  const { assertLocalRestoreTarget, restoreDatabase, openBackupConnection, BackupError } = await import("./database/backupRestore");
+  if (!process.env.DATABASE_URL) throw new BackupError("DATABASE_CONFIGURATION_REQUIRED");
+  const target = { url: process.env.DATABASE_URL, socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET };
+  assertLocalRestoreTarget(target.url, target.socketPath); // Reject remote before any connection.
+  const connection = await openBackupConnection(target.url, target.socketPath);
+  try { return await restoreDatabase(connection, payload, target); }
+  finally { await connection.end(); }
 }
