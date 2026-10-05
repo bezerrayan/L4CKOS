@@ -20,8 +20,7 @@ import { csrfFetch } from "../lib/csrf";
 import { trackStoreEvent } from "../lib/analytics";
 import { ProductReviews } from "../components/reviews/ProductReviews";
 
-const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
-const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
+import { DEFAULT_COLORS, DEFAULT_SIZES } from "@shared/catalogOptions";
 const COLOR_HEX_BY_NAME: Record<string, string> = {
   preto: "#1a1a1a",
   branco: "#ffffff",

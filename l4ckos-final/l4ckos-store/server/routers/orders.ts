@@ -1,16 +1,14 @@
+import { createConnection } from "mysql2/promise";
+import { checkout, checkoutItemSchema, CheckoutError, previewCheckoutItems, orderTotal, type CheckoutItem } from "../database/checkout";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
 import {
-  createOrderWithId,
-  getProductsByIds,
   getOrderByIdAndUser,
   getOrderReservationItems,
   getOrderByTrackingCodeAndUser,
   getOrdersByUserId,
   getApplicableCouponByCode,
-  incrementCouponUsage,
-  reserveStockForOrder,
   updateOrderShippingAddress,
 } from "../db";
 import { createAsaasChargeForOrder } from "../services/asaas";
@@ -18,11 +16,6 @@ import { quoteShippingDetailed } from "../services/shippingService";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { sendOrderCreatedEmail, sendPaymentPendingEmail } from "../services/emailService.js";
 import { securityLog } from "../_core/security";
-
-const checkoutItemSchema = z.object({
-  productId: z.number().int().positive(),
-  quantity: z.number().int().positive().max(99),
-}).strict();
 
 const shippingSelectionSchema = z.object({
   cep: z.string().trim().regex(/^\d{8}$/),
@@ -49,27 +42,18 @@ const shippingAddressEditableSchema = z.object({
 }).strict();
 
 async function resolveOrderPricing(input: {
-  items: Array<{ productId: number; quantity: number }>;
+  items: CheckoutItem[];
   shipping: { cep: string; optionId: string };
   couponCode?: string;
 }) {
-  const productIds = input.items.map(item => item.productId);
-  const products = await getProductsByIds(productIds);
-  const productsById = new Map(products.map(product => [product.id, product]));
-
-  let itemsSubtotalCents = 0;
-  for (const item of input.items) {
-    const product = productsById.get(item.productId);
-    if (!product) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: `Produto ${item.productId} não encontrado` });
-    }
-
-    if (Number(product.stock ?? 0) < item.quantity) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: `Estoque insuficiente para ${product.name}` });
-    }
-
-    itemsSubtotalCents += Number(product.price) * item.quantity;
-  }
+  if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
+  const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z" });
+  const frozen = await (async () => {
+    try { return await previewCheckoutItems(connection,input.items); }
+    finally { await connection.end(); }
+  })();
+  const itemsSubtotalCents = frozen.reduce((sum,item)=>sum+item.totalPrice,0);
+  orderTotal(itemsSubtotalCents,0);
 
   const shippingQuote = await quoteShippingDetailed({
     cep: input.shipping.cep,
@@ -83,7 +67,7 @@ async function resolveOrderPricing(input: {
   }
 
   const shippingCents = Math.round(Number(shippingOption.price) * 100);
-  const grossTotalCents = itemsSubtotalCents + shippingCents;
+  const grossTotalCents = orderTotal(itemsSubtotalCents,shippingCents).totalPrice;
 
   let appliedCouponId: number | null = null;
   let discountCents = 0;
@@ -93,27 +77,21 @@ async function resolveOrderPricing(input: {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Cupom inválido ou expirado" });
     }
 
-    const grossTotal = grossTotalCents / 100;
-    const rawDiscount =
-      coupon.type === "percent"
-        ? Number(((grossTotal * coupon.value) / 100).toFixed(2))
-        : Number(coupon.value.toFixed(2));
-
-    discountCents = Math.min(grossTotalCents, Math.round(rawDiscount * 100));
+    discountCents = orderTotal(itemsSubtotalCents,shippingCents,coupon).discountCents;
     appliedCouponId = coupon.id;
   }
 
-  const description = input.items
+  const description = frozen
     .slice(0, 2)
-    .map(item => productsById.get(item.productId)?.name)
+    .map(item => item.productName)
     .filter(Boolean)
     .join(" + ");
 
   return {
-    itemsPreview: input.items.map(item => ({
-      name: productsById.get(item.productId)?.name || `Produto #${item.productId}`,
+    itemsPreview: frozen.map(item => ({
+      name: item.productName,
       quantity: item.quantity,
-      price: formatCurrency((Number(productsById.get(item.productId)?.price || 0) * item.quantity) / 100),
+      price: formatCurrency(item.totalPrice / 100),
     })),
     itemsSubtotalCents,
     shippingCents,
@@ -258,6 +236,7 @@ export const ordersRouter = router({
   createAsaasCharge: protectedProcedure
     .input(
       z.object({
+        checkoutAttemptId: z.string().uuid(),
         method: z.enum(["PIX", "BOLETO", "CARD"]),
         items: z.array(checkoutItemSchema).min(1),
         shipping: shippingSelectionSchema,
@@ -280,44 +259,20 @@ export const ordersRouter = router({
       let orderId = 0;
 
       try {
-        const pricing = await resolveOrderPricing({
-          items: input.items,
-          shipping: input.shipping,
-          couponCode: input.couponCode,
-        });
-
-        orderId = await createOrderWithId(ctx.user.id, pricing.finalTotalCents, {
-          recipient: input.shippingAddress.recipient,
-          zipCode: input.shippingAddress.zipCode,
-          street: input.shippingAddress.street,
-          number: input.shippingAddress.number,
-          complement: input.shippingAddress.complement,
-          neighborhood: input.shippingAddress.neighborhood,
-          city: input.shippingAddress.city,
-          state: input.shippingAddress.state,
-        });
-        await reserveStockForOrder({
-          userId: ctx.user.id,
-          orderId,
-          items: input.items,
-        });
-
-        const payment = await createAsaasChargeForOrder({
-          orderId,
-          method: input.method,
-          value: Number((pricing.finalTotalCents / 100).toFixed(2)),
-          description: pricing.description,
-          dueDate: input.dueDate,
-          customer: {
-            name: input.customer.name,
-            cpfCnpj: input.customer.cpfCnpj,
-            email: input.customer.email || ctx.user.email || undefined,
-          },
-        });
-
-        if (pricing.appliedCouponId) {
-          await incrementCouponUsage(pricing.appliedCouponId);
-        }
+        if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
+        const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z" });
+        const prepared = await (async () => {
+          try { return await checkout(connection, { ...input, userId: ctx.user.id,
+            customer: { ...input.customer, email: input.customer.email || ctx.user.email || undefined },
+          }, { quote: quoteShippingDetailed, charge: createAsaasChargeForOrder }); }
+          finally { await connection.end(); }
+        })();
+        orderId = prepared.orderId;
+        const payment = prepared.payment;
+        if (prepared.replayed) return { orderId, ...payment };
+        const pricing = { finalTotalCents: prepared.totalPrice, itemsPreview: prepared.items.map(item => ({
+          name: item.productName, quantity: item.quantity, price: formatCurrency(item.totalPrice / 100),
+        })) };
 
         const formattedTotal = formatCurrency(pricing.finalTotalCents / 100);
         try {
@@ -350,11 +305,13 @@ export const ordersRouter = router({
         securityLog("warn", "orders.asaas_charge_failed", {
           userId: ctx.user.id,
           orderId: orderId || undefined,
-          reason: error instanceof Error ? error.message : "unknown",
+          reason: error instanceof CheckoutError ? error.code : "CHECKOUT_FAILED",
         });
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Não foi possível gerar a cobrança agora.",
+          message: error instanceof CheckoutError && error.code === "CHECKOUT_RECOVERY_REQUIRED"
+            ? "Tentativa registrada; o resultado da cobrança precisa ser verificado antes de tentar novamente."
+            : "Não foi possível gerar a cobrança agora.",
         });
       }
     }),

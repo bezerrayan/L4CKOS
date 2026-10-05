@@ -49,6 +49,7 @@ async function asaasRequest<T>(path: string, init: AsaasRequestInit = {}) {
   const { apiKey, apiUrl } = getAsaasConfig();
   const response = await fetch(`${apiUrl}${path}`, {
     method: init.method ?? "GET",
+    signal: AbortSignal.timeout(15000),
     headers: {
       "Content-Type": "application/json",
       access_token: apiKey,

@@ -132,6 +132,9 @@ export const orders = mysqlTable("orders", {
   trackingCode: varchar("trackingCode", { length: 120 }),
   totalPrice: int("totalPrice").notNull(), // em centavos
   asaasCheckoutId: varchar("asaasCheckoutId", { length: 64 }),
+  // Existing canonical physical columns, not a new migration.
+  checkoutAttemptId: varchar("checkoutAttemptId", { length: 64 }).unique(),
+  checkoutFingerprint: varchar("checkoutFingerprint", { length: 64 }),
   shippingRecipient: varchar("shippingRecipient", { length: 255 }),
   shippingZipCode: varchar("shippingZipCode", { length: 20 }),
   shippingStreet: varchar("shippingStreet", { length: 255 }),
@@ -152,6 +155,13 @@ export const orderItems = mysqlTable("orderItems", {
   id: int("id").autoincrement().primaryKey(),
   orderId: int("orderId").notNull(),
   productId: int("productId").notNull(),
+  variantId: int("variantId"),
+  productName: varchar("productName", { length: 255 }),
+  variantName: varchar("variantName", { length: 120 }),
+  sku: varchar("sku", { length: 120 }),
+  size: varchar("size", { length: 60 }),
+  color: varchar("color", { length: 60 }),
+  imageUrl: varchar("imageUrl", { length: 500 }),
   quantity: int("quantity").notNull(),
   unitPrice: int("unitPrice").notNull(), // snapshot unitário em centavos inteiros
   totalPrice: int("totalPrice"), // total histórico da linha; não recalcular
@@ -380,6 +390,8 @@ export const stockReservations = mysqlTable("stockReservations", {
   orderId: int("orderId").notNull(),
   userId: int("userId").notNull(),
   productId: int("productId").notNull(),
+  variantId: int("variantId"),
+  orderItemId: int("orderItemId"),
   quantity: int("quantity").notNull(),
   status: mysqlEnum("status", ["active", "consumed", "released", "expired", "restocked"]).default("active").notNull(),
   expiresAt: timestamp("expiresAt").notNull(),

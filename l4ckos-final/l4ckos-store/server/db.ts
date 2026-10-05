@@ -1247,11 +1247,14 @@ export async function getOrderReservationItems(orderId: number) {
       status: stockReservations.status,
       expiresAt: stockReservations.expiresAt,
       createdAt: stockReservations.createdAt,
-      productName: products.name,
-      productImage: products.imageUrl,
-      productPrice: products.price,
+      productName: sql<string>`case when ${orderItems.id} is null then ${products.name} else ${orderItems.productName} end`,
+      productImage: sql<string>`case when ${orderItems.id} is null then ${products.imageUrl} else ${orderItems.imageUrl} end`,
+      // Public DTO alias: productPrice is the frozen unitPrice for linked items.
+      // Historical unlinked reservations retain their existing catalog fallback.
+      productPrice: sql<number>`coalesce(${orderItems.unitPrice}, ${products.price})`,
     })
     .from(stockReservations)
+    .leftJoin(orderItems, eq(orderItems.id, stockReservations.orderItemId))
     .leftJoin(products, eq(products.id, stockReservations.productId))
     .where(eq(stockReservations.orderId, orderId))
     .orderBy(desc(stockReservations.id));
@@ -1420,6 +1423,13 @@ export async function markOrderPaid(
         .where(eq(products.id, reservation.productId))
         .limit(1);
 
+      if (reservation.variantId) {
+        const [variant] = await tx.select().from(productVariants)
+          .where(and(eq(productVariants.id, reservation.variantId), eq(productVariants.productId, reservation.productId))).for("update");
+        if (!variant || variant.stock < reservation.quantity) throw new Error("Reserved variant stock unavailable");
+        await tx.update(productVariants).set({ stock: sql`${productVariants.stock} - ${reservation.quantity}` })
+          .where(eq(productVariants.id, variant.id));
+      }
       const product = productRows[0];
       const currentStock = Number(product?.stock ?? 0);
       const nextStock = currentStock - reservation.quantity;

@@ -458,6 +458,8 @@ export default function Pagamento() {
         items: cart.items.map(item => ({
           productId: item.product.id,
           quantity: item.quantity,
+          size: item.selectedOptions?.tamanho || item.selectedOptions?.size,
+          color: item.selectedOptions?.cor || item.selectedOptions?.color,
         })),
         shipping: {
           cep: sanitizeCep(cep),
@@ -504,11 +506,13 @@ export default function Pagamento() {
     }
 
     try {
-      const result = await createAsaasCharge.mutateAsync({
+      const request = {
         method: checkoutMethod,
         items: cart.items.map(item => ({
           productId: item.product.id,
           quantity: item.quantity,
+          size: item.selectedOptions?.tamanho || item.selectedOptions?.size,
+          color: item.selectedOptions?.cor || item.selectedOptions?.color,
         })),
         shipping: {
           cep: sanitizeCep(cep),
@@ -530,7 +534,16 @@ export default function Pagamento() {
           cpfCnpj: cpfCnpj.trim(),
         },
         couponCode: appliedCouponCode || undefined,
-      });
+      };
+
+      // Retain only digest + UUID across uncertain responses/reloads, never PII.
+      const bytes = new TextEncoder().encode(JSON.stringify([request, cart.items.map(item => item.addedAt)]));
+      const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+        .map(value => value.toString(16).padStart(2, "0")).join("");
+      const key = `l4ckos:checkout-attempt:${digest}`;
+      const checkoutAttemptId = sessionStorage.getItem(key) || crypto.randomUUID();
+      sessionStorage.setItem(key, checkoutAttemptId);
+      const result = await createAsaasCharge.mutateAsync({ ...request, checkoutAttemptId });
 
       setPaymentData(result);
       trackStoreEvent("payment_charge_created", { method: checkoutMethod });
