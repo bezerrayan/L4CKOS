@@ -381,6 +381,37 @@ describe("security hardening contracts", () => {
     process.env.ASAAS_WEBHOOK_TOKEN = previousToken;
     process.env.NODE_ENV = previousEnv;
   });
+  it("acknowledges a paid webhook when internal recipient is missing", async () => {
+    const db = await import("./db");
+    const emails = await import("./services/emailService.js");
+    const { asaasWebhookHandler } = await import("./controllers/paymentController");
+    const previousToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    const previousEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.ASAAS_WEBHOOK_TOKEN = "synthetic-webhook-token";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(db.getOrderById).mockResolvedValue({ id: 12, userId: 1, status: "pending", totalPrice: 1000 } as any);
+    vi.mocked(db.markOrderPaid).mockResolvedValue({ updated: true, lowStockProducts: [] } as any);
+    vi.mocked(db.getUserById).mockResolvedValue({ id: 1, email: "synthetic@example.invalid", name: "Synthetic" } as any);
+    vi.mocked(db.getOrderReservationItems).mockResolvedValue([]);
+    vi.mocked(db.runAsaasWebhookOnce).mockImplementation(async (_input, handler) => ({ duplicate: false, result: await handler() }));
+    vi.mocked(emails.sendInternalNewSaleAlertEmail).mockRejectedValueOnce(new Error("Missing env var: ALERTS_NOTIFICATION_EMAIL"));
+    const res = createMockResponse();
+    try {
+      await asaasWebhookHandler({ ip: "127.0.0.1", headers: { "asaas-access-token": "synthetic-webhook-token" }, body: {
+        id: "synthetic-recipient-missing", event: "PAYMENT_RECEIVED",
+        payment: { id: "synthetic-payment", externalReference: "12", value: 10, status: "RECEIVED" },
+      } } as any, res as any);
+      expect(res.statusCode).toBe(200);
+      expect(emails.sendInternalNewSaleAlertEmail).toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      if (previousToken === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN; else process.env.ASAAS_WEBHOOK_TOKEN = previousToken;
+      if (previousEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousEnv;
+    }
+  });
+
 });
 
 function createMockResponse() {

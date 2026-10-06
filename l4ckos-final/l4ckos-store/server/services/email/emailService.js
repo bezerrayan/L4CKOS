@@ -1,3 +1,4 @@
+import { resolveAnnouncementUrl } from "./publicUrls";
 import { getResendClient } from "./resendClient.js";
 import { renderEmailTemplate } from "./emailRenderer.js";
 import { emailSubjects } from "../../utils/email/emailSubjects.js";
@@ -388,7 +389,7 @@ export async function sendLaunchAnnouncementEmail({ email, name, launchUrl, coup
   return sendMarketingEmail({
     templateName: "launchAnnouncement",
     subjectKey: "launchAnnouncement",
-    templatePayload: { name, launchUrl, couponCode, discountPercent },
+    templatePayload: { name, launchUrl: resolveAnnouncementUrl(launchUrl), couponCode, discountPercent },
     email,
   });
 }

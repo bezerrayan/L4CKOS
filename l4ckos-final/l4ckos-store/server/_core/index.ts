@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import helmet from "helmet";
 import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { imageProxyHandler } from "./imageProxy";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -50,21 +51,6 @@ function scheduleDailyBackup() {
   setInterval(() => {
     void execute();
   }, intervalMs);
-}
-
-function isPrivateHostname(hostname: string) {
-  const value = hostname.trim().toLowerCase();
-  if (!value) return true;
-  if (value === "localhost" || value === "::1" || value.endsWith(".local")) return true;
-  if (/^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value)) return true;
-
-  const match172 = value.match(/^172\.(\d{1,3})\./);
-  if (match172) {
-    const secondOctet = Number(match172[1]);
-    if (secondOctet >= 16 && secondOctet <= 31) return true;
-  }
-
-  return false;
 }
 
 type CepLookupResult = {
@@ -438,51 +424,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/image-proxy", async (req, res) => {
-    try {
-      const src = String(req.query.src ?? "").trim();
-      if (!src) {
-        res.status(400).json({ error: "Imagem não informada" });
-        return;
-      }
-
-      const url = new URL(src);
-      if (!/^https?:$/i.test(url.protocol) || isPrivateHostname(url.hostname)) {
-        res.status(400).json({ error: "Origem da imagem não permitida" });
-        return;
-      }
-
-      const response = await fetch(url.toString(), {
-        method: "GET",
-        redirect: "follow",
-        headers: {
-          Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        },
-      });
-
-      if (!response.ok) {
-        res.status(404).json({ error: "Não foi possível carregar a imagem" });
-        return;
-      }
-
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.toLowerCase().startsWith("image/")) {
-        res.status(415).json({ error: "Arquivo remoto não é uma imagem válida" });
-        return;
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      res.setHeader("Content-Disposition", "inline");
-      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.status(200).send(buffer);
-    } catch (error) {
-      console.error("[Image Proxy] Failed to fetch remote image", error);
-      res.status(500).json({ error: "Falha ao carregar imagem" });
-    }
-  });
+  app.get("/api/image-proxy", imageProxyHandler);
 
   // Backward-compatible alias for legacy webhook URL.
   // Canonical webhook endpoint is /api/webhooks/asaas.

@@ -54,18 +54,33 @@ function getFrontendBaseUrl(req: Request): string {
   const configured = ENV.frontendUrl?.trim();
   if (configured) {
     try {
-      return new URL(configured).toString();
+      const base = new URL(configured);
+      if (!["http:", "https:"].includes(base.protocol) || (ENV.isProduction && base.protocol !== "https:") || base.username || base.password) throw new Error("Invalid frontend URL");
+      return base.toString();
     } catch {
-      // ignore invalid configured URL and fallback
+      throw new Error("Invalid FRONTEND_URL");
     }
   }
 
+  if (ENV.isProduction) throw new Error("FRONTEND_URL required for OAuth redirects");
   return getBaseUrl(req);
 }
 
-function buildFrontendRedirectUrl(req: Request, path: string): string {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return new URL(normalizedPath, getFrontendBaseUrl(req)).toString();
+export function validateOAuthReturnTo(candidate: unknown, frontendBase: string): string | null {
+  if (typeof candidate !== "string" || !candidate.startsWith("/") || candidate.startsWith("//") ||
+      /[\\\x00-\x20\x7f]/.test(candidate) || /%(?:2f|5c|0[0-9a-f]|1[0-9a-f]|7f)/i.test(candidate)) return null;
+  try {
+    const base = new URL(frontendBase);
+    const destination = new URL(candidate, base);
+    if (!["http:", "https:"].includes(base.protocol) || destination.protocol !== base.protocol ||
+        destination.origin !== base.origin || destination.username || destination.password || destination.pathname.startsWith("//")) return null;
+    return `${destination.pathname}${destination.search}${destination.hash}`;
+  } catch { return null; }
+}
+
+function buildFrontendRedirectUrl(req: Request, path: unknown): string {
+  const base = getFrontendBaseUrl(req);
+  return new URL(validateOAuthReturnTo(path, base) ?? "/", base).toString();
 }
 
 function decodeState(state: string): { returnTo?: string; nonce?: string } {
@@ -103,6 +118,7 @@ function hasConfiguredGoogleCredentials() {
 
 export function registerOAuthRoutes(app: Express) {
   app.get("/api/oauth/login", async (req: Request, res: Response) => {
+    try { getFrontendBaseUrl(req); } catch { res.status(503).json({ error: "OAuth frontend configuration unavailable" }); return; }
     if (!hasConfiguredGoogleCredentials()) {
       const status = getGoogleCredentialStatus();
       res.status(500).json({
@@ -113,10 +129,7 @@ export function registerOAuthRoutes(app: Express) {
     }
 
     const returnToRaw = getQueryParam(req, "returnTo");
-    const returnTo =
-      typeof returnToRaw === "string" && returnToRaw.startsWith("/")
-        ? returnToRaw
-        : "/";
+    const returnTo = validateOAuthReturnTo(returnToRaw, getFrontendBaseUrl(req)) ?? "/";
 
     const nonce = randomBytes(16).toString("hex");
     const state = encodeState({ returnTo, nonce });
@@ -140,6 +153,7 @@ export function registerOAuthRoutes(app: Express) {
   });
 
   app.get("/api/oauth/callback", async (req: Request, res: Response) => {
+    try { getFrontendBaseUrl(req); } catch { res.status(503).json({ error: "OAuth frontend configuration unavailable" }); return; }
     const code = getQueryParam(req, "code");
     const state = getQueryParam(req, "state");
     let callbackStage = "init";
@@ -281,12 +295,7 @@ export function registerOAuthRoutes(app: Express) {
       res.clearCookie("oauth_state", { ...cookieOptions, maxAge: -1 });
 
       const decodedState = decodeState(state);
-      const returnTo =
-        typeof decodedState.returnTo === "string" && decodedState.returnTo.startsWith("/")
-          ? decodedState.returnTo
-          : "/";
-
-      res.redirect(302, buildFrontendRedirectUrl(req, returnTo));
+      res.redirect(302, buildFrontendRedirectUrl(req, decodedState.returnTo));
     } catch (error) {
       const code =
         typeof error === "object" && error !== null && "code" in error

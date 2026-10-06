@@ -41,6 +41,7 @@ import {
   isTrustedPaymentConfirmation,
   manualPaymentConfirmationInputSchema,
 } from "../payments/confirmation";
+import { resolveAnnouncementUrl } from "../services/email/publicUrls";
 import { ENV } from "../_core/env";
 import { TRPCError } from "@trpc/server";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -1121,6 +1122,7 @@ export const adminRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const launchUrl = resolveAnnouncementUrl(input.launchUrl);
       const waitlist = await getAllWaitlistEmails();
       const uniqueEmails = [...new Set(waitlist.map(item => String(item.email ?? "").trim().toLowerCase()).filter(Boolean))];
 
@@ -1146,7 +1148,7 @@ export const adminRouter = router({
               email,
               couponCode: input.couponCode,
               discountPercent: input.discountPercent,
-              launchUrl: input.launchUrl,
+              launchUrl,
             });
             sent += 1;
           } catch (error) {
@@ -1170,7 +1172,7 @@ export const adminRouter = router({
           sent,
           failed: failures.length,
           discountPercent: input.discountPercent,
-          launchUrl: input.launchUrl ?? ENV.frontendUrl ?? process.env.APP_BASE_URL ?? "https://l4ckos.com.br",
+          launchUrl,
         },
       });
 

@@ -415,7 +415,7 @@ export default function Admin() {
   const [launchEmailForm, setLaunchEmailForm] = useState({
     couponCode: "lançamento15",
     discountPercent: "15",
-    launchUrl: "https://l4ckos.com.br",
+    launchUrl: typeof window !== "undefined" ? window.location.origin : "",
     batchSize: "25",
   });
   const [launchEmailResult, setLaunchEmailResult] = useState<null | {

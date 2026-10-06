@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { resolvePublicApiOrigin } from "./publicUrls";
 import { isEmailUnsubscribed, unsubscribeEmail } from "../../db";
 
 function sanitizeText(value) {
@@ -10,11 +11,9 @@ function sanitizeEmail(value) {
 }
 
 function getSecret() {
-  return (
-    sanitizeText(process.env.EMAIL_UNSUBSCRIBE_SECRET) ||
-    sanitizeText(process.env.JWT_SECRET) ||
-    "l4ckos-email-secret"
-  );
+  const secret = sanitizeText(process.env.EMAIL_UNSUBSCRIBE_SECRET) || sanitizeText(process.env.JWT_SECRET);
+  if (!secret) throw new Error("EMAIL_UNSUBSCRIBE_SECRET or JWT_SECRET required");
+  return secret;
 }
 
 function toBase64Url(value) {
@@ -42,8 +41,8 @@ export function buildUnsubscribeToken(email) {
 
 export function verifyUnsubscribeToken(token) {
   const value = sanitizeText(token);
-  const [payload, signature] = value.split(".");
-  if (!payload || !signature) {
+  const [payload, signature, extra] = value.split(".");
+  if (!payload || !signature || extra !== undefined) {
     throw new Error("Invalid unsubscribe token");
   }
 
@@ -74,7 +73,9 @@ export function resolveAppUrl() {
 
 export function buildUnsubscribeUrl(email) {
   const token = buildUnsubscribeToken(email);
-  return `${resolveAppUrl()}/api/email/unsubscribe?token=${encodeURIComponent(token)}`;
+  const url = new URL("/api/email/unsubscribe", resolvePublicApiOrigin());
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 export async function ensureMarketingAllowed(email) {
