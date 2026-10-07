@@ -47,6 +47,10 @@ export function getAllowedMethodsForApiPath(pathname: string) {
   ) {
     return ["POST"];
   }
+  if (path === "/api/internal/manager/sync") {
+    return ["GET"];
+  }
+
   if (path === "/api/trpc" || path.startsWith("/api/trpc/")) {
     return ["GET", "POST"];
   }

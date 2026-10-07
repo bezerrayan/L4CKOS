@@ -26,6 +26,7 @@ import shippingRoutes from "../routes/shippingRoutes";
 import waitlistRoutes from "../routes/waitlist.routes";
 import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
+import managerSyncRoutes from "../routes/managerSyncRoutes";
 import { getBackupPayload } from "../db";
 import { asaasWebhookHandler } from "../controllers/paymentController";
 
@@ -317,6 +318,14 @@ async function startServer() {
     message: { error: "Too many admin requests. Try again later." },
   });
   app.use("/api/trpc/admin", adminApiLimiter);
+  const managerSyncLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: isProduction ? 180 : 1000,
+    message: {
+      error:
+        "Too many manager synchronization requests. Try again later.",
+    },
+  });
 
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
@@ -501,6 +510,12 @@ async function startServer() {
     },
     express.static(path.resolve(process.cwd(), "uploads"))
   );
+  app.use(
+    "/api/internal/manager",
+    managerSyncLimiter,
+    managerSyncRoutes,
+  );
+
   app.use("/api/payments", paymentRoutes);
   app.use("/api/webhooks", webhookRoutes);
   app.use("/api/shipping", shippingRoutes);

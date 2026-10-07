@@ -1323,6 +1323,432 @@ export async function reserveStockForOrder(input: {
   });
 }
 
+function managerSyncIso(
+  value:
+    | Date
+    | string
+    | null
+    | undefined,
+) {
+  if (!value) {
+    return null;
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.toISOString();
+  }
+
+  return new Date(
+    value,
+  ).toISOString();
+}
+
+export async function getManagerSyncPayload(
+  after:
+    Date | null,
+) {
+  const db =
+    await getDb();
+
+  if (!db) {
+    throw new Error(
+      "Database not available",
+    );
+  }
+
+  /*
+   * O cursor é capturado ANTES das consultas.
+   *
+   * Se algum registro mudar durante a sincronização,
+   * ele será repetido no próximo ciclo em vez de
+   * correr o risco de ser perdido.
+   */
+  const generatedAt =
+    new Date();
+
+  /*
+   * MySQL TIMESTAMP pode ter precisão inferior ao cursor JS.
+   * Repetimos uma pequena janela para evitar perder registros
+   * atualizados no mesmo segundo do cursor anterior.
+   *
+   * O consumidor deve ser idempotente por order id.
+   */
+  const effectiveAfter =
+    after
+      ? new Date(
+          after.getTime() - 2_000,
+        )
+      : null;
+
+  const orderSelection = {
+    id:
+      orders.id,
+
+    status:
+      orders.status,
+
+    paymentStatus:
+      orders.paymentStatus,
+
+    paymentConfirmationSource:
+      orders.paymentConfirmationSource,
+
+    paymentConfirmedAt:
+      orders.paymentConfirmedAt,
+
+    paymentConfirmationReference:
+      orders.paymentConfirmationReference,
+
+    totalPriceCents:
+      orders.totalPrice,
+
+    createdAt:
+      orders.createdAt,
+
+    updatedAt:
+      orders.updatedAt,
+  };
+
+  const orderRows =
+    effectiveAfter
+      ? await db
+          .select(
+            orderSelection,
+          )
+          .from(
+            orders,
+          )
+          .where(
+            gte(
+              orders.updatedAt,
+              effectiveAfter,
+            ),
+          )
+          .orderBy(
+            orders.updatedAt,
+            orders.id,
+          )
+      : await db
+          .select(
+            orderSelection,
+          )
+          .from(
+            orders,
+          )
+          .orderBy(
+            orders.updatedAt,
+            orders.id,
+          );
+
+  /*
+   * Compatibilidade V1.
+   *
+   * A produção ainda possui o formato legado de orderItems.
+   * A sincronização financeira não depende dos itens, então
+   * não consultamos essa tabela até a reconciliação completa
+   * do schema da loja.
+   */
+  type ManagerSyncItem = {
+    id: number;
+    orderId: number;
+    productId: number;
+    variantId: number | null;
+    productName: string | null;
+    variantName: string | null;
+    sku: string | null;
+    size: string | null;
+    color: string | null;
+    quantity: number;
+    unitPriceCents: number;
+    totalPriceCents: number | null;
+    createdAt: Date;
+  };
+
+  const itemRows:
+    ManagerSyncItem[] = [];
+
+  const itemsByOrder =
+    new Map<
+      number,
+      ManagerSyncItem[]
+    >();
+
+  /*
+   * V1: catálogo completo em cada sync.
+   *
+   * O catálogo da L4CKOS ainda é pequeno e isso
+   * elimina cursor separado de produto/variante,
+   * além de impedir perda silenciosa de alteração
+   * de estoque em uma variante.
+   */
+  const productRows =
+    await db
+      .select({
+        id:
+          products.id,
+
+        name:
+          products.name,
+
+        category:
+          products.category,
+
+        priceCents:
+          products.price,
+
+        stock:
+          products.stock,
+
+        createdAt:
+          products.createdAt,
+
+        updatedAt:
+          products.updatedAt,
+      })
+      .from(
+        products,
+      )
+      .orderBy(
+        products.id,
+      );
+
+  const variantRows =
+    await db
+      .select({
+        id:
+          productVariants.id,
+
+        productId:
+          productVariants.productId,
+
+        name:
+          productVariants.name,
+
+        sku:
+          productVariants.sku,
+
+        priceCents:
+          productVariants.price,
+
+        stock:
+          productVariants.stock,
+
+        createdAt:
+          productVariants.createdAt,
+
+        updatedAt:
+          productVariants.updatedAt,
+      })
+      .from(
+        productVariants,
+      )
+      .orderBy(
+        productVariants.productId,
+        productVariants.id,
+      );
+
+  const variantsByProduct =
+    new Map<
+      number,
+      typeof variantRows
+    >();
+
+  for (
+    const variant
+    of variantRows
+  ) {
+    const current =
+      variantsByProduct.get(
+        variant.productId,
+      ) ?? [];
+
+    current.push(
+      variant,
+    );
+
+    variantsByProduct.set(
+      variant.productId,
+      current,
+    );
+  }
+
+  const cursor =
+    generatedAt.toISOString();
+
+  return {
+    schemaVersion:
+      1,
+
+    generatedAt:
+      cursor,
+
+    cursor,
+
+    orders:
+      orderRows.map(
+        (order) => ({
+          id:
+            order.id,
+
+          status:
+            order.status,
+
+          paymentStatus:
+            order.paymentStatus,
+
+          paymentConfirmationSource:
+            order
+              .paymentConfirmationSource,
+
+          paymentConfirmedAt:
+            managerSyncIso(
+              order
+                .paymentConfirmedAt,
+            ),
+
+          paymentConfirmationReference:
+            order
+              .paymentConfirmationReference,
+
+          totalPriceCents:
+            order
+              .totalPriceCents,
+
+          createdAt:
+            managerSyncIso(
+              order.createdAt,
+            ),
+
+          updatedAt:
+            managerSyncIso(
+              order.updatedAt,
+            ),
+
+          items:
+            (
+              itemsByOrder.get(
+                order.id,
+              ) ?? []
+            ).map(
+              (item) => ({
+                id:
+                  item.id,
+
+                productId:
+                  item.productId,
+
+                variantId:
+                  item.variantId,
+
+                productName:
+                  item.productName,
+
+                variantName:
+                  item.variantName,
+
+                sku:
+                  item.sku,
+
+                size:
+                  item.size,
+
+                color:
+                  item.color,
+
+                quantity:
+                  item.quantity,
+
+                unitPriceCents:
+                  item
+                    .unitPriceCents,
+
+                /*
+                 * Pode ser null em registro histórico
+                 * antigo. Não recalculamos um snapshot
+                 * histórico artificialmente.
+                 */
+                totalPriceCents:
+                  item
+                    .totalPriceCents,
+
+                createdAt:
+                  managerSyncIso(
+                    item.createdAt,
+                  ),
+              }),
+            ),
+        }),
+      ),
+
+    products:
+      productRows.map(
+        (product) => ({
+          id:
+            product.id,
+
+          name:
+            product.name,
+
+          category:
+            product.category,
+
+          priceCents:
+            product.priceCents,
+
+          stock:
+            product.stock,
+
+          createdAt:
+            managerSyncIso(
+              product.createdAt,
+            ),
+
+          updatedAt:
+            managerSyncIso(
+              product.updatedAt,
+            ),
+
+          variants:
+            (
+              variantsByProduct.get(
+                product.id,
+              ) ?? []
+            ).map(
+              (variant) => ({
+                id:
+                  variant.id,
+
+                name:
+                  variant.name,
+
+                sku:
+                  variant.sku,
+
+                priceCents:
+                  variant
+                    .priceCents,
+
+                stock:
+                  variant.stock,
+
+                createdAt:
+                  managerSyncIso(
+                    variant.createdAt,
+                  ),
+
+                updatedAt:
+                  managerSyncIso(
+                    variant.updatedAt,
+                  ),
+              }),
+            ),
+        }),
+      ),
+  };
+}
+
 export async function getAllOrders() {
   const db = await getDb();
   if (!db) return [];
