@@ -1,0 +1,295 @@
+{
+  "origin": "http://127.0.0.1:3413",
+  "widths": [
+    320,
+    360,
+    390,
+    430
+  ],
+  "desktop": 1440,
+  "checks": [
+    {
+      "name": "product",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart-preorder",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "checkout",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "tracking",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "order",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "admin-details",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "product",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart-preorder",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "checkout",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "tracking",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "order",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "admin-details",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "product",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart-preorder",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "checkout",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "tracking",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "order",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "admin-details",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "product",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart-preorder",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "checkout",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "tracking",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "order",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "admin-details",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "product",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart-preorder",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "cart",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "checkout",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "tracking",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "order",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    },
+    {
+      "name": "admin-details",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true
+    }
+  ],
+  "pageErrors": [],
+  "externalRequests": "blocked",
+  "paymentSubmitted": false
+}

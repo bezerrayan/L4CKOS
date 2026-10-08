@@ -1,7 +1,10 @@
 # Local verification — PREORDER/BATCH
 
 Starting HEAD: `83ee0d835e9bacadc12ac3d08603ce7600135b97`.
-Worktree: `/tmp/l4ckos-preorder-83ee0d8/l4ckos-final/l4ckos-store`.
+Original temporary worktree: `/tmp/l4ckos-preorder-83ee0d8/l4ckos-final/l4ckos-store` (no longer active).
+Current persistent worktree: `/home/yan/Documentos/l4ckos/worktrees/l4ckos-preorder/l4ckos-final/l4ckos-store`.
+
+This document preserves the original verification results. Final certification of the current committed HEAD remains pending.
 Branch: `feat/preorder-batch`. The original workspace and manager sync commit were preserved.
 
 ## Automated gates
@@ -63,6 +66,6 @@ Migration is forward-only. Do not run historical migrations or a new baseline. I
 
 ## Preview and visual evidence
 
-Local review URL: `http://127.0.0.1:3413`. Synthetic account `admin@local.dev`, password `PreorderLocal2026!`; uses existing restricted local-auth configuration, no new bypass. Three synthetic products; DROP 01 contains two PREORDER products; the third is STOCK. The synthetic paid mixed order is #1. Database: `l4ckos_local_preorder_preview`.
+Local review URL: `http://127.0.0.1:3413`. Synthetic credentials supplied through `PREORDER_VISUAL_EMAIL` and `PREORDER_VISUAL_PASSWORD`; uses existing restricted local-auth configuration, no new bypass. Three synthetic products; DROP 01 contains two PREORDER products; the third is STOCK. The synthetic paid mixed order is #1. Database: `l4ckos_local_preorder_preview`.
 
 Preview assets must be built with `VITE_API_URL=same-origin`. The browser is allowlisted to localhost/127.0.0.1. Rebuilding running assets requires reloading pages to discard cached hashed module paths. Captures in `visual/` cover product cards/detail, cart, checkout, customer order and admin lot/production summary at 1440×1000 and 390×844. Fonts/external domains are blocked during this local review. No payment button was submitted to a real provider.
