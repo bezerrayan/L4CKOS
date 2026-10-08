@@ -24,7 +24,7 @@ export default function ProductCard({ product }: Props) {
   }).format(product.price);
 
   const getBadgeInfo = () => {
-    if (product.salesMode === "PREORDER") return { text: "PRÉ-VENDA", color: "#39462a" };
+    if (product.salesMode === "PREORDER") return { text: "PRÉ-VENDA", color: "#191919" };
     if ((product.stock ?? 0) <= 0) return { text: "INDISPONÍVEL", color: "#5b1d1d" };
     if ((product.stock ?? 0) <= 3) return { text: "ESTOQUE REDUZIDO", color: "#6b3e0b" };
     if (product.category?.trim()) return { text: getCategoryLabel(product.category).toUpperCase(), color: "#4a5568" };
@@ -67,7 +67,7 @@ export default function ProductCard({ product }: Props) {
             retryImageWithVersion(event, product.image, camisaFallback, product.id);
           }}
         />
-        {badge ? <div style={{ ...styles.badge, background: badge.color } as CSSProperties}>{badge.text}</div> : null}
+        {badge ? <div style={{ ...styles.badge, background: badge.color, ...(product.salesMode === "PREORDER" ? { color: "#E6D6C2", border: "1px solid rgba(230,214,194,.3)" } : {}) } as CSSProperties}>{badge.text}</div> : null}
         <button
           type="button"
           style={{ ...styles.favoriteButton, ...(favorited ? styles.favoriteButtonActive : {}) } as CSSProperties}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { renderEmailTemplate } from "../services/email/emailRenderer.js";
-import { shippingEstimate } from "../../shared/preorder";
+import { shippingEstimate, purchasedSalesMode, MIXED_SHIPPING_NOTICE } from "../../shared/preorder";
 describe("preorder order confirmation rendering (no provider)", () => {
   it("shows historical batch/estimate, full payment and mixed shipping even past the four-item summary", () => {
     const items = Array.from({ length: 4 }, (_, i) => ({
@@ -39,5 +39,22 @@ describe("preorder order confirmation rendering (no provider)", () => {
     );
     expect(html).toContain("reservamos os itens selecionados");
     expect(html).not.toContain("demanda do lote");
+  });
+});
+
+describe("payment approved purchase snapshots (provider-free)", () => {
+  it.each(["STOCK", "PREORDER", "MIXED"] as const)("renders %s without implying premature preparation", mode => {
+    const items = mode === "STOCK" ? [{}] : mode === "PREORDER" ? [{ salesModeAtPurchase: "PREORDER" }] : [...Array.from({length: 5}, () => ({salesModeAtPurchase: "STOCK"})), {salesModeAtPurchase: "PREORDER"}];
+    expect(purchasedSalesMode(items)).toBe(mode);
+    const html = renderToStaticMarkup(renderEmailTemplate("paymentApproved", { customerName: "Synthetic <script>", orderNumber: "42", total: "R$ 100,00", salesMode: purchasedSalesMode(items) }));
+    expect(html).not.toContain("<script>");
+    if (mode === "STOCK") expect(html).toContain("liberar o pedido para separação");
+    else {
+      expect(html).toContain("Os itens em pré-venda estão confirmados");
+      expect(html).toContain("serão produzidos conforme o calendário dos respectivos lançamentos");
+      expect(html).not.toContain("liberar o pedido para separação");
+    }
+    if (mode === "MIXED") expect(html).toContain(MIXED_SHIPPING_NOTICE);
+    else expect(html).not.toContain(MIXED_SHIPPING_NOTICE);
   });
 });

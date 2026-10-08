@@ -199,7 +199,7 @@ describe("PREORDER authoritative contracts", () => {
   it("derives customer progress and mixed shipping language", () => {
     expect(productionLabel("IN_PRODUCTION")).toBe("Em produção");
     expect(productionLabel("RECEIVED")).toContain("preparando");
-    expect(MIXED_SHIPPING_NOTICE).toContain("todos os itens");
+    expect(MIXED_SHIPPING_NOTICE).toBe("Seu pedido contém itens com prazos diferentes. O envio será feito em uma única remessa quando todos os itens estiverem disponíveis.");
     expect(
       batchAcceptsSales({
         id: 1,
@@ -271,6 +271,29 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       for (const c of connections) await c.end();
       for (const name of names) await root.query(`DROP DATABASE \`${name}\``);
       await root.end();
+    });
+    it("a payment interleaved after demand SELECT cannot split groups/totals/pending", async () => {
+      const {c, id} = await fixture();
+      const order = await checkout(c, input(), adapters());
+      const payer = await other(c);
+      const original = c.query.bind(c);
+      let interleaved = false;
+      c.query = (async (...args: any[]) => {
+        const result = await (original as any)(...args);
+        if (typeof args[0] === "string" && args[0].includes("FROM orderItems i JOIN orders o") && !interleaved) {
+          interleaved = true;
+          await paid(payer, order.orderId);
+        }
+        return result;
+      }) as typeof c.query;
+      try {
+        const snapshot = await productionSummary(c, id);
+        expect(interleaved).toBe(true);
+        expect(snapshot).toMatchObject({ confirmedQuantity: 0, pendingQuantity: 2, paidOrders: 0, pendingOrders: 1, groups: [] });
+        const next = await productionSummary(c, id);
+        expect(next).toMatchObject({ confirmedQuantity: 2, pendingQuantity: 0, paidOrders: 1, pendingOrders: 0 });
+        expect(next.groups.reduce((n,g) => n + g.quantity,0)).toBe(next.confirmedQuantity);
+      } finally { c.query = original; }
     });
     it("OPEN accepts zero physical stock; full amount; orderItems context and no stock reservations; external IO after commit", async () => {
       const { c, id } = await fixture();

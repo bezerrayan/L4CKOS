@@ -1,0 +1,22 @@
+.l4-tracking { min-width: 0; overflow-wrap: anywhere; }
+.l4-tracking * { box-sizing: border-box; }
+.l4-tracking-summary > div { min-width: 0; }
+@media (max-width: 600px) {
+ .l4-tracking-hero, .l4-tracking-inputRow, .l4-tracking-summary { grid-template-columns: minmax(0, 1fr) !important; }
+ .l4-tracking-timeline { grid-template-columns: minmax(0, 1fr) !important; gap: 0 !important; }
+ .l4-tracking-step { grid-template-columns: 14px minmax(0, 1fr); justify-items: start !important; align-items: center; padding: 12px 0; gap: 14px !important; }
+ .l4-tracking-step p { text-align: left !important; }
+ .l4-tracking-line { top: 26px !important; left: 6px; right: auto !important; width: 2px !important; height: 100% !important; }
+ .l4-tracking-itemCard, .l4-tracking-actions { flex-direction: column; align-items: stretch !important; }
+ .l4-tracking-itemIdentity { width: 100%; }
+ .l4-tracking-itemValues { text-align: left !important; }
+ .l4-tracking-actions a, .l4-tracking-actions button { max-width: 100%; text-align: center; }
+}
+
+.l4-order-detail { min-width: 0; overflow-wrap: anywhere; }
+.l4-order-detail-item { flex-wrap: wrap; }
+.l4-order-detail-item > .l4-preorder { flex-basis: 100%; }
+@media (max-width: 600px) {
+ .l4-order-detail-item { flex-direction: column; }
+ .l4-order-detail-item > p:last-child { align-self: flex-start !important; }
+}

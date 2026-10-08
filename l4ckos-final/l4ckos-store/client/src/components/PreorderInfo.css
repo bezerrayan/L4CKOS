@@ -1,27 +1,18 @@
 .l4-preorder {
-  background: rgba(177, 200, 126, 0.07);
-  border: 1px solid rgba(177, 200, 126, 0.32);
-  border-left: 3px solid #b1c87e;
+  background: #151515;
+  border: 1px solid rgba(230, 214, 194, 0.25);
   border-radius: 6px;
-  color: #e2e8ce;
-  padding: 14px 16px;
+  color: #d4d4d4;
+  padding: 12px 14px;
   margin: 12px 0;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.55;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
-.l4-preorder strong {
-  color: #c4d89c;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-}
-.l4-preorder p {
-  margin: 5px 0;
-}
-.l4-preorder--compact {
-  padding: 8px 12px;
-  font-size: 12px;
-}
-.l4-preorder--compact strong {
-  font-size: 11px;
-}
+.l4-preorder strong, .l4-preorder h3 { color: #E6D6C2; font-size: 12px; letter-spacing: 0.06em; }
+.l4-preorder h3 { margin: 0 0 14px; }
+.l4-preorder p { margin: 5px 0; }
+.l4-preorder--compact { padding: 6px 9px; margin: 8px 0; font-size: 11px; }
+.l4-preorder--compact strong { font-size: 10px; }
+.l4-preorder-checkout strong { display: block; margin-top: 12px; }

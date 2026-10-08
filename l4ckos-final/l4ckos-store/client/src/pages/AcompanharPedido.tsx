@@ -1,4 +1,5 @@
-import { PurchasedPreorderInfo, type PurchasedPreorder } from "../components/PreorderInfo";
+import "./Tracking.css";
+import { PurchasedPreorderInfo, PurchasedMixedShippingNotice, type PurchasedPreorder } from "../components/PreorderInfo";
 import { FormEvent, useMemo, useState, type CSSProperties } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTrackOrder } from "../hooks/useOrders";
@@ -113,6 +114,10 @@ export default function AcompanharPedido() {
   const query = useTrackOrder(payload);
 
   const currentStatus = (query.data?.status as OrderStatus | undefined) ?? "pending";
+  const hasPreorder = query.data?.items.some(item => item.salesModeAtPurchase === "PREORDER") ?? false;
+  const awaitingProduction = ["paid", "processing"].includes(currentStatus) && (query.data?.items.some(item => item.salesModeAtPurchase === "PREORDER" && !["RECEIVED", "SHIPPING", "COMPLETED"].includes(item.productionStatus ?? "")) ?? false);
+  const displayedStatus = awaitingProduction ? "Acompanhando produção" : statusLabel[currentStatus];
+  const displayedTone = hasPreorder && currentStatus !== "cancelled" ? { bg: "#191919", color: "#E6D6C2", border: "rgba(230,214,194,.3)" } : statusTone[currentStatus];
   const timelineIndex = timelineSteps.findIndex(step => {
     if (currentStatus === "paid" && step.key === "processing") return true;
     return step.key === currentStatus;
@@ -153,7 +158,7 @@ export default function AcompanharPedido() {
 
   if (!isAuthenticated) {
     return (
-      <section style={styles.wrapper}>
+      <section className="l4-tracking" style={styles.wrapper}>
         <h1 style={styles.title}>Acompanhar pedido</h1>
         <p style={styles.muted}>Para acompanhar seus pedidos, entre com a sua conta.</p>
         <Link to="/login" style={styles.primaryButton}>
@@ -164,8 +169,8 @@ export default function AcompanharPedido() {
   }
 
   return (
-    <section style={styles.wrapper}>
-      <div style={styles.hero}>
+    <section className="l4-tracking" style={styles.wrapper}>
+      <div className="l4-tracking-hero" style={styles.hero}>
         <div>
           <p style={styles.eyebrow}>Pos-venda</p>
           <h1 style={styles.title}>Acompanhar pedido</h1>
@@ -196,7 +201,7 @@ export default function AcompanharPedido() {
           </button>
         </div>
 
-        <div style={styles.inputRow}>
+        <div className="l4-tracking-inputRow" style={styles.inputRow}>
           <input
             value={searchValue}
             onChange={event => setSearchValue(event.target.value)}
@@ -217,22 +222,23 @@ export default function AcompanharPedido() {
           <div style={styles.cardHead}>
             <div>
               <p style={styles.cardLabel}>Pedido #{query.data.id}</p>
-              <h2 style={styles.cardTitle}>{statusLabel[currentStatus]}</h2>
-              <p style={styles.cardDescription}>{["paid", "processing"].includes(currentStatus) && query.data.items.some(item => item.salesModeAtPurchase === "PREORDER") ? "Pagamento confirmado. Acompanhe a produção dos itens de pré-venda abaixo. O envio aguarda todos os itens disponíveis." : statusDescription[currentStatus]}</p>
+              <h2 style={styles.cardTitle}>{displayedStatus}</h2>
+              <p style={styles.cardDescription}>{["paid", "processing"].includes(currentStatus) && query.data.items.some(item => item.salesModeAtPurchase === "PREORDER") ? "Pagamento confirmado. Acompanhe a produção dos itens de pré-venda abaixo." : statusDescription[currentStatus]}</p>
             </div>
             <span
               style={{
                 ...styles.badge,
-                background: statusTone[currentStatus].bg,
-                color: statusTone[currentStatus].color,
-                borderColor: statusTone[currentStatus].border,
+                background: displayedTone.bg,
+                color: displayedTone.color,
+                borderColor: displayedTone.border,
               }}
             >
-              {statusLabel[currentStatus]}
+              {displayedStatus}
             </span>
           </div>
 
-          <div style={styles.summaryGrid}>
+          <PurchasedMixedShippingNotice items={query.data.items} />
+          <div className="l4-tracking-summary" style={styles.summaryGrid}>
             <div style={styles.summaryCard}>
               <p style={styles.metaLabel}>Total do pedido</p>
               <p style={styles.metaStrong}>{formatMoney(Number(query.data.totalPrice))}</p>
@@ -258,16 +264,16 @@ export default function AcompanharPedido() {
           </div>
 
           {currentStatus !== "cancelled" ? (
-            <div style={styles.timeline}>
+            <div className="l4-tracking-timeline" style={styles.timeline}>
               {timelineSteps.map((step, index) => {
-                const normalizedTimelineIndex = currentStatus === "paid" ? 1 : timelineIndex;
+                const normalizedTimelineIndex = awaitingProduction ? 0 : currentStatus === "paid" ? 1 : timelineIndex;
                 const active = normalizedTimelineIndex >= index;
                 return (
-                  <div key={step.key} style={styles.step}>
-                    <div style={{ ...styles.dot, ...(active ? styles.dotActive : {}) }} />
-                    <p style={{ ...styles.stepLabel, ...(active ? styles.stepLabelActive : {}) }}>{step.label}</p>
+                  <div key={step.key} className="l4-tracking-step" style={styles.step}>
+                    <div style={{ ...styles.dot, ...(active ? { ...styles.dotActive, ...(hasPreorder ? { background: "#E6D6C2", boxShadow: "0 0 0 4px rgba(230,214,194,.12)" } : {}) } : {}) }} />
+                    <p style={{ ...styles.stepLabel, ...(active ? { ...styles.stepLabelActive, ...(hasPreorder ? { color: "#E6D6C2" } : {}) } : {}) }}>{step.label}</p>
                     {index < timelineSteps.length - 1 ? (
-                      <div style={{ ...styles.line, ...((normalizedTimelineIndex ?? -1) > index ? styles.lineActive : {}) }} />
+                      <div className="l4-tracking-line" style={{ ...styles.line, ...((normalizedTimelineIndex ?? -1) > index ? { ...styles.lineActive, ...(hasPreorder ? { background: "#E6D6C2" } : {}) } : {}) }} />
                     ) : null}
                   </div>
                 );
@@ -303,8 +309,8 @@ export default function AcompanharPedido() {
             {orderItems.length > 0 ? (
               <div style={styles.itemsList}>
                 {orderItems.map(item => (
-                  <div key={item.id} style={styles.itemCard}>
-                    <div style={styles.itemIdentity}>
+                  <div key={item.id} className="l4-tracking-itemCard" style={styles.itemCard}>
+                    <div className="l4-tracking-itemIdentity" style={styles.itemIdentity}>
                       <div style={styles.itemImageWrap}>
                         {item.productImage ? (
                           <img src={item.productImage} alt={item.productName || `Produto ${item.productId}`} style={styles.itemImage} />
@@ -319,7 +325,7 @@ export default function AcompanharPedido() {
                         <p style={styles.itemMeta}>Quantidade: {item.quantity}</p>
                       </div>
                     </div>
-                    <div style={styles.itemValues}>
+                    <div className="l4-tracking-itemValues" style={styles.itemValues}>
                       <p style={styles.itemPrice}>{formatMoney(resolveItemSubtotal(item))}</p>
                       <p style={styles.itemMeta}>
                         {item.productPrice ? `${formatMoney(Number(item.productPrice))} por unidade` : "Valor unitario indisponivel"}
@@ -335,7 +341,7 @@ export default function AcompanharPedido() {
             )}
           </div>
 
-          <div style={styles.actions}>
+          <div className="l4-tracking-actions" style={styles.actions}>
             {canEditShippingAddress(query.data.status) ? (
               <Link to={`/meus-pedidos/${query.data.id}`} style={styles.secondaryButton}>
                  Ajustar endereço
@@ -436,6 +442,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
   },
   input: {
+    minWidth: 0,
     border: "1px solid #2f2f2f",
     borderRadius: 10,
     fontSize: 15,
@@ -508,6 +515,7 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: 0.5,
   },
   metaStrong: {
+    overflowWrap: "anywhere",
     margin: "6px 0 0",
     color: "#f0ede8",
     fontWeight: 800,
@@ -653,6 +661,7 @@ const styles: Record<string, CSSProperties> = {
   },
   itemCopy: {
     minWidth: 0,
+    overflowWrap: "anywhere",
     display: "grid",
     gap: 4,
   },
@@ -700,7 +709,7 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    background: "#e8002a",
     color: "white",
     border: "none",
     borderRadius: 10,

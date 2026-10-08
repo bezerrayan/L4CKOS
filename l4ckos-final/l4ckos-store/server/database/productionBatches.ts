@@ -103,31 +103,45 @@ export async function productionSummary(c: Connection, batchId: number) {
     await query(c, "SELECT * FROM productionBatches WHERE id=?", [batchId])
   )[0];
   if (!batch) fail("Lote não encontrado.");
-  const groups = await query(
-    c,
-    `SELECT i.productId,i.productName,i.variantId,i.variantName,i.size,i.color,
-    SUM(i.quantity) quantity,SUM(i.totalPrice) itemValueCents
-    FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER'
-    AND ${CONFIRMED_DEMAND_SQL} GROUP BY i.productId,i.productName,i.variantId,i.variantName,i.size,i.color
-    ORDER BY i.productId,i.size,i.color`,
-    [batchId]
-  );
-  const totals = (
-    await query(
-      c,
-      `SELECT COUNT(DISTINCT o.id) paidOrders,COALESCE(SUM(i.quantity),0) confirmedQuantity,COALESCE(SUM(i.totalPrice),0) confirmedItemValueCents
-    FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND ${CONFIRMED_DEMAND_SQL}`,
-      [batchId]
-    )
-  )[0];
-  const pending = (
-    await query(
-      c,
-      `SELECT COUNT(DISTINCT o.id) pendingOrders,COALESCE(SUM(i.quantity),0) pendingQuantity
-    FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled' AND NOT (${CONFIRMED_DEMAND_SQL})`,
-      [batchId]
-    )
-  )[0];
+  // One InnoDB consistent read supplies groups, totals and pending demand, including
+  // when called inside the READ COMMITTED transition transaction. No nested
+  // transaction or write lock: payment cannot move between separate SELECTs.
+  const demand = await query(c, `SELECT i.orderId,i.productId,i.productName,i.variantId,i.variantName,i.size,i.color,
+    i.quantity,i.totalPrice,COALESCE((${CONFIRMED_DEMAND_SQL}),0) confirmed
+    FROM orderItems i JOIN orders o ON o.id=i.orderId
+    WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'
+    ORDER BY i.productId,i.size,i.color`, [batchId]);
+  const groupMap = new Map<string, RowDataPacket>();
+  const confirmedOrders = new Set<number>(), pendingOrders = new Set<number>();
+  const totals = { paidOrders: 0, confirmedQuantity: 0, confirmedItemValueCents: 0 };
+  const pending = { pendingOrders: 0, pendingQuantity: 0 };
+  for (const row of demand) {
+    if (!Number(row.confirmed)) {
+      pendingOrders.add(Number(row.orderId));
+      pending.pendingQuantity += Number(row.quantity);
+      continue;
+    }
+    confirmedOrders.add(Number(row.orderId));
+    totals.confirmedQuantity += Number(row.quantity);
+    totals.confirmedItemValueCents += Number(row.totalPrice);
+    const key = JSON.stringify([row.productId,row.productName,row.variantId,row.variantName,row.size,row.color]);
+    const group = groupMap.get(key) ?? {
+      productId: row.productId,
+      productName: row.productName,
+      variantId: row.variantId,
+      variantName: row.variantName,
+      size: row.size,
+      color: row.color,
+      quantity: 0,
+      itemValueCents: 0,
+    } as RowDataPacket;
+    group.quantity += Number(row.quantity);
+    group.itemValueCents += Number(row.totalPrice);
+    groupMap.set(key, group);
+  }
+  totals.paidOrders = confirmedOrders.size;
+  pending.pendingOrders = pendingOrders.size;
+  const groups = [...groupMap.values()];
   const assignments = await query(
     c,
     "SELECT p.id,p.name,p.salesMode FROM productionBatchProducts bp JOIN products p ON p.id=bp.productId WHERE bp.productionBatchId=? ORDER BY p.id",

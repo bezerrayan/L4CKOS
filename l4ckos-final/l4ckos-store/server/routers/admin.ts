@@ -1,3 +1,4 @@
+import { purchasedSalesMode } from "../../shared/preorder";
 ﻿import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import {
@@ -18,6 +19,7 @@ import {
   getAllOrders,
   getAllWaitlistEmails,
   getOrderById,
+  getOrderReservationItems,
   getProductsByIds,
   getUserById,
   getOrdersByFilters,
@@ -601,6 +603,7 @@ export const adminRouter = router({
         if (user?.email) {
           try {
             await sendPaymentApprovedEmail({
+              salesMode: purchasedSalesMode(await getOrderReservationItems(currentOrder.id)),
               customerEmail: user.email,
               customerName: user.name || "Cliente",
               orderNumber: String(currentOrder.id),

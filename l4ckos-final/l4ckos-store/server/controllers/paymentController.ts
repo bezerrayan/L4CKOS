@@ -1,3 +1,4 @@
+import { purchasedSalesMode } from "../../shared/preorder";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
@@ -434,6 +435,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
           try {
             if (PAID_EVENTS.has(event) && result.updated) {
               await sendPaymentApprovedEmail({
+                salesMode: purchasedSalesMode(orderItems),
                 customerEmail: user.email,
                 customerName: user.name || "Cliente",
                 orderNumber: String(order.id),

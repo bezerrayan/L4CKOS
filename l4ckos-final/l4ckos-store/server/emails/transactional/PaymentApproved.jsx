@@ -1,9 +1,10 @@
+import { paymentApprovedMessage } from "../../../shared/preorder";
 import { EmailLayout } from "../components/EmailLayout.jsx";
 import { EmailOrderSummary } from "../components/EmailOrderSummary.jsx";
 import { EmailStatusBadge } from "../components/EmailStatusBadge.jsx";
 import { EmailText } from "../components/EmailText.jsx";
 
-export function PaymentApproved({ customerName, orderNumber, total }) {
+export function PaymentApproved({ customerName, orderNumber, total, salesMode = "STOCK" }) {
   const greeting = customerName ? `Olá, ${customerName}.` : "Olá.";
 
   return (
@@ -16,7 +17,7 @@ export function PaymentApproved({ customerName, orderNumber, total }) {
       <EmailStatusBadge tone="success">Pagamento confirmado</EmailStatusBadge>
       <EmailText variant="lead">{greeting}</EmailText>
       <EmailText>
-        Seu pagamento foi confirmado. A equipe da L4CKOS já pode liberar o pedido para separação e preparação.
+        {paymentApprovedMessage(salesMode)}
       </EmailText>
       <EmailOrderSummary orderNumber={orderNumber} total={total} statusLabel="Pagamento aprovado" />
     </EmailLayout>

@@ -1,4 +1,4 @@
-import { PreorderInfo, MixedShippingNotice } from "../components/PreorderInfo";
+import { PreorderInfo, CheckoutPreorderNotice } from "../components/PreorderInfo";
 ﻿/**
  * Pagina do checkout - envio e pagamento
  * 
@@ -678,8 +678,7 @@ export default function Pagamento() {
             </section>
 
             <section className="l4-checkout-finish">
-              {cart.items.some(item=>item.product.salesMode === "PREORDER") && <p className="l4-preorder">Este item é produzido sob pré-venda e possui prazo de envio diferente de produtos à pronta entrega. Pagamento de 100% no checkout, sem segunda cobrança.</p>}
-                <MixedShippingNotice items={cart.items} />
+              <CheckoutPreorderNotice items={cart.items} />
               {isMobile && cart.items.filter(item=>item.product.salesMode==='PREORDER').map(item=><PreorderInfo key={getItemKey(item.product.id,item.selectedOptions)} product={item.product} compact />)}
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
               <button type="button" onClick={() => void handleCheckout()} disabled={!isCatalogReady || !hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)}>{createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>

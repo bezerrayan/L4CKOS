@@ -16,7 +16,7 @@
 .l4-batches-kicker {
   font-size: 11px;
   letter-spacing: 0.14em;
-  color: #b1c87e;
+  color: #E6D6C2;
 }
 .l4-batches-layout {
   display: grid;
@@ -26,24 +26,24 @@
 }
 .l4-batches aside,
 .l4-batches article {
-  border: 1px solid #30352c;
-  background: #171917;
+  border: 1px solid #333333;
+  background: #171717;
   border-radius: 10px;
   padding: 22px;
   min-width: 0;
 }
 .l4-batches button {
   padding: 10px 14px;
-  background: #272c23;
-  color: #e4eed4;
-  border: 1px solid #48523d;
+  background: #252525;
+  color: #dddddd;
+  border: 1px solid #45403a;
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
 }
 .l4-batches button:hover,
 .l4-batches button[aria-pressed="true"] {
-  background: #38432a;
+  background: #35312c;
 }
 .l4-batches button:disabled {
   opacity: 0.5;
@@ -66,9 +66,9 @@
   display: block;
   width: 100%;
   box-sizing: border-box;
-  background: #0e110e;
+  background: #101010;
   color: #e5e5e5;
-  border: 1px solid #41483b;
+  border: 1px solid #45403a;
   border-radius: 5px;
   padding: 10px;
   margin-top: 5px;
@@ -105,13 +105,13 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
-  border-block: 1px solid #363e2e;
+  border-block: 1px solid #383838;
   padding: 22px 0;
 }
 .l4-batches-stats strong {
   font-size: 22px;
   display: block;
-  color: #c7dca0;
+  color: #E6D6C2;
 }
 .l4-batches-stats span {
   display: block;
@@ -121,10 +121,14 @@
 .l4-batches progress {
   width: 100%;
   height: 8px;
-  accent-color: #b1c87e;
+  accent-color: #E6D6C2;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: #333333;
 }
 .l4-batches-muted {
-  color: #a1a69c;
+  color: #a3a3a3;
 }
 .l4-batches-table {
   overflow: auto;
@@ -139,10 +143,10 @@
 .l4-batches td {
   padding: 12px;
   text-align: left;
-  border-bottom: 1px solid #30382b;
+  border-bottom: 1px solid #333333;
 }
 .l4-batches th {
-  color: #b8cb97;
+  color: #E6D6C2;
 }
 .l4-batches-products {
   max-height: 220px;
@@ -159,11 +163,11 @@
 }
 .l4-batches summary {
   cursor: pointer;
-  color: #c4d99f;
+  color: #E6D6C2;
   padding: 12px 0;
 }
 .l4-batches :focus-visible {
-  outline: 2px solid #c4d99f;
+  outline: 2px solid #E6D6C2;
   outline-offset: 3px;
 }
 @media (max-width: 900px) {
@@ -178,3 +182,15 @@
     padding: 16px;
   }
 }
+
+.l4-batches-new { margin-top: 16px; }
+.l4-batches-new form > button[type="submit"], .l4-batches-actions button:not(.l4-batches-danger) { background: #991b1b; color: #fff; border-color: #b91c1c; }
+@media (max-width: 900px) {
+  .l4-batches-layout--selected article { grid-row: 1; }
+  .l4-batches-heading { gap: 12px; flex-wrap: wrap; }
+  .l4-batches-pair { grid-template-columns: minmax(0, 1fr); }
+}
+
+.l4-batches progress::-webkit-progress-bar { background: #333333; }
+.l4-batches progress::-webkit-progress-value { background: #E6D6C2; }
+.l4-batches progress::-moz-progress-bar { background: #E6D6C2; }

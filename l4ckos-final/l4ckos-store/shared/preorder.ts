@@ -80,4 +80,17 @@ export function shippingEstimate(
         : "Previsão de envio a confirmar.";
 }
 export const MIXED_SHIPPING_NOTICE =
-  "Seu pedido contém itens com prazos de envio diferentes. O envio será feito quando todos os itens estiverem disponíveis.";
+  "Seu pedido contém itens com prazos diferentes. O envio será feito em uma única remessa quando todos os itens estiverem disponíveis.";
+
+export function compactShippingEstimate(start?: Date | string | null, end?: Date | string | null) {
+  const short = (v: Date | string) => new Date(utcMillis(v)).toLocaleDateString("pt-BR", { timeZone: "UTC", day: "2-digit", month: "2-digit" });
+  return start && end ? `Envio estimado ${short(start)}–${short(end)}` : shippingEstimate(start, end);
+}
+export function purchasedSalesMode(items: { salesModeAtPurchase?: string }[]) {
+  const preorder = items.some(i => i.salesModeAtPurchase === "PREORDER");
+  return preorder ? (items.some(i => i.salesModeAtPurchase !== "PREORDER") ? "MIXED" : "PREORDER") : "STOCK";
+}
+export function paymentApprovedMessage(mode: "STOCK" | "PREORDER" | "MIXED" = "STOCK") {
+  const preorder = "Seu pagamento foi confirmado. Os itens em pré-venda estão confirmados e serão produzidos conforme o calendário dos respectivos lançamentos. Avisaremos quando o pedido avançar para preparação e envio.";
+  return mode === "STOCK" ? "Seu pagamento foi confirmado. A equipe da L4CKOS já pode liberar o pedido para separação e preparação." : mode === "MIXED" ? `${preorder} ${MIXED_SHIPPING_NOTICE}` : preorder;
+}

@@ -1,4 +1,5 @@
-import { PurchasedPreorderInfo } from "../components/PreorderInfo";
+import "./Tracking.css";
+import { PurchasedPreorderInfo, PurchasedMixedShippingNotice } from "../components/PreorderInfo";
 import { Link, useParams } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
@@ -92,7 +93,7 @@ export default function PedidoDetalhe() {
   });
 
   return (
-    <section style={styles.wrapper}>
+    <section className="l4-order-detail" style={styles.wrapper}>
       <div style={styles.head}>
         <h1 style={styles.title}>Detalhes do pedido</h1>
         <Link to="/meus-pedidos" style={styles.linkButton}>
@@ -113,6 +114,7 @@ export default function PedidoDetalhe() {
             <span style={styles.badge}>{statusText[query.data.status as OrderStatus]}</span>
           </div>
 
+          <PurchasedMixedShippingNotice items={query.data.items ?? []} />
           <div style={styles.metaGrid}>
             <div>
               <p style={styles.metaLabel}>Total pago</p>
@@ -228,7 +230,7 @@ export default function PedidoDetalhe() {
           {query.data.items?.length ? (
             <div style={styles.itemsList}>
               {query.data.items.map(item => (
-                <div key={item.id} style={styles.itemRow}>
+                <div key={item.id} className="l4-order-detail-item" style={styles.itemRow}>
                   <div>
                   <p style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</p>
                   <PurchasedPreorderInfo item={item} status={query.data.status} />
@@ -258,9 +260,9 @@ const styles: Record<string, CSSProperties> = {
   row: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" },
   orderId: { margin: 0, fontSize: 22, color: "#f0ede8" },
   badge: { borderRadius: 999, background: "#1e293b", color: "#93c5fd", fontWeight: 700, fontSize: 12, padding: "7px 11px" },
-  metaGrid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" },
+  metaGrid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(160px, 100%), 1fr))" },
   metaLabel: { margin: 0, color: "#a1a1aa", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.4 },
-  metaValue: { margin: "4px 0 0", color: "#f0ede8", fontWeight: 700 },
+  metaValue: { overflowWrap: "anywhere", margin: "4px 0 0", color: "#f0ede8", fontWeight: 700 },
   sectionHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" },
   sectionHint: { color: "#a1a1aa", fontSize: 12 },
   sectionTitle: { margin: 0, color: "#f0ede8", fontSize: 18 },
@@ -269,7 +271,7 @@ const styles: Record<string, CSSProperties> = {
   addressLines: { display: "grid", gap: 4 },
   addressText: { margin: 0, color: "#f0ede8", lineHeight: 1.6 },
   addressRule: { margin: 0, color: "#a1a1aa", fontSize: 12, lineHeight: 1.6 },
-  addressForm: { display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" },
+  addressForm: { display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))" },
   input: {
     width: "100%",
     borderRadius: 10,
@@ -305,8 +307,8 @@ const styles: Record<string, CSSProperties> = {
   },
   saveButton: {
     borderRadius: 8,
-    border: "1px solid #166534",
-    background: "#166534",
+    border: "1px solid #b91c1c",
+    background: "#b91c1c",
     color: "#f8fafc",
     padding: "10px 14px",
     fontWeight: 800,

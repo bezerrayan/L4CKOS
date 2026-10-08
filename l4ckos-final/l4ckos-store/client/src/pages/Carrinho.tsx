@@ -62,7 +62,7 @@ export default function Carrinho() {
                 key={getItemKey(item.product.id, item.selectedOptions)}
                 style={{
                   ...styles.itemCard,
-                  gridTemplateColumns: isMobile ? "64px 1fr auto" : "80px 1fr auto auto",
+                  gridTemplateColumns: isMobile ? "64px minmax(0, 1fr)" : "80px minmax(0, 1fr) auto",
                   gap: isMobile ? 10 : 12,
                 }}
               >
@@ -92,9 +92,12 @@ export default function Carrinho() {
                 <div
                   style={{
                     ...styles.qtyColumn,
-                    justifySelf: isMobile ? "end" : "unset",
-                    gridColumn: isMobile ? "3" : "auto",
-                    gridRow: isMobile ? "1 / span 2" : "auto",
+                    justifySelf: isMobile ? "stretch" : "unset",
+                    gridColumn: isMobile ? "1 / -1" : "auto",
+                    gridRow: "auto",
+                    flexDirection: isMobile ? "row" : "column",
+                    justifyContent: "space-between",
+                    alignItems: isMobile ? "center" : "flex-end",
                     marginTop: 0,
                   }}
                 >
@@ -209,6 +212,11 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   itemName: {
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+    lineHeight: 1.4,
     margin: 0,
     fontSize: 15,
     fontWeight: 800,
@@ -317,7 +325,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     textDecoration: "none",
     color: "#fff",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    background: "#e8002a",
   },
   continueLink: {
     display: "block",
@@ -362,7 +370,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     textDecoration: "none",
     color: "#fff",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    background: "#e8002a",
   },
   emptyState: {
     border: "1px dashed #3a3a3a",
@@ -389,7 +397,7 @@ const styles: Record<string, CSSProperties> = {
     textDecoration: "none",
     fontWeight: 700,
     color: "#fff",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
+    background: "#e8002a",
   },
 };
 

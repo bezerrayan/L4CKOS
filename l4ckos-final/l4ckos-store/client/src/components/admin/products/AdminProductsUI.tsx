@@ -44,7 +44,7 @@ export function ProductsFilters({
 }
 
 export function ProductStockBadge({ stock, salesMode }: { stock: number; salesMode?: string }) {
-  if (salesMode === "PREORDER") return <AdminStatusBadge style={stockTones.ok}>Pré-venda</AdminStatusBadge>;
+  if (salesMode === "PREORDER") return <AdminStatusBadge style={{ color: "#E6D6C2", background: "#191919", border: "1px solid rgba(230,214,194,.3)" }}>Pré-venda</AdminStatusBadge>;
   if (stock <= 0) {
     return <AdminStatusBadge style={stockTones.empty}>Sem estoque</AdminStatusBadge>;
   }

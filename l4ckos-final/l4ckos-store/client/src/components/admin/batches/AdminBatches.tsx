@@ -151,7 +151,7 @@ export function AdminBatches() {
           {error}
         </p>
       )}
-      <div className="l4-batches-layout">
+      <div className={`l4-batches-layout ${selected ? "l4-batches-layout--selected" : ""}`}>
         <aside>
           <h3>Lançamentos</h3>
           {list.isLoading && <p>Carregando lotes…</p>}
@@ -174,6 +174,8 @@ export function AdminBatches() {
               <span>{labels[b.status as BatchStatus]}</span>
             </button>
           ))}
+          <details key={`${selected}-${editId}`} className="l4-batches-new" open={Boolean(editId) || !selected}>
+            <summary>{editId ? "Editar lote" : "Novo lote"}</summary>
           <form onSubmit={submit}>
             <h3>{editId ? "Editar lote" : "Novo lote"}</h3>
             <label>
@@ -238,6 +240,7 @@ export function AdminBatches() {
               </button>
             )}
           </form>
+          </details>
         </aside>
         <article>
           {detail.isLoading && selected && <p>Carregando produção…</p>}

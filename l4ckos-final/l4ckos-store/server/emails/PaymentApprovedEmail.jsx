@@ -1,8 +1,9 @@
+import { paymentApprovedMessage } from "../../shared/preorder";
 import { EmailLayout } from "./components/EmailLayout.jsx";
 import { EmailOrderSummary } from "./components/EmailOrderSummary.jsx";
 import { EmailText } from "./components/EmailText.jsx";
 
-export function PaymentApprovedEmail({ customerName, orderNumber, total }) {
+export function PaymentApprovedEmail({ customerName, orderNumber, total, salesMode = "STOCK" }) {
   const greeting = customerName ? `Olá, ${customerName}.` : "Olá.";
   const safeOrder = String(orderNumber || "-");
 
@@ -14,7 +15,7 @@ export function PaymentApprovedEmail({ customerName, orderNumber, total }) {
       footerNote="Você recebeu este e-mail porque realizou um pagamento na L4CKOS."
     >
       <EmailText variant="lead">{greeting}</EmailText>
-      <EmailText>Seu pagamento foi aprovado. Agora o pedido seguirá para preparação.</EmailText>
+      <EmailText>{paymentApprovedMessage(salesMode)}</EmailText>
       <EmailOrderSummary
         orderNumber={safeOrder}
         total={String(total || "-")}
