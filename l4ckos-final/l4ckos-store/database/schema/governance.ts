@@ -18,6 +18,12 @@ export async function withAuthorizedStagingLock<T>(connection: Connection, capab
   const plan = await verifyStagingCapability(connection, capability);
   return locked(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: plan.expectedPostFingerprint, lockTimeoutSeconds: 1 }, action);
 }
+/** Separate fixed 0021 capability; never accepted by the legacy 0020 executor. */
+export async function withAuthorizedPreorderStagingLock<T>(connection: Connection, capability: import("../staging0021/policy").AuthorizedStagingCapability, action: () => Promise<T>) {
+  const { verifyStagingCapability } = await import("../staging0021/policy");
+  const plan = await verifyStagingCapability(connection, capability);
+  return locked(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: plan.expectedPostFingerprint, lockTimeoutSeconds: 1 }, action);
+}
 async function locked<T>(connection: Connection, context: LedgerContext & { lockTimeoutSeconds?: number }, action: () => Promise<T>) {
   if (!/^[a-f0-9]{40}$/.test(context.applicationCommit)) throw new SchemaError("APPLICATION_COMMIT_REQUIRED");
   const timeout = context.lockTimeoutSeconds ?? 1;

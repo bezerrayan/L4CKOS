@@ -108,8 +108,8 @@ temp/
 
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
-b a c k u p s / 
- 
+b a c k u p s /
+
 # backups locais
 backups/
 
@@ -120,4 +120,6 @@ backups/
 node_modules/
 .env
 dist
- 
+
+# Private durable migration plans, backups and governance evidence
+.local/

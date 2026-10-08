@@ -20,7 +20,9 @@
     "db:baseline": "tsx scripts/database-schema.ts baseline",
     "db:migrate": "tsx scripts/database-schema.ts migrate",
     "db:staging:reconcile:prepare": "tsx scripts/staging-reconciliation.ts prepare",
-    "db:staging:reconcile:apply": "tsx scripts/staging-reconciliation.ts apply"
+    "db:staging:reconcile:apply": "tsx scripts/staging-reconciliation.ts apply",
+    "db:staging:preorder:prepare": "tsx scripts/staging-preorder.ts prepare",
+    "db:staging:preorder:apply": "tsx scripts/staging-preorder.ts apply"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
