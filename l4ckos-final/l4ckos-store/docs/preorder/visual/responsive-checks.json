@@ -9,12 +9,31 @@
   "desktop": 1440,
   "checks": [
     {
+      "name": "home",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "products",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
+    },
+    {
       "name": "product",
       "width": 1440,
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart-preorder",
@@ -22,7 +41,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart",
@@ -30,7 +50,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "checkout",
@@ -38,7 +59,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "tracking",
@@ -46,7 +68,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "order",
@@ -54,7 +77,17 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "admin-list",
+      "width": 1440,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "admin-details",
@@ -62,7 +95,26 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "home",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "products",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "product",
@@ -70,7 +122,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart-preorder",
@@ -78,7 +131,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart",
@@ -86,7 +140,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "checkout",
@@ -94,7 +149,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "tracking",
@@ -102,7 +158,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "order",
@@ -110,7 +167,17 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "admin-list",
+      "width": 320,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "admin-details",
@@ -118,7 +185,26 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "home",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "products",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "product",
@@ -126,7 +212,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart-preorder",
@@ -134,7 +221,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart",
@@ -142,7 +230,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "checkout",
@@ -150,7 +239,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "tracking",
@@ -158,7 +248,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "order",
@@ -166,7 +257,17 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "admin-list",
+      "width": 360,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "admin-details",
@@ -174,7 +275,26 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "home",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "products",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "product",
@@ -182,7 +302,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart-preorder",
@@ -190,7 +311,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart",
@@ -198,7 +320,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "checkout",
@@ -206,7 +329,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "tracking",
@@ -214,7 +338,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "order",
@@ -222,7 +347,17 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "admin-list",
+      "width": 390,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "admin-details",
@@ -230,7 +365,26 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "home",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "products",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "product",
@@ -238,7 +392,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart-preorder",
@@ -246,7 +401,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "cart",
@@ -254,7 +410,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "checkout",
@@ -262,7 +419,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "tracking",
@@ -270,7 +428,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "order",
@@ -278,7 +437,17 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
+    },
+    {
+      "name": "admin-list",
+      "width": 430,
+      "overflow": false,
+      "actionsAndValuesInBounds": true,
+      "greenSemantic": [],
+      "beige": true,
+      "progressBeige": true
     },
     {
       "name": "admin-details",
@@ -286,7 +455,8 @@
       "overflow": false,
       "actionsAndValuesInBounds": true,
       "greenSemantic": [],
-      "beige": true
+      "beige": true,
+      "progressBeige": true
     }
   ],
   "pageErrors": [],

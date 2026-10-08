@@ -1,10 +1,12 @@
 // Local-only browser verification. Install Playwright separately; no provider calls.
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
 const origin = 'http://127.0.0.1:3413';
-const output = new URL('../docs/preorder/visual/', import.meta.url);
+const outputDir = process.env.PREORDER_VISUAL_OUTPUT;
+assert.ok(outputDir?.startsWith('/'), 'PREORDER_VISUAL_OUTPUT deve ser um caminho absoluto');
+const output = pathToFileURL(outputDir.replace(/\/+$/, '') + '/');
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext();
 const page = await context.newPage();
@@ -58,13 +60,92 @@ const check = async (name, width) => {
 };
 const capture = async (name,width) => {
   await check(name,width);
-  if(width===1440||width===390) await page.screenshot({path:new URL(`${name}-${width===390?'mobile':'desktop'}.png`,output).pathname,fullPage:true});
+  if(width===1440||width===390) await page.screenshot({path:fileURLToPath(new URL(`${name}-${width===390?'mobile':'desktop'}.png`,output)),fullPage:true});
 };
 try {
  for (const width of [1440,320,360,390,430]) {
   await page.setViewportSize({width,height:width===1440?1000:844});
+  await page.goto(`${origin}/`);
+  await page.locator('.l4-home-product-card').first().waitFor();
+
+  assert.equal(await page.locator('.l4-home-product-card').count(), 3, 'HOME: quantidade de cards');
+  assert.equal(await page.locator('.l4-home-preorder-badge').count(), 2, 'HOME: quantidade de selos');
+  assert.equal(await page.locator('.l4-home-product-card .l4-preorder').count(), 0, 'HOME: bloco informativo duplicado');
+
+  const homeBadgesValid = await page.locator('.l4-home-preorder-badge').evaluateAll(nodes => nodes.every(node => {
+    const card = node.closest('.l4-home-product-card');
+    if (!card) return false;
+    const badge = node.getBoundingClientRect();
+    const bounds = card.getBoundingClientRect();
+
+    return badge.top >= bounds.top &&
+      badge.top <= bounds.top + 40 &&
+      badge.left >= bounds.left &&
+      badge.right <= bounds.right + 1 &&
+      getComputedStyle(node).color === 'rgb(230, 214, 194)';
+  }));
+
+  assert.equal(homeBadgesValid, true, 'HOME: posição ou cor dos selos');
+  await capture('home',width);
   await page.goto(`${origin}/produtos`);
   await page.getByText('PRÉ-VENDA',{exact:true}).first().waitFor();
+  // Aguarda os cards reais do catálogo, não a tela anterior.
+  // Aguarda os três cards reais e a estabilização do catálogo.
+  await page.locator('div.l4-product-media-surface:not(.l4-product-media-surface--thumb):not(.l4-home-product-img)')
+    .nth(2)
+    .waitFor({ state: 'visible', timeout: 20000 });
+
+  await page.waitForTimeout(1000);
+
+  assert.equal(
+    new URL(page.url()).pathname,
+    '/produtos',
+    'CATÁLOGO: rota incorreta'
+  );
+
+  const catalogResult = await page.locator('div.l4-product-media-surface:not(.l4-product-media-surface--thumb):not(.l4-home-product-img)')
+    .evaluateAll(elements => elements.map(media => {
+      const card = media.parentElement;
+      return {
+        name: card?.querySelector('h3')?.textContent?.trim() ?? '',
+        largeBlock: !!card?.querySelector('.l4-preorder'),
+        preorderBadge: [...media.querySelectorAll('*')].some(node =>
+          node.children.length === 0 &&
+          node.textContent?.trim() === 'PRÉ-VENDA'
+        )
+      };
+    }));
+
+  console.log(
+    `[CATÁLOGO ${width}px] ` + JSON.stringify(catalogResult)
+  );
+
+  const expectedProducts = [
+    ['Logo Essential — Pronta entrega', false],
+    ['Unknown Territory — Camiseta Oversized', true],
+    ['Sideways Dreams — Camiseta Oversized', true]
+  ];
+
+  for (const [name, expectsPreorder] of expectedProducts) {
+    const matching = catalogResult.filter(card => card.name === name);
+
+    assert.ok(matching.length > 0, `CATÁLOGO: produto ausente: ${name}`);
+
+    assert.ok(
+      matching.every(card => !card.largeBlock),
+      `CATÁLOGO: bloco grande encontrado em ${name}`
+    );
+
+    assert.ok(
+      matching.every(card => card.preorderBadge === expectsPreorder),
+      `CATÁLOGO: selo incorreto em ${name}`
+    );
+  }
+
+  assert.ok(
+    catalogResult.every(card => !card.largeBlock),
+    'CATÁLOGO: bloco grande em outro card'
+  );
   await capture('products',width);
   await page.goto(`${origin}/produto/1`);
   await page.getByText('PRÉ-VENDA — DROP 01',{exact:true}).filter({visible:true}).first().waitFor();
@@ -106,7 +187,8 @@ try {
     assert.ok(position.article<position.aside,'selected batch must precede creation on mobile');
   }
  }
+ assert.equal(checks.length,50,'Esperadas 50 verificações visuais');
  assert.deepEqual(errors,[]);
  await writeFile(new URL('responsive-checks.json',output),JSON.stringify({origin,widths:[320,360,390,430],desktop:1440,checks,pageErrors:errors,externalRequests:'blocked',paymentSubmitted:false},null,2)+'\n');
- console.log(JSON.stringify({checks:checks.length,pageErrors:errors,greenSemantic:'ZERO',widths:[320,360,390,430],screenshots:18}));
+ console.log(JSON.stringify({checks:checks.length,pageErrors:errors,greenSemantic:'ZERO',widths:[320,360,390,430],screenshots:20}));
 } finally { await browser.close(); }
