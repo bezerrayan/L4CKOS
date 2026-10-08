@@ -1,0 +1,6 @@
+*
+!package.json
+!guard.mjs
+!http.mjs
+!server.mjs
+!Dockerfile
