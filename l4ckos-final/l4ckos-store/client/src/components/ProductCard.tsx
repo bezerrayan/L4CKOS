@@ -1,5 +1,4 @@
 import { batchAcceptsSales } from "../../../shared/preorder";
-import { PreorderInfo } from "./PreorderInfo";
 ﻿import { useNavigate, useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { Heart } from "lucide-react";
@@ -94,7 +93,6 @@ export default function ProductCard({ product }: Props) {
 
       <div style={styles.content as CSSProperties}>
         <h3 style={styles.name as CSSProperties}>{product.name}</h3>
-        <PreorderInfo product={product} compact />
         <p style={styles.price as CSSProperties}>{formattedPrice}</p>
         <p style={styles.helper as CSSProperties}>
           {available

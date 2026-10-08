@@ -1,4 +1,3 @@
-import { PreorderInfo } from "../components/PreorderInfo";
 import type { Product } from "../types/product";
 ﻿import { Link, useNavigate } from "react-router-dom";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -220,10 +219,14 @@ export default function Home() {
                 ) : (
                   <img className="l4-product-media-image" src={camisaFallback} alt={product.name} loading="lazy" />
                 )}
+                {product.salesMode === "PREORDER" && (
+                  <span className="l4-home-preorder-badge">
+                    PRÉ-VENDA
+                  </span>
+                )}
               </div>
               <div className="l4-home-product-info">
                 <h3 className="l4-home-product-name">{product.name}</h3>
-                <PreorderInfo product={product} compact />
                 <p className="l4-home-product-category">{getCategoryLabel(product.category)}</p>
                 <div className="l4-home-product-meta">
                   <span>{formatCurrency(product.priceCents)}</span>
