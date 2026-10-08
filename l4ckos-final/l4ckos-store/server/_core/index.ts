@@ -29,6 +29,7 @@ import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
 import { getBackupPayload } from "../db";
 import { asaasWebhookHandler } from "../controllers/paymentController";
+import { createStagingMaintenanceMiddleware } from "./stagingMaintenance";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -206,6 +207,10 @@ async function startServer() {
       timestamp: new Date().toISOString(),
     });
   });
+
+  // /health is registered immediately before this middleware.
+  // Staging maintenance denies all subsequent HTTP routes.
+  app.use(createStagingMaintenanceMiddleware());
 
   app.use(
     helmet({
