@@ -1,3 +1,5 @@
+import { PreorderInfo } from "../components/PreorderInfo";
+import type { Product } from "../types/product";
 ﻿import { Link, useNavigate } from "react-router-dom";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { trpc } from "../lib/trpc";
@@ -9,7 +11,7 @@ import PromoCarousel from "../components/PromoCarousel";
 import "./Home.css";
 import camisaFallback from "../images/camisa.png";
 
-type ProductItem = {
+type ProductItem = Pick<Product,"salesMode"|"productionBatch"> & {
   id: number;
   name: string;
   priceCents: number;
@@ -68,6 +70,8 @@ export default function Home() {
       (productsQuery.data ?? []).slice(0, 3).map(item => ({
         id: item.id,
         name: item.name,
+        salesMode: item.salesMode,
+        productionBatch: item.productionBatch,
         priceCents: Number(item.price ?? 0),
         imageUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
         imageThumbnailUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
@@ -219,6 +223,7 @@ export default function Home() {
               </div>
               <div className="l4-home-product-info">
                 <h3 className="l4-home-product-name">{product.name}</h3>
+                <PreorderInfo product={product} compact />
                 <p className="l4-home-product-category">{getCategoryLabel(product.category)}</p>
                 <div className="l4-home-product-meta">
                   <span>{formatCurrency(product.priceCents)}</span>

@@ -12,7 +12,7 @@ import { restoreProof } from "../../database/staging/proof";
 import { FixedRailwayAdapter } from "../../database/staging/railway";
 // Identity adapter is mocked only in this test module. Shipped code has no local remote-capability override.
 vi.mock("../../database/staging/runtime", () => ({ assertStagingRuntime: (c: Connection) => {
-  if (c.config.socketPath !== "/tmp/l4ckos-reconciliation-socket/mysqld.sock" || !c.config.database?.startsWith("l4ckos_test_executor_")) throw Error("LOCAL_IDENTITY_FIXTURE_REQUIRED");
+  if (c.config.socketPath !== (process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock") || !c.config.database?.startsWith("l4ckos_test_executor_")) throw Error("LOCAL_IDENTITY_FIXTURE_REQUIRED");
 } }));
 const altered = vi.hoisted(() => ({ sql: false }));
 vi.mock("../../database/schema/artifacts", async original => {
@@ -22,7 +22,7 @@ vi.mock("../../database/schema/artifacts", async original => {
     return altered.sql && args[0] === "database/migrations/0020_reconcile_asaas_webhook_events.sql" ? Buffer.concat([bytes, Buffer.from(" ")]) : bytes;
   } };
 });
-const socketPath = "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
+const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const commit = "a".repeat(40);
 let root: Connection;
 const names: string[] = [], connections: Connection[] = [];

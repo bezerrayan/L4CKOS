@@ -1,3 +1,4 @@
+import { PurchasedPreorderInfo, type PurchasedPreorder } from "../components/PreorderInfo";
 import { FormEvent, useMemo, useState, type CSSProperties } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTrackOrder } from "../hooks/useOrders";
@@ -5,7 +6,7 @@ import { useUser } from "../contexts/UserContext";
 
 type OrderStatus = "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled";
 
-type TrackedOrderItem = {
+type TrackedOrderItem = PurchasedPreorder & {
   id: number;
   productId: number;
   quantity: number;
@@ -123,6 +124,7 @@ export default function AcompanharPedido() {
   );
 
   const orderItems: TrackedOrderItem[] = (query.data?.items ?? []).map(item => ({
+    ...item,
     id: item.id,
     productId: item.productId,
     quantity: item.quantity,
@@ -216,7 +218,7 @@ export default function AcompanharPedido() {
             <div>
               <p style={styles.cardLabel}>Pedido #{query.data.id}</p>
               <h2 style={styles.cardTitle}>{statusLabel[currentStatus]}</h2>
-              <p style={styles.cardDescription}>{statusDescription[currentStatus]}</p>
+              <p style={styles.cardDescription}>{["paid", "processing"].includes(currentStatus) && query.data.items.some(item => item.salesModeAtPurchase === "PREORDER") ? "Pagamento confirmado. Acompanhe a produção dos itens de pré-venda abaixo. O envio aguarda todos os itens disponíveis." : statusDescription[currentStatus]}</p>
             </div>
             <span
               style={{
@@ -312,6 +314,7 @@ export default function AcompanharPedido() {
                       </div>
                       <div style={styles.itemCopy}>
                         <p style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</p>
+                        <PurchasedPreorderInfo item={item} status={currentStatus} />
                         <p style={styles.itemMeta}>Codigo interno: #{item.productId}</p>
                         <p style={styles.itemMeta}>Quantidade: {item.quantity}</p>
                       </div>

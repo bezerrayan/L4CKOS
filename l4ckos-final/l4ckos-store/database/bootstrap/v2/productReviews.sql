@@ -1,0 +1,21 @@
+CREATE TABLE `productReviews` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `productId` int NOT NULL,
+  `orderId` int DEFAULT NULL,
+  `stockReservationId` int DEFAULT NULL,
+  `userId` int NOT NULL,
+  `rating` int NOT NULL,
+  `sizePerception` enum('small','true_to_size','large') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `comment` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `imageUrl` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `imageStatus` enum('none','pending','approved','rejected') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'none',
+  `moderationStatus` enum('published','hidden_spam','hidden_offensive') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'published',
+  `verifiedPurchase` int NOT NULL DEFAULT '0',
+  `moderatedBy` int DEFAULT NULL,
+  `moderatedAt` timestamp NULL DEFAULT NULL,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `productReviews_stockReservationId_unique` (`stockReservationId`),
+  KEY `productReviews_public_idx` (`productId`,`verifiedPurchase`,`moderationStatus`,`createdAt`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

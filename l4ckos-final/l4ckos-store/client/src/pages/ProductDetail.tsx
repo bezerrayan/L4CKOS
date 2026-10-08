@@ -1,3 +1,5 @@
+import { PreorderInfo } from "../components/PreorderInfo";
+import { batchAcceptsSales } from "../../../shared/preorder";
 ﻿/**
  * Pagina ProductDetail - Detalhes completos do produto
  * Exibe informações completas, opções de customização e ações de compra.
@@ -117,6 +119,8 @@ export default function ProductDetail() {
     ? {
         id: productQuery.data.id,
         name: productQuery.data.name,
+        salesMode: productQuery.data.salesMode,
+        productionBatch: productQuery.data.productionBatch,
         description: productQuery.data.description || "",
         price: normalizePrice(Number(productQuery.data.price)),
         image: resolveProductImageUrl((productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
@@ -235,7 +239,9 @@ export default function ProductDetail() {
     hex: COLOR_HEX_BY_NAME[name.toLowerCase()] ?? "#d1d5db",
   }));
   const sizeOptions = product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES;
-  const canAddToCart = Boolean(selectedColor && selectedSize && product.stock > 0);
+  const available = product.salesMode === "PREORDER" ? batchAcceptsSales(product.productionBatch) : product.stock > 0;
+  const quantityLimit = product.salesMode === "PREORDER" ? 99 : Math.max(1, product.stock);
+  const canAddToCart = Boolean(selectedColor && selectedSize && available);
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -245,7 +251,7 @@ export default function ProductDetail() {
   if (!selectedSize) missingSelections.push("tamanho");
 
   const handleAddToCart = () => {
-    if (product.stock <= 0) {
+    if (!available) {
       showToast({
         message: "Este produto está Indisponível no momento.",
         duration: 3500,
@@ -271,7 +277,7 @@ export default function ProductDetail() {
   };
 
   const handleBuyNow = () => {
-    if (product.stock <= 0) {
+    if (!available) {
       showToast({ message: "Este produto está indisponível no momento.", duration: 3500 });
       return;
     }
@@ -435,6 +441,7 @@ export default function ProductDetail() {
         >
           <div style={styles.headerSection as CSSProperties}>
             <h1 style={{ ...styles.productTitle, fontSize: isMobile ? 24 : styles.productTitle.fontSize } as CSSProperties}>{product.name}</h1>
+            <PreorderInfo product={product} />
             <div style={styles.headerMetaRow as CSSProperties}>
               <span style={styles.badge as CSSProperties}>{getCategoryLabel(product.category) || "Produto oficial"}</span>
                 <button
@@ -598,26 +605,26 @@ export default function ProductDetail() {
               <button
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={product.stock <= 0}
+                disabled={!available}
               >
                 -
               </button>
               <input
                 type="number"
                 min="1"
-                 max={product.stock > 0 ? product.stock : 1}
+                 max={quantityLimit}
                 value={quantity}
                  onChange={(e) =>
                    setQuantity(
-                     Math.min(product.stock > 0 ? product.stock : 1, Math.max(1, parseInt(e.target.value) || 1))
+                     Math.min(quantityLimit, Math.max(1, parseInt(e.target.value) || 1))
                    )
                  }
                 style={styles.quantityInput as CSSProperties}
               />
               <button
-                onClick={() => setQuantity(Math.min(product.stock > 0 ? product.stock : 1, quantity + 1))}
+                onClick={() => setQuantity(Math.min(quantityLimit, quantity + 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={product.stock <= 0}
+                disabled={!available}
               >
                 +
               </button>
@@ -644,26 +651,26 @@ export default function ProductDetail() {
             <button
               onClick={handleBuyNow}
               style={styles.buyNowBtn as CSSProperties}
-              disabled={product.stock <= 0}
+              disabled={!available}
               onMouseEnter={(e) => {
-                if (product.stock <= 0) return;
+                if (!available) return;
                 const btn = e.currentTarget as HTMLElement;
                 btn.style.transform = "scale(1.02)";
                 btn.style.boxShadow = "0 12px 24px rgba(26,26,26,0.3)";
               }}
               onMouseLeave={(e) => {
-                if (product.stock <= 0) return;
+                if (!available) return;
                 const btn = e.currentTarget as HTMLElement;
                 btn.style.transform = "scale(1)";
                 btn.style.boxShadow = "0 4px 12px rgba(26,26,26,0.2)";
               }}
             >
-              {product.stock > 0 ? "Comprar agora" : "Indisponível"}
+              {available ? "Comprar agora" : "Indisponível"}
             </button>
             <button
               onClick={handleAddToCart}
               style={styles.addToCartBtn as CSSProperties}
-              disabled={product.stock <= 0}
+              disabled={!available}
             >
               Adicionar à sacola
             </button>
@@ -685,7 +692,7 @@ export default function ProductDetail() {
             </Link>
           </div>
 
-          {product.stock >= 0 && (
+          {product.salesMode !== "PREORDER" && product.stock >= 0 && (
             <div style={styles.stockInfo as CSSProperties}>
               <span style={{
                 color: product.stock > 5 ? "#86efac" : product.stock > 0 ? "#facc15" : "#f87171"

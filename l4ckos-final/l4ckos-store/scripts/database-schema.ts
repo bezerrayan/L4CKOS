@@ -4,7 +4,7 @@ import { openBackupConnection } from "../server/database/backupRestore";
 import { assertLocalSchemaTarget, verifyLocalConnection, SchemaError } from "../database/schema/safety";
 import { readStructuralSchema, structuralHash } from "../database/schema/fingerprint";
 import { baselineDatabase } from "../database/schema/baseline";
-import { bootstrapDatabase } from "../database/bootstrap/bootstrap";
+import { bootstrapCurrentDatabase } from "../database/bootstrap/bootstrap";
 import { migrateDatabase } from "../database/migrations/runner";
 async function main() {
   const [operation, acceptanceFlag, approvedFingerprint, ...extra] = process.argv.slice(2);
@@ -20,7 +20,7 @@ async function main() {
       await verifyLocalConnection(connection, target);
       console.log(JSON.stringify({ fingerprint: structuralHash(await readStructuralSchema(connection)) }));
     } else {
-      const result = operation === "bootstrap" ? await bootstrapDatabase(connection, context) : operation === "baseline" ? await baselineDatabase(connection, context) : await migrateDatabase(connection, context);
+      const result = operation === "bootstrap" ? await bootstrapCurrentDatabase(connection, context) : operation === "baseline" ? await baselineDatabase(connection, context) : await migrateDatabase(connection, context);
       console.log(JSON.stringify(result));
     }
   } finally { await connection.end(); }

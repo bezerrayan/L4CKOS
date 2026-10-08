@@ -1,3 +1,4 @@
+import { batchAcceptsSales } from "../../shared/preorder";
 ﻿import { z } from "zod";
 import { router, publicProcedure, adminProcedure, protectedProcedure } from "../_core/trpc";
 import {
@@ -57,7 +58,7 @@ export const productsRouter = router({
       }
 
       if (input.inStockOnly) {
-        products = products.filter((p) => Number(p.stock ?? 0) > 0);
+        products = products.filter((p) => p.salesMode === "PREORDER" ? batchAcceptsSales(p.productionBatch) : Number(p.stock ?? 0) > 0);
       }
 
       if (input.sortBy && input.sortBy !== "relevance") {

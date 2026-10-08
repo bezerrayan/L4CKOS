@@ -1,3 +1,4 @@
+import { shippingEstimate } from "../../shared/preorder";
 import { createConnection } from "mysql2/promise";
 import { checkout, checkoutItemSchema, CheckoutError, previewCheckoutItems, orderTotal, type CheckoutItem } from "../database/checkout";
 import { TRPCError } from "@trpc/server";
@@ -47,7 +48,7 @@ async function resolveOrderPricing(input: {
   couponCode?: string;
 }) {
   if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
-  const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z" });
+  const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
   const frozen = await (async () => {
     try { return await previewCheckoutItems(connection,input.items); }
     finally { await connection.end(); }
@@ -89,7 +90,7 @@ async function resolveOrderPricing(input: {
 
   return {
     itemsPreview: frozen.map(item => ({
-      name: item.productName,
+      name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase)}` : item.productName,
       quantity: item.quantity,
       price: formatCurrency(item.totalPrice / 100),
     })),
@@ -260,7 +261,7 @@ export const ordersRouter = router({
 
       try {
         if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
-        const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z" });
+        const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
         const prepared = await (async () => {
           try { return await checkout(connection, { ...input, userId: ctx.user.id,
             customer: { ...input.customer, email: input.customer.email || ctx.user.email || undefined },
@@ -271,7 +272,7 @@ export const ordersRouter = router({
         const payment = prepared.payment;
         if (prepared.replayed) return { orderId, ...payment };
         const pricing = { finalTotalCents: prepared.totalPrice, itemsPreview: prepared.items.map(item => ({
-          name: item.productName, quantity: item.quantity, price: formatCurrency(item.totalPrice / 100),
+          name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase)}` : item.productName, quantity: item.quantity, price: formatCurrency(item.totalPrice / 100),
         })) };
 
         const formattedTotal = formatCurrency(pricing.finalTotalCents / 100);

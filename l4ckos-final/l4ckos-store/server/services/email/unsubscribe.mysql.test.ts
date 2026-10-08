@@ -7,7 +7,7 @@ import { buildUnsubscribeToken } from "./emailSubscriptions.js";
 import emailRoutes from "../../routes/email.routes";
 import { getDb } from "../../db";
 
-const socketPath = "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
+const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const name = `l4ckos_test_unsubscribe_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 let root: Connection;
 let db: Connection;

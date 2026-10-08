@@ -12,7 +12,7 @@ import { bootstrapDatabase } from "../../database/bootstrap/bootstrap";
 import { migrateDatabase, loadLineage, type LineageManifest } from "../../database/migrations/runner";
 import { ledgerRows, type OperationContext } from "../../database/schema/governance";
 
-const socketPath = "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
+const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const url = (name: string) => `mysql://root@localhost/${name}`;
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 let root: Connection;
@@ -67,7 +67,7 @@ describe("local schema safety and reviewed artifacts", () => {
   });
   it("uses only an explicit new lineage and rejects legacy paths", async () => {
     const lineage = await loadLineage();
-    expect(lineage.entries).toEqual([]);
+    expect(lineage.entries.map(e=>e.name)).toEqual(["0021_preorder_production_batches"]);
     expect(lineage.reconciliations.map(e => e.name)).toEqual(["0020_reconcile_asaas_webhook_events"]);
     const contract = await readContract();
     const invalid = { version: 2 as const, migrations: [{ name: "test_escape", kind: "MIGRATION" as const, path: "drizzle/0001_tired_bruce_banner.sql", checksum: "a".repeat(64), description: "test", expectedPreFingerprint: contract.fingerprint, expectedPostFingerprint: contract.fingerprint }] };
@@ -167,10 +167,12 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 schema / ledge
   });
   it("default V2 ignores all legacy SQL/journal and never discovers test fixtures", async () => {
     expect((await readdir(`${ROOT}/drizzle`)).filter(n => /^00\d\d.*\.sql$/.test(n)).length).toBeGreaterThanOrEqual(20);
-    const result = await migrateDatabase(fresh1, context("l4ckos_test_workflow_fresh1"));
-    expect(result).toMatchObject({ status: "UP_TO_DATE", applied: [] });
-    expect(await historySize(fresh1)).toBe(1);
-    expect(structuralHash(await readStructuralSchema(fresh1))).toBe(expected.fingerprint);
+    const {c,ctx}=await database("forward_default");
+    await bootstrapDatabase(c,ctx);
+    const result = await migrateDatabase(c,ctx);
+    expect(result).toMatchObject({ status: "APPLIED", applied: ["0021_preorder_production_batches"] });
+    expect(await historySize(c)).toBe(2);
+    expect(structuralHash(await readStructuralSchema(c))).toBe((await loadLineage()).entries[0].expectedPostFingerprint);
   });
   it("runs a manifest-listed migration once, checks postcondition and rejects changed ledger checksum", async () => {
     const post = await postFingerprint();

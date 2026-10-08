@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:22.23.2-alpine AS build
 
 LABEL org.opencontainers.image.title="l4ckos-frontend"
 LABEL org.opencontainers.image.description="Frontend Vite servido por nginx da L4CKOS"

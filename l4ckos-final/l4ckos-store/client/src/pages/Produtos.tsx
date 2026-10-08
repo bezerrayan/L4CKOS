@@ -38,6 +38,8 @@ export default function Produtos() {
       (productsQuery.data ?? []).map(item => ({
         id: item.id,
         name: item.name,
+        salesMode: item.salesMode,
+        productionBatch: item.productionBatch,
         description: item.description || "",
         price: normalizePrice(Number(item.price)),
         image: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),

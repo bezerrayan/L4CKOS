@@ -1,11 +1,13 @@
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+import currentContract from "../../database/schema/contract-v2.json";
 import { randomUUID } from "node:crypto";
 import type { Connection } from "mysql2/promise";
 import { checkout, checkoutItemSchema, orderTotal, type CheckoutInput } from "./checkout";
 import { openBackupConnection, backupDatabase, restoreDatabase, assertLocalRestoreTarget } from "./backupRestore";
 import { bootstrapArtifacts } from "../../database/schema/artifacts";
 import { readStructuralSchema, structuralHash } from "../../database/schema/fingerprint";
-const socketPath="/tmp/l4ckos-reconciliation-socket/mysqld.sock";
+const socketPath=process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const url=(name:string)=>`mysql://root@localhost/${name}`;
 let root:Connection;const connections:Connection[]=[];const names:string[]=[];
 async function database(seed=true){
@@ -14,6 +16,7 @@ async function database(seed=true){
  await root.query(`CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);names.push(name);
  const c=await openBackupConnection(url(name),socketPath);connections.push(c);
  for(const s of (await bootstrapArtifacts()).statements)await c.query(s.sql);
+ for(const s of (await readFile(new URL("../../database/migrations/0021_preorder_production_batches.sql",import.meta.url),"utf8")).split(/^-- l4ckos:statement-breakpoint\s*$/m).map(s=>s.trim()).filter(Boolean)) await c.query(s);
  if(seed){
  await c.query("INSERT INTO users (id,openId,name) VALUES (1,'synthetic-checkout','Synthetic')");
  await c.query("INSERT INTO products (id,name,category,price,stock,imageUrl) VALUES (1,'Frozen A','fixture',8000,20,'/fixture-a.png'),(2,'Frozen B','fixture',3000,20,'/fixture-b.png')");
@@ -67,7 +70,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('real MySQL atomic checkout
   const artifact=await backupDatabase(c),destination=await database(false);
   await restoreDatabase(destination,artifact,{url:url(destination.config.database!),socketPath});
   const restored=await backupDatabase(destination);for(const name of Object.keys(artifact.tables))expect(restored.tables[name].checksum).toBe(artifact.tables[name].checksum);
-  expect(structuralHash(await readStructuralSchema(destination))).toBe('f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d');
+  expect(structuralHash(await readStructuralSchema(destination))).toBe(currentContract.fingerprint);
  });
  it.each([
   [{productId:999,quantity:1}], [{productId:2,variantId:999,quantity:1}], [{productId:1,variantId:1,quantity:1}],

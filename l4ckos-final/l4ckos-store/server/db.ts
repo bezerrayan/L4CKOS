@@ -1,3 +1,4 @@
+import type { BatchPreview } from "../shared/preorder";
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createHash, randomUUID } from "node:crypto";
@@ -9,6 +10,7 @@ import {
   cartItems,
   orders,
   orderItems,
+  productionBatches,
   favorites,
   productImages,
   productVariants,
@@ -544,12 +546,24 @@ function mergeProductRowsWithImages(productRows: Array<typeof products.$inferSel
   });
 }
 
+async function enrichProductsWithBatch<T extends {id:number; salesMode:string}>(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, rows: T[]) {
+  const assignments = extractExecutedRows(await db.execute(sql`SELECT b.id,b.name,b.status,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`));
+  const byProduct=new Map(assignments.map(row=>[Number(row.productId),{
+    id:Number(row.id),name:String(row.name),status:row.status,
+    salesOpenAt:row.salesOpenAt===null?null:new Date(Number(row.salesOpenAt)),
+    salesCloseAt:row.salesCloseAt===null?null:new Date(Number(row.salesCloseAt)),
+    estimatedShippingStart:row.estimatedShippingStart===null?null:new Date(Number(row.estimatedShippingStart)),
+    estimatedShippingEnd:row.estimatedShippingEnd===null?null:new Date(Number(row.estimatedShippingEnd)),
+  } as BatchPreview]));
+  return rows.map(row=>({...row,productionBatch:row.salesMode==='PREORDER' ? byProduct.get(row.id) ?? null : null}));
+}
+
 export async function getProducts() {
   const db = await getDb();
   if (!db) return [];
   const productRows = await selectProductRows(db);
   const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
-  return mergeProductRowsWithImages(productRows, imageRows);
+  return enrichProductsWithBatch(db, mergeProductRowsWithImages(productRows, imageRows));
 }
 
 export async function getProductById(id: number) {
@@ -580,7 +594,7 @@ export async function getProductByIdWithDetails(id: number) {
   const variantRows = await selectProductVariantRows(db, [id]);
 
   return {
-    ...productRows[0],
+    ...(await enrichProductsWithBatch(db,productRows))[0],
     imageUrl: productRows[0].imageUrl || imageRows[0]?.imageUrl || null,
     imageThumbnailUrl: productRows[0].imageThumbnailUrl || imageRows[0]?.imageThumbnailUrl || imageRows[0]?.imageUrl || productRows[0].imageUrl || null,
     imageDetailUrl: productRows[0].imageDetailUrl || imageRows[0]?.imageDetailUrl || imageRows[0]?.imageUrl || productRows[0].imageUrl || null,
@@ -1259,7 +1273,21 @@ export async function getOrderReservationItems(orderId: number) {
     .where(eq(stockReservations.orderId, orderId))
     .orderBy(desc(stockReservations.id));
 
-  return items;
+  const purchased = await db.select({
+    id: orderItems.id, orderId:orderItems.orderId, productId:orderItems.productId,
+    quantity:orderItems.quantity, productName:orderItems.productName, productImage:orderItems.imageUrl,
+    productPrice:orderItems.unitPrice, size:orderItems.size, color:orderItems.color,
+    salesModeAtPurchase:orderItems.salesModeAtPurchase, productionBatchId:orderItems.productionBatchId,
+    productionBatchNameAtPurchase:orderItems.productionBatchNameAtPurchase,
+    estimatedShippingStartAtPurchase:orderItems.estimatedShippingStartAtPurchase,
+    estimatedShippingEndAtPurchase:orderItems.estimatedShippingEndAtPurchase,
+    productionStatus:productionBatches.status,
+  }).from(orderItems).leftJoin(productionBatches,eq(productionBatches.id,orderItems.productionBatchId))
+    .where(eq(orderItems.orderId,orderId)).orderBy(orderItems.id);
+  const legacy=await db.select({id:stockReservations.id}).from(stockReservations)
+    .where(and(eq(stockReservations.orderId,orderId),sql`${stockReservations.orderItemId} IS NULL`));
+  const legacyIds=new Set(legacy.map(row=>row.id));
+  return [...purchased.map(item=>({...item,status:'purchased',expiresAt:null})),...items.filter(item=>legacyIds.has(item.id)).map(item=>({...item,salesModeAtPurchase:'STOCK' as const,productionBatchId:null,productionBatchNameAtPurchase:null,estimatedShippingStartAtPurchase:null,estimatedShippingEndAtPurchase:null,productionStatus:null,size:null,color:null}))];
 }
 
 export async function updateOrderShippingAddress(
@@ -1770,19 +1798,7 @@ export async function getOrdersByFilters(filters?: {
       if (isMissingDatabaseObjectError(error)) return [];
       throw error;
     });
-  const reservations = await db
-    .select({
-      orderId: stockReservations.orderId,
-      productId: stockReservations.productId,
-      quantity: stockReservations.quantity,
-      productName: products.name,
-    })
-    .from(stockReservations)
-    .leftJoin(products, eq(products.id, stockReservations.productId))
-    .catch(error => {
-      if (isMissingDatabaseObjectError(error)) return [];
-      throw error;
-    });
+  const reservations = (await Promise.all(baseOrders.map(order=>getOrderReservationItems(order.id)))).flat();
 
   const usersById = new Map(usersRows.map(user => [user.id, user]));
   const itemsByOrder = new Map<number, typeof reservations>();
@@ -1859,15 +1875,7 @@ export async function setOrderAdminData(
     trackingCode?: string | null;
   },
 ) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  return await db
-    .update(orders)
-    .set({
-      ...(data.status ? { status: data.status } : {}),
-      ...(data.trackingCode !== undefined ? { trackingCode: data.trackingCode } : {}),
-    })
-    .where(eq(orders.id, orderId));
+  return updateOrderAndReserveDeliveredEmailEvents(orderId,data);
 }
 
 export type OrderEmailEventType = "order_delivered_email" | "review_request_email";
@@ -1926,6 +1934,14 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
     const rows = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1).for("update");
     const previousOrder = rows[0];
     if (!previousOrder) throw new Error("Order not found");
+
+    if(data.status) {
+      const preorder=await tx.select({batchStatus:productionBatches.status}).from(orderItems)
+        .leftJoin(productionBatches,eq(orderItems.productionBatchId,productionBatches.id))
+        .where(and(eq(orderItems.orderId,orderId),eq(orderItems.salesModeAtPurchase,'PREORDER')));
+      if(preorder.length && previousOrder.status==='cancelled' && data.status!=='cancelled') throw new Error('Cancelled preorder cannot be reactivated');
+      if(['shipped','delivered'].includes(data.status) && preorder.some(i=>!['RECEIVED','SHIPPING','COMPLETED'].includes(String(i.batchStatus)))) throw new Error('Preorder production not received');
+    }
 
     await tx.update(orders).set({
       ...(data.status ? { status: data.status } : {}),
@@ -2409,7 +2425,7 @@ export async function getDashboardKpis() {
   const [lowStockRow] = await db
     .select({ total: sql<number>`count(*)` })
     .from(products)
-    .where(lte(products.stock, 5));
+    .where(and(eq(products.salesMode, "STOCK"), lte(products.stock, 5)));
 
   const [ordersTodayRow] = await db
     .select({ total: sql<number>`count(*)` })

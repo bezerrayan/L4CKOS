@@ -1,0 +1,20 @@
+CREATE TABLE `paymentEvents` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `provider` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'asaas',
+  `providerEventId` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `paymentId` int DEFAULT NULL,
+  `orderId` int DEFAULT NULL,
+  `providerPaymentId` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `eventType` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `processingStatus` enum('pending','processing','processed','ignored','failed','conflict') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `payload` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `errorCode` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `receivedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `processedAt` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `paymentEvents_providerEventId_unique` (`providerEventId`),
+  KEY `paymentEvents_paymentId_idx` (`paymentId`),
+  KEY `paymentEvents_orderId_idx` (`orderId`),
+  KEY `paymentEvents_processingStatus_idx` (`processingStatus`),
+  CONSTRAINT `payment_events_payment_fk` FOREIGN KEY (`paymentId`) REFERENCES `payments` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

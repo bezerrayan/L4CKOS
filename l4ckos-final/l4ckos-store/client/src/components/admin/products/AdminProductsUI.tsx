@@ -43,7 +43,8 @@ export function ProductsFilters({
   return <AdminFilterPills value={value} onChange={onChange} options={options} />;
 }
 
-export function ProductStockBadge({ stock }: { stock: number }) {
+export function ProductStockBadge({ stock, salesMode }: { stock: number; salesMode?: string }) {
+  if (salesMode === "PREORDER") return <AdminStatusBadge style={stockTones.ok}>Pré-venda</AdminStatusBadge>;
   if (stock <= 0) {
     return <AdminStatusBadge style={stockTones.empty}>Sem estoque</AdminStatusBadge>;
   }

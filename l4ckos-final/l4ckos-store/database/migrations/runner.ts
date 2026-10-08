@@ -77,7 +77,7 @@ export async function reconcileAuthorizedStaging(connection: Connection, capabil
   return withAuthorizedStagingLock(connection, capability, async () => {
     const plan = await verifyStagingCapability(connection, capability);
     const lineage = await loadLineage();
-    if (lineage.entries.length || lineage.reconciliations.length !== 1 || lineage.initialFingerprint !== PRE || lineage.contract.fingerprint !== POST || lineage.reconciliations[0].name !== MIGRATION.name || lineage.reconciliations[0].kind !== MIGRATION.kind || lineage.reconciliations[0].checksum !== MIGRATION.checksum) fail("STAGING_MIGRATION_SCOPE_MISMATCH");
+    if (lineage.reconciliations.length !== 1 || lineage.initialFingerprint !== PRE || lineage.contract.fingerprint !== POST || lineage.reconciliations[0].name !== MIGRATION.name || lineage.reconciliations[0].kind !== MIGRATION.kind || lineage.reconciliations[0].checksum !== MIGRATION.checksum) fail("STAGING_MIGRATION_SCOPE_MISMATCH");
     const current = structuralHash(await readStructuralSchema(connection));
     const internal = await readStructuralSchema(connection, true);
     if (current === POST) {
@@ -92,7 +92,9 @@ export async function reconcileAuthorizedStaging(connection: Connection, capabil
         canonical(Object.fromEntries(Object.entries(snapshot.tables).map(([t,v]) => [t,v.rowCount]))) !== canonical(plan.backup.rowCounts) ||
         canonical(Object.fromEntries(Object.entries(snapshot.tables).map(([t,v]) => [t,v.checksum]))) !== canonical(plan.backup.rowChecksums)) fail("STAGING_PREWRITE_DATA_CHANGED");
     await verifyStagingCapability(connection, capability);
-    return runMigrationBody(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: POST }, undefined, async () => {
+    const reviewed=JSON.parse((await readArtifact("database/migrations/manifest.json","database/migrations")).toString("utf8")) as LineageManifest;
+    // This legacy authorized operation remains restricted to 0020 even when forward migrations exist.
+    return runMigrationBody(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: POST }, {...reviewed,migrations:[]}, async () => {
       const [counts] = await connection.query<any[]>("SELECT COUNT(*) n FROM asaasWebhookEvents");
       if (Number(counts[0].n) !== 0) fail("STAGING_WEBHOOK_TABLE_NOT_EMPTY");
     });
@@ -100,7 +102,8 @@ export async function reconcileAuthorizedStaging(connection: Connection, capabil
 }
 async function runMigrationBody(connection: Connection, context: LedgerContext, manifest?: LineageManifest, validatePost?: () => Promise<void>) {
     const lineage = await loadLineage(manifest);
-    if (context.approvedFingerprint !== lineage.contract.fingerprint) throw new SchemaError("APPROVED_FINGERPRINT_REQUIRED");
+    const targetFingerprint=lineage.entries.at(-1)?.expectedPostFingerprint ?? lineage.contract.fingerprint;
+    if (![targetFingerprint,lineage.contract.fingerprint].includes(context.approvedFingerprint)) throw new SchemaError("APPROVED_FINGERPRINT_REQUIRED");
     const internal = await readStructuralSchema(connection, true);
     if (!internal.tables.length) {
       if (!lineage.initialFingerprint) throw new SchemaError("BASELINE_REQUIRED");

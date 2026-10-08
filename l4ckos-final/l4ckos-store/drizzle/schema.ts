@@ -1,4 +1,5 @@
-import { index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { sql } from "drizzle-orm";
+import { check, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -81,6 +82,19 @@ export const userPaymentMethods = mysqlTable("userPaymentMethods", {
 export type UserPaymentMethod = typeof userPaymentMethods.$inferSelect;
 export type InsertUserPaymentMethod = typeof userPaymentMethods.$inferInsert;
 
+// Production drops. Assignment is normalized: many products per batch, one current drop per product.
+export const productionBatches = mysqlTable("productionBatches", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  status: mysqlEnum("status", ["DRAFT", "OPEN", "CLOSED", "IN_PRODUCTION", "RECEIVED", "SHIPPING", "COMPLETED", "CANCELLED"]).default("DRAFT").notNull(),
+  salesOpenAt: timestamp("salesOpenAt"), salesCloseAt: timestamp("salesCloseAt"),
+  estimatedShippingStart: timestamp("estimatedShippingStart"), estimatedShippingEnd: timestamp("estimatedShippingEnd"),
+  productionStartedAt: timestamp("productionStartedAt"), receivedAt: timestamp("receivedAt"),
+  shippingStartedAt: timestamp("shippingStartedAt"), completedAt: timestamp("completedAt"),
+  minimumQuantity: int("minimumQuantity").default(0).notNull(), maximumQuantity: int("maximumQuantity"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(), updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("productionBatches_status").on(table.status), check("batch_quantities",sql`${table.minimumQuantity} >= 0 AND (${table.maximumQuantity} IS NULL OR (${table.maximumQuantity} > 0 AND ${table.maximumQuantity} >= ${table.minimumQuantity}))`)]);
+
 // Produtos
 export const products = mysqlTable("products", {
   id: int("id").autoincrement().primaryKey(),
@@ -97,12 +111,19 @@ export const products = mysqlTable("products", {
   imageDetailUrl: varchar("imageDetailUrl", { length: 500 }),
   imageBannerUrl: varchar("imageBannerUrl", { length: 500 }),
   stock: int("stock").default(0).notNull(),
+  salesMode: mysqlEnum("salesMode", ["STOCK", "PREORDER"]).default("STOCK").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type Product = typeof products.$inferSelect;
 export type InsertProduct = typeof products.$inferInsert;
+
+export const productionBatchProducts = mysqlTable("productionBatchProducts", {
+  id: int("id").autoincrement().primaryKey(),
+  productionBatchId: int("productionBatchId").notNull().references(() => productionBatches.id, { onDelete: "restrict", onUpdate: "restrict" }),
+  productId: int("productId").notNull().references(() => products.id, { onDelete: "restrict", onUpdate: "restrict" }),
+}, table => [uniqueIndex("batch_product_assignment").on(table.productId), index("batch_products").on(table.productionBatchId)]);
 
 // Variações de produtos (tamanho/cor etc.)
 export const productVariants = mysqlTable("productVariants", {
@@ -156,6 +177,11 @@ export const orderItems = mysqlTable("orderItems", {
   orderId: int("orderId").notNull(),
   productId: int("productId").notNull(),
   variantId: int("variantId"),
+  salesModeAtPurchase: mysqlEnum("salesModeAtPurchase", ["STOCK", "PREORDER"]).default("STOCK").notNull(),
+  productionBatchId: int("productionBatchId").references(() => productionBatches.id, { onDelete: "restrict", onUpdate: "restrict" }),
+  productionBatchNameAtPurchase: varchar("productionBatchNameAtPurchase", { length: 255 }),
+  estimatedShippingStartAtPurchase: timestamp("estimatedShippingStartAtPurchase"),
+  estimatedShippingEndAtPurchase: timestamp("estimatedShippingEndAtPurchase"),
   productName: varchar("productName", { length: 255 }),
   variantName: varchar("variantName", { length: 120 }),
   sku: varchar("sku", { length: 120 }),
@@ -166,7 +192,7 @@ export const orderItems = mysqlTable("orderItems", {
   unitPrice: int("unitPrice").notNull(), // snapshot unitário em centavos inteiros
   totalPrice: int("totalPrice"), // total histórico da linha; não recalcular
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, table => [index("orderItems_batch_order").on(table.productionBatchId,table.orderId)]);
 
 export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertOrderItem = typeof orderItems.$inferInsert;

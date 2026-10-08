@@ -1,0 +1,20 @@
+CREATE TABLE `productionBatches` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('DRAFT','OPEN','CLOSED','IN_PRODUCTION','RECEIVED','SHIPPING','COMPLETED','CANCELLED') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'DRAFT',
+  `salesOpenAt` timestamp NULL DEFAULT NULL,
+  `salesCloseAt` timestamp NULL DEFAULT NULL,
+  `estimatedShippingStart` timestamp NULL DEFAULT NULL,
+  `estimatedShippingEnd` timestamp NULL DEFAULT NULL,
+  `productionStartedAt` timestamp NULL DEFAULT NULL,
+  `receivedAt` timestamp NULL DEFAULT NULL,
+  `shippingStartedAt` timestamp NULL DEFAULT NULL,
+  `completedAt` timestamp NULL DEFAULT NULL,
+  `minimumQuantity` int NOT NULL DEFAULT '0',
+  `maximumQuantity` int DEFAULT NULL,
+  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `productionBatches_status` (`status`),
+  CONSTRAINT `batch_quantities` CHECK (((`minimumQuantity` >= 0) and ((`maximumQuantity` is null) or ((`maximumQuantity` > 0) and (`maximumQuantity` >= `minimumQuantity`)))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

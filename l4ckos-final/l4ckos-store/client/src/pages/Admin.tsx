@@ -1,3 +1,4 @@
+import { AdminBatches } from "../components/admin/batches/AdminBatches";
 ﻿import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
@@ -79,6 +80,7 @@ import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 import { AdminReviewsPanel } from "../components/admin/reviews/AdminReviewsPanel";
 
 type Section =
+  | "batches"
   | "overview"
   | "customers"
   | "products"
@@ -769,9 +771,9 @@ export default function Admin() {
     const rows = productsQuery.data ?? [];
     return {
       total: rows.length,
-      withStock: rows.filter(row => Number(row.stock ?? 0) > 0).length,
-      outOfStock: rows.filter(row => Number(row.stock ?? 0) <= 0).length,
-      lowStock: rows.filter(row => Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length,
+      withStock: rows.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) > 0).length,
+      outOfStock: rows.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) <= 0).length,
+      lowStock: rows.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length,
       withoutImage: rows.filter(row => !resolveAdminImageUrl(row.imageUrl)).length,
       withVariants: rows.filter(row => (row.variants?.length ?? 0) > 0).length,
     };
@@ -779,8 +781,8 @@ export default function Admin() {
   const productFilterOptions = useMemo(
     () => [
       { key: "all" as const, label: "Todos", count: searchedProducts.length },
-      { key: "lowStock" as const, label: "Estoque baixo", count: searchedProducts.filter(row => Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length },
-      { key: "outOfStock" as const, label: "Sem estoque", count: searchedProducts.filter(row => Number(row.stock ?? 0) <= 0).length },
+      { key: "lowStock" as const, label: "Estoque baixo", count: searchedProducts.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5).length },
+      { key: "outOfStock" as const, label: "Sem estoque", count: searchedProducts.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) <= 0).length },
       { key: "withoutImage" as const, label: "Sem imagem", count: searchedProducts.filter(row => !resolveAdminImageUrl(row.imageUrl)).length },
       { key: "withVariants" as const, label: "Com variantes", count: searchedProducts.filter(row => (row.variants?.length ?? 0) > 0).length },
     ],
@@ -788,8 +790,8 @@ export default function Admin() {
   );
   const products = useMemo(() => {
     return searchedProducts.filter(row => {
-      if (productFilter === "lowStock") return Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5;
-      if (productFilter === "outOfStock") return Number(row.stock ?? 0) <= 0;
+      if (productFilter === "lowStock") return row.salesMode !== "PREORDER" && Number(row.stock ?? 0) > 0 && Number(row.stock ?? 0) <= 5;
+      if (productFilter === "outOfStock") return row.salesMode !== "PREORDER" && Number(row.stock ?? 0) <= 0;
       if (productFilter === "withoutImage") return !resolveAdminImageUrl(row.imageUrl);
       if (productFilter === "withVariants") return (row.variants?.length ?? 0) > 0;
       return true;
@@ -988,8 +990,8 @@ export default function Admin() {
     const alerts: Array<{ title: string; description: string; tone: "danger" | "warning" | "neutral" }> = [];
     const pendingOrders = orders.filter(order => order.status === "pending").length;
     const paidOrders = orders.filter(order => order.status === "paid").length;
-    const emptyStockProducts = products.filter(product => Number(product.stock ?? 0) <= 0).length;
-    const lowStockTotal = products.filter(product => Number(product.stock ?? 0) > 0 && Number(product.stock ?? 0) <= 5).length;
+    const emptyStockProducts = products.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) <= 0).length;
+    const lowStockTotal = products.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) > 0 && Number(product.stock ?? 0) <= 5).length;
 
     if (pendingOrders > 0) {
       alerts.push({
@@ -1074,6 +1076,7 @@ export default function Admin() {
           { key: "overview", label: "KPIs" },
           { key: "customers", label: "Clientes" },
           { key: "products", label: "Produtos" },
+          { key: "batches", label: "Lotes / Pré-venda" },
           { key: "promos", label: "Promoções" },
           { key: "orders", label: "Pedidos" },
           { key: "reviews", label: "Avaliações" },
@@ -1929,7 +1932,7 @@ export default function Admin() {
                           </span>
                           <div style={styles.productMetaRow}>
                             <span style={styles.categoryTableBadge}>{getCategoryLabel(row.category)}</span>
-                            <ProductStockBadge stock={Number(quickProductEdits[row.id]?.stock ?? row.stock)} />
+                            <ProductStockBadge salesMode={row.salesMode} stock={Number(quickProductEdits[row.id]?.stock ?? row.stock)} />
                             <span style={styles.variantCountBadge}>{row.variants?.length ?? 0} var.</span>
                           </div>
                           <ProductOptionPreview label="Cores" values={optionColors} />
@@ -2102,6 +2105,8 @@ export default function Admin() {
           )}
         </AdminSurface>
       )}
+
+      {section === "batches" && <AdminBatches />}
 
       {section === "orders" && (
         <AdminSurface

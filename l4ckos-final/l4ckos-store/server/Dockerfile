@@ -1,4 +1,4 @@
-FROM node:22-alpine AS base
+FROM node:22.23.2-alpine AS base
 
 LABEL org.opencontainers.image.title="l4ckos-backend"
 LABEL org.opencontainers.image.description="Backend Node.js da L4CKOS"
@@ -23,7 +23,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build:server
 
-FROM node:22-alpine AS runtime
+FROM node:22.23.2-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production

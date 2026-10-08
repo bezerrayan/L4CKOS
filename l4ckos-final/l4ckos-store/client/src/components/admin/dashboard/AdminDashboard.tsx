@@ -23,6 +23,7 @@ type DashboardOrder = {
 };
 
 type DashboardProduct = {
+  salesMode?: string;
   id: number;
   name?: string | null;
   category?: string | null;
@@ -130,7 +131,7 @@ export function AdminDashboard({
   onViewProduct,
 }: AdminDashboardProps) {
   const recentOrders = orders.slice(0, 6);
-  const lowStockProducts = products.filter(row => Number(row.stock ?? 0) <= 5).slice(0, 6);
+  const lowStockProducts = products.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) <= 5).slice(0, 6);
   const totalRevenue = orders.reduce((sum, order) => sum + asMoney(order.totalPrice), 0);
   const averageTicket = orders.length > 0 ? totalRevenue / orders.length : 0;
   const paidOrders = orders.filter(order => order.status === "paid").length;

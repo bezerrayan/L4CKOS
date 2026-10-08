@@ -31,3 +31,15 @@ export async function bootstrapDatabase(connection: Connection, context: Operati
     return { status: "BOOTSTRAPPED", fingerprint: contract.fingerprint, tables: artifacts.statements.length };
   });
 }
+
+/** Fresh operational bootstrap preserves the original baseline then executes reviewed forward migrations. */
+export async function bootstrapCurrentDatabase(connection: Connection, context: OperationContext) {
+  const {readCurrentContract}=await import('../schema/artifacts');
+  const {migrateDatabase}=await import('../migrations/runner');
+  const current=await readCurrentContract(),baseline=await readContract();
+  if(context.approvedFingerprint!==current.fingerprint) throw new SchemaError('APPROVED_FINGERPRINT_REQUIRED');
+  await bootstrapDatabase(connection,{...context,approvedFingerprint:baseline.fingerprint});
+  const migrated=await migrateDatabase(connection,context);
+  if(migrated.fingerprint!==current.fingerprint) throw new SchemaError('CANONICAL_SCHEMA_DRIFT');
+  return {...migrated,status:'BOOTSTRAPPED_CURRENT',tables:current.schema.tables.length};
+}

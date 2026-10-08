@@ -1,3 +1,4 @@
+import { trpc } from "../lib/trpc";
 /**
  * CartContext - Gerencia o carrinho de compras global
  * Fornece: items, addToCart, removeFromCart, clearCart, updateQuantity, total
@@ -13,6 +14,7 @@ import { trackStoreEvent } from "../lib/analytics";
 
 type CartContextType = {
   cart: Cart;
+  isCatalogReady: boolean;
   addToCart: (product: Product, quantity: number, selectedOptions?: SelectedOptions) => void;
   removeFromCart: (productId: number, selectedOptions?: SelectedOptions) => void;
   updateQuantity: (productId: number, quantity: number, selectedOptions?: SelectedOptions) => void;
@@ -61,8 +63,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
     );
   };
 
+  const catalog=trpc.products.list.useQuery({limit:10000},{enabled:items.length>0,refetchOnWindowFocus:true});
+  const currentItems=items.map(item=>{
+    const live=catalog.data?.find(p=>p.id===item.product.id);
+    return live ? {...item,product:{...item.product,salesMode:live.salesMode,productionBatch:live.productionBatch}} : item;
+  });
   const cart: Cart = {
-    items,
+    items:currentItems,
     total: calculateCartTotal(items),
     itemCount: calculateItemCount(items),
   };
@@ -148,6 +155,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const value: CartContextType = {
     cart,
+    isCatalogReady: items.length===0 || catalog.isSuccess,
     addToCart,
     removeFromCart,
     updateQuantity,

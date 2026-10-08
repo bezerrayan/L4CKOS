@@ -19,7 +19,8 @@ export interface StagingAdapter {
 export const logEvent = (event: string, metadata: Record<string, unknown> = {}) => console.log(JSON.stringify({ event, ...metadata }));
 export async function verifyScope() {
   const lineage = await loadLineage(), entry = lineage.reconciliations[0];
-  if (lineage.entries.length || lineage.reconciliations.length !== 1 || lineage.initialFingerprint !== PRE || lineage.contract.fingerprint !== POST || entry.name !== MIGRATION.name || entry.kind !== MIGRATION.kind || entry.checksum !== MIGRATION.checksum || entry.expectedPostFingerprint !== POST) fail("STAGING_MIGRATION_SCOPE_MISMATCH");
+  // Forward migrations are never selected by this fixed 0020 executor.
+  if (lineage.reconciliations.length !== 1 || lineage.initialFingerprint !== PRE || lineage.contract.fingerprint !== POST || entry.name !== MIGRATION.name || entry.kind !== MIGRATION.kind || entry.checksum !== MIGRATION.checksum || entry.expectedPostFingerprint !== POST) fail("STAGING_MIGRATION_SCOPE_MISMATCH");
 }
 function assertInspection(i: Inspection) {
   if (i.fingerprint !== PRE || i.secondFingerprint !== PRE || i.webhook || i.internalTables.length) fail("STAGING_PREWRITE_DRIFT");

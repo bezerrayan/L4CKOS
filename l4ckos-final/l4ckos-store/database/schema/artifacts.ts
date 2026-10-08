@@ -40,3 +40,25 @@ export async function readRecognizedExistingContract() {
   if (contract.version !== 1 || structuralHash(contract.schema) !== contract.fingerprint) throw new SchemaError("INVALID_APPROVED_CONTRACT");
   return { ...contract, checksum: sha256(bytes) };
 }
+
+/** v1 remains the immutable BASELINE identity. v2 describes the expected result of 0021. */
+export async function readCurrentContract() {
+  const bytes=await readArtifact('database/schema/contract-v2.json','database/schema');
+  const contract=JSON.parse(bytes.toString('utf8')) as SchemaContract;
+  if(contract.version!==2 || structuralHash(contract.schema)!==contract.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  return {...contract,checksum:sha256(bytes)};
+}
+export async function currentBootstrapArtifacts() {
+  const bytes=await readArtifact('database/bootstrap/manifest-v2.json','database/bootstrap');
+  const manifest=JSON.parse(bytes.toString('utf8')) as {version:number;tables:{table:string;path:string;checksum:string}[]};
+  if(manifest.version!==2 || new Set(manifest.tables.map(t=>t.table)).size!==manifest.tables.length) throw new SchemaError('INVALID_BOOTSTRAP_MANIFEST');
+  const statements=[];
+  for(const entry of manifest.tables){
+    const content=await readArtifact(entry.path,'database/bootstrap/v2');
+    if(sha256(content)!==entry.checksum) throw new SchemaError('BOOTSTRAP_CHECKSUM_MISMATCH');
+    statements.push({table:entry.table,sql:content.toString('utf8')});
+  }
+  const contract=await readCurrentContract();
+  if(JSON.stringify(statements.map(s=>s.table).sort())!==JSON.stringify(contract.schema.tables.map(t=>t.name).sort())) throw new SchemaError('BOOTSTRAP_TABLE_MANIFEST_MISMATCH');
+  return {statements,checksum:sha256(bytes)};
+}

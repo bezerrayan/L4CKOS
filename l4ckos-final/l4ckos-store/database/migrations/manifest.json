@@ -1,6 +1,16 @@
 {
   "version": 2,
-  "migrations": [],
+  "migrations": [
+    {
+      "name": "0021_preorder_production_batches",
+      "kind": "MIGRATION",
+      "path": "database/migrations/0021_preorder_production_batches.sql",
+      "checksum": "46e7b40f6320659791ba90d3ebaf4c4cc031e84de36f5bdf8789ab1993d0233d",
+      "description": "Add explicit sales modes and production batches with historical order item context",
+      "expectedPreFingerprint": "f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d",
+      "expectedPostFingerprint": "6654c63ea42bbcb84af99e7640f24d3963581128a6a5387898b12b34cbbca93a"
+    }
+  ],
   "unbaselined": {
     "expectedInitialFingerprint": "09f647cdda027984d3425bef6ccee9cb3496a648602515b0930465b7b02d9efe",
     "reconciliations": [

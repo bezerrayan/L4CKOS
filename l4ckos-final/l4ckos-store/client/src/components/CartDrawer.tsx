@@ -1,3 +1,4 @@
+import { PreorderInfo, MixedShippingNotice } from "./PreorderInfo";
 import { useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
@@ -61,7 +62,8 @@ export default function CartDrawer() {
         ) : (
           <>
             <div className="l4-cart-drawer-items">
-              {cart.items.map(item => (
+              <MixedShippingNotice items={cart.items} />
+            {cart.items.map(item => (
                 <article key={`${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
                   <img
                     className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image"
@@ -72,6 +74,7 @@ export default function CartDrawer() {
                   <div className="l4-cart-drawer-item-info">
                     <div className="l4-cart-drawer-item-topline">
                       <h3>{item.product.name}</h3>
+                      <PreorderInfo product={item.product} compact />
                       <strong>{formatPrice(item.product.price * item.quantity)}</strong>
                     </div>
                     {formatSelectedOptions(item.selectedOptions) ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}

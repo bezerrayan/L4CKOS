@@ -1,3 +1,4 @@
+import { PreorderInfo, MixedShippingNotice } from "../components/PreorderInfo";
 ﻿/**
  * Pagina do checkout - envio e pagamento
  * 
@@ -120,7 +121,7 @@ function getOrderStatusLabel(status?: string | null) {
 export default function Pagamento() {
   // O resumo passa a ser compacto no mesmo ponto em que o layout deixa as duas colunas.
   const isMobile = useIsMobile(900);
-  const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
+  const { isCatalogReady, cart, removeFromCart, updateQuantity, clearCart } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
   const clearedOrdersRef = useRef<Set<number>>(new Set());
@@ -480,6 +481,7 @@ export default function Pagamento() {
 
   const handleCheckout = async () => {
     setPaymentError("");
+    if (!isCatalogReady) { setPaymentError("Aguarde a atualização dos itens do carrinho."); return; }
 
     if (paymentData || createAsaasCharge.isPending) {
       return;
@@ -584,12 +586,14 @@ export default function Pagamento() {
             </button>
             {summaryExpanded ? (
               <div id="checkout-order-summary" className="l4-checkout-summary-content">
+
                 <div className="l4-checkout-summary-items">
                   {cart.items.map(item => (
                     <article key={getItemKey(item.product.id, item.selectedOptions)} className="l4-checkout-summary-item">
                       <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={item.product.imageThumbnail || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
                       <div>
                         <div className="l4-checkout-item-title"><h3>{item.product.name}</h3><strong>{formatPrice(item.product.price * item.quantity)}</strong></div>
+                        <PreorderInfo product={item.product} compact />
                         {item.selectedOptions ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}
                         <div className="l4-checkout-item-controls">
                           <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
@@ -674,8 +678,11 @@ export default function Pagamento() {
             </section>
 
             <section className="l4-checkout-finish">
+              {cart.items.some(item=>item.product.salesMode === "PREORDER") && <p className="l4-preorder">Este item é produzido sob pré-venda e possui prazo de envio diferente de produtos à pronta entrega. Pagamento de 100% no checkout, sem segunda cobrança.</p>}
+                <MixedShippingNotice items={cart.items} />
+              {isMobile && cart.items.filter(item=>item.product.salesMode==='PREORDER').map(item=><PreorderInfo key={getItemKey(item.product.id,item.selectedOptions)} product={item.product} compact />)}
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)}>{createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
+              <button type="button" onClick={() => void handleCheckout()} disabled={!isCatalogReady || !hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)}>{createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
               {!hasCompleteCheckoutData && !paymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
               {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
@@ -749,6 +756,7 @@ export default function Pagamento() {
 
                       <div style={styles.mobileInfoCol}>
                         <h3 style={styles.mobileItemName}>{item.product.name}</h3>
+                      <PreorderInfo product={item.product} compact />
                         <p style={styles.mobileItemSub}>Produtos L4CKOS</p>
                         {item.selectedOptions && (
                           <p style={styles.mobileItemSub}>{formatSelectedOptions(item.selectedOptions)}</p>
@@ -823,6 +831,7 @@ export default function Pagamento() {
 
                       <div style={styles.itemDetails}>
                         <h3 style={styles.itemName}>{item.product.name}</h3>
+                      <PreorderInfo product={item.product} compact />
                         <p style={styles.itemCategory}>Produtos L4CKOS</p>
                         {item.selectedOptions && (
                           <p style={styles.itemOptions}>{formatSelectedOptions(item.selectedOptions)}</p>

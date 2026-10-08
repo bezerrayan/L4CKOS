@@ -1,3 +1,4 @@
+import { PreorderInfo, MixedShippingNotice } from "../components/PreorderInfo";
 ﻿import { Link } from "react-router-dom";
 import { ShoppingBag } from "lucide-react";
 import EmptyState from "../components/EmptyState";
@@ -55,6 +56,7 @@ export default function Carrinho() {
       ) : (
         <div style={{ ...styles.layout, gridTemplateColumns: isMobile ? "1fr" : "1fr 340px" }}>
           <div style={styles.itemsList}>
+            <MixedShippingNotice items={cart.items} />
             {cart.items.map((item) => (
               <div
                 key={getItemKey(item.product.id, item.selectedOptions)}
@@ -80,6 +82,7 @@ export default function Carrinho() {
 
                 <div style={styles.itemInfo}>
                   <h3 style={styles.itemName}>{item.product.name}</h3>
+                      <PreorderInfo product={item.product} compact />
                   {item.selectedOptions ? (
                     <p style={styles.itemMeta}>{formatSelectedOptions(item.selectedOptions)}</p>
                   ) : null}

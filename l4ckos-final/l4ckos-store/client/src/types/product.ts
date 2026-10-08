@@ -1,3 +1,4 @@
+import type { BatchPreview } from "../../../shared/preorder";
 export type Product = {
   id: number;
   name: string;
@@ -9,5 +10,7 @@ export type Product = {
   imageBanner?: string;
   category?: string;
   stock?: number;
+  salesMode?: "STOCK" | "PREORDER";
+  productionBatch?: BatchPreview | null;
   rating?: number;
 };

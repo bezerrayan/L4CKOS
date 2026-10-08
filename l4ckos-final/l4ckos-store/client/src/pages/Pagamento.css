@@ -67,15 +67,15 @@
 .l4-checkout-coupon svg, .l4-checkout-summary-toggle svg { transition: transform .16s ease; }
 
 .l4-checkout-finish { padding-top: 25px; border-top: 1px solid #292929; }
-.l4-checkout-finish > div { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 15px; }
-.l4-checkout-finish > div span { color: #c8c1ba; font-size: 14px; font-weight: 700; }
-.l4-checkout-finish > div strong { font-size: 25px; }
+.l4-checkout-finish > div:not(.l4-preorder) { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 15px; }
+.l4-checkout-finish > div:not(.l4-preorder) span { color: #c8c1ba; font-size: 14px; font-weight: 700; }
+.l4-checkout-finish > div:not(.l4-preorder) strong { font-size: 25px; }
 .l4-checkout-finish > button { width: 100%; min-height: 54px; border: 1px solid #ff4966; border-radius: 8px; color: #fff; background: #e8002a; font-size: 15px; font-weight: 900; transition: background-color .16s ease, border-color .16s ease, transform .12s ease; }
 .l4-checkout-finish > button:hover:not(:disabled) { background: #ff1741; }
 .l4-checkout-finish > button:active:not(:disabled) { transform: translateY(1px); }
 .l4-checkout-finish > button:focus-visible { outline: 2px solid #f0ede8; outline-offset: 3px; }
 .l4-checkout-finish > button:disabled { cursor: not-allowed; border-color: #6f2634; color: #e4b8c0; background: #671021; }
-.l4-checkout-finish > p { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 12px; color: #9ca3af; font-size: 11px; text-align: center; }
+.l4-checkout-finish > p:not(.l4-preorder) { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 12px; color: #9ca3af; font-size: 11px; text-align: center; }
 .l4-checkout-finish > p.l4-checkout-validation-note { margin-top: 10px; color: #c8c1ba; }
 .is-error { color: #f87171 !important; font-size: 12px; line-height: 1.45; }
 

@@ -1,3 +1,5 @@
+import { batchAcceptsSales, type BatchPreview } from "../../shared/preorder";
+import { CAPACITY_SQL } from "./productionBatches";
 import { createHash } from "node:crypto";
 import type { Connection, RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import { z } from "zod";
@@ -21,7 +23,7 @@ export type CheckoutInput = {
   customer: { name: string; cpfCnpj: string; email?: string };
 };
 type Charge = Awaited<ReturnType<typeof createAsaasChargeForOrder>>;
-type Snapshot = { productId: number; variantId: number | null; productName: string; variantName: string | null; sku: string | null; size: string | null; color: string | null; imageUrl: string | null; quantity: number; unitPrice: number; totalPrice: number };
+type Snapshot = { salesModeAtPurchase: "STOCK" | "PREORDER"; productionBatchId: number | null; productionBatchNameAtPurchase: string | null; estimatedShippingStartAtPurchase: string | null; estimatedShippingEndAtPurchase: string | null; productId: number; variantId: number | null; productName: string; variantName: string | null; sku: string | null; size: string | null; color: string | null; imageUrl: string | null; quantity: number; unitPrice: number; totalPrice: number };
 export class CheckoutError extends Error { constructor(public code: string) { super(code); } }
 function fail(code: string): never { throw new CheckoutError(code); }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -41,6 +43,21 @@ async function snapshots(c: Connection, items: CheckoutItem[], lock: boolean): P
   for (const id of [...products.keys()].sort((a,b) => a-b)) {
     for (const variant of await rows(c, `SELECT * FROM productVariants WHERE productId=? ORDER BY id${lock ? " FOR UPDATE" : ""}`, [id])) variants.set(variant.id, variant);
   }
+  const assignments = new Map<number, number>();
+  for (const product of products.values()) {
+    if (!['STOCK','PREORDER'].includes(product.salesMode)) fail("CHECKOUT_SALES_MODE_INVALID");
+    if (product.salesMode !== 'PREORDER') continue;
+    const assignment=(await rows(c,"SELECT productionBatchId FROM productionBatchProducts WHERE productId=?",[product.id]))[0];
+    if(!assignment) fail("CHECKOUT_BATCH_REQUIRED");
+    assignments.set(product.id,Number(assignment.productionBatchId));
+  }
+  const batches=new Map<number,RowDataPacket>();
+  for(const id of [...new Set(assignments.values())].sort((a,b)=>a-b)) {
+    const batch=(await rows(c,`SELECT * FROM productionBatches WHERE id=?${lock ? " FOR UPDATE" : ""}`,[id]))[0];
+    if(!batch || !batchAcceptsSales(batch as BatchPreview)) fail("CHECKOUT_BATCH_UNAVAILABLE");
+    batches.set(id,batch);
+  }
+  const iso=(value: Date | string | null): string | null => value ? new Date(utcTime(value)).toISOString() : null;
   return items.map(item => {
     const product = products.get(item.productId)!;
     let variant = item.variantId ? variants.get(item.variantId) : null;
@@ -57,7 +74,11 @@ async function snapshots(c: Connection, items: CheckoutItem[], lock: boolean): P
     };
     if (!variant && ((item.size && !options(product.optionSizes,DEFAULT_SIZES).includes(item.size)) || (item.color && !options(product.optionColors,DEFAULT_COLORS).includes(item.color)))) fail("CHECKOUT_OPTION_INVALID");
     const money = orderItemMoney(Number(variant?.price ?? product.price), item.quantity);
-    return { productId: product.id, variantId: variant?.id ?? null, productName: product.name, variantName: variant?.name ?? null,
+    const batch=batches.get(assignments.get(product.id) ?? 0);
+    return { salesModeAtPurchase: product.salesMode, productionBatchId: batch ? Number(batch.id) : null,
+      productionBatchNameAtPurchase: batch?.name ?? null,
+      estimatedShippingStartAtPurchase: iso(batch?.estimatedShippingStart ?? null),
+      estimatedShippingEndAtPurchase: iso(batch?.estimatedShippingEnd ?? null), productId: product.id, variantId: variant?.id ?? null, productName: product.name, variantName: variant?.name ?? null,
       sku: variant?.sku ?? null, size: variant?.size ?? item.size ?? null, color: variant?.color ?? item.color ?? null, imageUrl: product.imageUrl ?? null, ...money };
   });
 }
@@ -123,7 +144,14 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
     await c.beginTransaction(); transaction = true;
     const frozen = await snapshots(c,items,true);
     if (hash(frozen) !== hash(quoted)) fail("CHECKOUT_CATALOG_CHANGED");
-    await checkStock(c,frozen);
+    await checkStock(c,frozen.filter(item=>item.salesModeAtPurchase==='STOCK'));
+    for(const batchId of [...new Set(frozen.flatMap(i=>i.productionBatchId ? [i.productionBatchId] : []))].sort((a,b)=>a-b)) {
+      const batch=(await rows(c,"SELECT maximumQuantity FROM productionBatches WHERE id=?",[batchId]))[0];
+      if(batch.maximumQuantity===null) continue;
+      const claimed=Number((await rows(c,CAPACITY_SQL,[batchId]))[0].n);
+      const requested=frozen.filter(i=>i.productionBatchId===batchId).reduce((n,i)=>n+i.quantity,0);
+      if(claimed+requested>Number(batch.maximumQuantity)) fail("CHECKOUT_BATCH_CAPACITY_EXCEEDED");
+    }
     let coupon: RowDataPacket | undefined;
     if (input.couponCode) {
       coupon = (await rows(c,"SELECT * FROM coupons WHERE code=? FOR UPDATE",[input.couponCode.trim().toUpperCase()]))[0];
@@ -139,8 +167,8 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
     const address = input.shippingAddress;
     orderId = await insert(c,"INSERT INTO orders (userId,totalPrice,checkoutAttemptId,checkoutFingerprint,couponId,shippingRecipient,shippingZipCode,shippingStreet,shippingNumber,shippingComplement,shippingNeighborhood,shippingCity,shippingState) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",[input.userId,totalPrice,attempt,fingerprint,coupon?.id??null,address.recipient,address.zipCode,address.street,address.number,address.complement??null,address.neighborhood,address.city,address.state]);
     for (const item of frozen) {
-      const itemId = await insert(c,"INSERT INTO orderItems (orderId,productId,variantId,productName,variantName,sku,size,color,imageUrl,quantity,unitPrice,totalPrice) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",[orderId,item.productId,item.variantId,item.productName,item.variantName,item.sku,item.size,item.color,item.imageUrl,item.quantity,item.unitPrice,item.totalPrice]);
-      await insert(c,"INSERT INTO stockReservations (orderId,userId,productId,variantId,orderItemId,quantity,status,expiresAt) VALUES (?,?,?,?,?,?,'active',DATE_ADD(NOW(),INTERVAL 20 MINUTE))",[orderId,input.userId,item.productId,item.variantId,itemId,item.quantity]);
+      const itemId = await insert(c,"INSERT INTO orderItems (orderId,productId,variantId,productName,variantName,sku,size,color,imageUrl,quantity,unitPrice,totalPrice,salesModeAtPurchase,productionBatchId,productionBatchNameAtPurchase,estimatedShippingStartAtPurchase,estimatedShippingEndAtPurchase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",[orderId,item.productId,item.variantId,item.productName,item.variantName,item.sku,item.size,item.color,item.imageUrl,item.quantity,item.unitPrice,item.totalPrice,item.salesModeAtPurchase,item.productionBatchId,item.productionBatchNameAtPurchase,item.estimatedShippingStartAtPurchase ? new Date(item.estimatedShippingStartAtPurchase) : null,item.estimatedShippingEndAtPurchase ? new Date(item.estimatedShippingEndAtPurchase) : null]);
+      if(item.salesModeAtPurchase==='STOCK') await insert(c,"INSERT INTO stockReservations (orderId,userId,productId,variantId,orderItemId,quantity,status,expiresAt) VALUES (?,?,?,?,?,?,'active',DATE_ADD(NOW(),INTERVAL 20 MINUTE))",[orderId,input.userId,item.productId,item.variantId,itemId,item.quantity]);
     }
     await insert(c,"INSERT INTO auditLogs (actorUserId,actorType,action,entity,entityId,metadata) VALUES (?,'user','checkout.created','order',?,?)",[input.userId,String(orderId),JSON.stringify({subtotalCents:subtotal,shippingCents,discountCents,totalPrice})]);
     await c.commit(); transaction = false;

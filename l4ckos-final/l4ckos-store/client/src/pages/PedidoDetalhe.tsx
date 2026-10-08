@@ -1,3 +1,4 @@
+import { PurchasedPreorderInfo } from "../components/PreorderInfo";
 import { Link, useParams } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
@@ -230,6 +231,7 @@ export default function PedidoDetalhe() {
                 <div key={item.id} style={styles.itemRow}>
                   <div>
                   <p style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</p>
+                  <PurchasedPreorderInfo item={item} status={query.data.status} />
                   <p style={styles.itemMeta}>Quantidade: {item.quantity}</p>
                 </div>
                   <p style={styles.itemPrice}>{formatMoney(Number(item.productPrice || 0) * Number(item.quantity || 0))}</p>

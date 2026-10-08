@@ -8,7 +8,7 @@ import { REQUIRED_TABLES, TABLE_ORDER, classifyTable } from "./tableManifest";
 import { assertLocalRestoreTarget, backupDatabase, restoreDatabase, openBackupConnection, checksum, rowsChecksum, type BackupArtifact } from "./backupRestore";
 
 const enabled = process.env.L4CKOS_MYSQL_TEST === "1";
-const socketPath = "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
+const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const url = (name: string) => `mysql://root@localhost/${name}`;
 const target = (name: string) => ({ url: url(name), socketPath });
 const q = (name: string) => `\`${name.replace(/`/g, "``")}\``;
@@ -76,7 +76,7 @@ describe("backup safety and explicit manifest", () => {
     const names = Object.values(domain).filter(v => typeof v === "object" && v !== null).flatMap(v => {
       try { return [getTableName(v as any)]; } catch { return []; }
     }).filter(Boolean);
-    expect(names.length).toBe(23);
+    expect(names.length).toBe(25);
     for (const name of names) expect(classifyTable(name)).not.toBe("UNKNOWN");
     expect(REQUIRED_TABLES.length).toBe(25);
     expect(classifyTable("payments")).toBe("KNOWN");
@@ -147,12 +147,12 @@ describe.skipIf(!enabled)("MySQL 8.4 real isolated backup/restore", () => {
     await expect(restoreDatabase(c, artifact, target("l4ckos_test_inventory"))).rejects.toThrow("MISSING_REQUIRED_TABLE");
   });
   it("handles optional webhook absence and future presence explicitly", async () => {
-    expect(artifact.absentOptionalTables).toEqual(["asaasWebhookEvents"]);
+    expect(artifact.absentOptionalTables).toEqual(["productionBatches", "productionBatchProducts", "asaasWebhookEvents"]);
     const c = await database("l4ckos_test_optional_source", true);
     const d = await database("l4ckos_test_optional_destination", true);
     await c.query("INSERT INTO asaasWebhookEvents (eventId,eventType,payloadHash,status) VALUES ('synthetic-event','SYNTHETIC',REPEAT('a',64),'processed')");
     const b = await backupDatabase(c);
-    expect(b.absentOptionalTables).toEqual([]);
+    expect(b.absentOptionalTables).toEqual(["productionBatches", "productionBatchProducts"]);
     await restoreDatabase(d, b, target("l4ckos_test_optional_destination"));
     expect((await backupDatabase(d)).tables.asaasWebhookEvents.checksum).toBe(b.tables.asaasWebhookEvents.checksum);
     const e = await database("l4ckos_test_optional_mismatch");

@@ -6,7 +6,7 @@ import type * as mysqlOrm from "drizzle-orm/mysql2";
 import { openBackupConnection, backupDatabase, restoreDatabase } from "./backupRestore";
 import { bootstrapArtifacts, readContract, readRecognizedExistingContract, ROOT } from "../../database/schema/artifacts";
 import { quote, rows, sha256, readStructuralSchema, structuralHash } from "../../database/schema/fingerprint";
-import { loadLineage, migrateDatabase, type LineageManifest } from "../../database/migrations/runner";
+import { loadLineage, migrateDatabase as migrateForwardDatabase, type LineageManifest } from "../../database/migrations/runner";
 import { baselineDatabase } from "../../database/schema/baseline";
 import { bootstrapDatabase } from "../../database/bootstrap/bootstrap";
 import { ledgerRows, type OperationContext } from "../../database/schema/governance";
@@ -28,8 +28,12 @@ vi.mock("../../database/schema/artifacts", async importOriginal => {
     return bytes;
   } };
 });
+async function migrateDatabase(c: Connection, ctx: OperationContext, manifest?: LineageManifest) {
+  const historical=JSON.parse(await readFile(`${ROOT}/database/migrations/manifest.json`,"utf8")) as LineageManifest;
+  return migrateForwardDatabase(c,ctx,manifest??{...historical,migrations:[]});
+}
 const migrationName = "0020_reconcile_asaas_webhook_events";
-const socketPath = "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
+const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const applicationCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 let root: Connection;
 let success: Connection;
@@ -60,7 +64,7 @@ async function noGovernance(c: Connection) { expect((await readStructuralSchema(
 describe("0020 reviewed artifact", () => {
   it("is byte-identical to the canonical CREATE, with exact checksum and no business DML", async () => {
     const lineage = await loadLineage();
-    expect(lineage.entries).toEqual([]);
+    expect(lineage.entries.map(e=>e.name)).toEqual(["0021_preorder_production_batches"]);
     expect(lineage.reconciliations).toHaveLength(1);
     const entry = lineage.reconciliations[0];
     const sql = await readFile(`${ROOT}/${entry.path}`);
