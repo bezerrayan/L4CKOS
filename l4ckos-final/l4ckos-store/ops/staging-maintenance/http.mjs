@@ -15,6 +15,7 @@ export function handleMaintenanceRequest(req, res) {
     res.end(JSON.stringify({
       ok: true,
       service: "staging-maintenance",
+      maintenance: true,
     }));
     return;
   }

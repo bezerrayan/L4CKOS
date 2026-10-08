@@ -52,6 +52,7 @@ mkdirSync(path.join(app, "server"), { recursive: true });
 
 const files = [
   "package.json",
+  "package-lock.json",
   "guard.mjs",
   "http.mjs",
   "server.mjs",
@@ -80,7 +81,7 @@ for (const file of files) {
   }
 }
 
-console.error("[OK] Cinco arquivos empacotados");
+console.error("[OK] Seis arquivos empacotados");
 console.error("[OK] Checksums dos arquivos de aplicação verificados");
 console.error("[OK] Dockerfile no caminho esperado");
 console.log(root);

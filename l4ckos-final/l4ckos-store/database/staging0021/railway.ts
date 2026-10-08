@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { isExpectedStagingHealth } from "./healthContract";
 import { mkdtemp, readFile, chmod, mkdir } from "node:fs/promises";
 import { build } from "esbuild";
 import { homedir } from "node:os";
@@ -70,7 +71,7 @@ export class FixedPreorderRailwayAdapter implements StagingAdapter {
     try {
       const r = await fetch(`https://${TARGET.backendHost}/health`, { redirect: "error", signal: AbortSignal.timeout(10000) });
       const body = await r.json();
-      if (r.status !== 200 || body.ok !== true || body.service !== "backend") fail("STAGING_HEALTH_REQUIRED");
+      if (!isExpectedStagingHealth(r.status, body)) fail("STAGING_HEALTH_REQUIRED");
       return { status: 200 };
     } catch { return fail("STAGING_HEALTH_REQUIRED"); }
   }
