@@ -308,6 +308,128 @@ describe("security hardening contracts", () => {
     process.env.NODE_ENV = previousEnv;
   });
 
+  it("acknowledges inconsistent PAYMENT_DELETED without payment side effects", async () => {
+    const db = await import("./db");
+    const { asaasWebhookHandler } = await import("./controllers/paymentController");
+    const oldToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    const oldEnv = process.env.NODE_ENV;
+
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.ASAAS_WEBHOOK_TOKEN = "webhook-token-123";
+
+      vi.mocked(db.markOrderPaid).mockClear();
+      vi.mocked(db.getOrderById).mockClear();
+      vi.mocked(db.runAsaasWebhookOnce).mockClear();
+
+      const res = createMockResponse();
+      await asaasWebhookHandler({
+        ip: "127.0.0.1",
+        headers: { "asaas-access-token": "webhook-token-123" },
+        body: {
+          id: "evt-deleted-mismatch",
+          event: "PAYMENT_DELETED",
+          payment: {
+            id: "pay-old",
+            externalReference: "12",
+            status: "CONFIRMED",
+          },
+        },
+      } as any, res as any);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatchObject({
+        handled: false,
+        reason: "deleted_event_status_mismatch",
+      });
+      expect(db.markOrderPaid).not.toHaveBeenCalled();
+      expect(db.getOrderById).not.toHaveBeenCalled();
+      expect(db.runAsaasWebhookOnce).not.toHaveBeenCalled();
+    } finally {
+      if (oldToken === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
+      else process.env.ASAAS_WEBHOOK_TOKEN = oldToken;
+      if (oldEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = oldEnv;
+    }
+  });
+
+  it("rejects an invalid token for inconsistent PAYMENT_DELETED", async () => {
+    const db = await import("./db");
+    const { asaasWebhookHandler } = await import("./controllers/paymentController");
+    const oldToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    const oldEnv = process.env.NODE_ENV;
+
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.ASAAS_WEBHOOK_TOKEN = "webhook-token-123";
+
+      vi.mocked(db.markOrderPaid).mockClear();
+      vi.mocked(db.runAsaasWebhookOnce).mockClear();
+
+      const res = createMockResponse();
+      await asaasWebhookHandler({
+        ip: "127.0.0.1",
+        headers: { "asaas-access-token": "invalid-token" },
+        body: {
+          id: "evt-invalid-token-deleted",
+          event: "PAYMENT_DELETED",
+          payment: { id: "pay-old", status: "CONFIRMED" },
+        },
+      } as any, res as any);
+
+      expect(res.statusCode).toBe(401);
+      expect(db.markOrderPaid).not.toHaveBeenCalled();
+      expect(db.runAsaasWebhookOnce).not.toHaveBeenCalled();
+    } finally {
+      if (oldToken === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
+      else process.env.ASAAS_WEBHOOK_TOKEN = oldToken;
+      if (oldEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = oldEnv;
+    }
+  });
+
+  it("preserves HTTP 409 for other payment status mismatches", async () => {
+    const db = await import("./db");
+    const { asaasWebhookHandler } = await import("./controllers/paymentController");
+    const oldToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    const oldEnv = process.env.NODE_ENV;
+
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.ASAAS_WEBHOOK_TOKEN = "webhook-token-123";
+
+      vi.mocked(db.markOrderPaid).mockClear();
+      vi.mocked(db.runAsaasWebhookOnce).mockClear();
+
+      for (const [event, status] of [
+        ["PAYMENT_CONFIRMED", "PENDING"],
+        ["PAYMENT_REFUSED", "CONFIRMED"],
+      ]) {
+        const res = createMockResponse();
+
+        await asaasWebhookHandler({
+          ip: "127.0.0.1",
+          headers: { "asaas-access-token": "webhook-token-123" },
+          body: {
+            id: `evt-mismatch-${event}`,
+            event,
+            payment: { id: "pay-mismatch", status },
+          },
+        } as any, res as any);
+
+        expect(res.statusCode).toBe(409);
+      }
+
+      expect(db.markOrderPaid).not.toHaveBeenCalled();
+      expect(db.runAsaasWebhookOnce).not.toHaveBeenCalled();
+    } finally {
+      if (oldToken === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
+      else process.env.ASAAS_WEBHOOK_TOKEN = oldToken;
+      if (oldEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = oldEnv;
+    }
+  });
+
   it("does not repeat Asaas webhook side effects for duplicate events", async () => {
     const db = await import("./db");
     const { asaasWebhookHandler } = await import("./controllers/paymentController");

@@ -335,6 +335,20 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
     }
 
     if (FAILED_EVENTS.has(event) && paymentStatus && !FAILED_PAYMENT_STATUSES.has(paymentStatus)) {
+      if (event === "PAYMENT_DELETED") {
+        securityLog("warn", "payment.asaas_webhook_deleted_status_mismatch_ignored", {
+          requestIp: req.ip || "unknown",
+          event,
+          paymentId,
+          paymentStatus,
+        });
+        res.status(200).json({
+          handled: false,
+          reason: "deleted_event_status_mismatch",
+        });
+        return;
+      }
+
       sendControllerError(res, 409, "PAYMENT_STATUS_MISMATCH", "O status do pagamento não corresponde ao evento recebido.");
       return;
     }
