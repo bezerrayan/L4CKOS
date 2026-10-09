@@ -308,11 +308,17 @@ export const ordersRouter = router({
           orderId: orderId || undefined,
           reason: error instanceof CheckoutError ? error.code : "CHECKOUT_FAILED",
         });
+        const checkoutCode = error instanceof CheckoutError ? error.code : "";
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: error instanceof CheckoutError && error.code === "CHECKOUT_RECOVERY_REQUIRED"
-            ? "Tentativa registrada; o resultado da cobrança precisa ser verificado antes de tentar novamente."
-            : "Não foi possível gerar a cobrança agora.",
+          message:
+            checkoutCode === "CHECKOUT_BATCH_CAPACITY_EXCEEDED"
+            ? "A capacidade da pré-venda foi esgotada. Ajuste a sacola e tente novamente."
+            : checkoutCode === "CHECKOUT_BATCH_UNAVAILABLE"
+                ? "Esta pré-venda não está mais disponível. Ajuste a sacola e tente novamente."
+                : checkoutCode === "CHECKOUT_RECOVERY_REQUIRED"
+                  ? "Tentativa registrada; o resultado da cobrança precisa ser verificado antes de tentar novamente."
+                  : "Não foi possível gerar a cobrança agora.",
         });
       }
     }),

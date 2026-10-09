@@ -15,7 +15,15 @@ function formatSelectedOptions(options?: Record<string, string>) {
 
 export default function CartDrawer() {
   const navigate = useNavigate();
-  const { cart, updateQuantity, removeFromCart, isCartDrawerOpen, closeCartDrawer } = useCart();
+  const {
+    cart,
+    updateQuantity,
+    removeFromCart,
+    isCartDrawerOpen,
+    closeCartDrawer,
+    hasUnavailableItems,
+    isCatalogReady,
+  } = useCart();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -63,6 +71,12 @@ export default function CartDrawer() {
           <>
             <div className="l4-cart-drawer-items">
               <MixedShippingNotice items={cart.items} />
+            {hasUnavailableItems ? (
+                <p className="l4-preorder" role="alert">
+                  A disponibilidade da pré-venda mudou. Ajuste a sacola antes de
+                  finalizar.
+                </p>
+              ) : null}
             {cart.items.map(item => (
                 <article key={`${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
                   <img
@@ -97,7 +111,9 @@ export default function CartDrawer() {
             <footer className="l4-cart-drawer-footer">
               <div className="l4-cart-drawer-subtotal"><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p>Frete e prazo calculados no checkout.</p>
-              <button type="button" className="l4-cart-drawer-checkout" onClick={() => goTo("/checkout")}>Finalizar compra</button>
+              <button type="button" className="l4-cart-drawer-checkout" onClick={() => goTo("/checkout")}
+                disabled={hasUnavailableItems || !isCatalogReady}
+              >Finalizar compra</button>
               <Link to="/carrinho" onClick={closeCartDrawer}>Ver sacola completa</Link>
             </footer>
           </>

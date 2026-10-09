@@ -1,6 +1,7 @@
 import type { BatchPreview } from "../../../shared/preorder";
 import {
   batchAcceptsSales,
+  batchRemainingCapacity,
   shippingEstimate,
   compactShippingEstimate,
   purchasedSalesMode,
@@ -38,6 +39,9 @@ export function PreorderInfo({
       </p>
       {!batchAcceptsSales(batch) && (
         <p>Pré-venda indisponível para novas compras.</p>
+      )}
+    {batchAcceptsSales(batch) && batchRemainingCapacity(batch) === 0 && (
+        <p>Capacidade deste lote esgotada.</p>
       )}
     </div>
   );

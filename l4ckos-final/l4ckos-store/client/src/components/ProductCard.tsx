@@ -1,4 +1,4 @@
-import { batchAcceptsSales } from "../../../shared/preorder";
+import { batchAcceptsSales, batchHasCapacity } from "../../../shared/preorder";
 ﻿import { useNavigate, useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { Heart } from "lucide-react";
@@ -23,7 +23,13 @@ export default function ProductCard({ product }: Props) {
   }).format(product.price);
 
   const getBadgeInfo = () => {
-    if (product.salesMode === "PREORDER") return { text: "PRÉ-VENDA", color: "#191919" };
+    if (product.salesMode === "PREORDER")
+      return { text: !batchAcceptsSales(product.productionBatch)
+          ? "PRÉ-VENDA INDISPONÍVEL"
+          : !batchHasCapacity(product.productionBatch)
+            ? "PRÉ-VENDA ESGOTADA"
+            : "PRÉ-VENDA", color: "#191919",
+      };
     if ((product.stock ?? 0) <= 0) return { text: "INDISPONÍVEL", color: "#5b1d1d" };
     if ((product.stock ?? 0) <= 3) return { text: "ESTOQUE REDUZIDO", color: "#6b3e0b" };
     if (product.category?.trim()) return { text: getCategoryLabel(product.category).toUpperCase(), color: "#4a5568" };
@@ -31,7 +37,8 @@ export default function ProductCard({ product }: Props) {
   };
 
   const badge = getBadgeInfo();
-  const available = product.salesMode === "PREORDER" ? batchAcceptsSales(product.productionBatch) : (product.stock ?? 0) > 0;
+  const available = product.salesMode === "PREORDER" ? batchAcceptsSales(product.productionBatch) &&
+        batchHasCapacity(product.productionBatch) : (product.stock ?? 0) > 0;
 
   return (
     <div

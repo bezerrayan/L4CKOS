@@ -10,7 +10,13 @@ import camisaFallback from "../images/camisa.png";
 
 export default function Carrinho() {
   const isMobile = useIsMobile();
-  const { cart, removeFromCart, updateQuantity } = useCart();
+  const {
+    cart,
+    removeFromCart,
+    updateQuantity,
+    hasUnavailableItems,
+    isCatalogReady,
+  } = useCart();
 
   const getItemKey = (productId: number, selectedOptions?: Record<string, string>) => {
     if (!selectedOptions) return `${productId}`;
@@ -57,7 +63,13 @@ export default function Carrinho() {
         <div style={{ ...styles.layout, gridTemplateColumns: isMobile ? "1fr" : "1fr 340px" }}>
           <div style={styles.itemsList}>
             <MixedShippingNotice items={cart.items} />
-            {cart.items.map((item) => (
+            {hasUnavailableItems ? (
+              <p role="alert" style={{ color: "#fca5a5", margin: 0 }}>
+                A disponibilidade da pré-venda mudou. Ajuste ou remova os itens
+                antes de finalizar.
+              </p>
+            ) : null}
+          {cart.items.map((item) => (
               <div
                 key={getItemKey(item.product.id, item.selectedOptions)}
                 style={{
@@ -143,7 +155,21 @@ export default function Carrinho() {
               <div style={styles.summaryRow}><span>Itens</span><strong>{cart.itemCount}</strong></div>
               <div style={styles.summaryRow}><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p style={styles.summaryHint}>Frete, cupom e pagamento na próxima etapa.</p>
-              <Link to="/checkout" style={styles.checkoutButton}>Finalizar compra</Link>
+              {hasUnavailableItems || !isCatalogReady ? (
+                <button
+                  type="button"
+                  disabled
+                  style={{ ...styles.checkoutButton, border: 0, opacity: 0.55 }}
+                >
+                  {isCatalogReady
+                    ? "Pré-venda indisponível"
+                    : "Atualizando disponibilidade…"}
+                </button>
+              ) : (
+                <Link to="/checkout" style={styles.checkoutButton}>
+                  Finalizar compra
+                </Link>
+              )}
               <Link to="/produtos" style={styles.continueLink}>Continuar comprando</Link>
             </aside>
           ) : null}
@@ -156,7 +182,25 @@ export default function Carrinho() {
             <p style={styles.mobileCheckoutLabel}>Subtotal</p>
             <p style={styles.mobileCheckoutValue}>{formatPrice(cart.total)}</p>
           </div>
-          <Link to="/checkout" style={styles.mobileCheckoutButton}>Finalizar compra</Link>
+          {hasUnavailableItems || !isCatalogReady ? (
+            <button
+              type="button"
+              disabled
+              style={{
+                ...styles.mobileCheckoutButton,
+                border: 0,
+                opacity: 0.55,
+              }}
+            >
+              {isCatalogReady
+                ? "Pré-venda indisponível"
+                : "Atualizando disponibilidade…"}
+            </button>
+          ) : (
+            <Link to="/checkout" style={styles.mobileCheckoutButton}>
+              Finalizar compra
+            </Link>
+          )}
         </div>
       ) : null}
     </div>

@@ -1,9 +1,7 @@
-import { PreorderInfo, CheckoutPreorderNotice } from "../components/PreorderInfo";
-﻿/**
+import { PreorderInfo, CheckoutPreorderNotice } from "../components/PreorderInfo"; /**
  * Pagina do checkout - envio e pagamento
- * 
+ *
  */
-
 import { Link } from "react-router-dom";
 import { useCart } from "../contexts/CartContext";
 import { formatPrice } from "../lib/utils";
@@ -121,7 +119,15 @@ function getOrderStatusLabel(status?: string | null) {
 export default function Pagamento() {
   // O resumo passa a ser compacto no mesmo ponto em que o layout deixa as duas colunas.
   const isMobile = useIsMobile(900);
-  const { isCatalogReady, cart, removeFromCart, updateQuantity, clearCart } = useCart();
+  const {
+    isCatalogReady,
+    cart,
+    removeFromCart,
+    updateQuantity,
+    clearCart,
+    hasUnavailableItems,
+    revalidateCart,
+  } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
   const clearedOrdersRef = useRef<Set<number>>(new Set());
@@ -482,8 +488,18 @@ export default function Pagamento() {
   const handleCheckout = async () => {
     setPaymentError("");
     if (!isCatalogReady) { setPaymentError("Aguarde a atualização dos itens do carrinho."); return; }
+    if (hasUnavailableItems) {
+      setPaymentError(
+        "A capacidade da pré-venda foi alterada. Ajuste a sacola antes de finalizar."
+      );
+      return;
+    }
 
     if (paymentData || createAsaasCharge.isPending) {
+      return;
+    }
+    if (!(await revalidateCart())) {
+      setPaymentError("A disponibilidade mudou ou não pôde ser atualizada. Revise a sacola antes de finalizar.");
       return;
     }
 
@@ -628,19 +644,35 @@ export default function Pagamento() {
 
             <section className="l4-checkout-section" aria-labelledby="checkout-shipping-title">
               <div className="l4-checkout-section-heading"><span>02</span><div><h2 id="checkout-shipping-title">Entrega</h2><p>Calcule o frete e preencha o endereço.</p></div></div>
-              {savedAddresses.length > 0 ? <div className="l4-checkout-saved-address">
-                <label>Endereço salvo
-                  <select value={selectedSavedAddressId} onChange={event => {
-                    const address = savedAddresses.find(item => item.id === event.target.value);
-                    setSelectedSavedAddressId(event.target.value);
-                    if (address) applySavedAddress(address);
-                  }}>
-                    <option value="">Preencher outro endereço</option>
-                    {savedAddresses.map(address => <option key={address.id} value={address.id}>{address.label}{address.isDefault ? " (principal)" : ""} — {address.street}, {address.number}</option>)}
-                  </select>
-                </label>
-                <p>Você pode trocar o endereço salvo ou editar os campos abaixo.</p>
-              </div> : null}
+              {savedAddresses.length > 0 ? (
+                <div className="l4-checkout-saved-address">
+                  <label>
+                    Endereço salvo
+                    <select value={selectedSavedAddressId}
+                      onChange={event => {
+                        const address = savedAddresses.find(
+                          item => item.id === event.target.value
+                        );
+                        setSelectedSavedAddressId(event.target.value);
+                        if (address) applySavedAddress(address);
+                      }}
+                    >
+                      <option value="">Preencher outro endereço</option>
+                      {savedAddresses.map(address => (
+                        <option key={address.id} value={address.id}>
+                          {address.label}
+                          {address.isDefault ? " (principal)" : ""} —{" "}
+                          {address.street}, {address.number}
+                        </option>
+                      ))}
+                    </select>
+                    </label>
+                <p>
+                    Você pode trocar o endereço salvo ou editar os campos
+                    abaixo.
+                  </p>
+                </div>
+              ) : null}
               <div className="l4-checkout-cep-row">
                 <label>CEP<input value={formatCep(cep)} onChange={event => setCep(sanitizeCep(event.target.value))} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" aria-describedby="checkout-shipping-status" /></label>
                 <button type="button" onClick={handleLookupCep} disabled={sanitizeCep(cep).length !== 8 || addressLoading || shippingLoading}>{addressLoading ? "Consultando..." : shippingLoading ? "Calculando..." : "Consultar CEP"}</button>
@@ -654,11 +686,32 @@ export default function Pagamento() {
                 <label>Cidade<input value={addressCity} onChange={event => setAddressCity(event.target.value)} autoComplete="address-level2" /></label>
                 <label>UF<input value={addressState} onChange={event => setAddressState(event.target.value.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} /></label>
               </div>
-              {shippingOptions.length > 0 ? <div className="l4-checkout-shipping-options" aria-busy={shippingLoading}>
-                {shippingOptions.map(option => <button key={option.id} type="button" className={selectedShippingId === option.id ? "is-selected" : ""} onClick={() => setSelectedShippingId(option.id)}>
-                  <span><strong>{option.label}</strong><small>{option.description} · {option.minDays} a {option.maxDays} dias úteis</small></span><strong>{formatPrice(option.price)}</strong>
-                </button>)}
-              </div> : null}
+              {shippingOptions.length > 0 ? (
+                <div
+                  className="l4-checkout-shipping-options"
+                  aria-busy={shippingLoading}
+                >
+                  {shippingOptions.map(option => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={
+                        selectedShippingId === option.id ? "is-selected" : ""
+                      }
+                      onClick={() => setSelectedShippingId(option.id)}
+                    >
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>
+                          {option.description} · {option.minDays} a{" "}
+                          {option.maxDays} dias úteis
+                        </small>
+                      </span>
+                      <strong>{formatPrice(option.price)}</strong>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {selectedShipping ? <p className="l4-checkout-delivery-note">Previsão: <strong>{estimatedDateRange}</strong>, após a aprovação do pagamento.</p> : null}
             </section>
 
@@ -681,7 +734,19 @@ export default function Pagamento() {
               <CheckoutPreorderNotice items={cart.items} />
               {isMobile && cart.items.filter(item=>item.product.salesMode==='PREORDER').map(item=><PreorderInfo key={getItemKey(item.product.id,item.selectedOptions)} product={item.product} compact />)}
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={!isCatalogReady || !hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)}>{createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
+              <button type="button" onClick={() => void handleCheckout()} disabled={
+                  !isCatalogReady ||
+                  hasUnavailableItems || !hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)
+                }
+              >
+                {createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}
+              </button>
+              {hasUnavailableItems ? (
+                <p className="is-error" role="alert">
+                  A pré-venda na sua sacola não tem mais capacidade. Ajuste as
+                  quantidades.
+                </p>
+              ) : null}
               {!hasCompleteCheckoutData && !paymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
               {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
@@ -981,7 +1046,8 @@ export default function Pagamento() {
                         </div>
                         <p style={styles.shippingOptionText}>{option.description}</p>
                         <p style={styles.shippingOptionText}>
-                          Prazo estimado: {option.minDays} a {option.maxDays} dias úteis
+                          Prazo estimado: {option.minDays} a {option.maxDays}{" "}
+                          dias úteis
                         </p>
                       </button>
                     ))}
@@ -990,7 +1056,8 @@ export default function Pagamento() {
 
                 {selectedShipping ? (
                   <p style={styles.shippingEstimate}>
-                    Previsão estimada de entrega: <strong>{estimatedDateRange}</strong>, contada após a aprovação do pagamento.
+                    Previsão estimada de entrega:{" "}
+                    <strong>{estimatedDateRange}</strong>, contada após a aprovação do pagamento.
                   </p>
                 ) : null}
               </div>
@@ -1146,7 +1213,8 @@ export default function Pagamento() {
                     Cobrança {paymentData.method} gerada para o pedido #{paymentData.orderId}
                   </p>
                   <p style={styles.shippingOptionText}>
-                    Status atual do pedido: <strong>{getOrderStatusLabel(paymentStatus)}</strong>
+                    Status atual do pedido:{" "}
+                    <strong>{getOrderStatusLabel(paymentStatus)}</strong>
                   </p>
 
                   {isPaymentConfirmed ? (

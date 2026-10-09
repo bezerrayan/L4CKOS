@@ -97,7 +97,7 @@ export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { addToCart, closeCartDrawer } = useCart();
+  const { addToCart, closeCartDrawer, preorderAdditionalLimit } = useCart();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const { showToast } = useToast();
 
@@ -114,6 +114,9 @@ export default function ProductDetail() {
   const productId = id ? parseInt(id) : null;
   const productQuery = trpc.products.getById.useQuery(productId ?? 0, {
     enabled: Boolean(productId),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: 15000,
   });
   const product = productQuery.data
     ? {
@@ -239,8 +242,15 @@ export default function ProductDetail() {
     hex: COLOR_HEX_BY_NAME[name.toLowerCase()] ?? "#d1d5db",
   }));
   const sizeOptions = product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES;
-  const available = product.salesMode === "PREORDER" ? batchAcceptsSales(product.productionBatch) : product.stock > 0;
-  const quantityLimit = product.salesMode === "PREORDER" ? 99 : Math.max(1, product.stock);
+  const preorderLimit = preorderAdditionalLimit(product);
+  const available =
+    product.salesMode === "PREORDER"
+      ? batchAcceptsSales(product.productionBatch) && preorderLimit !== 0
+      : product.stock > 0;
+  const quantityLimit =
+    product.salesMode === "PREORDER"
+      ? Math.max(1, Math.min(preorderLimit ?? 99, 99))
+      : Math.max(1, product.stock);
   const canAddToCart = Boolean(selectedColor && selectedSize && available);
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
@@ -268,10 +278,18 @@ export default function ProductDetail() {
       return;
     }
 
-    addToCart(product, quantity, {
-      cor: selectedColor,
-      tamanho: selectedSize,
-    });
+    if (
+      !addToCart(product, quantity, {
+        cor: selectedColor,
+        tamanho: selectedSize,
+      })
+    ) {
+      showToast({
+        message: "A disponibilidade da pré-venda mudou. Ajuste a quantidade.",
+        duration: 3500,
+      });
+      return;
+    }
     setShowSelectionWarning(false);
     setQuantity(1);
   };
@@ -288,7 +306,18 @@ export default function ProductDetail() {
       return;
     }
 
-    addToCart(product, quantity, { cor: selectedColor, tamanho: selectedSize });
+    if (
+      !addToCart(product, quantity, {
+        cor: selectedColor,
+        tamanho: selectedSize,
+      })
+    ) {
+      showToast({
+        message: "A disponibilidade da pré-venda mudou. Ajuste a quantidade.",
+        duration: 3500,
+      });
+      return;
+    }
     setShowSelectionWarning(false);
     closeCartDrawer();
     navigate("/checkout");
@@ -560,7 +589,8 @@ export default function ProductDetail() {
               ))}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
-              Selecionado: <strong style={selectedColor ? styles.selectedValue : undefined}>{selectedColor || "Nenhuma cor"}</strong>
+              Selecionado:{" "}
+              <strong style={selectedColor ? styles.selectedValue : undefined}>{selectedColor || "Nenhuma cor"}</strong>
             </p>
           </div>
 
@@ -595,7 +625,8 @@ export default function ProductDetail() {
               ))}
             </div>
             <p style={styles.selectedLabel as CSSProperties}>
-              Selecionado: <strong style={selectedSize ? styles.selectedValue : undefined}>{selectedSize || "Nenhum tamanho"}</strong>
+              Selecionado:{" "}
+              <strong style={selectedSize ? styles.selectedValue : undefined}>{selectedSize || "Nenhum tamanho"}</strong>
             </p>
           </div>
 
@@ -629,6 +660,13 @@ export default function ProductDetail() {
                 +
               </button>
             </div>
+          {product.salesMode === "PREORDER" && preorderLimit !== null ? (
+              <p style={styles.helperText}>
+                {preorderLimit > 0
+                  ? `${preorderLimit} peça${preorderLimit === 1 ? "" : "s"} disponível${preorderLimit === 1 ? "" : "is"} neste lote.`
+                  : "Lote esgotado."}
+              </p>
+            ) : null}
           </div>
 
           <div

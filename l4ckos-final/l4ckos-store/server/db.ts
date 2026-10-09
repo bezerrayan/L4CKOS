@@ -546,15 +546,35 @@ function mergeProductRowsWithImages(productRows: Array<typeof products.$inferSel
   });
 }
 
-async function enrichProductsWithBatch<T extends {id:number; salesMode:string}>(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, rows: T[]) {
-  const assignments = extractExecutedRows(await db.execute(sql`SELECT b.id,b.name,b.status,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`));
-  const byProduct=new Map(assignments.map(row=>[Number(row.productId),{
+async function enrichProductsWithBatch<T extends {id:number; salesMode:string},
+>(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, rows: T[]) {
+  const assignments = extractExecutedRows(
+    await db.execute(sql`SELECT b.id,b.name,b.status,b.maximumQuantity,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId,COALESCE((SELECT SUM(oi.quantity) FROM orderItems oi JOIN orders o ON o.id=oi.orderId WHERE oi.productionBatchId=b.id AND oi.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'),0) claimedQuantity FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`
+    )
+  );
+  const byProduct = new Map(assignments.map(row=> [Number(row.productId),
+      {
     id:Number(row.id),name:String(row.name),status:row.status,
     salesOpenAt:row.salesOpenAt===null?null:new Date(Number(row.salesOpenAt)),
     salesCloseAt:row.salesCloseAt===null?null:new Date(Number(row.salesCloseAt)),
     estimatedShippingStart:row.estimatedShippingStart===null?null:new Date(Number(row.estimatedShippingStart)),
     estimatedShippingEnd:row.estimatedShippingEnd===null?null:new Date(Number(row.estimatedShippingEnd)),
-  } as BatchPreview]));
+        capacity: (() => {
+          const maximumQuantity =
+              row.maximumQuantity === null ? null : Number(row.maximumQuantity),
+            claimedQuantity = Number(row.claimedQuantity);
+          return {
+            maximumQuantity,
+            claimedQuantity,
+            remainingQuantity:
+              maximumQuantity === null
+                ? null
+                : Math.max(0, maximumQuantity - claimedQuantity),
+          };
+        })(),
+      } as BatchPreview,
+    ])
+  );
   return rows.map(row=>({...row,productionBatch:row.salesMode==='PREORDER' ? byProduct.get(row.id) ?? null : null}));
 }
 

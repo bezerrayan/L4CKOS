@@ -813,7 +813,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       expect(a.charge).not.toHaveBeenCalled();
     });
     it("normal payment confirmation, mixed stock consumption, ownership and shipping readiness through ORM", async () => {
-      const { c, id } = await fixture(),
+      const { c, id } = await fixture(2),
         r = await checkout(
           c,
           input([
@@ -831,6 +831,16 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       const { ordersRouter } = await import("../routers/orders");
       try {
         expect((await productionSummary(c, id)).confirmedQuantity).toBe(0);
+        expect(
+          (await db.getProductByIdWithDetails(1))?.productionBatch
+        ).toMatchObject({
+          status: "OPEN",
+          capacity: {
+            maximumQuantity: 2,
+            claimedQuantity: 2,
+            remainingQuantity: 0,
+          },
+        });
         expect(
           (
             await db.markOrderPaid(r.orderId, {
@@ -880,6 +890,21 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         const storefront = (await db.getProducts()).find(p => p.id === 1)!;
         expect(storefront.salesMode).toBe("PREORDER");
         expect(batchAcceptsSales(storefront.productionBatch)).toBe(true);
+        expect(storefront.productionBatch?.capacity).toEqual({
+          maximumQuantity: 2,
+          claimedQuantity: 2,
+          remainingQuantity: 0,
+        });
+        expect(
+          (await db.getProducts()).find(p => p.id === 2)?.productionBatch
+            ?.capacity
+        ).toEqual(storefront.productionBatch?.capacity);
+        const blocked = adapters();
+        await expect(
+          checkout(c, input([{ productId: 1, quantity: 4 }]), blocked)
+        ).rejects.toThrow("CHECKOUT_BATCH_CAPACITY_EXCEEDED");
+        expect(blocked.charge).not.toHaveBeenCalled();
+        expect((await query(c, "SELECT COUNT(*) n FROM orders"))[0].n).toBe(1);
         expect(
           (await db.getProductByIdWithDetails(1))?.productionBatch?.name
         ).toBe("DROP 01");

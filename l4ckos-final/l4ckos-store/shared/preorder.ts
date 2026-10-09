@@ -17,6 +17,12 @@ export type BatchPreview = {
   salesCloseAt: Date | string | null;
   estimatedShippingStart: Date | string | null;
   estimatedShippingEnd: Date | string | null;
+  /** Informative snapshot; checkout recalculates this under a transaction lock. */
+  capacity?: {
+    maximumQuantity: number | null;
+    claimedQuantity: number;
+    remainingQuantity: number | null;
+  };
 };
 export const BATCH_TRANSITIONS: Record<BatchStatus, readonly BatchStatus[]> = {
   DRAFT: ["OPEN", "CANCELLED"],
@@ -45,6 +51,13 @@ export function batchAcceptsSales(
       (!batch.salesOpenAt || utcMillis(batch.salesOpenAt) <= now) &&
       (!batch.salesCloseAt || utcMillis(batch.salesCloseAt) > now)
   );
+}
+export function batchRemainingCapacity(batch: BatchPreview | null | undefined) {
+  return batch?.capacity?.remainingQuantity ?? null;
+}
+export function batchHasCapacity(batch: BatchPreview | null | undefined) {
+  const remaining = batchRemainingCapacity(batch);
+  return remaining === null || remaining > 0;
 }
 export function productionLabel(status: string | null | undefined) {
   switch (status) {

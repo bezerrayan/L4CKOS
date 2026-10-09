@@ -1,4 +1,5 @@
 import type { Product } from "../types/product";
+import { batchAcceptsSales, batchHasCapacity } from "../../../shared/preorder";
 ﻿import { Link, useNavigate } from "react-router-dom";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { trpc } from "../lib/trpc";
@@ -59,7 +60,7 @@ function resolveProductImageUrl(raw: string | null | undefined) {
 
 export default function Home() {
   const navigate = useNavigate();
-  const productsQuery = trpc.products.list.useQuery({ limit: 12 });
+  const productsQuery = trpc.products.list.useQuery({ limit: 12 }, { staleTime: 0, refetchOnMount: "always", refetchInterval: 15000 });
   const [email, setEmail] = useState("");
   const [newsletterStatus, setNewsletterStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [newsletterMessage, setNewsletterMessage] = useState("");
@@ -221,7 +222,7 @@ export default function Home() {
                 )}
                 {product.salesMode === "PREORDER" && (
                   <span className="l4-home-preorder-badge">
-                    PRÉ-VENDA
+                    {!batchAcceptsSales(product.productionBatch) ? "PRÉ-VENDA INDISPONÍVEL" : !batchHasCapacity(product.productionBatch) ? "PRÉ-VENDA ESGOTADA" : "PRÉ-VENDA"}
                   </span>
                 )}
               </div>

@@ -31,7 +31,7 @@ export default function Produtos() {
   const [searchTerm, setSearchTerm] = useState("");
   const selectedCategory = normalizeCategoryValue(categorySlug);
 
-  const productsQuery = trpc.products.list.useQuery({ limit: 200 });
+  const productsQuery = trpc.products.list.useQuery({ limit: 200 }, { staleTime: 0, refetchOnMount: "always", refetchInterval: 15000 });
 
   const produtosBrutos: Product[] = useMemo(
     () =>
