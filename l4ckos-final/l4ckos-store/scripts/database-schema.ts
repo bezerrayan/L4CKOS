@@ -5,7 +5,7 @@ import { assertLocalSchemaTarget, verifyLocalConnection, SchemaError } from "../
 import { readStructuralSchema, structuralHash } from "../database/schema/fingerprint";
 import { baselineDatabase } from "../database/schema/baseline";
 import { bootstrapCurrentDatabase } from "../database/bootstrap/bootstrap";
-import { migrateDatabase } from "../database/migrations/runner";
+import { migrateDatabase, readOperationalManifest } from "../database/migrations/runner";
 async function main() {
   const [operation, acceptanceFlag, approvedFingerprint, ...extra] = process.argv.slice(2);
   if (!["fingerprint", "baseline", "bootstrap", "migrate"].includes(operation) || extra.length ||
@@ -20,7 +20,7 @@ async function main() {
       await verifyLocalConnection(connection, target);
       console.log(JSON.stringify({ fingerprint: structuralHash(await readStructuralSchema(connection)) }));
     } else {
-      const result = operation === "bootstrap" ? await bootstrapCurrentDatabase(connection, context) : operation === "baseline" ? await baselineDatabase(connection, context) : await migrateDatabase(connection, context);
+      const result = operation === "bootstrap" ? await bootstrapCurrentDatabase(connection, context) : operation === "baseline" ? await baselineDatabase(connection, context) : await migrateDatabase(connection, context, await readOperationalManifest());
       console.log(JSON.stringify(result));
     }
   } finally { await connection.end(); }

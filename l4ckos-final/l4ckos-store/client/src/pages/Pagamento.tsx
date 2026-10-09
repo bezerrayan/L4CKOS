@@ -18,6 +18,7 @@ import { trackStoreEvent } from "../lib/analytics";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Pagamento.css";
+import { transportEstimate, TRANSPORT_DEADLINE_NOTICE } from "../../../shared/preorder";
 
 type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 
@@ -37,8 +38,8 @@ type ShippingOption = {
   label: string;
   description: string;
   price: number;
-  minDays: number;
-  maxDays: number;
+  minDays: number | null;
+  maxDays: number | null;
 };
 
 type SavedCheckoutAddress = {
@@ -57,7 +58,7 @@ type SavedCheckoutAddress = {
 
 const checkoutHighlights = [
   "Revise frete, prazo e dados antes de gerar a cobrança.",
-  "O pedido segue para separação após confirmação do pagamento.",
+  "Itens em estoque seguem para preparação após o pagamento; pré-vendas seguem o calendário do lote.",
   "Se precisar ajustar algo, o suporte atende pelos canais oficiais da loja.",
 ];
 
@@ -69,34 +70,6 @@ function formatCep(value: string) {
   const digits = sanitizeCep(value);
   if (digits.length <= 5) return digits;
   return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-}
-
-function addBusinessDays(startDate: Date, daysToAdd: number) {
-  const date = new Date(startDate);
-  let addedDays = 0;
-
-  while (addedDays < daysToAdd) {
-    date.setDate(date.getDate() + 1);
-    const weekDay = date.getDay();
-    if (weekDay !== 0 && weekDay !== 6) {
-      addedDays += 1;
-    }
-  }
-
-  return date;
-}
-
-function buildShippingOptions(_cep: string, _subtotal: number, _itemCount: number): ShippingOption[] {
-  return [
-    {
-      id: "local-plano-piloto",
-      label: "Entrega local - Plano Piloto",
-      description: "Agendamento local no Plano Piloto (Brasilia - DF)",
-      price: 0,
-      minDays: 1,
-      maxDays: 2,
-    },
-  ];
 }
 
 function getOrderStatusLabel(status?: string | null) {
@@ -148,6 +121,15 @@ export default function Pagamento() {
   const [addressLoading, setAddressLoading] = useState(false);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [cep, setCep] = useState("");
+  const shippingRequestRef = useRef(0);
+  const shippingContextRef = useRef("");
+  shippingContextRef.current = `${sanitizeCep(cep)}:${cart.itemCount}:${cart.total}`;
+  useEffect(() => {
+    shippingRequestRef.current++;
+    setShippingOptions([]);
+    setSelectedShippingId(null);
+    setShippingLoading(false);
+  }, [cep]);
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
   const [selectedShippingId, setSelectedShippingId] = useState<ShippingOption["id"] | null>(null);
   const [shippingError, setShippingError] = useState("");
@@ -189,16 +171,6 @@ export default function Pagamento() {
     paymentStatus === "paid" || paymentStatus === "processing" || paymentStatus === "shipped" || paymentStatus === "delivered";
   const paymentOrderTotalCents = Number((paymentOrderQuery.data as any)?.totalPrice ?? 0);
 
-  const estimatedDateRange = useMemo(() => {
-    if (!selectedShipping) return "";
-
-    const minDate = addBusinessDays(new Date(), selectedShipping.minDays);
-    const maxDate = addBusinessDays(new Date(), selectedShipping.maxDays);
-    const formatter = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" });
-
-    return `${formatter.format(minDate)} a ${formatter.format(maxDate)}`;
-  }, [selectedShipping]);
-
   const orderBaseTotal = cart.total + (selectedShipping?.price ?? 0);
   const orderTotal = Math.max(0, Number((orderBaseTotal - couponDiscount).toFixed(2)));
   const hasCompleteCheckoutData = Boolean(
@@ -212,7 +184,7 @@ export default function Pagamento() {
     addressNeighborhood.trim() &&
     addressCity.trim() &&
     addressState.trim() &&
-    selectedShipping,
+    selectedShipping && !shippingLoading,
   );
 
   useEffect(() => {
@@ -321,6 +293,8 @@ export default function Pagamento() {
   };
 
   const handleCalculateShipping = async (cepValue = cep) => {
+    const request = ++shippingRequestRef.current;
+    const context = `${sanitizeCep(cepValue)}:${cart.itemCount}:${cart.total}`;
     setShippingError("");
     const normalizedCep = sanitizeCep(cepValue);
 
@@ -354,9 +328,10 @@ export default function Pagamento() {
         options?: ShippingOption[];
         warning?: string;
         providerError?: string;
-        source?: "melhor-envio" | "fallback-local" | "mixed";
+        source?: "melhor-envio" | "fallback-local" | "mixed" | "unavailable";
       };
-      const options = data.options?.length ? data.options : buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
+      if (request !== shippingRequestRef.current || context !== shippingContextRef.current) return;
+      const options = data.options ?? [];
       setShippingOptions(options);
       setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options[0]?.id ?? null);
       const sanitizedProviderError = (data.providerError || "")
@@ -372,16 +347,16 @@ export default function Pagamento() {
           ? `${data.warning} (${sanitizedProviderError})`
           : publicWarning
         : "";
-      setShippingError(detailedWarning);
+      setShippingError(detailedWarning || (options.length ? "" : "Não há cotação disponível para este CEP. Consulte a loja antes de comprar."));
       trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, options_count: options.length });
     } catch {
-      const fallbackOptions = buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
-      setShippingOptions(fallbackOptions);
-      setSelectedShippingId(fallbackOptions[0]?.id ?? null);
-      setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+      if (request !== shippingRequestRef.current || context !== shippingContextRef.current) return;
+      setShippingOptions([]);
+      setSelectedShippingId(null);
+      setShippingError("Não foi possível consultar o frete. Tente novamente; nenhuma opção de entrega foi presumida.");
       trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, success: false });
     } finally {
-      setShippingLoading(false);
+      if (request === shippingRequestRef.current) setShippingLoading(false);
     }
   };
 
@@ -518,7 +493,7 @@ export default function Pagamento() {
       return;
     }
 
-    if (!selectedShipping) {
+    if (!selectedShipping || shippingLoading) {
       setPaymentError("Calcule e selecione o frete antes de finalizar a compra.");
       return;
     }
@@ -703,8 +678,7 @@ export default function Pagamento() {
                       <span>
                         <strong>{option.label}</strong>
                         <small>
-                          {option.description} · {option.minDays} a{" "}
-                          {option.maxDays} dias úteis
+                          {option.description} · {transportEstimate(option)}
                         </small>
                       </span>
                       <strong>{formatPrice(option.price)}</strong>
@@ -712,7 +686,7 @@ export default function Pagamento() {
                   ))}
                 </div>
               ) : null}
-              {selectedShipping ? <p className="l4-checkout-delivery-note">Previsão: <strong>{estimatedDateRange}</strong>, após a aprovação do pagamento.</p> : null}
+              {selectedShipping ? <p className="l4-checkout-delivery-note">{transportEstimate(selectedShipping)} {TRANSPORT_DEADLINE_NOTICE}</p> : null}
             </section>
 
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
@@ -1046,8 +1020,7 @@ export default function Pagamento() {
                         </div>
                         <p style={styles.shippingOptionText}>{option.description}</p>
                         <p style={styles.shippingOptionText}>
-                          Prazo estimado: {option.minDays} a {option.maxDays}{" "}
-                          dias úteis
+                          {transportEstimate(option)}
                         </p>
                       </button>
                     ))}
@@ -1056,8 +1029,8 @@ export default function Pagamento() {
 
                 {selectedShipping ? (
                   <p style={styles.shippingEstimate}>
-                    Previsão estimada de entrega:{" "}
-                    <strong>{estimatedDateRange}</strong>, contada após a aprovação do pagamento.
+                    Condições de transporte:{" "}
+                    <strong>{transportEstimate(selectedShipping)}</strong>
                   </p>
                 ) : null}
               </div>
@@ -1317,7 +1290,7 @@ export default function Pagamento() {
               <p style={styles.infoTitle}>Informações importantes:</p>
               <ul style={styles.infoBenefits}>
                 <li>- Frete calculado conforme o CEP informado</li>
-                <li>- Prazo exibido antes da finalização e sujeito à aprovação do pagamento</li>
+                <li>- Transporte contado após a postagem; fabricação e preparação seguem as condições dos itens e lotes.</li>
                 <li>- Trocas e devoluções conforme nossa política publicada no site</li>
               </ul>
             </div>

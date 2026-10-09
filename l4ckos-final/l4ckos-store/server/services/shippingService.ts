@@ -5,8 +5,8 @@ type ShippingOption = {
   label: string;
   description: string;
   price: number;
-  minDays: number;
-  maxDays: number;
+  minDays: number | null;
+  maxDays: number | null;
 };
 
 type QuoteInput = {
@@ -17,7 +17,7 @@ type QuoteInput = {
 
 export type QuoteShippingResult = {
   options: ShippingOption[];
-  source: "melhor-envio" | "fallback-local" | "mixed";
+  source: "melhor-envio" | "fallback-local" | "mixed" | "unavailable";
   warning?: string;
   providerError?: string;
 };
@@ -62,8 +62,8 @@ function buildLocalOption(): ShippingOption {
     label: "Entrega local - Plano Piloto",
     description: "Agendamento local no Plano Piloto (Brasilia - DF)",
     price: 0,
-    minDays: 1,
-    maxDays: 2,
+    minDays: null,
+    maxDays: null,
   };
 }
 
@@ -79,27 +79,33 @@ function getMelhorEnvioConfig() {
   };
 }
 
-function parseMelhorEnvioQuotes(data: any): ShippingOption[] {
+export function parseMelhorEnvioQuotes(data: any): ShippingOption[] {
   if (!Array.isArray(data)) return [];
 
   return data
     .filter((item: any) => !item?.error)
     .map((item: any, index: number) => {
-      const rawPrice = Number(item?.custom_price ?? item?.price ?? 0);
-      const deliveryRange = String(item?.delivery_range || "");
-      const minDays = Number(deliveryRange.split("-")[0]) || Number(item?.delivery_time) || 3;
-      const maxDays = Number(deliveryRange.split("-")[1]) || Number(item?.delivery_time) || minDays;
+      const rawPrice = item?.custom_price ?? item?.price;
+      const price = (typeof rawPrice !== "string" && typeof rawPrice !== "number") || String(rawPrice).trim() === "" ? NaN : Number(rawPrice);
+      const range = item?.custom_delivery_range ?? item?.delivery_range;
+      const days = (value: unknown) => (typeof value !== "string" && typeof value !== "number") || String(value).trim() === "" ? null : Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : null;
+      const time = days(item?.custom_delivery_time ?? item?.delivery_time);
+      const parts = typeof range === "string" ? range.split("-") : [];
+      const min = days(typeof range === "object" && range ? range.min : parts[0]);
+      const max = days(typeof range === "object" && range ? range.max : parts[1]);
+      const minDays = min !== null && max !== null && max >= min ? min : time;
+      const maxDays = min !== null && max !== null && max >= min ? max : time;
 
       return {
         id: `melhor-envio-${item?.id ?? index}`,
         label: String(item?.name || "Transportadora"),
         description: String(item?.company?.name || "Entrega via transportadora"),
-        price: Number.isFinite(rawPrice) ? rawPrice : 0,
+        price,
         minDays,
         maxDays,
       } as ShippingOption;
     })
-    .filter((item: ShippingOption) => Number.isFinite(item.price));
+    .filter((item: ShippingOption) => Number.isFinite(item.price) && item.price >= 0);
 }
 
 function extractMelhorEnvioItemErrors(data: any): string {
@@ -135,7 +141,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
 
   const cfg = getMelhorEnvioConfig();
   if (!cfg.token) {
-    return options.length > 0 ? options : [buildLocalOption()];
+    return options;
   }
 
   try {
@@ -171,7 +177,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
     const parsed = parseMelhorEnvioQuotes(response.data);
     return [...options, ...parsed];
   } catch {
-    return options.length > 0 ? options : [buildLocalOption()];
+    return options;
   }
 }
 
@@ -188,11 +194,11 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
 
   const cfg = getMelhorEnvioConfig();
   if (!cfg.token) {
-    const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
+    const fallback = localOptions;
     return {
       options: fallback,
-      source: "fallback-local",
-      warning: "Token do Melhor Envio ausente. Usando entrega local.",
+      source: fallback.length ? "fallback-local" : "unavailable",
+      warning: fallback.length ? "Cotação de transporte indisponível. Entrega local disponível apenas por agendamento." : "Cotação de frete indisponível para este CEP. Tente novamente ou consulte a loja antes de comprar.",
     };
   }
 
@@ -228,12 +234,12 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
 
     const parsed = parseMelhorEnvioQuotes(response.data);
     if (parsed.length === 0) {
-      const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
+      const fallback = localOptions;
       const providerError = extractMelhorEnvioItemErrors(response.data);
       return {
         options: fallback,
-        source: "fallback-local",
-        warning: "Melhor Envio não retornou cotações para este CEP. Usando entrega local.",
+        source: fallback.length ? "fallback-local" : "unavailable",
+        warning: fallback.length ? "Sem cotação de transporte. Entrega local disponível apenas por agendamento." : "Não há cotação de frete disponível para este CEP. Consulte a loja antes de comprar.",
         providerError: providerError || "API respondeu sem opcoes validas de frete.",
       };
     }
@@ -244,11 +250,11 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
     };
   } catch (error) {
     const providerError = extractProviderError(error);
-    const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
+    const fallback = localOptions;
     return {
       options: fallback,
-      source: "fallback-local",
-      warning: "Cotacao externa indisponivel. Usando entrega local.",
+      source: fallback.length ? "fallback-local" : "unavailable",
+      warning: fallback.length ? "Cotação de transporte indisponível. Entrega local disponível apenas por agendamento." : "Não foi possível consultar o frete. Tente novamente ou consulte a loja antes de comprar.",
       providerError,
     };
   }

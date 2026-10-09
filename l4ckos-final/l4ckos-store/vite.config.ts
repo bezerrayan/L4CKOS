@@ -4,7 +4,8 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig, type Plugin, type ViteDevServer } from "vite";
+import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite";
+import { validateBuildApiConfig } from "./shared/apiConfig";
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -153,7 +154,18 @@ function vitePluginManusDebugCollector(): Plugin {
 
 const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusDebugCollector()];
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  if (command === "build") {
+    const buildEnv = loadEnv(mode, PROJECT_ROOT, "");
+    try {
+      validateBuildApiConfig({ apiUrl: buildEnv.VITE_API_URL, target: buildEnv.VITE_DEPLOY_TARGET });
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String(error.code) : "API_BUILD_CONFIG_INVALID";
+      throw new Error(`[${code}] ${error instanceof Error ? error.message : "Invalid API build configuration."}`);
+    }
+  }
+
+  return {
   plugins,
   resolve: {
     alias: {
@@ -202,5 +214,6 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+  };
 });
 

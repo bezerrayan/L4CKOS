@@ -19,15 +19,13 @@ import { securityLog } from "./_core/security";
 import { createAppError } from "./_core/appErrors";
 import {
   createPasswordResetToken,
-  deletePasswordResetTokensForUser,
+  consumePasswordReset,
   getActivePasswordResetTokenByHash,
   getLocalAuthCredentialByEmail,
   getLocalAuthCredentialByUserId,
   getUserById,
   getUserByOpenId,
-  markPasswordResetTokenUsed,
   rotateUserSessionVersion,
-  updateLocalAuthPasswordByUserId,
   upsertLocalAuthCredential,
   upsertUser,
 } from "./db";
@@ -527,13 +525,12 @@ export const appRouter = router({
         }
 
         const passwordHash = await bcrypt.hash(input.password, PASSWORD_HASH_ROUNDS);
-        await updateLocalAuthPasswordByUserId({
+        const consumed = await consumePasswordReset({
           userId: resetToken.userId,
+          tokenHash,
           passwordHash,
         });
-        await markPasswordResetTokenUsed(resetToken.id);
-        await deletePasswordResetTokensForUser(resetToken.userId);
-        await rotateUserSessionVersion(resetToken.userId);
+        if (!consumed) throw createAppError({ trpcCode: "BAD_REQUEST", appCode: "INVALID_OR_EXPIRED_RESET_TOKEN", message: "O link de redefinição é inválido ou expirou." });
 
         securityLog("info", "auth.password_reset_completed", {
           userId: resetToken.userId,

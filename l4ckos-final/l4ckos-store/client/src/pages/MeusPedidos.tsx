@@ -42,6 +42,7 @@ function formatDate(value: unknown) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
   });
 }
 
@@ -101,7 +102,7 @@ export default function MeusPedidos() {
                   <p style={styles.meta}>Criado em {formatDate(order.createdAt)}</p>
                 </div>
                 <span style={{ ...styles.badge, background: `${statusColor[status]}22`, color: statusColor[status] }}>
-                  {statusLabel[status]}
+                  {order.awaitingProduction ? "Acompanhando produção" : statusLabel[status]}
                 </span>
               </div>
 

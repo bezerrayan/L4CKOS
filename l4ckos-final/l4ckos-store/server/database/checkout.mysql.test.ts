@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import { readFile } from "node:fs/promises";
-import currentContract from "../../database/schema/contract-v2.json";
+import currentContract from "../../database/schema/contract-v3.json";
 import { randomUUID } from "node:crypto";
 import type { Connection } from "mysql2/promise";
 import { checkout, checkoutItemSchema, orderTotal, type CheckoutInput } from "./checkout";
@@ -17,6 +17,7 @@ async function database(seed=true){
  const c=await openBackupConnection(url(name),socketPath);connections.push(c);
  for(const s of (await bootstrapArtifacts()).statements)await c.query(s.sql);
  for(const s of (await readFile(new URL("../../database/migrations/0021_preorder_production_batches.sql",import.meta.url),"utf8")).split(/^-- l4ckos:statement-breakpoint\s*$/m).map(s=>s.trim()).filter(Boolean)) await c.query(s);
+ for(const s of (await readFile(new URL("../../database/migrations/0022_preorder_manufacturing_schedule.sql",import.meta.url),"utf8")).split(/^-- l4ckos:statement-breakpoint\s*$/m).map(s=>s.trim()).filter(Boolean)) await c.query(s);
  if(seed){
  await c.query("INSERT INTO users (id,openId,name) VALUES (1,'synthetic-checkout','Synthetic')");
  await c.query("INSERT INTO products (id,name,category,price,stock,imageUrl) VALUES (1,'Frozen A','fixture',8000,20,'/fixture-a.png'),(2,'Frozen B','fixture',3000,20,'/fixture-b.png')");

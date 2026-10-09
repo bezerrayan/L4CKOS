@@ -8,6 +8,8 @@ import {
   BATCH_STATUSES,
   BATCH_TRANSITIONS,
   utcMillis,
+  civilDate,
+  brasiliaCalendarDate,
   type BatchStatus,
 } from "../../shared/preorder";
 
@@ -30,7 +32,8 @@ export async function query(
   return (await c.query<RowDataPacket[]>(sql, values))[0];
 }
 const id = z.number().int().positive();
-const date = z.string().datetime({ offset: true }).nullable();
+const date = z.string().datetime({ offset: true, error: "Data e horário inválidos; informe o fuso horário." }).nullable();
+const manufacturingDate = z.string().refine(v => civilDate(v) !== null, "Data de fabricação inválida; use AAAA-MM-DD.").nullable().optional();
 export const batchEditSchema = z
   .object({
     id: id.optional(),
@@ -39,6 +42,8 @@ export const batchEditSchema = z
     salesCloseAt: date,
     estimatedShippingStart: date,
     estimatedShippingEnd: date,
+    estimatedManufacturingStart: manufacturingDate,
+    estimatedManufacturingEnd: manufacturingDate,
     minimumQuantity: z.number().int().nonnegative().max(2147483647),
     maximumQuantity: z.number().int().positive().max(2147483647).nullable(),
   })
@@ -46,11 +51,17 @@ export const batchEditSchema = z
   .superRefine((v, ctx) => {
     if (v.maximumQuantity !== null && v.maximumQuantity < v.minimumQuantity)
       ctx.addIssue({ code: "custom", message: "Máximo menor que mínimo." });
-    for (const [start, end] of [
-      [v.salesOpenAt, v.salesCloseAt],
-      [v.estimatedShippingStart, v.estimatedShippingEnd],
+    const start = v.estimatedManufacturingStart, end = v.estimatedManufacturingEnd;
+    if (Boolean(start) !== Boolean(end)) ctx.addIssue({ code: "custom", message: "Informe início e término estimados da fabricação juntos." });
+    if (start && end && start > end) ctx.addIssue({ code: "custom", message: "Início da fabricação não pode ser posterior ao término." });
+    for (const postage of [v.estimatedShippingStart, v.estimatedShippingEnd]) {
+      if (end && postage && Number.isFinite(utcMillis(postage)) && brasiliaCalendarDate(postage) < end) ctx.addIssue({ code: "custom", message: "Postagem estimada não pode anteceder o término da fabricação (datas de Brasília)." });
+    }
+    for (const [start, end, allowEqual] of [
+      [v.salesOpenAt, v.salesCloseAt, false],
+      [v.estimatedShippingStart, v.estimatedShippingEnd, true],
     ])
-      if (start && end && utcMillis(start) >= utcMillis(end))
+      if (typeof start === "string" && typeof end === "string" && (allowEqual ? utcMillis(start) > utcMillis(end) : utcMillis(start) >= utcMillis(end)))
         ctx.addIssue({ code: "custom", message: "Janela de datas inválida." });
   });
 export const batchTransitionSchema = z
@@ -190,6 +201,11 @@ export async function saveBatch(
     if (data.id && !before) fail("Lote não encontrado.");
     if (before && ["COMPLETED", "CANCELLED"].includes(before.status))
       fail("Lote finalizado não pode ser editado.");
+    // Older clients omitting optional fields must not erase an existing schedule.
+    const manufacturingStart = data.estimatedManufacturingStart === undefined ? civilDate(before?.estimatedManufacturingStart) : data.estimatedManufacturingStart;
+    const manufacturingEnd = data.estimatedManufacturingEnd === undefined ? civilDate(before?.estimatedManufacturingEnd) : data.estimatedManufacturingEnd;
+    const effective = batchEditSchema.parse({ ...data, estimatedManufacturingStart: manufacturingStart, estimatedManufacturingEnd: manufacturingEnd });
+    if (before?.status === "OPEN" && Number(before.manufacturingScheduleRequired) === 1 && (!manufacturingStart || !manufacturingEnd)) fail("Informe o período estimado de fabricação antes de vender neste lote.");
     if (
       data.maximumQuantity !== null &&
       data.id &&
@@ -203,15 +219,17 @@ export async function saveBatch(
       "salesCloseAt",
       "estimatedShippingStart",
       "estimatedShippingEnd",
+      "estimatedManufacturingStart",
+      "estimatedManufacturingEnd",
       "minimumQuantity",
       "maximumQuantity",
     ] as const;
     const values = columns.map(k =>
-      k.endsWith("At") || k.startsWith("estimated")
-        ? data[k]
-          ? new Date(String(data[k]))
+      k.endsWith("At") || k.startsWith("estimatedShipping")
+        ? effective[k]
+          ? new Date(String(effective[k]))
           : null
-        : data[k]
+        : effective[k]
     );
     let batchId = data.id;
     if (batchId)
@@ -232,7 +250,7 @@ export async function saveBatch(
       before ? "batch.edited" : "batch.created",
       batchId,
       before,
-      data
+      effective
     );
     return { id: batchId };
   });
@@ -341,6 +359,7 @@ export async function transitionBatch(
     if (!BATCH_TRANSITIONS[before.status as BatchStatus].includes(data.status))
       fail("Transição de lote inválida.");
     if (data.status === "OPEN") {
+      if (Number(before.manufacturingScheduleRequired) === 1 && (!before.estimatedManufacturingStart || !before.estimatedManufacturingEnd)) fail("Informe início e término estimados da fabricação antes de abrir a pré-venda.");
       if (
         !(
           await query(

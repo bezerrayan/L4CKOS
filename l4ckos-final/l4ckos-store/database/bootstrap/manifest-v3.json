@@ -1,0 +1,145 @@
+{
+  "version": 3,
+  "tables": [
+    {
+      "table": "users",
+      "path": "database/bootstrap/v2/users.sql",
+      "checksum": "a5bc6e3d9c91979d54ec181db4c5d17f4827ecef9aff543d43915d8270f67b82"
+    },
+    {
+      "table": "products",
+      "path": "database/bootstrap/v2/products.sql",
+      "checksum": "f41001bd9c588991548f42547265c8be89747499eacfed0772cc06b7f70bdb4a"
+    },
+    {
+      "table": "productVariants",
+      "path": "database/bootstrap/v2/productVariants.sql",
+      "checksum": "16050f57a140ce2b647401356e729bd6a6aa5dba7ee435b45a677f773d09d190"
+    },
+    {
+      "table": "productImages",
+      "path": "database/bootstrap/v2/productImages.sql",
+      "checksum": "760a0dedf9f994bf88ac0b3002af0b7bdba86fea56e5f11be2a0d3c62444f1b6"
+    },
+    {
+      "table": "productionBatches",
+      "path": "database/bootstrap/v3/productionBatches.sql",
+      "checksum": "3c2bb16d153501bed6336c2ebc233663ff87e501a8333d9bf4ee4325694e9d9c"
+    },
+    {
+      "table": "productionBatchProducts",
+      "path": "database/bootstrap/v2/productionBatchProducts.sql",
+      "checksum": "77c9170e5cd7e82d6223ca2b4035b02c283bff1c1206e5dc9236ce24e3522148"
+    },
+    {
+      "table": "coupons",
+      "path": "database/bootstrap/v2/coupons.sql",
+      "checksum": "511ea85edcc579071cc22a516e32caaa36677f916a888bfb730c2e12c8cd0dc6"
+    },
+    {
+      "table": "orders",
+      "path": "database/bootstrap/v2/orders.sql",
+      "checksum": "08bf4b1a65329b6e6fcbe7e8c38328ce7798480d01c970aa85145a959102d4d9"
+    },
+    {
+      "table": "orderItems",
+      "path": "database/bootstrap/v3/orderItems.sql",
+      "checksum": "57fdf6a3ad5819222449cca15e6a97f825595a094829f9754be85b6e0ec4f29b"
+    },
+    {
+      "table": "payments",
+      "path": "database/bootstrap/v2/payments.sql",
+      "checksum": "9bf3c80f6def597d89f187336ea32d7faefd8d216b93cf622dadf0d0aadd556a"
+    },
+    {
+      "table": "paymentEvents",
+      "path": "database/bootstrap/v2/paymentEvents.sql",
+      "checksum": "379c43e6f012cfbd20abaf27eca52add87c4748107f01736196059b5bdd77f67"
+    },
+    {
+      "table": "notificationOutbox",
+      "path": "database/bootstrap/v2/notificationOutbox.sql",
+      "checksum": "acd8ed972741caa7aba42ba0e907c91a43d571cd35084315437fc79daf14b63e"
+    },
+    {
+      "table": "stockReservations",
+      "path": "database/bootstrap/v2/stockReservations.sql",
+      "checksum": "12e9a0874eeffca6520d26e5331b543e44e74307fb4c6d68061d22ebb66f957c"
+    },
+    {
+      "table": "orderEmailEvents",
+      "path": "database/bootstrap/v2/orderEmailEvents.sql",
+      "checksum": "694663de13c4d32bcbf46756f1a74dc117d0efbdf1724ec75d9e87f583557591"
+    },
+    {
+      "table": "auditLogs",
+      "path": "database/bootstrap/v2/auditLogs.sql",
+      "checksum": "200d24ea8e680cabd1f13e593c6a75e586116521e774cf67fa3430af251be39d"
+    },
+    {
+      "table": "cartItems",
+      "path": "database/bootstrap/v2/cartItems.sql",
+      "checksum": "6548b0cee9077a4da05dd9b73321df39e634413986825afe8300e0f4a8abd954"
+    },
+    {
+      "table": "favorites",
+      "path": "database/bootstrap/v2/favorites.sql",
+      "checksum": "18566ae8691dc1635f0792672984f94340f409bd3e8589f4c425ccd52e98eedf"
+    },
+    {
+      "table": "localAuthUsers",
+      "path": "database/bootstrap/v2/localAuthUsers.sql",
+      "checksum": "9b431b8eeb2c61662ffa086db10404f6e2b7337b979150cb09290981146cfe3c"
+    },
+    {
+      "table": "passwordResetTokens",
+      "path": "database/bootstrap/v2/passwordResetTokens.sql",
+      "checksum": "b500333775fc5b7ea79921e47eb1a964110c8e11431bfc258f01f918af764597"
+    },
+    {
+      "table": "userProfiles",
+      "path": "database/bootstrap/v2/userProfiles.sql",
+      "checksum": "741f36bd5d63972eb4f99437ab51f2b26ba5520ef2fecda1ffc0d9c0b4cc4778"
+    },
+    {
+      "table": "userAddresses",
+      "path": "database/bootstrap/v2/userAddresses.sql",
+      "checksum": "9e02eccd9c7e65555001eaa3781b4c31353d2e1ef3f35265dfa5678058810fca"
+    },
+    {
+      "table": "userPaymentMethods",
+      "path": "database/bootstrap/v2/userPaymentMethods.sql",
+      "checksum": "e8a31e500c71113e31441307e5e855e7fdde600647aa8bd694203790053c18c9"
+    },
+    {
+      "table": "productReviews",
+      "path": "database/bootstrap/v2/productReviews.sql",
+      "checksum": "dc37db50c5a4bff9850a1a852a00619d80b6fde903c63f52429c930ec0995db5"
+    },
+    {
+      "table": "productReviewUploads",
+      "path": "database/bootstrap/v2/productReviewUploads.sql",
+      "checksum": "11ae06b77102942b11a87dc9e103f93d489e27eeda6e46c739404d709d6e39c2"
+    },
+    {
+      "table": "promoBanners",
+      "path": "database/bootstrap/v2/promoBanners.sql",
+      "checksum": "227278e7ea72a0422f43d6e8428d2bceb3e7a9b60dd3c72256439d5b3b3796d0"
+    },
+    {
+      "table": "waitlist_emails",
+      "path": "database/bootstrap/v2/waitlist_emails.sql",
+      "checksum": "9a8c5f919e5b4205acb9f9bada62227ca21d80f588aec4c50cd0842b8ef343a5"
+    },
+    {
+      "table": "emailUnsubscribes",
+      "path": "database/bootstrap/v2/emailUnsubscribes.sql",
+      "checksum": "87af511d913e1bcb1f2406d004670220f860ba0ddc57110b3fd8ceb57c7b4e63"
+    },
+    {
+      "table": "asaasWebhookEvents",
+      "path": "database/bootstrap/v2/asaasWebhookEvents.sql",
+      "checksum": "c60140d3014dce1068e34718f95248682e8639ea6b8f9e7ef49a3311006e71d1"
+    }
+  ]
+}

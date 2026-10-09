@@ -13,7 +13,7 @@ interface FAQ {
 
 const FAQS: FAQ[] = [
   { id: 1, categoria: "Pedidos", pergunta: "Como faço um pedido?", resposta: "Navegue pela loja, adicione os produtos à sacola e conclua a compra no checkout." },
-  { id: 2, categoria: "Pedidos", pergunta: "Qual é o prazo de entrega?", resposta: "O prazo varia conforme o CEP, a transportadora e a modalidade escolhida no fechamento do pedido." },
+  { id: 2, categoria: "Pedidos", pergunta: "Qual é o prazo de entrega?", resposta: "Em pré-vendas, fabricação e preparação antecedem a postagem. A previsão de postagem do lote não é a data de entrega. O prazo de transporte é informado pela transportadora conforme CEP e modalidade, e começa após a postagem. Entrega local depende de agendamento. Estimativas não são garantias; consulte as condições do produto e do pedido." },
   { id: 3, categoria: "Pedidos", pergunta: "Existe valor mínimo para compra?", resposta: "Não há valor mínimo para comprar no site." },
   { id: 4, categoria: "Pagamento", pergunta: "Quais formas de pagamento são aceitas?", resposta: "Aceitamos PIX, boleto e cartão, conforme as opções exibidas no checkout." },
   { id: 5, categoria: "Pagamento", pergunta: "Posso parcelar o pedido?", resposta: "Sim. O parcelamento disponível aparece no checkout, de acordo com as condições do meio de pagamento." },

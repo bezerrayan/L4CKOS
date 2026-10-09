@@ -13,12 +13,6 @@ function maskIp(ip: string | undefined | null) {
   return `${parts[0]}.${parts[1]}.${parts[2]}.*`;
 }
 
-function redactValue(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  if (value.length <= 8) return value;
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
-}
-
 export function securityLog(
   severity: SecuritySeverity,
   event: string,
@@ -30,7 +24,7 @@ export function securityLog(
     ...Object.fromEntries(
       Object.entries(details).map(([key, value]) => {
         if (key.toLowerCase().includes("ip")) return [key, maskIp(String(value ?? ""))];
-        if (key.toLowerCase().includes("token")) return [key, redactValue(value)];
+        if (key.toLowerCase().includes("token")) return [key, typeof value === "boolean" ? value : "[redacted]"];
         if (key.toLowerCase().includes("secret")) return [key, "[redacted]"];
         if (key.toLowerCase().includes("password")) return [key, "[redacted]"];
         if (key.toLowerCase().includes("authorization")) return [key, "[redacted]"];

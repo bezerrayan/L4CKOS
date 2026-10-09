@@ -41,20 +41,28 @@ export async function readRecognizedExistingContract() {
   return { ...contract, checksum: sha256(bytes) };
 }
 
-/** v1 remains the immutable BASELINE identity. v2 describes the expected result of 0021. */
+/** v1/v2 remain immutable. v3 is a verified additive contract over v2. */
 export async function readCurrentContract() {
-  const bytes=await readArtifact('database/schema/contract-v2.json','database/schema');
-  const contract=JSON.parse(bytes.toString('utf8')) as SchemaContract;
-  if(contract.version!==2 || structuralHash(contract.schema)!==contract.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
-  return {...contract,checksum:sha256(bytes)};
+  const base=JSON.parse((await readArtifact('database/schema/contract-v2.json','database/schema')).toString('utf8')) as SchemaContract;
+  const bytes=await readArtifact('database/schema/contract-v3.json','database/schema');
+  const delta=JSON.parse(bytes.toString('utf8')) as { version:number; baseFingerprint:string; fingerprint:string; additions:Record<string,StructuralSchema['tables'][number]['columns']> };
+  if(delta.version!==3 || structuralHash(base.schema)!==base.fingerprint || delta.baseFingerprint!==base.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  for(const [name,columns] of Object.entries(delta.additions)) {
+    const table=base.schema.tables.find(t=>t.name===name);
+    if(!table || columns.some((c,i)=>c.position!==table.columns.length+i+1 || table.columns.some(old=>old.name===c.name))) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+    table.columns.push(...columns);
+  }
+  if(structuralHash(base.schema)!==delta.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  return {version:3,fingerprint:delta.fingerprint,schema:base.schema,checksum:sha256(bytes)};
 }
 export async function currentBootstrapArtifacts() {
-  const bytes=await readArtifact('database/bootstrap/manifest-v2.json','database/bootstrap');
+  const bytes=await readArtifact('database/bootstrap/manifest-v3.json','database/bootstrap');
   const manifest=JSON.parse(bytes.toString('utf8')) as {version:number;tables:{table:string;path:string;checksum:string}[]};
-  if(manifest.version!==2 || new Set(manifest.tables.map(t=>t.table)).size!==manifest.tables.length) throw new SchemaError('INVALID_BOOTSTRAP_MANIFEST');
+  if(manifest.version!==3 || new Set(manifest.tables.map(t=>t.table)).size!==manifest.tables.length) throw new SchemaError('INVALID_BOOTSTRAP_MANIFEST');
   const statements=[];
   for(const entry of manifest.tables){
-    const content=await readArtifact(entry.path,'database/bootstrap/v2');
+    const directory=entry.path.startsWith('database/bootstrap/v3/') ? 'database/bootstrap/v3' : 'database/bootstrap/v2';
+    const content=await readArtifact(entry.path,directory);
     if(sha256(content)!==entry.checksum) throw new SchemaError('BOOTSTRAP_CHECKSUM_MISMATCH');
     statements.push({table:entry.table,sql:content.toString('utf8')});
   }

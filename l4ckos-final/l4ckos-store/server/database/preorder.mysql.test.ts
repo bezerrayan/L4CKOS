@@ -31,7 +31,7 @@ import {
 } from "../../database/schema/fingerprint";
 import { bootstrapCurrentDatabase } from "../../database/bootstrap/bootstrap";
 import { baselineDatabase } from "../../database/schema/baseline";
-import { migrateDatabase, loadLineage } from "../../database/migrations/runner";
+import { migrateDatabase, loadLineage, readOperationalManifest } from "../../database/migrations/runner";
 import { ledgerRows } from "../../database/schema/governance";
 import { productionBatchesRouter } from "../routers/productionBatches";
 import {
@@ -86,6 +86,8 @@ const edit = {
   salesCloseAt: null,
   estimatedShippingStart: "2026-11-05T00:00:00Z",
   estimatedShippingEnd: "2026-11-12T00:00:00Z",
+  estimatedManufacturingStart: "2026-10-20",
+  estimatedManufacturingEnd: "2026-11-01",
   minimumQuantity: 10,
   maximumQuantity: null,
 };
@@ -267,6 +269,139 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       );
       expect((await query(root, "SELECT VERSION() v"))[0].v).toBe("8.4.11");
     });
+    it("password reset consumes one link once and revokes sessions atomically under concurrency", async () => {
+      const c=await database(),prior=process.env.DATABASE_URL;
+      process.env.DATABASE_URL=url(c.config.database!)+"?socketPath="+encodeURIComponent(socketPath);vi.resetModules();
+      try {
+        const db=await import('../db');
+        await c.query("INSERT INTO localAuthUsers (userId,email,passwordHash) VALUES (2,'reset@example.invalid','original')");
+        await db.createPasswordResetToken({userId:2,tokenHash:'synthetic-reset',expiresAt:new Date(Date.now()+60000)});
+        const results=await Promise.all([db.consumePasswordReset({userId:2,tokenHash:'synthetic-reset',passwordHash:'hash-a'}),db.consumePasswordReset({userId:2,tokenHash:'synthetic-reset',passwordHash:'hash-b'})]);
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect((await query(c,'SELECT sessionVersion FROM users WHERE id=2'))[0].sessionVersion).toBe(2);
+        expect((await query(c,'SELECT COUNT(*) n FROM passwordResetTokens'))[0].n).toBe(0);
+        const after=await query(c,'SELECT passwordHash FROM localAuthUsers WHERE userId=2');
+        expect(await db.consumePasswordReset({userId:2,tokenHash:'synthetic-reset',passwordHash:'replay'})).toBe(false);
+        expect(await query(c,'SELECT passwordHash FROM localAuthUsers WHERE userId=2')).toEqual(after);
+        await db.createPasswordResetToken({userId:2,tokenHash:'expired',expiresAt:new Date(Date.now()-60000)});
+        expect(await db.consumePasswordReset({userId:2,tokenHash:'expired',passwordHash:'expired'})).toBe(false);
+        await db.createPasswordResetToken({userId:2,tokenHash:'rollback',expiresAt:new Date(Date.now()+60000)});
+        await c.query("CREATE TRIGGER reset_failure BEFORE UPDATE ON localAuthUsers FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='SYNTHETIC_RESET_FAILURE'");
+        await expect(db.consumePasswordReset({userId:2,tokenHash:'rollback',passwordHash:'failure'})).rejects.toThrow();
+        expect((await query(c,'SELECT COUNT(*) n FROM passwordResetTokens'))[0].n).toBe(1);
+        expect((await query(c,'SELECT sessionVersion FROM users WHERE id=2'))[0].sessionVersion).toBe(2);
+        expect(await query(c,'SELECT passwordHash FROM localAuthUsers WHERE userId=2')).toEqual(after);
+      } finally {process.env.DATABASE_URL=prior;vi.resetModules();}
+    });
+    it.each([false, true])("cancellation releases active MIXED reservations once without refund or stock restoration, paid=%s", async confirmed => {
+      const {c,id}=await fixture(); const a=adapters(), request=input([{productId:1,quantity:1},{productId:3,quantity:2}]);
+      const r=await checkout(c,request,a), original=await query(c,"SELECT * FROM orderItems WHERE orderId=?",[r.orderId]);
+      const prior=process.env.DATABASE_URL;
+      process.env.DATABASE_URL=url(c.config.database!)+"?socketPath="+encodeURIComponent(socketPath);
+      vi.resetModules();
+      const db=await import('../db');
+      try {
+        if(confirmed) await db.markOrderPaid(r.orderId,{source:'manual',actorUserId:1});
+        const stockBefore=(await query(c,"SELECT stock FROM products WHERE id=3"))[0].stock;
+        await Promise.all([db.updateOrderAndReserveDeliveredEmailEvents(r.orderId,{status:'cancelled'},1),db.updateOrderAndReserveDeliveredEmailEvents(r.orderId,{status:'cancelled'},1)]);
+        expect((await query(c,"SELECT status FROM stockReservations WHERE orderId=?",[r.orderId]))[0].status).toBe(confirmed?'consumed':'released');
+        expect((await query(c,"SELECT stock FROM products WHERE id=3"))[0].stock).toBe(stockBefore);
+        expect((await query(c,"SELECT COUNT(*) n FROM auditLogs WHERE action='order.cancelled' AND entityId=?",[String(r.orderId)]))[0].n).toBe(1);
+        expect(await query(c,"SELECT * FROM orderItems WHERE orderId=?",[r.orderId])).toEqual(original);
+        await expect(checkout(c,request,a)).rejects.toThrow('CHECKOUT_ORDER_CANCELLED');
+        expect(a.charge).toHaveBeenCalledOnce();
+        await expect(db.updateOrderAndReserveDeliveredEmailEvents(r.orderId,{status:'pending'},1)).rejects.toThrow('cannot be reactivated');
+        expect((await db.markOrderPaid(r.orderId,{source:'asaas_webhook',reference:'late'})).updated).toBe(false);
+        expect((await query(c,"SELECT status FROM orders WHERE id=?",[r.orderId]))[0].status).toBe('cancelled');
+      } finally {process.env.DATABASE_URL=prior;vi.resetModules();}
+    });
+    it("cancel and payment serialize; expired STOCK and late financial observations require reconciliation", async () => {
+      const {c}=await fixture(); const r=await checkout(c,input([{productId:3,quantity:2}]),adapters());
+      const prior=process.env.DATABASE_URL;
+      process.env.DATABASE_URL=url(c.config.database!)+"?socketPath="+encodeURIComponent(socketPath);
+      vi.resetModules();
+      const db=await import('../db');
+      try {
+        await Promise.all([db.updateOrderAndReserveDeliveredEmailEvents(r.orderId,{status:'cancelled'},1),db.markOrderPaid(r.orderId,{source:'asaas_webhook',reference:'race'})]);
+        const [reservation]=await query(c,'SELECT status FROM stockReservations WHERE orderId=?',[r.orderId]);
+        expect(['released','consumed']).toContain(reservation.status);
+        expect((await query(c,'SELECT stock FROM products WHERE id=3'))[0].stock).toBe(reservation.status==='consumed'?8:10);
+        const e=await checkout(c,input([{productId:3,quantity:1}]),adapters());
+        await expect(db.reserveExternalCheckoutCreation(e.orderId,2)).rejects.toThrow('reconciliation');
+        const [inserted]=await c.query<any>('INSERT INTO orders (userId,totalPrice) VALUES (2,3000)');
+        const legacyId=Number(inserted.insertId);
+        const claims=await Promise.allSettled([db.reserveExternalCheckoutCreation(legacyId,2),db.reserveExternalCheckoutCreation(legacyId,2)]);
+        expect(claims.filter(x=>x.status==='fulfilled')).toHaveLength(1);
+        await expect(db.reserveExternalCheckoutCreation(legacyId,2)).rejects.toThrow('reconciliation');
+        await c.query('UPDATE stockReservations SET expiresAt=DATE_SUB(NOW(),INTERVAL 1 HOUR) WHERE orderId=?',[e.orderId]);
+        expect(await db.markOrderPaid(e.orderId,{source:'asaas_webhook',reference:'expired'})).toMatchObject({updated:false,invalidTransition:true});
+        expect((await query(c,'SELECT paymentStatus FROM orders WHERE id=?',[e.orderId]))[0].paymentStatus).not.toBe('confirmed');
+        for(const event of ['PAYMENT_REFUND_IN_PROGRESS','PAYMENT_REFUNDED','PAYMENT_REFUND_DENIED','PAYMENT_PARTIALLY_REFUNDED','PAYMENT_OVERDUE']) await db.recordPaymentException({orderId:e.orderId,eventId:event,event,paymentId:'synthetic',checkoutId:null});
+        expect((await query(c,"SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required' AND entityId=?",[String(e.orderId)]))[0].n).toBe(6);
+        expect((await query(c,'SELECT status FROM orders WHERE id=?',[e.orderId]))[0].status).toBe('pending');
+      } finally {process.env.DATABASE_URL=prior;vi.resetModules();}
+    });
+    it.each(['IN_PRODUCTION','RECEIVED','COMPLETED'])('paid cancellation at %s preserves financial evidence and snapshots without automatic refund', async status => {
+      const {c,id}=await fixture(); const r=await checkout(c,input(),adapters());
+      await paid(c,r.orderId); await c.query('UPDATE productionBatches SET status=? WHERE id=?',[status,id]);
+      const before=await query(c,'SELECT paymentStatus,paymentConfirmedAt,totalPrice FROM orders WHERE id=?',[r.orderId]);
+      const prior=process.env.DATABASE_URL;
+      process.env.DATABASE_URL=url(c.config.database!)+"?socketPath="+encodeURIComponent(socketPath);vi.resetModules();
+      try {
+        const db=await import('../db'); await db.updateOrderAndReserveDeliveredEmailEvents(r.orderId,{status:'cancelled'},1);
+        expect(await query(c,'SELECT paymentStatus,paymentConfirmedAt,totalPrice FROM orders WHERE id=?',[r.orderId])).toEqual(before);
+        expect((await query(c,"SELECT metadata FROM auditLogs WHERE action='order.cancelled'"))[0].metadata).toContain('"refundExecuted":false');
+      } finally {process.env.DATABASE_URL=prior;vi.resetModules();}
+    });
+    it("new drafts require manufacturing before OPEN; invalid edits and clearing an OPEN schedule fail without mutating it", async () => {
+      const c = await database();
+      const b = await saveBatch(c, { ...edit, estimatedManufacturingStart:null, estimatedManufacturingEnd:null }, 1);
+      await assignBatchProducts(c, { id:b.id, productIds:[1] }, 1);
+      await expect(transitionBatch(c,{id:b.id,status:"OPEN",acknowledgePaidOrders:false},1)).rejects.toThrow("fabricação antes de abrir");
+      await saveBatch(c,{...edit,id:b.id},1);
+      await transitionBatch(c,{id:b.id,status:"OPEN",acknowledgePaidOrders:false},1);
+      const before=await query(c,"SELECT * FROM productionBatches WHERE id=?",[b.id]);
+      await expect(saveBatch(c,{...edit,id:b.id,estimatedManufacturingStart:null,estimatedManufacturingEnd:null},1)).rejects.toThrow("fabricação antes de vender");
+      await expect(saveBatch(c,{...edit,id:b.id,estimatedManufacturingEnd:"2026-12-01"},1)).rejects.toThrow();
+      expect(await query(c,"SELECT * FROM productionBatches WHERE id=?",[b.id])).toEqual(before);
+    });
+    it("manufacturing edits are audited and cannot erase or overwrite purchase snapshots", async () => {
+      const {c,id}=await fixture(); const a=adapters(),request=input();
+      const result=await checkout(c,request,a);
+      const before=await query(c,"SELECT * FROM orderItems WHERE orderId=?",[result.orderId]);
+      expect(result.items[0]).toMatchObject({estimatedManufacturingStartAtPurchase:edit.estimatedManufacturingStart,estimatedManufacturingEndAtPurchase:edit.estimatedManufacturingEnd});
+      await saveBatch(c,{...edit,id,estimatedManufacturingStart:"2026-10-25",estimatedManufacturingEnd:"2026-11-03"},1);
+      const {estimatedManufacturingStart:_,estimatedManufacturingEnd:__,...olderClient}=edit;
+      await saveBatch(c,{...olderClient,id,name:"Older client edit"},1);
+      expect((await query(c,"SELECT DATE_FORMAT(estimatedManufacturingStart,'%Y-%m-%d') start FROM productionBatches WHERE id=?",[id]))[0].start).toBe("2026-10-25");
+      expect(await query(c,"SELECT * FROM orderItems WHERE orderId=?",[result.orderId])).toEqual(before);
+      expect((await checkout(c,request,a)).items[0].estimatedManufacturingStartAtPurchase).toBe("2026-10-20");
+      expect(a.charge).toHaveBeenCalledOnce();
+      expect((await query(c,"SELECT afterState FROM auditLogs WHERE entity='productionBatch' AND action='batch.edited' ORDER BY id DESC LIMIT 1"))[0].afterState).toContain("2026-10-25");
+    });
+    it("0022 preserves legacy lots and orders without fictional dates, while new database defaults require a schedule", async () => {
+      const c=await database(1), pre=await readContract();
+      const v2=JSON.parse(await readFile(new URL("../../database/schema/contract-v2.json",import.meta.url),"utf8"));
+      await baselineDatabase(c,{...(await context(c)),approvedFingerprint:pre.fingerprint});
+      await migrateDatabase(c,{...(await context(c)),approvedFingerprint:v2.fingerprint});
+      await c.query("INSERT INTO productionBatches (id,name,status) VALUES (1,'Legacy','DRAFT')");
+      await c.query("UPDATE products SET salesMode='PREORDER' WHERE id=1");
+      await c.query("INSERT INTO productionBatchProducts (productId,productionBatchId) VALUES (1,1)");
+      await c.query("INSERT INTO orders (id,userId,totalPrice) VALUES (1,2,8000)");
+      await c.query("INSERT INTO orderItems (orderId,productId,quantity,unitPrice,totalPrice,salesModeAtPurchase,productionBatchId) VALUES (1,1,1,8000,8000,'PREORDER',1)");
+      const oldItems=await query(c,"SELECT * FROM orderItems");
+      const migrated=await migrateDatabase(c,await context(c),await readOperationalManifest());
+      expect(migrated.applied).toEqual(["0022_preorder_manufacturing_schedule"]);
+      expect((await query(c,"SELECT manufacturingScheduleRequired,estimatedManufacturingStart,estimatedManufacturingEnd FROM productionBatches"))[0]).toEqual({manufacturingScheduleRequired:0,estimatedManufacturingStart:null,estimatedManufacturingEnd:null});
+      const after=await query(c,"SELECT * FROM orderItems");
+      const {estimatedManufacturingStartAtPurchase,estimatedManufacturingEndAtPurchase,...old}=after[0];
+      expect(old).toEqual(oldItems[0]); expect(estimatedManufacturingStartAtPurchase).toBeNull(); expect(estimatedManufacturingEndAtPurchase).toBeNull();
+      await transitionBatch(c,{id:1,status:"OPEN",acknowledgePaidOrders:false},1);
+      await saveBatch(c,{...edit,id:1,estimatedManufacturingStart:null,estimatedManufacturingEnd:null},1);
+      await c.query("INSERT INTO productionBatches (name) VALUES ('New')");
+      expect((await query(c,"SELECT manufacturingScheduleRequired FROM productionBatches WHERE name='New'"))[0].manufacturingScheduleRequired).toBe(1);
+      expect((await migrateDatabase(c,await context(c),await readOperationalManifest())).status).toBe("UP_TO_DATE");
+    });
     afterAll(async () => {
       for (const c of connections) await c.end();
       for (const name of names) await root.query(`DROP DATABASE \`${name}\``);
@@ -402,6 +537,29 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       expect(r.items[0].estimatedShippingStartAtPurchase).toBe(
         "2026-11-05T00:00:00.000Z"
       );
+    });
+    it("freezes postage and transport conditions; schedule edits and requotes do not rewrite purchases", async () => {
+      const { c, id } = await fixture();
+      const a = { quote: vi.fn(async () => ({ options: [{ id: "transport-fixture", label: "Synthetic carrier", price: 7, minDays: 2, maxDays: 5 }] })), charge: vi.fn(async () => payment) };
+      const request = { ...input(), shipping: { cep: "70000000", optionId: "transport-fixture" } };
+      const result = await checkout(c, request, a);
+      const originalItems = await query(c, "SELECT * FROM orderItems WHERE orderId=?", [result.orderId]);
+      const originalAudit = await query(c, "SELECT metadata FROM auditLogs WHERE action='checkout.created' AND entityId=?", [String(result.orderId)]);
+      expect(JSON.parse(originalAudit[0].metadata).shippingAtPurchase).toEqual({ id: "transport-fixture", label: "Synthetic carrier", minDays: 2, maxDays: 5 });
+      await saveBatch(c, { ...edit, id, estimatedShippingStart: "2026-12-01T00:00:00Z", estimatedShippingEnd: "2026-12-10T00:00:00Z" }, 1);
+      a.quote.mockResolvedValue({ options: [{ id: "transport-fixture", label: "Synthetic carrier", price: 20, minDays: 10, maxDays: 20 }] });
+      expect((await checkout(c, request, a)).replayed).toBe(true);
+      expect(a.charge).toHaveBeenCalledOnce();
+      expect(await query(c, "SELECT * FROM orderItems WHERE orderId=?", [result.orderId])).toEqual(originalItems);
+      expect(await query(c, "SELECT metadata FROM auditLogs WHERE action='checkout.created' AND entityId=?", [String(result.orderId)])).toEqual(originalAudit);
+    });
+    it("unavailable freight fails before creating order, reservation or charge", async () => {
+      const { c } = await fixture();
+      const a = { quote: vi.fn(async () => ({ options: [] })), charge: vi.fn(async () => payment) };
+      await expect(checkout(c, input(), a)).rejects.toThrow("CHECKOUT_SHIPPING_INVALID");
+      expect(a.charge).not.toHaveBeenCalled();
+      expect((await query(c, "SELECT COUNT(*) n FROM orders"))[0].n).toBe(0);
+      expect((await query(c, "SELECT COUNT(*) n FROM orderItems"))[0].n).toBe(0);
     });
     it("confirmed demand excludes unpaid, counterfeit confirmation and cancelled; groups sizes and products once", async () => {
       const { c, id } = await fixture();
@@ -706,7 +864,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         else process.env.DATABASE_URL = prior;
       }
     });
-    it("0021 preserves historical STOCK data, uses V2 runner, repeats once; fresh v2 matches independently", async () => {
+    it("0021 and 0022 preserve historical STOCK data; operational runner replays; fresh v3 matches independently", async () => {
       const c = await database(1, false),
         pre = await readContract(),
         post = await readCurrentContract();
@@ -726,10 +884,10 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         ...(await context(c)),
         approvedFingerprint: pre.fingerprint,
       });
-      const migrated = await migrateDatabase(c, await context(c));
-      expect(migrated.applied).toEqual(["0021_preorder_production_batches"]);
+      const migrated = await migrateDatabase(c, await context(c), await readOperationalManifest());
+      expect(migrated.applied).toEqual(["0021_preorder_production_batches", "0022_preorder_manufacturing_schedule"]);
       expect(migrated.fingerprint).toBe(post.fingerprint);
-      expect((await migrateDatabase(c, await context(c))).status).toBe(
+      expect((await migrateDatabase(c, await context(c), await readOperationalManifest())).status).toBe(
         "UP_TO_DATE"
       );
       expect(
@@ -747,6 +905,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       expect((await ledgerRows(c)).map(r => r.name)).toEqual([
         "baseline-v1",
         "0021_preorder_production_batches",
+        "0022_preorder_manufacturing_schedule",
       ]);
       const fresh = await database(1, false);
       for (const table of (await bootstrapArtifacts()).statements.reverse())
@@ -875,6 +1034,9 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
           res: {},
         } as any);
         expect((await owner.detail(r.orderId)).items).toHaveLength(2);
+        expect((await owner.list())[0].awaitingProduction).toBe(true);
+        expect((await owner.detail(r.orderId)).shippingAtPurchase).toEqual({ id: "local", label: "Local", minDays: null, maxDays: null });
+        expect((await owner.track({ orderId: r.orderId })).shippingAtPurchase).toEqual((await owner.detail(r.orderId)).shippingAtPurchase);
         expect((await owner.detail(r.orderId)).items[0]).toMatchObject({
           salesModeAtPurchase: "PREORDER",
           productionBatchNameAtPurchase: "DROP 01",

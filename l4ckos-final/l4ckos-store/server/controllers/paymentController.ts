@@ -1,4 +1,5 @@
-import { purchasedSalesMode } from "../../shared/preorder";
+import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
+import { PAYMENT_EXCEPTION_EVENTS } from "../../shared/paymentExceptions";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
@@ -10,6 +11,8 @@ import {
   getUserById,
   getUserPhoneById,
   runAsaasWebhookOnce,
+  recordPaymentException,
+  reserveExternalCheckoutCreation,
   setOrderAsaasCheckoutId,
   updateUserAsaasCustomerId,
 } from "../db";
@@ -273,6 +276,13 @@ export async function createCheckoutHandler(req: Request, res: Response) {
       return;
     }
 
+    if (order.status !== "pending" || order.asaasCheckoutId || order.checkoutAttemptId) {
+      sendControllerError(res, 409, "PAYMENT_RECONCILIATION_REQUIRED", "Pedido indisponível para nova cobrança. Confira a cobrança existente antes de tentar novamente.");
+      return;
+    }
+
+    // A durable claim prevents concurrent calls and blind retries after ambiguous provider errors.
+    await reserveExternalCheckoutCreation(order.id, userId);
     const checkout = await createAsaasCheckout({
       name: body.checkoutName?.trim() || `Pedido #${order.id}`,
       value: Number((order.totalPrice / 100).toFixed(2)),
@@ -313,7 +323,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
     const payload = req.body as any;
     const event = String(payload?.event || "").trim();
 
-    if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event)) {
+    if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event) && !PAYMENT_EXCEPTION_EVENTS.has(event)) {
       res.status(200).json({ handled: false, reason: "event_ignored" });
       return;
     }
@@ -431,6 +441,10 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
         payload,
       },
       async () => {
+        if (PAYMENT_EXCEPTION_EVENTS.has(event) || event === "PAYMENT_DELETED" || (PAID_EVENTS.has(event) && order.status === "cancelled")) {
+          await recordPaymentException({ orderId, eventId, event, paymentId, checkoutId });
+          return { updated: false, reconciliationRequired: true };
+        }
         let result: { updated: boolean; invalidTransition?: boolean; lowStockProducts?: ReadonlyArray<{ id: number; name: string; stock: number }> } = { updated: false };
         if (PAID_EVENTS.has(event)) {
           if (order.status === "cancelled") {
@@ -450,6 +464,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
             if (PAID_EVENTS.has(event) && result.updated) {
               await sendPaymentApprovedEmail({
                 salesMode: purchasedSalesMode(orderItems),
+                scheduleMessages: purchasedScheduleMessages(orderItems),
                 customerEmail: user.email,
                 customerName: user.name || "Cliente",
                 orderNumber: String(order.id),
@@ -473,7 +488,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
                   products: (result as any).lowStockProducts,
                 });
               }
-            } else if (FAILED_EVENTS.has(event)) {
+            } else if (FAILED_EVENTS.has(event) && !["paid", "processing", "shipped", "delivered", "cancelled"].includes(order.status)) {
               await sendPaymentFailedEmail({
                 customerEmail: user.email,
                 customerName: user.name || "Cliente",

@@ -1,5 +1,5 @@
 import { PreorderInfo } from "../components/PreorderInfo";
-import { batchAcceptsSales } from "../../../shared/preorder";
+import { batchAcceptsSales, transportEstimate, TRANSPORT_DEADLINE_NOTICE } from "../../../shared/preorder";
 ﻿/**
  * Pagina ProductDetail - Detalhes completos do produto
  * Exibe informações completas, opções de customização e ações de compra.
@@ -11,7 +11,7 @@ import { useCart } from "../contexts/CartContext";
 import { useFavorites } from "../contexts/FavoritesContext";
 import { useToast } from "../contexts/ToastContext";
 import type { CSSProperties } from "react";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { trpc } from "../lib/trpc";
 import camisaFallback from "../images/camisa.png";
@@ -50,8 +50,8 @@ type ShippingOption = {
   label: string;
   description: string;
   price: number;
-  minDays: number;
-  maxDays: number;
+  minDays: number | null;
+  maxDays: number | null;
 };
 
 function sanitizeCep(value: string) {
@@ -110,6 +110,9 @@ export default function ProductDetail() {
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
   const [shippingError, setShippingError] = useState("");
   const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
+  const shippingContextRef = useRef("");
+  shippingContextRef.current = `${id}:${sanitizeCep(cep)}:${quantity}`;
+  useEffect(() => { setShippingOptions([]); }, [id, cep, quantity]);
 
   const productId = id ? parseInt(id) : null;
   const productQuery = trpc.products.getById.useQuery(productId ?? 0, {
@@ -324,6 +327,7 @@ export default function ProductDetail() {
   };
 
   const handleCalculateShipping = async () => {
+    const context = shippingContextRef.current;
     const normalizedCep = sanitizeCep(cep);
     setShippingError("");
 
@@ -347,12 +351,14 @@ export default function ProductDetail() {
       });
 
       const data = (await response.json()) as { options?: ShippingOption[]; error?: string; warning?: string };
+      if (context !== shippingContextRef.current) return;
       if (!response.ok) throw new Error(data.error || "Não foi possível calcular o frete.");
 
       setShippingOptions(data.options || []);
-      setShippingError(data.warning || "");
+      setShippingError(data.warning || (data.options?.length ? "" : "Não há cotação disponível para este CEP. Consulte a loja antes de comprar."));
       trackStoreEvent("shipping_quoted", { product_id: product.id, options_count: data.options?.length ?? 0 });
     } catch (error) {
+      if (context !== shippingContextRef.current) return;
       setShippingOptions([]);
       setShippingError(error instanceof Error ? error.message : "Não foi possível calcular o frete.");
       trackStoreEvent("shipping_quoted", { product_id: product.id, success: false });
@@ -499,7 +505,7 @@ export default function ProductDetail() {
           <div style={styles.shippingEstimator as CSSProperties}>
             <div>
               <strong style={styles.shippingEstimatorTitle as CSSProperties}>Calcule o frete</strong>
-              <p style={styles.shippingEstimatorHint as CSSProperties}>Veja prazo e valor para o seu CEP antes de comprar.</p>
+              <p style={styles.shippingEstimatorHint as CSSProperties}>Consulte valor e prazo de transporte para seu CEP. {TRANSPORT_DEADLINE_NOTICE}</p>
             </div>
             <div style={styles.shippingInputRow as CSSProperties}>
               <input
@@ -525,7 +531,7 @@ export default function ProductDetail() {
                   <div key={option.id} style={styles.shippingResult as CSSProperties}>
                     <div style={styles.shippingResultInfo as CSSProperties}>
                       <strong>{option.label}</strong>
-                      <span style={styles.shippingResultDeadline as CSSProperties}>{option.minDays} a {option.maxDays} dias úteis</span>
+                      <span style={styles.shippingResultDeadline as CSSProperties}>{transportEstimate(option)}</span>
                     </div>
                     <strong>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(option.price)}</strong>
                   </div>

@@ -68,6 +68,7 @@ export function sendPaymentNotFinishedEmail(payload: {
 }): Promise<unknown>;
 
 export function sendPaymentApprovedEmail(payload: {
+  scheduleMessages?: string[];
   salesMode?: "STOCK" | "PREORDER" | "MIXED";
   customerEmail: string;
   customerName?: string;

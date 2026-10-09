@@ -2204,7 +2204,7 @@ export default function Admin() {
                             value={row.status}
                             onChange={e => {
                               const nextStatus = e.target.value as any;
-                              if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?`)) return;
+                              if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === 'cancelled' ? ' Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas.' : ''}`)) return;
                               updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
                             }}
                           >

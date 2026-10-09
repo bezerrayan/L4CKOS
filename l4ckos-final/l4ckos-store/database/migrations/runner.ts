@@ -10,6 +10,10 @@ export type MigrationEntry = {
   description: string; expectedPreFingerprint: string; expectedPostFingerprint: string;
 };
 export type LineageManifest = { version: 2; migrations: MigrationEntry[]; unbaselined?: { expectedInitialFingerprint: string; reconciliations: MigrationEntry[] } };
+/** Operational forward lineage; the fixed legacy staging executors retain manifest.json. */
+export async function readOperationalManifest(): Promise<LineageManifest> {
+  return JSON.parse((await readArtifact("database/migrations/manifest-v3.json", "database/migrations")).toString("utf8"));
+}
 export async function loadLineage(manifest?: LineageManifest) {
   const input = manifest ?? JSON.parse((await readArtifact("database/migrations/manifest.json", "database/migrations")).toString("utf8")) as LineageManifest;
   if (input.version !== 2 || !Array.isArray(input.migrations)) throw new SchemaError("INVALID_LINEAGE_MANIFEST");

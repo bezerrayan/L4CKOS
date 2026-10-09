@@ -20,6 +20,8 @@ vi.mock("./db", () => ({
   getOrderReservationItems: vi.fn(),
   getOrderByIdAndUser: vi.fn(),
   markOrderPaid: vi.fn(),
+  recordPaymentException: vi.fn(),
+  reserveExternalCheckoutCreation: vi.fn(),
   getUserByOpenId: vi.fn(),
   upsertUser: vi.fn(),
   getUserById: vi.fn(),
@@ -49,13 +51,43 @@ vi.mock("./services/emailService.js", () => ({
 }));
 
 describe("security hardening contracts", () => {
+  it.each(['PAYMENT_OVERDUE','PAYMENT_REFUNDED','PAYMENT_REFUND_IN_PROGRESS','PAYMENT_REFUND_DENIED','PAYMENT_PARTIALLY_REFUNDED','PAYMENT_DELETED'])('records %s for reconciliation without refund, cancellation, email or reservation mutations', async event => {
+    const db=await import('./db'), email=await import('./services/emailService.js');
+    const {asaasWebhookHandler}=await import('./controllers/paymentController');
+    const token=process.env.ASAAS_WEBHOOK_TOKEN;
+    process.env.ASAAS_WEBHOOK_TOKEN='synthetic-exception-token';
+    vi.mocked(db.getOrderById).mockResolvedValue({id:9007,userId:1,status:'paid',totalPrice:1000} as any);
+    vi.mocked(db.runAsaasWebhookOnce).mockImplementation(async (_input,handler)=>({duplicate:false,result:await handler()}));
+    vi.mocked(db.markOrderPaid).mockClear();vi.mocked(db.recordPaymentException).mockClear();vi.mocked(email.sendPaymentFailedEmail).mockClear();
+    try {
+      const res=createMockResponse();
+      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-exception-token'},body:{id:'evt-'+event,event,payment:{id:'synthetic',externalReference:'9007',status:event==='PAYMENT_DELETED'?'DELETED':undefined}}} as any,res as any);
+      expect(res.statusCode).toBe(200);
+      expect(db.recordPaymentException).toHaveBeenCalledOnce();
+      expect(db.markOrderPaid).not.toHaveBeenCalled();expect(email.sendPaymentFailedEmail).not.toHaveBeenCalled();
+      vi.mocked(db.runAsaasWebhookOnce).mockResolvedValueOnce({duplicate:true});
+      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-exception-token'},body:{id:'evt-'+event,event,payment:{id:'synthetic',externalReference:'9007',status:event==='PAYMENT_DELETED'?'DELETED':undefined}}} as any,createMockResponse() as any);
+      expect(db.recordPaymentException).toHaveBeenCalledOnce();
+    } finally {if(token===undefined)delete process.env.ASAAS_WEBHOOK_TOKEN;else process.env.ASAAS_WEBHOOK_TOKEN=token;}
+  });
   it("uses a JSON API 404 contract", () => {
     expect(API_NOT_FOUND_RESPONSE).toEqual({
       error: "ROUTE_NOT_FOUND",
       message: "Route not found",
     });
   });
-
+  it('late paid webhook preserves cancelled order and records reconciliation instead of approval email', async () => {
+    const db=await import('./db'),email=await import('./services/emailService.js');
+    const {asaasWebhookHandler}=await import('./controllers/paymentController');
+    const token=process.env.ASAAS_WEBHOOK_TOKEN;process.env.ASAAS_WEBHOOK_TOKEN='synthetic-late-token';
+    vi.mocked(db.getOrderById).mockResolvedValue({id:9007,userId:1,status:'cancelled',totalPrice:1000} as any);
+    vi.mocked(db.markOrderPaid).mockClear();vi.mocked(db.recordPaymentException).mockClear();vi.mocked(email.sendPaymentApprovedEmail).mockClear();
+    try {
+      const res=createMockResponse();
+      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-late-token'},body:{id:'evt-late',event:'PAYMENT_RECEIVED',payment:{id:'synthetic',externalReference:'9007',value:10,status:'RECEIVED'}}} as any,res as any);
+      expect(res.statusCode).toBe(200);expect(db.recordPaymentException).toHaveBeenCalledOnce();expect(db.markOrderPaid).not.toHaveBeenCalled();expect(email.sendPaymentApprovedEmail).not.toHaveBeenCalled();
+    } finally {if(token===undefined)delete process.env.ASAAS_WEBHOOK_TOKEN;else process.env.ASAAS_WEBHOOK_TOKEN=token;}
+  });
   it("declares 405 methods for known API routes", () => {
     expect(getAllowedMethodsForApiPath("/api/payments/create-checkout")).toEqual(["POST"]);
     expect(getAllowedMethodsForApiPath("/api/cep/70000000")).toEqual(["GET"]);

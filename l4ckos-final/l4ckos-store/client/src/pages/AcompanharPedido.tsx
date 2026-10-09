@@ -1,5 +1,5 @@
 import "./Tracking.css";
-import { PurchasedPreorderInfo, PurchasedMixedShippingNotice, type PurchasedPreorder } from "../components/PreorderInfo";
+import { PurchasedPreorderInfo, PurchasedMixedShippingNotice, PurchasedTransportInfo, type PurchasedPreorder } from "../components/PreorderInfo";
 import { FormEvent, useMemo, useState, type CSSProperties } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTrackOrder } from "../hooks/useOrders";
@@ -238,6 +238,7 @@ export default function AcompanharPedido() {
           </div>
 
           <PurchasedMixedShippingNotice items={query.data.items} />
+          <PurchasedTransportInfo option={query.data.shippingAtPurchase} status={currentStatus} />
           <div className="l4-tracking-summary" style={styles.summaryGrid}>
             <div style={styles.summaryCard}>
               <p style={styles.metaLabel}>Total do pedido</p>

@@ -1,0 +1,86 @@
+{
+  "version": 3,
+  "baseFingerprint": "6654c63ea42bbcb84af99e7640f24d3963581128a6a5387898b12b34cbbca93a",
+  "fingerprint": "a7c2774e783e83f34c0304e970a91278f4df9e8c2b0a1fd5576c2694c1b9011e",
+  "additions": {
+    "orderItems": [
+      {
+        "name": "estimatedManufacturingStartAtPurchase",
+        "position": 20,
+        "type": "date",
+        "nullable": true,
+        "defaultValue": null,
+        "extra": "",
+        "generationExpression": "",
+        "charset": null,
+        "collation": null,
+        "length": null,
+        "numericPrecision": null,
+        "numericScale": null,
+        "datetimePrecision": null
+      },
+      {
+        "name": "estimatedManufacturingEndAtPurchase",
+        "position": 21,
+        "type": "date",
+        "nullable": true,
+        "defaultValue": null,
+        "extra": "",
+        "generationExpression": "",
+        "charset": null,
+        "collation": null,
+        "length": null,
+        "numericPrecision": null,
+        "numericScale": null,
+        "datetimePrecision": null
+      }
+    ],
+    "productionBatches": [
+      {
+        "name": "estimatedManufacturingStart",
+        "position": 16,
+        "type": "date",
+        "nullable": true,
+        "defaultValue": null,
+        "extra": "",
+        "generationExpression": "",
+        "charset": null,
+        "collation": null,
+        "length": null,
+        "numericPrecision": null,
+        "numericScale": null,
+        "datetimePrecision": null
+      },
+      {
+        "name": "estimatedManufacturingEnd",
+        "position": 17,
+        "type": "date",
+        "nullable": true,
+        "defaultValue": null,
+        "extra": "",
+        "generationExpression": "",
+        "charset": null,
+        "collation": null,
+        "length": null,
+        "numericPrecision": null,
+        "numericScale": null,
+        "datetimePrecision": null
+      },
+      {
+        "name": "manufacturingScheduleRequired",
+        "position": 18,
+        "type": "tinyint",
+        "nullable": false,
+        "defaultValue": "1",
+        "extra": "",
+        "generationExpression": "",
+        "charset": null,
+        "collation": null,
+        "length": null,
+        "numericPrecision": 3,
+        "numericScale": 0,
+        "datetimePrecision": null
+      }
+    ]
+  }
+}

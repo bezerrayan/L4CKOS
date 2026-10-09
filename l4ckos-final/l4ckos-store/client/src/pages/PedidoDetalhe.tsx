@@ -1,11 +1,12 @@
 import "./Tracking.css";
-import { PurchasedPreorderInfo, PurchasedMixedShippingNotice } from "../components/PreorderInfo";
+import { PurchasedPreorderInfo, PurchasedMixedShippingNotice, PurchasedTransportInfo } from "../components/PreorderInfo";
 import { Link, useParams } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import { useOrderDetail } from "../hooks/useOrders";
 import { trpc } from "../lib/trpc";
 import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
+import { CANCELLATION_NOTICE } from "../../../shared/paymentExceptions";
 type OrderStatus = "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled";
 
 const statusText: Record<OrderStatus, string> = {
@@ -21,7 +22,7 @@ function formatDate(value: unknown) {
   if (!value) return "-";
   const date = new Date(value as string);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("pt-BR");
+  return date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
 function formatMoney(cents: number) {
@@ -111,7 +112,7 @@ export default function PedidoDetalhe() {
               <h2 style={styles.orderId}>Pedido #{query.data.id}</h2>
               <p style={styles.muted}>Criado em {formatDate(query.data.createdAt)}</p>
             </div>
-            <span style={styles.badge}>{statusText[query.data.status as OrderStatus]}</span>
+            <span style={styles.badge}>{["paid", "processing"].includes(query.data.status) && query.data.items.some(item => item.salesModeAtPurchase === "PREORDER" && !["RECEIVED", "SHIPPING", "COMPLETED"].includes(item.productionStatus ?? "")) ? "Acompanhando produção" : statusText[query.data.status as OrderStatus]}</span>
           </div>
 
           <PurchasedMixedShippingNotice items={query.data.items ?? []} />
@@ -227,6 +228,8 @@ export default function PedidoDetalhe() {
           </div>
 
           <h3 style={styles.sectionTitle}>Itens deste pedido</h3>
+          {query.data.status === "cancelled" && <p role="note">{CANCELLATION_NOTICE}</p>}
+          <PurchasedTransportInfo option={query.data.shippingAtPurchase} status={query.data.status} />
           {query.data.items?.length ? (
             <div style={styles.itemsList}>
               {query.data.items.map(item => (

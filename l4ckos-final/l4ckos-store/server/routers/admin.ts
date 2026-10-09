@@ -1,4 +1,4 @@
-import { purchasedSalesMode } from "../../shared/preorder";
+import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
 ﻿import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import {
@@ -525,7 +525,7 @@ export const adminRouter = router({
       const transition = await updateOrderAndReserveDeliveredEmailEvents(input.orderId, {
         status: input.status,
         trackingCode: input.trackingCode,
-      });
+      }, ctx.user.id);
       const updatedOrder = transition.updatedOrder;
       const user = updatedOrder ? await getUserById(updatedOrder.userId) : undefined;
       const appBaseUrl = String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "");
@@ -598,12 +598,18 @@ export const adminRouter = router({
         actorUserId: ctx.user.id,
       });
 
+      if ('invalidTransition' in result && result.invalidTransition) {
+        throw new TRPCError({ code: "CONFLICT", message: "Pagamento não aplicado ao pedido: cancelamento ou reserva indisponível. Confira a evidência financeira e faça a conciliação; não repita a cobrança." });
+      }
+
       if (result.updated) {
         const user = await getUserById(currentOrder.userId);
         if (user?.email) {
           try {
+            const purchasedItems = await getOrderReservationItems(currentOrder.id);
             await sendPaymentApprovedEmail({
-              salesMode: purchasedSalesMode(await getOrderReservationItems(currentOrder.id)),
+              salesMode: purchasedSalesMode(purchasedItems),
+              scheduleMessages: purchasedScheduleMessages(purchasedItems),
               customerEmail: user.email,
               customerName: user.name || "Cliente",
               orderNumber: String(currentOrder.id),

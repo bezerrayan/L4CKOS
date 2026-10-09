@@ -3,6 +3,7 @@ import { EmailLayout } from "../components/EmailLayout.jsx";
 import { EmailOrderSummary } from "../components/EmailOrderSummary.jsx";
 import { EmailStatusBadge } from "../components/EmailStatusBadge.jsx";
 import { EmailText } from "../components/EmailText.jsx";
+import { TRANSPORT_DEADLINE_NOTICE } from "../../../shared/preorder";
 
 export function OrderCreated({ customerName, orderNumber, total, items = [], orderUrl }) {
   const preorderItems = items.filter(item => String(item?.name || "").includes("— Pré-venda —"));
@@ -22,6 +23,7 @@ export function OrderCreated({ customerName, orderNumber, total, items = [], ord
       </EmailText>
 
       <EmailOrderSummary orderNumber={orderNumber} total={total} statusLabel="Pedido criado" items={items} />
+      <EmailText>{TRANSPORT_DEADLINE_NOTICE}</EmailText>
       {preorderItems.map((item, index) => <EmailText key={index}>{item.name}</EmailText>)}
       <EmailButton href={orderUrl}>Acompanhar pedido</EmailButton>
     </EmailLayout>

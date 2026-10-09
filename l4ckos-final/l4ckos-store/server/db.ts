@@ -1,4 +1,5 @@
 import type { BatchPreview } from "../shared/preorder";
+import { readShippingSnapshot } from "./database/orderShippingSnapshot";
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createHash, randomUUID } from "node:crypto";
@@ -549,7 +550,7 @@ function mergeProductRowsWithImages(productRows: Array<typeof products.$inferSel
 async function enrichProductsWithBatch<T extends {id:number; salesMode:string},
 >(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, rows: T[]) {
   const assignments = extractExecutedRows(
-    await db.execute(sql`SELECT b.id,b.name,b.status,b.maximumQuantity,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId,COALESCE((SELECT SUM(oi.quantity) FROM orderItems oi JOIN orders o ON o.id=oi.orderId WHERE oi.productionBatchId=b.id AND oi.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'),0) claimedQuantity FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`
+    await db.execute(sql`SELECT b.id,b.name,b.status,b.maximumQuantity,DATE_FORMAT(b.estimatedManufacturingStart,'%Y-%m-%d') estimatedManufacturingStart,DATE_FORMAT(b.estimatedManufacturingEnd,'%Y-%m-%d') estimatedManufacturingEnd,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId,COALESCE((SELECT SUM(oi.quantity) FROM orderItems oi JOIN orders o ON o.id=oi.orderId WHERE oi.productionBatchId=b.id AND oi.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'),0) claimedQuantity FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`
     )
   );
   const byProduct = new Map(assignments.map(row=> [Number(row.productId),
@@ -559,6 +560,8 @@ async function enrichProductsWithBatch<T extends {id:number; salesMode:string},
     salesCloseAt:row.salesCloseAt===null?null:new Date(Number(row.salesCloseAt)),
     estimatedShippingStart:row.estimatedShippingStart===null?null:new Date(Number(row.estimatedShippingStart)),
     estimatedShippingEnd:row.estimatedShippingEnd===null?null:new Date(Number(row.estimatedShippingEnd)),
+    estimatedManufacturingStart:row.estimatedManufacturingStart ?? null,
+    estimatedManufacturingEnd:row.estimatedManufacturingEnd ?? null,
         capacity: (() => {
           const maximumQuantity =
               row.maximumQuantity === null ? null : Number(row.maximumQuantity),
@@ -1213,8 +1216,13 @@ export async function getOrdersByUserId(userId: number) {
     db.select().from(orders).where(eq(orders.userId, userId)),
     getPreferredUserAddress(userId),
   ]);
+  const preorderRows = orderRows.length ? await db.select({ orderId: orderItems.orderId, status: productionBatches.status })
+    .from(orderItems).leftJoin(productionBatches, eq(productionBatches.id, orderItems.productionBatchId))
+    .where(and(inArray(orderItems.orderId, orderRows.map(order => order.id)), eq(orderItems.salesModeAtPurchase, "PREORDER"))) : [];
+  const awaitingProduction = new Set(preorderRows.filter(item => !["RECEIVED", "SHIPPING", "COMPLETED"].includes(item.status ?? "")).map(item => item.orderId));
   return orderRows.map(order => ({
     ...order,
+    awaitingProduction: ["paid", "processing"].includes(order.status) && awaitingProduction.has(order.id),
     shippingAddress: buildOrderShippingAddress(order, fallbackAddress),
   }));
 }
@@ -1268,6 +1276,16 @@ export async function getOrderByTrackingCodeAndUser(trackingCode: string, userId
   };
 }
 
+/** Call only after order ownership/admin authorization, like getOrderReservationItems. */
+export async function getOrderShippingDeadlineSnapshot(orderId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [event] = await db.select({ metadata: auditLogs.metadata }).from(auditLogs)
+    .where(and(eq(auditLogs.entity, "order"), eq(auditLogs.entityId, String(orderId)), eq(auditLogs.action, "checkout.created")))
+    .orderBy(auditLogs.id).limit(1);
+  return readShippingSnapshot(event?.metadata);
+}
+
 export async function getOrderReservationItems(orderId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -1301,7 +1319,13 @@ export async function getOrderReservationItems(orderId: number) {
     productionBatchNameAtPurchase:orderItems.productionBatchNameAtPurchase,
     estimatedShippingStartAtPurchase:orderItems.estimatedShippingStartAtPurchase,
     estimatedShippingEndAtPurchase:orderItems.estimatedShippingEndAtPurchase,
+    estimatedManufacturingStartAtPurchase:orderItems.estimatedManufacturingStartAtPurchase,
+    estimatedManufacturingEndAtPurchase:orderItems.estimatedManufacturingEndAtPurchase,
     productionStatus:productionBatches.status,
+    currentEstimatedShippingStart:productionBatches.estimatedShippingStart,
+    currentEstimatedShippingEnd:productionBatches.estimatedShippingEnd,
+    currentEstimatedManufacturingStart:productionBatches.estimatedManufacturingStart,
+    currentEstimatedManufacturingEnd:productionBatches.estimatedManufacturingEnd,
   }).from(orderItems).leftJoin(productionBatches,eq(productionBatches.id,orderItems.productionBatchId))
     .where(eq(orderItems.orderId,orderId)).orderBy(orderItems.id);
   const legacy=await db.select({id:stockReservations.id}).from(stockReservations)
@@ -1395,6 +1419,32 @@ export async function getAllOrders() {
   return await db.select().from(orders);
 }
 
+/** Immutable reconciliation evidence only; no financial or fulfillment mutation. */
+export async function reserveExternalCheckoutCreation(orderId: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Persistent checkout evidence unavailable");
+  return db.transaction(async tx => {
+    const [order] = await tx.select().from(orders).where(and(eq(orders.id, orderId), eq(orders.userId, userId))).for("update");
+    if (!order || order.status !== "pending" || isTrustedPaymentConfirmation(order) || order.asaasCheckoutId || order.checkoutAttemptId) throw new Error("Checkout reconciliation required");
+    const [attempt] = await tx.select({id:auditLogs.id}).from(auditLogs).where(and(eq(auditLogs.entity,"order"),eq(auditLogs.entityId,String(orderId)),eq(auditLogs.action,"checkout.external_creation_requested"))).limit(1);
+    if (attempt) throw new Error("Checkout reconciliation required");
+    await tx.insert(auditLogs).values({actorUserId:userId,actorType:"user",action:"checkout.external_creation_requested",entity:"order",entityId:String(orderId),metadata:JSON.stringify({recoveryRequiredOnUncertainResult:true})});
+    return order;
+  });
+}
+
+/** Immutable reconciliation evidence only; no financial or fulfillment mutation. */
+export async function recordPaymentException(input: { orderId: number; eventId: string; event: string; paymentId: string | null; checkoutId: string | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("Persistent reconciliation unavailable");
+  await db.transaction(async tx => {
+    const [order] = await tx.select().from(orders).where(eq(orders.id, input.orderId)).for("update");
+    if (!order) throw new Error("Order not found");
+    if (input.checkoutId && order.asaasCheckoutId && input.checkoutId !== order.asaasCheckoutId) throw new Error("Payment checkout mismatch");
+    await tx.insert(auditLogs).values({ actorType: "system", action: "payment.reconciliation_required", entity: "order", entityId: String(input.orderId), metadata: JSON.stringify({ ...input, orderStatus: order.status, providerObservationOnly: true, financialMutation: false, reservationMutation: false, reconciliationRequired: true }) });
+  });
+}
+
 export async function markOrderPaid(
   orderId: number,
   confirmation: TrustedPaymentConfirmation,
@@ -1416,8 +1466,18 @@ export async function markOrderPaid(
       throw new Error("Order not found");
     }
 
+    if (order.status === "cancelled") {
+      await tx.insert(auditLogs).values({ actorType: "system", action: "payment.reconciliation_required", entity: "order", entityId: String(orderId), metadata: JSON.stringify({ reason: "payment_after_cancellation", source: confirmation.source, reconciliationRequired: true, financialMutation: false }) });
+      return { updated: false, invalidTransition: true, status: order.status, lowStockProducts: [] } as const;
+    }
     if (isTrustedPaymentConfirmation(order)) {
       return { updated: false, status: order.status, lowStockProducts: [] } as const;
+    }
+
+    const reservations = await tx.select().from(stockReservations).where(eq(stockReservations.orderId, orderId)).for("update");
+    if (reservations.some(r => r.status !== "active" || r.expiresAt.getTime() < Date.now())) {
+      await tx.insert(auditLogs).values({ actorType: "system", action: "payment.reconciliation_required", entity: "order", entityId: String(orderId), metadata: JSON.stringify({ reason: "stock_reservation_unavailable", source: confirmation.source, reconciliationRequired: true, financialMutation: false }) });
+      return { updated: false, invalidTransition: true, status: order.status, lowStockProducts: [] } as const;
     }
 
     const lowStockProducts: Array<{ id: number; name: string; stock: number }> = [];
@@ -1946,6 +2006,7 @@ export async function reserveOrderEmailEvent(tx: any, orderId: number, eventType
 export async function updateOrderAndReserveDeliveredEmailEvents(
   orderId: number,
   data: { status?: "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled"; trackingCode?: string | null },
+  actorUserId?: number,
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1954,6 +2015,15 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
     const rows = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1).for("update");
     const previousOrder = rows[0];
     if (!previousOrder) throw new Error("Order not found");
+
+    if (previousOrder.status === "cancelled" && data.status && data.status !== "cancelled") throw new Error('Cancelled order cannot be reactivated');
+    if (data.status && ['paid','processing','shipped','delivered'].includes(data.status) && !isTrustedPaymentConfirmation(previousOrder)) throw new Error('Trusted payment confirmation required');
+
+    if (data.status === "cancelled" && previousOrder.status !== "cancelled") {
+      // Cancellation is not a refund. Consumed stock is never automatically restocked.
+      await tx.update(stockReservations).set({ status: "released" }).where(and(eq(stockReservations.orderId, orderId), eq(stockReservations.status, "active")));
+      await tx.insert(auditLogs).values({ actorUserId: actorUserId ?? null, actorType: actorUserId ? "admin" : "system", action: "order.cancelled", entity: "order", entityId: String(orderId), metadata: JSON.stringify({ previousStatus: previousOrder.status, paymentConfirmed: isTrustedPaymentConfirmation(previousOrder), refundExecuted: false, reconciliationRequired: isTrustedPaymentConfirmation(previousOrder), stockPolicy: "release_active_only" }) });
+    }
 
     if(data.status) {
       const preorder=await tx.select({batchStatus:productionBatches.status}).from(orderItems)
@@ -2578,6 +2648,24 @@ export async function markPasswordResetTokenUsed(tokenId: number) {
     .update(passwordResetTokens)
     .set({ usedAt: new Date() })
     .where(eq(passwordResetTokens.id, tokenId));
+}
+
+/** Consume the reset link, replace the credential and revoke sessions atomically. */
+export async function consumePasswordReset(input: { userId: number; tokenHash: string; passwordHash: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async tx => {
+    const [user] = await tx.select({id:users.id}).from(users).where(eq(users.id,input.userId)).for("update");
+    if (!user) return false;
+    const [token] = await tx.select().from(passwordResetTokens).where(and(eq(passwordResetTokens.userId,input.userId),eq(passwordResetTokens.tokenHash,input.tokenHash))).for("update");
+    if (!token || token.usedAt || token.expiresAt.getTime() <= Date.now()) return false;
+    const [credential] = await tx.select({id:localAuthUsers.id}).from(localAuthUsers).where(eq(localAuthUsers.userId,input.userId)).for("update");
+    if (!credential) return false;
+    await tx.update(localAuthUsers).set({passwordHash:input.passwordHash}).where(eq(localAuthUsers.id,credential.id));
+    await tx.delete(passwordResetTokens).where(eq(passwordResetTokens.userId,input.userId));
+    await tx.update(users).set({sessionVersion:sql`${users.sessionVersion} + 1`}).where(eq(users.id,input.userId));
+    return true;
+  });
 }
 
 export async function deletePasswordResetTokensForUser(userId: number) {

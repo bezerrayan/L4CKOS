@@ -110,7 +110,7 @@ export default function CartDrawer() {
 
             <footer className="l4-cart-drawer-footer">
               <div className="l4-cart-drawer-subtotal"><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
-              <p>Frete e prazo calculados no checkout.</p>
+              <p>Frete e prazo de transporte consultados no checkout. Fabricação e preparação não estão incluídas nesse prazo.</p>
               <button type="button" className="l4-cart-drawer-checkout" onClick={() => goTo("/checkout")}
                 disabled={hasUnavailableItems || !isCatalogReady}
               >Finalizar compra</button>

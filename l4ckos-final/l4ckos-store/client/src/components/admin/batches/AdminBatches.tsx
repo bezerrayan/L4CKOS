@@ -4,6 +4,8 @@ import {
   BATCH_TRANSITIONS,
   type BatchStatus,
   shippingEstimate,
+  manufacturingEstimate,
+  civilDate,
 } from "../../../../../shared/preorder";
 import "./AdminBatches.css";
 const empty = {
@@ -12,6 +14,8 @@ const empty = {
   salesCloseAt: "",
   estimatedShippingStart: "",
   estimatedShippingEnd: "",
+  estimatedManufacturingStart: "",
+  estimatedManufacturingEnd: "",
   minimumQuantity: "0",
   maximumQuantity: "",
 };
@@ -86,8 +90,8 @@ export function AdminBatches() {
   const dateLabels = [
     "Abertura das vendas",
     "Encerramento das vendas",
-    "Envio estimado — início",
-    "Envio estimado — fim",
+    "Postagem estimada — início",
+    "Postagem estimada — fim",
   ];
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -99,6 +103,8 @@ export function AdminBatches() {
       salesCloseAt: iso(form.salesCloseAt),
       estimatedShippingStart: iso(form.estimatedShippingStart),
       estimatedShippingEnd: iso(form.estimatedShippingEnd),
+      estimatedManufacturingStart: form.estimatedManufacturingStart || null,
+      estimatedManufacturingEnd: form.estimatedManufacturingEnd || null,
       minimumQuantity: Number(form.minimumQuantity),
       maximumQuantity: form.maximumQuantity
         ? Number(form.maximumQuantity)
@@ -110,6 +116,8 @@ export function AdminBatches() {
     setEditId(Number(batch.id));
     setForm({
       name: batch.name,
+      estimatedManufacturingStart: civilDate(batch.estimatedManufacturingStart) ?? "",
+      estimatedManufacturingEnd: civilDate(batch.estimatedManufacturingEnd) ?? "",
       minimumQuantity: String(batch.minimumQuantity),
       maximumQuantity:
         batch.maximumQuantity === null ? "" : String(batch.maximumQuantity),
@@ -197,6 +205,13 @@ export function AdminBatches() {
                 />
               </label>
             ))}
+            {(["estimatedManufacturingStart", "estimatedManufacturingEnd"] as const).map((key, i) => <label key={key}>
+              {i === 0 ? "Início estimado da fabricação" : "Término estimado da fabricação"} (data de Brasília)
+              <input type="date" value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} />
+            </label>)}
+            <p>Fabricação: datas civis de Brasília, cadastradas conforme compromisso do fornecedor. Novos lotes exigem início e término antes de abrir vendas. Postagem não pode ocorrer em dia anterior ao término da fabricação.</p>
+            <p>Datas acima em UTC (Brasília: UTC−3). A janela de postagem não inclui o transporte nem configura o período de fabricação. Informe apenas estimativas acordadas com o fornecedor; datas vencidas exigem revisão do cronograma.</p>
+            <p>Alterar o lote atualiza o catálogo, mas não substitui as condições registradas em pedidos anteriores. Comunique alterações aos clientes afetados.</p>
             <div className="l4-batches-pair">
               <label>
                 Mínimo informativo
@@ -256,6 +271,7 @@ export function AdminBatches() {
                     {labels[batch.status as BatchStatus]}
                   </span>
                   <h2>{batch.name}</h2>
+                  <p>{manufacturingEstimate(batch.estimatedManufacturingStart, batch.estimatedManufacturingEnd)}</p>
                   <p>
                     {shippingEstimate(
                       batch.estimatedShippingStart,

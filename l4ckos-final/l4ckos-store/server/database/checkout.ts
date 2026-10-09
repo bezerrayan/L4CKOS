@@ -1,4 +1,4 @@
-import { batchAcceptsSales, type BatchPreview } from "../../shared/preorder";
+import { batchAcceptsSales, civilDate, type BatchPreview } from "../../shared/preorder";
 import { CAPACITY_SQL } from "./productionBatches";
 import { createHash } from "node:crypto";
 import type { Connection, RowDataPacket, ResultSetHeader } from "mysql2/promise";
@@ -23,7 +23,7 @@ export type CheckoutInput = {
   customer: { name: string; cpfCnpj: string; email?: string };
 };
 type Charge = Awaited<ReturnType<typeof createAsaasChargeForOrder>>;
-type Snapshot = { salesModeAtPurchase: "STOCK" | "PREORDER"; productionBatchId: number | null; productionBatchNameAtPurchase: string | null; estimatedShippingStartAtPurchase: string | null; estimatedShippingEndAtPurchase: string | null; productId: number; variantId: number | null; productName: string; variantName: string | null; sku: string | null; size: string | null; color: string | null; imageUrl: string | null; quantity: number; unitPrice: number; totalPrice: number };
+type Snapshot = { estimatedManufacturingStartAtPurchase: string | null; estimatedManufacturingEndAtPurchase: string | null; salesModeAtPurchase: "STOCK" | "PREORDER"; productionBatchId: number | null; productionBatchNameAtPurchase: string | null; estimatedShippingStartAtPurchase: string | null; estimatedShippingEndAtPurchase: string | null; productId: number; variantId: number | null; productName: string; variantName: string | null; sku: string | null; size: string | null; color: string | null; imageUrl: string | null; quantity: number; unitPrice: number; totalPrice: number };
 export class CheckoutError extends Error { constructor(public code: string) { super(code); } }
 function fail(code: string): never { throw new CheckoutError(code); }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -77,6 +77,8 @@ async function snapshots(c: Connection, items: CheckoutItem[], lock: boolean): P
     const batch=batches.get(assignments.get(product.id) ?? 0);
     return { salesModeAtPurchase: product.salesMode, productionBatchId: batch ? Number(batch.id) : null,
       productionBatchNameAtPurchase: batch?.name ?? null,
+      estimatedManufacturingStartAtPurchase: civilDate(batch?.estimatedManufacturingStart),
+      estimatedManufacturingEndAtPurchase: civilDate(batch?.estimatedManufacturingEnd),
       estimatedShippingStartAtPurchase: iso(batch?.estimatedShippingStart ?? null),
       estimatedShippingEndAtPurchase: iso(batch?.estimatedShippingEnd ?? null), productId: product.id, variantId: variant?.id ?? null, productName: product.name, variantName: variant?.name ?? null,
       sku: variant?.sku ?? null, size: variant?.size ?? item.size ?? null, color: variant?.color ?? item.color ?? null, imageUrl: product.imageUrl ?? null, ...money };
@@ -111,7 +113,7 @@ export function orderTotal(subtotal: number, shipping: number, coupon?: { type: 
 }
 
 export type CheckoutAdapters = {
-  quote: (input: { cep: string; itemCount: number; subtotal: number }) => Promise<{ options: { id: string; label: string; price: number }[] }>;
+  quote: (input: { cep: string; itemCount: number; subtotal: number }) => Promise<{ options: { id: string; label: string; price: number; minDays?: number | null; maxDays?: number | null }[] }>;
   charge: typeof createAsaasChargeForOrder;
 };
 /** Caller owns the dedicated connection. Only the advisory attempt lock spans provider IO. */
@@ -126,8 +128,9 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
     acquired = Number((await rows(c,"SELECT GET_LOCK(?, 2) acquired",[lock]))[0].acquired) === 1;
     if (!acquired) fail("CHECKOUT_ATTEMPT_BUSY");
     await c.query("SET time_zone='+00:00'");
-    const existing = (await rows(c,"SELECT id,checkoutFingerprint FROM orders WHERE checkoutAttemptId=?",[attempt]))[0];
+    const existing = (await rows(c,"SELECT id,checkoutFingerprint,status FROM orders WHERE checkoutAttemptId=?",[attempt]))[0];
     if (existing) {
+      if (existing.status === 'cancelled') fail("CHECKOUT_ORDER_CANCELLED");
       if (existing.checkoutFingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
       const event = (await rows(c,"SELECT metadata FROM auditLogs WHERE entity='order' AND entityId=? AND action='checkout.charge_created' ORDER BY id LIMIT 1",[String(existing.id)]))[0];
       if (!event) fail("CHECKOUT_RECOVERY_REQUIRED");
@@ -167,10 +170,12 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
     const address = input.shippingAddress;
     orderId = await insert(c,"INSERT INTO orders (userId,totalPrice,checkoutAttemptId,checkoutFingerprint,couponId,shippingRecipient,shippingZipCode,shippingStreet,shippingNumber,shippingComplement,shippingNeighborhood,shippingCity,shippingState) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",[input.userId,totalPrice,attempt,fingerprint,coupon?.id??null,address.recipient,address.zipCode,address.street,address.number,address.complement??null,address.neighborhood,address.city,address.state]);
     for (const item of frozen) {
-      const itemId = await insert(c,"INSERT INTO orderItems (orderId,productId,variantId,productName,variantName,sku,size,color,imageUrl,quantity,unitPrice,totalPrice,salesModeAtPurchase,productionBatchId,productionBatchNameAtPurchase,estimatedShippingStartAtPurchase,estimatedShippingEndAtPurchase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",[orderId,item.productId,item.variantId,item.productName,item.variantName,item.sku,item.size,item.color,item.imageUrl,item.quantity,item.unitPrice,item.totalPrice,item.salesModeAtPurchase,item.productionBatchId,item.productionBatchNameAtPurchase,item.estimatedShippingStartAtPurchase ? new Date(item.estimatedShippingStartAtPurchase) : null,item.estimatedShippingEndAtPurchase ? new Date(item.estimatedShippingEndAtPurchase) : null]);
+      const itemId = await insert(c,"INSERT INTO orderItems (orderId,productId,variantId,productName,variantName,sku,size,color,imageUrl,quantity,unitPrice,totalPrice,salesModeAtPurchase,productionBatchId,productionBatchNameAtPurchase,estimatedShippingStartAtPurchase,estimatedShippingEndAtPurchase,estimatedManufacturingStartAtPurchase,estimatedManufacturingEndAtPurchase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",[orderId,item.productId,item.variantId,item.productName,item.variantName,item.sku,item.size,item.color,item.imageUrl,item.quantity,item.unitPrice,item.totalPrice,item.salesModeAtPurchase,item.productionBatchId,item.productionBatchNameAtPurchase,item.estimatedShippingStartAtPurchase ? new Date(item.estimatedShippingStartAtPurchase) : null,item.estimatedShippingEndAtPurchase ? new Date(item.estimatedShippingEndAtPurchase) : null,item.estimatedManufacturingStartAtPurchase,item.estimatedManufacturingEndAtPurchase]);
       if(item.salesModeAtPurchase==='STOCK') await insert(c,"INSERT INTO stockReservations (orderId,userId,productId,variantId,orderItemId,quantity,status,expiresAt) VALUES (?,?,?,?,?,?,'active',DATE_ADD(NOW(),INTERVAL 20 MINUTE))",[orderId,input.userId,item.productId,item.variantId,itemId,item.quantity]);
     }
-    await insert(c,"INSERT INTO auditLogs (actorUserId,actorType,action,entity,entityId,metadata) VALUES (?,'user','checkout.created','order',?,?)",[input.userId,String(orderId),JSON.stringify({subtotalCents:subtotal,shippingCents,discountCents,totalPrice})]);
+    // Persist transport conditions before provider IO, alongside the existing immutable checkout evidence.
+    const shippingAtPurchase = { id: option.id, label: option.label, minDays: option.minDays ?? null, maxDays: option.maxDays ?? null };
+    await insert(c,"INSERT INTO auditLogs (actorUserId,actorType,action,entity,entityId,metadata) VALUES (?,'user','checkout.created','order',?,?)",[input.userId,String(orderId),JSON.stringify({subtotalCents:subtotal,shippingCents,discountCents,totalPrice,shippingAtPurchase})]);
     await c.commit(); transaction = false;
     const description = `${frozen.slice(0,2).map(i=>i.productName).join(" + ")} | Frete: ${option.label}`;
     let payment: Charge;

@@ -1,4 +1,4 @@
-import { shippingEstimate } from "../../shared/preorder";
+import { shippingEstimate, manufacturingEstimate } from "../../shared/preorder";
 import { createConnection } from "mysql2/promise";
 import { checkout, checkoutItemSchema, CheckoutError, previewCheckoutItems, orderTotal, type CheckoutItem } from "../database/checkout";
 import { TRPCError } from "@trpc/server";
@@ -7,6 +7,7 @@ import { router, protectedProcedure } from "../_core/trpc";
 import {
   getOrderByIdAndUser,
   getOrderReservationItems,
+  getOrderShippingDeadlineSnapshot,
   getOrderByTrackingCodeAndUser,
   getOrdersByUserId,
   getApplicableCouponByCode,
@@ -90,7 +91,7 @@ async function resolveOrderPricing(input: {
 
   return {
     itemsPreview: frozen.map(item => ({
-      name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase)}` : item.productName,
+      name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${manufacturingEstimate(item.estimatedManufacturingStartAtPurchase,item.estimatedManufacturingEndAtPurchase,true)} ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase,{ historical: true })}` : item.productName,
       quantity: item.quantity,
       price: formatCurrency(item.totalPrice / 100),
     })),
@@ -134,7 +135,7 @@ export const ordersRouter = router({
       }
 
       const items = await getOrderReservationItems(order.id);
-      return { ...order, items };
+      return { ...order, items, shippingAtPurchase: await getOrderShippingDeadlineSnapshot(order.id) };
     }),
 
   detail: protectedProcedure.input(z.number().int().positive()).query(async ({ input, ctx }) => {
@@ -147,7 +148,7 @@ export const ordersRouter = router({
     }
 
     const items = await getOrderReservationItems(order.id);
-    return { ...order, items };
+    return { ...order, items, shippingAtPurchase: await getOrderShippingDeadlineSnapshot(order.id) };
   }),
 
   updateShippingAddress: protectedProcedure
@@ -272,7 +273,7 @@ export const ordersRouter = router({
         const payment = prepared.payment;
         if (prepared.replayed) return { orderId, ...payment };
         const pricing = { finalTotalCents: prepared.totalPrice, itemsPreview: prepared.items.map(item => ({
-          name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase)}` : item.productName, quantity: item.quantity, price: formatCurrency(item.totalPrice / 100),
+          name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${manufacturingEstimate(item.estimatedManufacturingStartAtPurchase,item.estimatedManufacturingEndAtPurchase,true)} ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase,{ historical: true })}` : item.productName, quantity: item.quantity, price: formatCurrency(item.totalPrice / 100),
         })) };
 
         const formattedTotal = formatCurrency(pricing.finalTotalCents / 100);

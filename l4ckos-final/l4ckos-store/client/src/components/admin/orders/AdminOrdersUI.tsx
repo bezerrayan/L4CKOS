@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { AdminEmptyState, AdminFilterPills, AdminMetricCards, AdminStatusBadge, AdminSurface } from "../AdminUI";
 import { formatPrice } from "../../../lib/utils";
 
+import { CANCELLATION_NOTICE } from "../../../../../shared/paymentExceptions";
 export type OrderListFilter = "all" | "pending" | "paid" | "processing" | "shipped" | "delivered" | "cancelled" | "withoutTracking";
 
 export type AdminOrderView = {
@@ -161,6 +162,7 @@ export function OrderDetailPanel({
 
       <section style={styles.detailSection}>
         <strong style={styles.detailSubtitle}>Pagamento</strong>
+        <p style={styles.secondaryText}>{CANCELLATION_NOTICE} Reembolsos são tratados por conciliação, não por este seletor de status.</p>
         {order.paymentStatus === "confirmed" ? (
           <div style={styles.paymentConfirmed}>
             <strong style={styles.itemName}>Pagamento confirmado</strong>

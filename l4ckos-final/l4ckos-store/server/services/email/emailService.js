@@ -278,12 +278,12 @@ export async function sendPaymentNotFinishedEmail({
   });
 }
 
-export async function sendPaymentApprovedEmail({ customerEmail, customerName, orderNumber, total, salesMode = "STOCK" }) {
+export async function sendPaymentApprovedEmail({ customerEmail, customerName, orderNumber, total, salesMode = "STOCK", scheduleMessages = [] }) {
   return sendEmail({
     templateName: "paymentApproved",
     subjectKey: "paymentApproved",
     subjectPayload: { orderNumber },
-    templatePayload: { customerName, orderNumber, total, salesMode },
+    templatePayload: { customerName, orderNumber, total, salesMode, scheduleMessages },
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),

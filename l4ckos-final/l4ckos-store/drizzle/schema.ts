@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { check, date, index, int, mysqlEnum, mysqlTable, text, timestamp, tinyint, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -89,6 +89,9 @@ export const productionBatches = mysqlTable("productionBatches", {
   status: mysqlEnum("status", ["DRAFT", "OPEN", "CLOSED", "IN_PRODUCTION", "RECEIVED", "SHIPPING", "COMPLETED", "CANCELLED"]).default("DRAFT").notNull(),
   salesOpenAt: timestamp("salesOpenAt"), salesCloseAt: timestamp("salesCloseAt"),
   estimatedShippingStart: timestamp("estimatedShippingStart"), estimatedShippingEnd: timestamp("estimatedShippingEnd"),
+  estimatedManufacturingStart: date("estimatedManufacturingStart", { mode: "string" }),
+  estimatedManufacturingEnd: date("estimatedManufacturingEnd", { mode: "string" }),
+  manufacturingScheduleRequired: tinyint("manufacturingScheduleRequired").default(1).notNull(),
   productionStartedAt: timestamp("productionStartedAt"), receivedAt: timestamp("receivedAt"),
   shippingStartedAt: timestamp("shippingStartedAt"), completedAt: timestamp("completedAt"),
   minimumQuantity: int("minimumQuantity").default(0).notNull(), maximumQuantity: int("maximumQuantity"),
@@ -182,6 +185,8 @@ export const orderItems = mysqlTable("orderItems", {
   productionBatchNameAtPurchase: varchar("productionBatchNameAtPurchase", { length: 255 }),
   estimatedShippingStartAtPurchase: timestamp("estimatedShippingStartAtPurchase"),
   estimatedShippingEndAtPurchase: timestamp("estimatedShippingEndAtPurchase"),
+  estimatedManufacturingStartAtPurchase: date("estimatedManufacturingStartAtPurchase", { mode: "string" }),
+  estimatedManufacturingEndAtPurchase: date("estimatedManufacturingEndAtPurchase", { mode: "string" }),
   productName: varchar("productName", { length: 255 }),
   variantName: varchar("variantName", { length: 120 }),
   sku: varchar("sku", { length: 120 }),
