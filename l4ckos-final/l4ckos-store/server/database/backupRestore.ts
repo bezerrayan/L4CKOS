@@ -148,14 +148,15 @@ export async function backupDatabase(connection: Connection): Promise<BackupArti
 export function validateArtifact(input: unknown): asserts input is BackupArtifact {
   if (!input || typeof input !== "object") fail("INVALID_BACKUP_FORMAT");
   const artifact = input as BackupArtifact;
-  if (artifact.formatVersion !== 1 || ![1,TABLE_MANIFEST_VERSION].includes(artifact.tableManifestVersion) || artifact.databaseEngine !== "MySQL" ||
+  if (artifact.formatVersion !== 1 || ![1,2,TABLE_MANIFEST_VERSION].includes(artifact.tableManifestVersion) || artifact.databaseEngine !== "MySQL" ||
       !/^8\.4\./.test(artifact.databaseVersion) || typeof artifact.createdAt !== "string" || !Number.isFinite(Date.parse(artifact.createdAt)) ||
       (artifact.applicationCommit !== null && !/^[a-f0-9]{40}$/.test(artifact.applicationCommit)) ||
       !artifact.tables || !Array.isArray(artifact.absentOptionalTables)) fail("INVALID_BACKUP_FORMAT");
   const names = Object.keys(artifact.tables);
   if (names.some(name => classifyTable(name) === "UNKNOWN")) fail("UNKNOWN_TABLE");
   if (REQUIRED_TABLES.some(name => !names.includes(name))) fail("MISSING_REQUIRED_TABLE");
-  if (canonical(artifact.absentOptionalTables) !== canonical((artifact.tableManifestVersion===1 ? ["asaasWebhookEvents"] : OPTIONAL_TABLES).filter(name => !names.includes(name)))) fail("OPTIONAL_MANIFEST_MISMATCH");
+  if (canonical(artifact.absentOptionalTables) !== canonical((artifact.tableManifestVersion===1 ? ["asaasWebhookEvents"] : artifact.tableManifestVersion===2 ? ["productionBatches","productionBatchProducts","asaasWebhookEvents"] : OPTIONAL_TABLES).filter(name => !names.includes(name)))) fail("OPTIONAL_MANIFEST_MISMATCH");
+  if(artifact.tableManifestVersion<3 && names.includes('asaasWebhookInbox')) fail('INVALID_BACKUP_FORMAT');
   if(artifact.tableManifestVersion===1 && names.some(name=>['productionBatches','productionBatchProducts'].includes(name))) fail('INVALID_BACKUP_FORMAT');
   if(artifact.tables.products.schema.includes('`salesMode`') && !['productionBatches','productionBatchProducts'].every(name=>names.includes(name))) fail('MISSING_REQUIRED_TABLE');
   const schema: Record<string, string> = {};

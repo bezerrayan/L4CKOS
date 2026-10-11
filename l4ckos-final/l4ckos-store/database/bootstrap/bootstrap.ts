@@ -43,3 +43,13 @@ export async function bootstrapCurrentDatabase(connection: Connection, context: 
   if(migrated.fingerprint!==current.fingerprint) throw new SchemaError('CANONICAL_SCHEMA_DRIFT');
   return {...migrated,status:'BOOTSTRAPPED_CURRENT',tables:current.schema.tables.length};
 }
+
+/** Fresh RC2 schema: preserve baseline history, then apply 0021, 0022, 0023. */
+export async function bootstrapReleaseDatabase(connection: Connection, context: OperationContext) {
+  const { readReleaseContract, readContract } = await import('../schema/artifacts');
+  const { migrateDatabase, readReleaseManifest } = await import('../migrations/runner');
+  const current = await readReleaseContract(), baseline = await readContract();
+  if (context.approvedFingerprint !== current.fingerprint) throw new SchemaError('APPROVED_FINGERPRINT_REQUIRED');
+  await bootstrapDatabase(connection, { ...context, approvedFingerprint: baseline.fingerprint });
+  return migrateDatabase(connection, context, await readReleaseManifest());
+}

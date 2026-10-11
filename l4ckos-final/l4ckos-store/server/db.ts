@@ -38,8 +38,9 @@ import {
   type TrustedPaymentConfirmation,
 } from "./payments/confirmation";
 
+import { webhookDb, inWebhookTransaction } from "./database/webhookTransaction";
+
 let _db: ReturnType<typeof drizzle> | null = null;
-const inMemoryAsaasWebhookEvents = new Set<string>();
 
 type OrderShippingSnapshotInput = {
   recipient: string;
@@ -128,7 +129,9 @@ function buildOrderShippingAddress(
 }
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
-export async function getDb() {
+export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
+  const scoped = webhookDb();
+  if (scoped) return scoped;
   if (!_db && process.env.DATABASE_URL) {
     try {
       _db = drizzle(process.env.DATABASE_URL);
@@ -165,10 +168,6 @@ function affectedRows(result: unknown) {
   );
 }
 
-export function resetInMemoryAsaasWebhookEventsForTests() {
-  inMemoryAsaasWebhookEvents.clear();
-}
-
 export async function runAsaasWebhookOnce<T>(
   input: {
     eventId: string;
@@ -177,6 +176,7 @@ export async function runAsaasWebhookOnce<T>(
     checkoutId?: string | null;
     orderId?: number | null;
     payload: unknown;
+    sourcePayloadHash?: string;
   },
   handler: () => Promise<T>,
 ): Promise<{ duplicate: boolean; result?: T }> {
@@ -184,50 +184,42 @@ export async function runAsaasWebhookOnce<T>(
   if (!eventId) throw new Error("Asaas webhook event_id is required");
 
   const db = await getDb();
-  if (!db) {
-    if (ENV.isProduction) {
-      throw new Error("Persistent webhook idempotency unavailable");
-    }
+  if (!db) throw new Error("Persistent webhook idempotency unavailable");
 
-    if (inMemoryAsaasWebhookEvents.has(eventId)) {
-      return { duplicate: true };
-    }
-    inMemoryAsaasWebhookEvents.add(eventId);
-    const result = await handler();
-    return { duplicate: false, result };
-  }
-
-  const payloadHash = hashWebhookPayload(input.payload);
-
+  const payloadHash = input.sourcePayloadHash && /^[a-f0-9]{64}$/.test(input.sourcePayloadHash)
+    ? input.sourcePayloadHash : hashWebhookPayload(input.payload);
   try {
     await db.insert(asaasWebhookEvents).values({
-      eventId,
-      eventType: input.eventType,
-      paymentId: input.paymentId ?? null,
-      checkoutId: input.checkoutId ?? null,
-      orderId: input.orderId ?? null,
-      payloadHash,
-      status: "processing",
+      eventId, eventType: input.eventType, paymentId: input.paymentId ?? null,
+      checkoutId: input.checkoutId ?? null, orderId: input.orderId ?? null,
+      payloadHash, status: "processing",
     });
-  } catch (error) {
-    if (isDuplicateKeyError(error)) {
-      return { duplicate: true };
-    }
-    throw error;
-  }
-
+  } catch (error) { if (!isDuplicateKeyError(error)) throw error; }
+  const effects: Array<() => Promise<void>> = [];
   try {
-    const result = await handler();
-    await db
-      .update(asaasWebhookEvents)
-      .set({ status: "processed", processedAt: new Date() })
-      .where(eq(asaasWebhookEvents.eventId, eventId));
-    return { duplicate: false, result };
+    const output = await db.transaction(async tx => {
+      const [record] = await tx.select().from(asaasWebhookEvents)
+        .where(eq(asaasWebhookEvents.eventId, eventId)).for("update");
+      if (!record || record.eventId !== eventId || record.eventType !== input.eventType ||
+        (record.paymentId && record.paymentId !== input.paymentId) ||
+        (record.checkoutId && record.checkoutId !== input.checkoutId) ||
+        (record.orderId && record.orderId !== input.orderId)) throw new Error("WEBHOOK_EVENT_CONFLICT");
+      if (record.status === "processed") return { duplicate: true };
+      if (record.payloadHash !== payloadHash) throw new Error("WEBHOOK_EVENT_CONFLICT");
+      // A failed/orphan processing marker is NOT completed. The transaction context
+      // binds all nested order/reservation/audit transactions to this same commit.
+      const result = await inWebhookTransaction(tx as unknown as NonNullable<typeof db>, handler, effects);
+      await tx.update(asaasWebhookEvents).set({ status: "processed", processedAt: new Date() })
+        .where(eq(asaasWebhookEvents.eventId, eventId));
+      return { duplicate: false, result };
+    });
+    // When an inbox transaction owns us, notifications belong to its commit.
+    const { afterWebhookCommit } = await import("./database/webhookTransaction");
+    for (const effect of effects) await afterWebhookCommit(effect);
+    return output;
   } catch (error) {
-    await db
-      .update(asaasWebhookEvents)
-      .set({ status: "failed" })
-      .where(eq(asaasWebhookEvents.eventId, eventId));
+    await db.update(asaasWebhookEvents).set({ status: "failed" })
+      .where(and(eq(asaasWebhookEvents.eventId, eventId), sql`${asaasWebhookEvents.status} <> 'processed'`));
     throw error;
   }
 }

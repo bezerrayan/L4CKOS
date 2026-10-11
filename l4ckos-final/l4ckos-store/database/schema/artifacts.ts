@@ -70,3 +70,16 @@ export async function currentBootstrapArtifacts() {
   if(JSON.stringify(statements.map(s=>s.table).sort())!==JSON.stringify(contract.schema.tables.map(t=>t.name).sort())) throw new SchemaError('BOOTSTRAP_TABLE_MANIFEST_MISMATCH');
   return {statements,checksum:sha256(bytes)};
 }
+
+export async function readReleaseContract() {
+  const bytes = await readArtifact('database/schema/contract-v4.json', 'database/schema');
+  const delta = JSON.parse(bytes.toString('utf8')) as { version: number; baseFingerprint: string; fingerprint: string; tables: StructuralSchema['tables'] };
+  const base = await readCurrentContract();
+  if (delta.version !== 4 || delta.baseFingerprint !== base.fingerprint || delta.tables.length !== 1 ||
+    delta.tables[0].name !== 'asaasWebhookInbox' || base.schema.tables.some(t => t.name === delta.tables[0].name))
+    throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  base.schema.tables.push(...delta.tables);
+  base.schema.tables.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  if (structuralHash(base.schema) !== delta.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  return { version: 4, fingerprint: delta.fingerprint, schema: base.schema, checksum: sha256(bytes) };
+}

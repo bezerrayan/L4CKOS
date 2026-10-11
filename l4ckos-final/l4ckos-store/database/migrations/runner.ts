@@ -144,3 +144,8 @@ async function runMigrationBody(connection: Connection, context: LedgerContext, 
     await validateHistory(connection, lineage);
     return { status: applied.length ? "APPLIED" : "UP_TO_DATE", applied, fingerprint: structuralHash(await readStructuralSchema(connection)) };
 }
+
+/** RC2 forward lineage; fixed 0022 operator continues using immutable manifest-v3. */
+export async function readReleaseManifest(): Promise<LineageManifest> {
+  return JSON.parse((await readArtifact("database/migrations/manifest-v4.json", "database/migrations")).toString("utf8"));
+}

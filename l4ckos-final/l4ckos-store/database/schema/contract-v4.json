@@ -1,0 +1,210 @@
+{
+  "version": 4,
+  "baseFingerprint": "a7c2774e783e83f34c0304e970a91278f4df9e8c2b0a1fd5576c2694c1b9011e",
+  "fingerprint": "0ba16c9b19b698d4933d0abad9a5e4679052fd2aaf78800da42d480e396ef5d2",
+  "tables": [
+    {
+      "name": "asaasWebhookInbox",
+      "type": "BASE TABLE",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "options": "",
+      "columns": [
+        {
+          "name": "eventId",
+          "position": 1,
+          "type": "varchar(191)",
+          "nullable": false,
+          "defaultValue": null,
+          "extra": "",
+          "generationExpression": "",
+          "charset": "utf8mb4",
+          "collation": "utf8mb4_bin",
+          "length": 191,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": null
+        },
+        {
+          "name": "payload",
+          "position": 2,
+          "type": "text",
+          "nullable": true,
+          "defaultValue": null,
+          "extra": "",
+          "generationExpression": "",
+          "charset": "utf8mb4",
+          "collation": "utf8mb4_bin",
+          "length": 65535,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": null
+        },
+        {
+          "name": "payloadHash",
+          "position": 3,
+          "type": "varchar(64)",
+          "nullable": false,
+          "defaultValue": null,
+          "extra": "",
+          "generationExpression": "",
+          "charset": "utf8mb4",
+          "collation": "utf8mb4_bin",
+          "length": 64,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": null
+        },
+        {
+          "name": "state",
+          "position": 4,
+          "type": "enum('received','processing','processed','failed','rejected')",
+          "nullable": false,
+          "defaultValue": "received",
+          "extra": "",
+          "generationExpression": "",
+          "charset": "utf8mb4",
+          "collation": "utf8mb4_bin",
+          "length": 10,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": null
+        },
+        {
+          "name": "attempts",
+          "position": 5,
+          "type": "int",
+          "nullable": false,
+          "defaultValue": "0",
+          "extra": "",
+          "generationExpression": "",
+          "charset": null,
+          "collation": null,
+          "length": null,
+          "numericPrecision": 10,
+          "numericScale": 0,
+          "datetimePrecision": null
+        },
+        {
+          "name": "errorCode",
+          "position": 6,
+          "type": "varchar(64)",
+          "nullable": true,
+          "defaultValue": null,
+          "extra": "",
+          "generationExpression": "",
+          "charset": "utf8mb4",
+          "collation": "utf8mb4_bin",
+          "length": 64,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": null
+        },
+        {
+          "name": "nextAttemptAt",
+          "position": 7,
+          "type": "timestamp",
+          "nullable": true,
+          "defaultValue": null,
+          "extra": "",
+          "generationExpression": "",
+          "charset": null,
+          "collation": null,
+          "length": null,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": 0
+        },
+        {
+          "name": "completedAt",
+          "position": 8,
+          "type": "timestamp",
+          "nullable": true,
+          "defaultValue": null,
+          "extra": "",
+          "generationExpression": "",
+          "charset": null,
+          "collation": null,
+          "length": null,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": 0
+        },
+        {
+          "name": "createdAt",
+          "position": 9,
+          "type": "timestamp",
+          "nullable": false,
+          "defaultValue": "CURRENT_TIMESTAMP(0)",
+          "extra": "",
+          "generationExpression": "",
+          "charset": null,
+          "collation": null,
+          "length": null,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": 0
+        },
+        {
+          "name": "updatedAt",
+          "position": 10,
+          "type": "timestamp",
+          "nullable": false,
+          "defaultValue": "CURRENT_TIMESTAMP(0)",
+          "extra": "on update CURRENT_TIMESTAMP(0)",
+          "generationExpression": "",
+          "charset": null,
+          "collation": null,
+          "length": null,
+          "numericPrecision": null,
+          "numericScale": null,
+          "datetimePrecision": 0
+        }
+      ],
+      "indexes": [
+        {
+          "primary": true,
+          "unique": true,
+          "type": "BTREE",
+          "visible": true,
+          "columns": [
+            {
+              "name": "eventId",
+              "direction": "A",
+              "prefixLength": null,
+              "expression": null
+            }
+          ]
+        },
+        {
+          "primary": false,
+          "unique": false,
+          "type": "BTREE",
+          "visible": true,
+          "columns": [
+            {
+              "name": "state",
+              "direction": "A",
+              "prefixLength": null,
+              "expression": null
+            },
+            {
+              "name": "nextAttemptAt",
+              "direction": "A",
+              "prefixLength": null,
+              "expression": null
+            },
+            {
+              "name": "createdAt",
+              "direction": "A",
+              "prefixLength": null,
+              "expression": null
+            }
+          ]
+        }
+      ],
+      "foreignKeys": [],
+      "checks": []
+    }
+  ]
+}

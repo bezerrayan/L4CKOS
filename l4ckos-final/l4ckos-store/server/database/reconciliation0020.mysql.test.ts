@@ -208,7 +208,8 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 first reconcil
     const failed = { ...input, eventId: "synthetic-failed" };
     await expect(runAsaasWebhookOnce(failed, async () => { throw new Error("synthetic handler failure"); })).rejects.toThrow("synthetic handler failure");
     expect((await rows(success, "SELECT status, processedAt FROM asaasWebhookEvents WHERE eventId=?", [failed.eventId]))[0]).toMatchObject({ status: "failed", processedAt: null });
-    expect(await runAsaasWebhookOnce(failed, async () => { throw new Error("must not run"); })).toEqual({ duplicate: true });
+    expect(await runAsaasWebhookOnce(failed, async () => "recovered")).toEqual({ duplicate: false, result: "recovered" });
+    expect((await rows(success, "SELECT status FROM asaasWebhookEvents WHERE eventId=?", [failed.eventId]))[0].status).toBe("processed");
     expect(await fingerprint(success)).toBe(expectedPost);
   });
   it("reconciled 26-table fixture backs up and restores webhook rows into fresh canonical DB", async () => {

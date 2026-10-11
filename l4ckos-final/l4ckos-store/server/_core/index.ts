@@ -1,3 +1,5 @@
+import { startWebhookRecovery } from "../payments/webhookInbox";
+import { processWebhookEnvelope } from "../controllers/paymentController";
 ﻿import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -508,6 +510,7 @@ async function startServer() {
   console.log(`Server running on http://${host}:${port}/`);
 
   scheduleDailyBackup();
+  startWebhookRecovery(processWebhookEnvelope);
 }
 
 startServer().catch(console.error);

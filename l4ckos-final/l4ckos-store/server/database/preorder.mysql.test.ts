@@ -931,7 +931,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       );
       await paid(c, r.orderId);
       const artifact = await backupDatabase(c);
-      expect(artifact.tableManifestVersion).toBe(2);
+      expect(artifact.tableManifestVersion).toBe(3);
       expect(Object.keys(artifact.tables)).toHaveLength(28);
       const destination = await database(2, false);
       await restoreDatabase(destination, JSON.parse(JSON.stringify(artifact)), {

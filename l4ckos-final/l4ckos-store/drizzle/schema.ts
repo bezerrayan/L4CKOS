@@ -454,3 +454,17 @@ export const emailUnsubscribes = mysqlTable("emailUnsubscribes", {
 
 export type EmailUnsubscribe = typeof emailUnsubscribes.$inferSelect;
 export type InsertEmailUnsubscribe = typeof emailUnsubscribes.$inferInsert;
+
+// Minimal financial envelope only; never provider headers/customer/contact data.
+export const asaasWebhookInbox = mysqlTable("asaasWebhookInbox", {
+  eventId: varchar("eventId", { length: 191 }).primaryKey(),
+  payload: text("payload"),
+  payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+  state: mysqlEnum("state", ["received", "processing", "processed", "failed", "rejected"]).default("received").notNull(),
+  attempts: int("attempts").default(0).notNull(),
+  errorCode: varchar("errorCode", { length: 64 }),
+  nextAttemptAt: timestamp("nextAttemptAt"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("inbox_pending").on(table.state, table.nextAttemptAt, table.createdAt)]);

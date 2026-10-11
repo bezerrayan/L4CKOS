@@ -1,3 +1,5 @@
+import { receiveWebhook, type WebhookReply } from "../payments/webhookInbox";
+import { afterWebhookCommit } from "../database/webhookTransaction";
 import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
 import { PAYMENT_EXCEPTION_EVENTS } from "../../shared/paymentExceptions";
 import type { Request, Response } from "express";
@@ -320,11 +322,29 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
       return;
     }
 
+    const outcome = await receiveWebhook(req.body, processWebhookEnvelope);
+    res.status(outcome.status).json(outcome.body);
+  } catch {
+    sendControllerError(res, 503, "WEBHOOK_PERSISTENCE_FAILED", "Não foi possível receber a notificação.");
+  }
+}
+
+/** Internal recovery entrypoint; HTTP authentication is required before persistence. */
+export async function processWebhookEnvelope(payload: unknown): Promise<WebhookReply> {
+  let status = 500;
+  let body: Record<string, unknown> = { code: "WEBHOOK_PROCESSING_FAILED" };
+  const response = { status(code: number) { status = code; return this; }, json(value: Record<string, unknown>) { body = value; return this; } };
+  await processAsaasWebhook({ body: payload, ip: "inbox" } as Request, response as unknown as Response);
+  return { status, body };
+}
+async function processAsaasWebhook(req: Request, res: Response) {
+  try {
     const payload = req.body as any;
     const event = String(payload?.event || "").trim();
 
     if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event) && !PAYMENT_EXCEPTION_EVENTS.has(event)) {
-      res.status(200).json({ handled: false, reason: "event_ignored" });
+      // Durable rejection is reviewable, but this unsupported event is not processed.
+      res.status(422).json({ handled: false, reason: "event_ignored" });
       return;
     }
 
@@ -352,7 +372,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
           paymentId,
           paymentStatus,
         });
-        res.status(200).json({
+        res.status(409).json({
           handled: false,
           reason: "deleted_event_status_mismatch",
         });
@@ -383,7 +403,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
         securityLog("warn", "payment.asaas_webhook_resolve_failed", {
           paymentId,
           requestIp: req.ip || "unknown",
-          reason: error instanceof Error ? error.message : String(error),
+          reason: "provider_resolution_failed",
         });
       }
     }
@@ -395,7 +415,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
         paymentId,
         checkoutId,
       });
-      res.status(200).json({ handled: false, reason: "order_not_resolved" });
+      res.status(503).json({ handled: false, reason: "order_not_resolved" });
       return;
     }
 
@@ -408,7 +428,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
         paymentId,
         checkoutId,
       });
-      res.status(200).json({ handled: false, reason: "order_not_found" });
+      res.status(503).json({ handled: false, reason: "order_not_found" });
       return;
     }
 
@@ -439,6 +459,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
         checkoutId,
         orderId,
         payload,
+        sourcePayloadHash: payload.sourcePayloadHash,
       },
       async () => {
         if (PAYMENT_EXCEPTION_EVENTS.has(event) || event === "PAYMENT_DELETED" || (PAID_EVENTS.has(event) && order.status === "cancelled")) {
@@ -457,62 +478,64 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
           }
         }
 
-        const user = await getUserById(order.userId);
-        const orderItems = PAID_EVENTS.has(event) ? await getOrderReservationItems(order.id) : [];
-        if (user?.email) {
-          try {
-            if (PAID_EVENTS.has(event) && result.updated) {
-              await sendPaymentApprovedEmail({
-                salesMode: purchasedSalesMode(orderItems),
-                scheduleMessages: purchasedScheduleMessages(orderItems),
-                customerEmail: user.email,
-                customerName: user.name || "Cliente",
-                orderNumber: String(order.id),
-                total: formatCurrency(order.totalPrice / 100),
-              });
-              await sendInternalNewSaleAlertEmail({
-                customerName: user.name || "Cliente",
-                customerEmail: user.email,
-                orderNumber: String(order.id),
-                total: formatCurrency(order.totalPrice / 100),
-                items: orderItems.map(item => ({
-                  id: item.productId,
-                  name: item.productName || `Produto #${item.productId}`,
-                  price: formatCurrency((Number(item.productPrice || 0) * Number(item.quantity || 1)) / 100),
-                  imageUrl: item.productImage || "",
-                })),
-                orderUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/meus-pedidos/${order.id}`,
-              });
-              if (Array.isArray((result as any).lowStockProducts) && (result as any).lowStockProducts.length > 0) {
-                await sendInternalLowStockAlertEmail({
-                  products: (result as any).lowStockProducts,
+        await afterWebhookCommit(async () => {
+          const user = await getUserById(order.userId);
+          const orderItems = PAID_EVENTS.has(event) ? await getOrderReservationItems(order.id) : [];
+          if (user?.email) {
+            try {
+              if (PAID_EVENTS.has(event) && result.updated) {
+                await sendPaymentApprovedEmail({
+                  salesMode: purchasedSalesMode(orderItems),
+                  scheduleMessages: purchasedScheduleMessages(orderItems),
+                  customerEmail: user.email,
+                  customerName: user.name || "Cliente",
+                  orderNumber: String(order.id),
+                  total: formatCurrency(order.totalPrice / 100),
+                });
+                await sendInternalNewSaleAlertEmail({
+                  customerName: user.name || "Cliente",
+                  customerEmail: user.email,
+                  orderNumber: String(order.id),
+                  total: formatCurrency(order.totalPrice / 100),
+                  items: orderItems.map(item => ({
+                    id: item.productId,
+                    name: item.productName || `Produto #${item.productId}`,
+                    price: formatCurrency((Number(item.productPrice || 0) * Number(item.quantity || 1)) / 100),
+                    imageUrl: item.productImage || "",
+                  })),
+                  orderUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/meus-pedidos/${order.id}`,
+                });
+                if (Array.isArray((result as any).lowStockProducts) && (result as any).lowStockProducts.length > 0) {
+                  await sendInternalLowStockAlertEmail({
+                    products: (result as any).lowStockProducts,
+                  });
+                }
+              } else if (FAILED_EVENTS.has(event) && !["paid", "processing", "shipped", "delivered", "cancelled"].includes(order.status)) {
+                await sendPaymentFailedEmail({
+                  customerEmail: user.email,
+                  customerName: user.name || "Cliente",
+                  orderNumber: String(order.id),
+                  total: formatCurrency(order.totalPrice / 100),
+                  paymentUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/checkout`,
+                  failureReason: "A operadora ou o provedor não confirmou o pagamento.",
+                });
+                await sendInternalPaymentFailedAlertEmail({
+                  customerName: user.name || "Cliente",
+                  customerEmail: user.email,
+                  orderNumber: String(order.id),
+                  total: formatCurrency(order.totalPrice / 100),
+                  failureReason: "A operadora ou o provedor não confirmou o pagamento.",
                 });
               }
-            } else if (FAILED_EVENTS.has(event) && !["paid", "processing", "shipped", "delivered", "cancelled"].includes(order.status)) {
-              await sendPaymentFailedEmail({
-                customerEmail: user.email,
-                customerName: user.name || "Cliente",
-                orderNumber: String(order.id),
-                total: formatCurrency(order.totalPrice / 100),
-                paymentUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/checkout`,
-                failureReason: "A operadora ou o provedor não confirmou o pagamento.",
-              });
-              await sendInternalPaymentFailedAlertEmail({
-                customerName: user.name || "Cliente",
-                customerEmail: user.email,
-                orderNumber: String(order.id),
-                total: formatCurrency(order.totalPrice / 100),
-                failureReason: "A operadora ou o provedor não confirmou o pagamento.",
+            } catch (error) {
+              securityLog("warn", PAID_EVENTS.has(event) ? "email.payment_approved_failed" : "email.payment_failed_notification_failed", {
+                orderId,
+                reason: "notification_failed",
               });
             }
-          } catch (error) {
-            securityLog("warn", PAID_EVENTS.has(event) ? "email.payment_approved_failed" : "email.payment_failed_notification_failed", {
-              orderId,
-              reason: error instanceof Error ? error.message : "unknown",
-            });
           }
-        }
 
+        });
         return result;
       },
     );
@@ -547,8 +570,12 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
   } catch (error) {
     securityLog("error", "payment.asaas_webhook_failed", {
       requestIp: req.ip || "unknown",
-      reason: error instanceof Error ? error.message : "unknown",
+      reason: "webhook_processing_failed",
     });
+    if (error instanceof Error && error.message === "WEBHOOK_EVENT_CONFLICT") {
+      sendControllerError(res, 409, "WEBHOOK_EVENT_CONFLICT", "O evento recebido diverge do registro financeiro.");
+      return;
+    }
     sendControllerError(res, 500, "WEBHOOK_PROCESSING_FAILED", "Não foi possível processar a notificação.");
   }
 }

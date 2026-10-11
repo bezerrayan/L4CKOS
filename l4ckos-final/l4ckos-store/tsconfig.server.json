@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["server/**/*", "shared/**/*", "database/**/*.ts", "scripts/database-schema.ts", "scripts/database-push.ts", "scripts/staging-reconciliation.ts", "scripts/staging-restore-proof.ts", "scripts/staging-preorder.ts", "scripts/staging0021-restore-proof.ts"],
+  "include": ["server/**/*", "shared/**/*", "database/**/*.ts", "scripts/database-schema.ts", "scripts/database-push.ts", "scripts/staging-reconciliation.ts", "scripts/staging-restore-proof.ts", "scripts/staging-preorder.ts", "scripts/staging0021-restore-proof.ts", "scripts/staging0022.ts"],
   "exclude": [
     "node_modules",
     "build",

@@ -1,3 +1,4 @@
+vi.mock("./payments/webhookInbox", () => ({ receiveWebhook: async (payload: unknown, process: (value: unknown) => Promise<unknown>) => process(payload) }));
 import { describe, expect, it, vi } from "vitest";
 import { TRPCError } from "@trpc/server";
 import cors from "cors";
@@ -51,6 +52,20 @@ vi.mock("./services/emailService.js", () => ({
 }));
 
 describe("security hardening contracts", () => {
+  it.each(["unsupported","unresolved","missing"])("never acknowledges undurable %s webhook",async kind=>{
+    const db=await import("./db"),service=await import("./services/asaasService");
+    const {asaasWebhookHandler}=await import("./controllers/paymentController");
+    const token=process.env.ASAAS_WEBHOOK_TOKEN;process.env.ASAAS_WEBHOOK_TOKEN="fixture-window-token";
+    vi.mocked(db.getOrderById).mockResolvedValue(undefined);
+    vi.mocked(service.getAsaasPayment).mockResolvedValue({} as any);
+    vi.mocked(db.runAsaasWebhookOnce).mockClear();vi.mocked(db.markOrderPaid).mockClear();
+    try{
+      const res=createMockResponse();
+      await asaasWebhookHandler({headers:{"asaas-access-token":"fixture-window-token"},body:{id:"evt-fixture-window",event:kind==="unsupported"?"UNSUPPORTED_FIXTURE":"PAYMENT_RECEIVED",payment:{id:"pay-fixture",externalReference:kind==="missing"?"9009":undefined,status:"RECEIVED"}}} as any,res as any);
+      expect(res.statusCode).toBe(kind==="unsupported"?422:503);
+      expect(db.runAsaasWebhookOnce).not.toHaveBeenCalled();expect(db.markOrderPaid).not.toHaveBeenCalled();
+    }finally{if(token===undefined)delete process.env.ASAAS_WEBHOOK_TOKEN;else process.env.ASAAS_WEBHOOK_TOKEN=token;}
+  });
   it.each(['PAYMENT_OVERDUE','PAYMENT_REFUNDED','PAYMENT_REFUND_IN_PROGRESS','PAYMENT_REFUND_DENIED','PAYMENT_PARTIALLY_REFUNDED','PAYMENT_DELETED'])('records %s for reconciliation without refund, cancellation, email or reservation mutations', async event => {
     const db=await import('./db'), email=await import('./services/emailService.js');
     const {asaasWebhookHandler}=await import('./controllers/paymentController');
@@ -340,7 +355,7 @@ describe("security hardening contracts", () => {
     process.env.NODE_ENV = previousEnv;
   });
 
-  it("acknowledges inconsistent PAYMENT_DELETED without payment side effects", async () => {
+  it("rejects inconsistent PAYMENT_DELETED without a false acknowledgement", async () => {
     const db = await import("./db");
     const { asaasWebhookHandler } = await import("./controllers/paymentController");
     const oldToken = process.env.ASAAS_WEBHOOK_TOKEN;
@@ -369,7 +384,7 @@ describe("security hardening contracts", () => {
         },
       } as any, res as any);
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(409);
       expect(res.body).toMatchObject({
         handled: false,
         reason: "deleted_event_status_mismatch",
