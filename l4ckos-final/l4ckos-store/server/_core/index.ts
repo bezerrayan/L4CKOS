@@ -2,6 +2,7 @@ import { startPaymentNotificationRecovery } from "../payments/paymentNotificatio
 import { startWebhookRecovery } from "../payments/webhookInbox";
 import {initializeWebhookRecoveryMode} from '../payments/webhookRecovery';
 import { processWebhookEnvelope } from "../controllers/paymentController";
+import { prepareRecoveryWorkerStartup } from "./recoveryWorkerStartup";
 ﻿import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -175,6 +176,10 @@ async function listenWithRetry(
 
 async function startServer() {
   initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
+  const recoveryWorkers = prepareRecoveryWorkerStartup(process.env, {
+    startAsaasWebhookRecovery: () => startWebhookRecovery(processWebhookEnvelope),
+    startPaymentNotifications: () => startPaymentNotificationRecovery(),
+  });
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
 
@@ -509,8 +514,9 @@ async function startServer() {
   console.log(`Server running on http://${host}:${port}/`);
 
   scheduleDailyBackup();
-  startWebhookRecovery(processWebhookEnvelope);
-  startPaymentNotificationRecovery();
+  if (!recoveryWorkers.config.asaasWebhookRecovery) console.info("[Startup] Asaas webhook recovery worker disabled");
+  if (!recoveryWorkers.config.paymentNotifications) console.info("[Startup] payment notification recovery worker disabled");
+  recoveryWorkers.start();
 }
 
 startServer().catch(console.error);
