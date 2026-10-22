@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "migrations": [
+    {
+      "name": "0021_preorder_production_batches",
+      "kind": "MIGRATION",
+      "path": "database/migrations/0021_preorder_production_batches.sql",
+      "checksum": "46e7b40f6320659791ba90d3ebaf4c4cc031e84de36f5bdf8789ab1993d0233d",
+      "description": "Add explicit sales modes and production batches with historical order item context",
+      "expectedPreFingerprint": "f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d",
+      "expectedPostFingerprint": "6654c63ea42bbcb84af99e7640f24d3963581128a6a5387898b12b34cbbca93a"
+    },
+    {
+      "name": "0022_preorder_manufacturing_schedule",
+      "kind": "MIGRATION",
+      "path": "database/migrations/0022_preorder_manufacturing_schedule.sql",
+      "checksum": "f6f3ec21394b03da2920d88b163d3aa512a6fe74da4aea4a689dda4f828b26c1",
+      "description": "Manual Brasilia civil manufacturing dates, historical purchase snapshots and legacy compatibility",
+      "expectedPreFingerprint": "6654c63ea42bbcb84af99e7640f24d3963581128a6a5387898b12b34cbbca93a",
+      "expectedPostFingerprint": "a7c2774e783e83f34c0304e970a91278f4df9e8c2b0a1fd5576c2694c1b9011e"
+    },
+    {
+      "name": "0023_asaas_webhook_inbox",
+      "kind": "MIGRATION",
+      "path": "database/migrations/0023_asaas_webhook_inbox.sql",
+      "checksum": "b0b588463e5318fdc63761fd6a8261827478fe058f2152a8a630fa5fa87bae8a",
+      "description": "Durable minimal Asaas event envelopes with transaction-bound recovery and terminal retention",
+      "expectedPreFingerprint": "a7c2774e783e83f34c0304e970a91278f4df9e8c2b0a1fd5576c2694c1b9011e",
+      "expectedPostFingerprint": "0ba16c9b19b698d4933d0abad9a5e4679052fd2aaf78800da42d480e396ef5d2"
+    },
+    {
+      "name": "0024_home_highlight_settings",
+      "kind": "MIGRATION",
+      "path": "database/migrations/0024_home_highlight_settings.sql",
+      "checksum": "b687a35477a7c3da740dbf0c139bfa386742dbe4e8143325dedc73ee557b61e3",
+      "description": "Persist the singleton Home highlight display mode and rotation interval",
+      "expectedPreFingerprint": "0ba16c9b19b698d4933d0abad9a5e4679052fd2aaf78800da42d480e396ef5d2",
+      "expectedPostFingerprint": "7fe98896cff3da47b18a522c668fc429355e0397d74afa26c864585f102d649e"
+    }
+  ],
+  "unbaselined": {
+    "expectedInitialFingerprint": "09f647cdda027984d3425bef6ccee9cb3496a648602515b0930465b7b02d9efe",
+    "reconciliations": [
+      {
+        "name": "0020_reconcile_asaas_webhook_events",
+        "kind": "RECONCILIATION",
+        "path": "database/migrations/0020_reconcile_asaas_webhook_events.sql",
+        "checksum": "cad11dda08787cf7935390a1531002627f7a2894455ad250357b0ec1fa050423",
+        "description": "Create missing Asaas webhook event ledger on reconciled existing databases; no historical backfill",
+        "expectedPreFingerprint": "09f647cdda027984d3425bef6ccee9cb3496a648602515b0930465b7b02d9efe",
+        "expectedPostFingerprint": "f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d"
+      }
+    ]
+  }
+}

@@ -4,6 +4,7 @@ import { router, publicProcedure, adminProcedure, protectedProcedure } from "../
 import {
   getProducts,
   getProductByIdWithDetails,
+  getPublicProductVariants,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -11,13 +12,24 @@ import {
   getEligibleReviewProducts,
   getProductReviews,
   getPromoBanners,
+  getPublicHomeHighlights,
 } from "../db";
 import { TRPCError } from "@trpc/server";
 import { createReviewInputSchema } from "../reviews/policy";
+import { isRestrictedPublicPurchase } from "../database/publicPurchasePolicy";
 
 export const productsRouter = router({
   promotions: publicProcedure.query(async () => {
     return await getPromoBanners({ activeOnly: true });
+  }),
+
+  homeHighlights: publicProcedure.query(async () => {
+    const presentation = await getPublicHomeHighlights();
+    return {
+      displayMode: presentation.displayMode,
+      rotationIntervalSeconds: presentation.rotationIntervalSeconds,
+      campaigns: presentation.campaigns,
+    };
   }),
 
   // Listar todos os produtos com filtros opcionais
@@ -58,9 +70,9 @@ export const productsRouter = router({
       }
 
       if (input.inStockOnly) {
-        products = products.filter(p => p.salesMode === "PREORDER" ? batchAcceptsSales(p.productionBatch) &&
-              batchHasCapacity(p.productionBatch) : Number(p.stock ?? 0) > 0
-        );
+        products = products.filter(p => p.salesMode === "PREORDER"
+          ? batchAcceptsSales(p.productionBatch) && batchHasCapacity(p.productionBatch) && (p.hasVariants !== true || p.hasSellableVariants === true)
+          : p.hasVariants === true ? p.hasSellableVariants === true : Number(p.stock ?? 0) > 0);
       }
 
       if (input.sortBy && input.sortBy !== "relevance") {
@@ -82,6 +94,30 @@ export const productsRouter = router({
       throw new Error("Produto nao encontrado");
     }
     return product;
+  }),
+
+  /** Preparatory catalog projection only; checkout/cart do not consume this endpoint yet. */
+  sellableVariants: publicProcedure.input(z.number().int().positive()).query(async ({ input }) => {
+    const result = await getPublicProductVariants(input);
+    if (!result.product) throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
+    if (isRestrictedPublicPurchase(result.product.name)) {
+      return { productId: input, hasVariants: result.hasVariants, publicPurchaseAllowed: false as const, variants: [] as const };
+    }
+    if (!result.hasVariants) return { productId: input, hasVariants: false as const, publicPurchaseAllowed: true as const, variants: [] as const };
+    const preorderAvailable = result.product.salesMode === "PREORDER"
+      && batchAcceptsSales(result.product.productionBatch)
+      && batchHasCapacity(result.product.productionBatch);
+    const variants = result.variants
+      .filter(variant => result.product!.salesMode === "PREORDER" ? preorderAvailable : variant.availableUnits !== null && variant.availableUnits > 0)
+      .map(variant => ({
+        variantId: variant.variantId,
+        color: variant.color,
+        size: variant.size,
+        price: variant.price,
+        available: true as const,
+        availableUnits: variant.availableUnits,
+      }));
+    return { productId: input, hasVariants: true as const, publicPurchaseAllowed: true as const, variants };
   }),
 
   reviews: publicProcedure.input(z.number().int().positive()).query(async ({ input }) => {

@@ -1,0 +1,261 @@
+.l4-about {
+  --about-gutter: clamp(20px, 5.2vw, 104px);
+  --about-paper: #f0ede8;
+  --about-muted: #b7b4af;
+  --about-red: #e8002a;
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  background: #080808;
+  color: var(--about-paper);
+  font-family: "DM Sans", sans-serif;
+}
+
+.l4-about *,
+.l4-about *::before,
+.l4-about *::after { box-sizing: border-box; }
+
+.l4-about-gutter {
+  width: 100%;
+  padding-right: var(--about-gutter);
+  padding-left: var(--about-gutter);
+}
+
+.l4-about-hero {
+  position: relative;
+  display: flex;
+  min-height: min(780px, calc(100svh - 70px));
+  align-items: center;
+  overflow: hidden;
+  background: #080808;
+}
+
+.l4-about-hero-backdrop {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image:
+    linear-gradient(90deg, rgba(8, 8, 8, .72) 0%, rgba(8, 8, 8, .44) 48%, rgba(8, 8, 8, .16) 100%),
+    linear-gradient(0deg, #080808 0%, rgba(8, 8, 8, .03) 46%, rgba(8, 8, 8, .12) 100%),
+    url("/images/hero/montanhas-l4ckos-bg.webp");
+  background-position: center, center, center 54%;
+  background-repeat: no-repeat;
+  background-size: cover;
+  opacity: 1;
+}
+
+.l4-about-hero-inner {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 1920px);
+  margin: 0 auto;
+  padding-top: clamp(76px, 9vw, 144px);
+  padding-bottom: 44px;
+}
+
+.l4-about-kicker,
+.l4-about-overline,
+.l4-about-mark-index,
+.l4-about-mark-foot,
+.l4-about-scroll {
+  font-family: "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.l4-about-kicker { display: flex; align-items: center; gap: 12px; color: #d0ceca; }
+.l4-about-kicker-mark { width: 7px; height: 7px; background: var(--about-red); }
+
+.l4-about-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr);
+  gap: clamp(40px, 8vw, 150px);
+  align-items: center;
+  margin-top: clamp(38px, 7vw, 100px);
+}
+
+.l4-about-hero-copy { max-width: 1050px; }
+.l4-about-hero-copy h1,
+.l4-about-section-heading h2,
+.l4-about-statement h2,
+.l4-about-principles-heading h2,
+.l4-about-founders h2,
+.l4-about-closing h2 {
+  font-family: "Bebas Neue", Impact, sans-serif;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+
+.l4-about-hero-copy h1 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(56px, 5.3vw, 92px);
+  line-height: .86;
+  letter-spacing: -.018em;
+}
+
+.l4-about-hero-copy h1 .l4-about-title-line { display: block; color: var(--about-paper); }
+.l4-about-hero-copy h1 em { color: var(--about-red); font-style: normal; }
+.l4-about-hero-copy p { max-width: 590px; margin: 30px 0 0; color: #d0ceca; font-size: clamp(15px, 1.25vw, 18px); line-height: 1.75; }
+
+.l4-about-hero-mark {
+  position: relative;
+  display: flex;
+  min-height: 300px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 28px 0 28px 20px;
+}
+
+.l4-about-mark-index,
+.l4-about-mark-foot { color: #c3c0bb; font-size: 9px; }
+.l4-about-mark-word { margin: 9px -8px 8px 0; color: #fff; font-family: "Bebas Neue", Impact, sans-serif; font-size: clamp(82px, 11vw, 172px); line-height: .8; letter-spacing: -.035em; }
+.l4-about-mark-word span { color: var(--about-red); }
+.l4-about-mark-rule { width: min(100%, 250px); height: 2px; margin: 13px 0; background: var(--about-red); }
+.l4-about-mark-foot i { padding: 0 6px; color: var(--about-red); font-style: normal; }
+
+.l4-about-scroll { display: inline-flex; align-items: center; gap: 18px; margin-top: clamp(42px, 7vw, 96px); color: #e6e3de; text-decoration: none; }
+.l4-about-scroll span:last-child { color: var(--about-red); font-size: 17px; transition: transform .2s ease; }
+.l4-about-scroll:hover span:last-child { transform: translateY(3px); }
+.l4-about-scroll:focus-visible,
+.l4-about-cta:focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
+
+.l4-about-story { width: min(100%, 1920px); margin: 0 auto; padding-top: clamp(84px, 10.5vw, 158px); padding-bottom: clamp(88px, 10.5vw, 158px); }
+.l4-about-section-heading { display: grid; grid-template-columns: minmax(160px, .45fr) minmax(0, 1.55fr); gap: 24px; align-items: start; margin-bottom: clamp(50px, 8vw, 112px); }
+.l4-about-overline { color: var(--about-red); }
+.l4-about-section-heading h2,
+.l4-about-principles-heading h2 { max-width: 900px; margin: -12px 0 0; color: #fff; font-size: clamp(48px, 7.2vw, 108px); line-height: .9; }
+.l4-about-section-heading h2 span { color: var(--about-red); }
+
+.l4-about-story-list { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: clamp(16px, 3vw, 48px); row-gap: clamp(46px, 7.6vw, 112px); }
+.l4-about-story-item { position: relative; grid-column: span 5; min-width: 0; padding-top: 18px; }
+.l4-about-story-item-2 { grid-column: 8 / span 5; margin-top: 76px; }
+.l4-about-story-item-3 { grid-column: 2 / span 5; }
+.l4-about-story-item-4 { grid-column: 8 / span 5; margin-top: 34px; }
+.l4-about-story-number { display: block; margin-bottom: 24px; color: var(--about-red); font: 700 12px "Space Mono", monospace; letter-spacing: .1em; }
+.l4-about-story-item h3 { margin: 0 0 15px; color: #fff; font-family: "Bebas Neue", Impact, sans-serif; font-size: clamp(32px, 4vw, 56px); font-weight: 400; line-height: .95; text-transform: uppercase; }
+.l4-about-brand-four { color: var(--about-red); }
+.l4-about-story-item p { max-width: 460px; margin: 0; color: var(--about-muted); font-size: clamp(15px, 1.2vw, 17px); line-height: 1.8; }
+.l4-about-story-accent { position: absolute; top: 0; left: 0; width: 48px; height: 1px; background: #5a171f; }
+
+.l4-about-statement { position: relative; overflow: hidden; padding: clamp(80px, 10.5vw, 154px) 0; background: #111; }
+.l4-about-statement::before { position: absolute; top: 0; left: var(--about-gutter); width: 1px; height: 100%; background: linear-gradient(transparent, rgba(232, 0, 42, .7), transparent); content: ""; }
+.l4-about-statement-inner { width: min(100%, 1920px); margin: 0 auto; padding-left: calc(var(--about-gutter) + clamp(24px, 6vw, 100px)); }
+.l4-about-statement h2 { max-width: 1200px; margin: 34px 0 28px; color: #fff; font-size: clamp(58px, 9vw, 140px); line-height: .85; }
+.l4-about-statement h2 span { color: #aaa7a2; }
+.l4-about-statement p { max-width: 620px; margin: 0; color: var(--about-muted); font-size: clamp(15px, 1.2vw, 17px); line-height: 1.8; }
+
+.l4-about-principles { width: min(100%, 1920px); margin: 0 auto; padding-top: clamp(88px, 11.5vw, 168px); padding-bottom: clamp(98px, 12.3vw, 176px); }
+.l4-about-principles-heading { display: grid; grid-template-columns: minmax(160px, .45fr) minmax(0, 1.55fr); gap: 24px; align-items: start; margin-bottom: clamp(50px, 7vw, 96px); }
+.l4-about-principles-heading h2 { font-size: clamp(48px, 6.8vw, 100px); }
+.l4-about-principles-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid #373737; }
+.l4-about-principle { min-width: 0; padding: 24px clamp(18px, 3vw, 48px) 0 0; }
+.l4-about-principle + .l4-about-principle { padding-left: clamp(18px, 3vw, 48px); border-left: 1px solid #373737; }
+.l4-about-principle > span { color: var(--about-red); font: 700 11px "Space Mono", monospace; }
+.l4-about-principle h3 { max-width: 300px; margin: 35px 0 14px; color: #fff; font-family: "Bebas Neue", Impact, sans-serif; font-size: clamp(28px, 3vw, 42px); font-weight: 400; line-height: .95; text-transform: uppercase; }
+.l4-about-principle p { max-width: 360px; margin: 0; color: var(--about-muted); font-size: 15px; line-height: 1.75; }
+
+.l4-about-founders { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: clamp(30px, 6.8vw, 116px); align-items: center; padding-top: clamp(72px, 8.8vw, 126px); padding-bottom: clamp(80px, 9.7vw, 140px); background: #101010; }
+.l4-about-founders-intro { max-width: 620px; }
+.l4-about-founders h2 { margin: 26px 0 18px; color: #fff; font-size: clamp(56px, 7vw, 104px); line-height: .82; }
+.l4-about-founders h2 span { color: #9a9792; }
+.l4-about-founders-intro p { max-width: 490px; margin: 0 0 12px; color: var(--about-muted); font-size: 16px; line-height: 1.75; }
+.l4-about-founders-intro .l4-about-founders-note { color: #fff; font-size: 14px; }
+.l4-about-founders-names { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: clamp(12px, 2.5vw, 40px); border-bottom: 1px solid #444; padding: 0 0 14px; }
+.l4-about-founders-names span { flex: 1 1 0; min-width: 0; color: #fff; font-family: "Bebas Neue", Impact, sans-serif; font-size: clamp(54px, 6vw, 100px); line-height: .8; text-align: center; }
+.l4-about-founders-names i { flex: 0 0 auto; color: var(--about-red); font: normal 400 clamp(24px, 3vw, 40px) "DM Sans", sans-serif; }
+
+.l4-about-closing { position: relative; background: #080808; }
+.l4-about-closing::before { position: absolute; top: 0; left: 50%; width: min(82%, 1400px); height: 1px; background: linear-gradient(90deg, transparent, #5a171f, transparent); content: ""; transform: translateX(-50%); }
+.l4-about-closing-inner { width: min(100%, 1920px); margin: 0 auto; padding-top: clamp(88px, 11.5vw, 168px); padding-bottom: clamp(100px, 12.4vw, 182px); }
+.l4-about-closing h2 { max-width: 1200px; margin: 30px 0 28px; color: #fff; font-size: clamp(62px, 8.2vw, 124px); line-height: .84; }
+.l4-about-closing h2 span { color: #aaa7a2; }
+.l4-about-closing p { max-width: 640px; margin: 0 0 12px; color: var(--about-muted); font-size: 16px; line-height: 1.75; }
+.l4-about-cta { display: inline-flex; min-height: 52px; align-items: center; gap: 24px; margin-top: 28px; padding: 0 20px; border: 1px solid rgba(240, 237, 232, .55); color: #fff; font: 700 11px "Space Mono", monospace; letter-spacing: .08em; text-decoration: none; transition: color .2s ease, background-color .2s ease, border-color .2s ease; }
+.l4-about-cta span { color: var(--about-red); font-size: 17px; }
+.l4-about-cta:hover { border-color: #fff; background: rgba(255, 255, 255, .08); }
+
+.l4-about [data-reveal] { opacity: 1; transform: none; }
+.l4-about.is-reveal-ready [data-reveal]:not(.is-visible) { opacity: 0; transform: translateY(22px); }
+.l4-about.is-reveal-ready [data-reveal] { transition: opacity .65s ease, transform .65s cubic-bezier(.2, .7, .25, 1); }
+
+@media (min-width: 1921px) {
+  .l4-about-hero-inner { max-width: 1920px; }
+}
+
+@media (max-width: 900px) {
+  .l4-about-hero { min-height: auto; }
+  .l4-about-hero-backdrop { background-position: center, center, 58% center; }
+  .l4-about-hero-inner { padding-top: 90px; padding-bottom: 38px; }
+  .l4-about-hero-grid { grid-template-columns: minmax(0, 1fr) minmax(190px, .55fr); gap: 22px; margin-top: 54px; }
+  .l4-about-hero-copy h1 { font-size: clamp(58px, 7vw, 88px); }
+  .l4-about-hero-mark { min-height: 220px; }
+  .l4-about-mark-word { font-size: clamp(76px, 12vw, 112px); }
+  .l4-about-section-heading,
+  .l4-about-principles-heading { grid-template-columns: 1fr; gap: 20px; }
+  .l4-about-section-heading h2,
+  .l4-about-principles-heading h2 { margin-top: 0; }
+  .l4-about-founders { grid-template-columns: minmax(0, 1fr); gap: 54px; }
+  .l4-about-founders-names { max-width: 760px; }
+}
+
+@media (max-width: 600px) {
+  .l4-about { --about-gutter: 22px; }
+  .l4-about-hero-backdrop {
+    background-image:
+      linear-gradient(90deg, rgba(8, 8, 8, .62), rgba(8, 8, 8, .24)),
+      linear-gradient(0deg, #080808, rgba(8, 8, 8, .03) 68%),
+      url("/images/hero/montanhas-l4ckos-bg.webp");
+    background-position: center, center, 61% center;
+  }
+  .l4-about-hero-inner { padding-top: 70px; padding-bottom: 32px; }
+  .l4-about-kicker,.l4-about-overline,.l4-about-mark-index,.l4-about-mark-foot,.l4-about-scroll { font-size: 9px; }
+  .l4-about-hero-grid { grid-template-columns: minmax(0, 1fr); gap: 32px; margin-top: 42px; }
+  .l4-about-hero-copy h1 { font-size: clamp(42px, 11.5vw, 54px); line-height: .92; }
+  .l4-about-hero-copy p { max-width: 420px; margin-top: 22px; font-size: 15px; line-height: 1.7; }
+  .l4-about-hero-mark { min-height: 130px; align-items: flex-start; padding: 0; }
+  .l4-about-mark-word { margin: 8px 0 5px; font-size: clamp(70px, 18vw, 82px); }
+  .l4-about-mark-rule { width: min(72%, 240px); }
+  .l4-about-scroll { margin-top: 40px; }
+  .l4-about-story { padding-top: 78px; padding-bottom: 82px; }
+  .l4-about-section-heading,.l4-about-principles-heading { margin-bottom: 54px; }
+  .l4-about-section-heading h2,.l4-about-principles-heading h2 { font-size: clamp(50px, 13vw, 72px); }
+  .l4-about-story-list { grid-template-columns: minmax(0, 1fr); row-gap: 39px; }
+  .l4-about-story-item,
+  .l4-about-story-item-2,
+  .l4-about-story-item-3,
+  .l4-about-story-item-4 { grid-column: 1; margin-top: 0; padding-left: 0; }
+  .l4-about-story-item-2,.l4-about-story-item-4 { padding-left: clamp(22px, 8vw, 38px); }
+  .l4-about-story-item h3 { font-size: 38px; }
+  .l4-about-story-item p { font-size: 15px; line-height: 1.75; }
+  .l4-about-statement { padding-top: 78px; padding-bottom: 82px; }
+  .l4-about-statement-inner { padding-left: calc(var(--about-gutter) + 22px); }
+  .l4-about-statement h2 { margin-top: 28px; font-size: clamp(56px, 15vw, 82px); }
+  .l4-about-statement p { font-size: 15px; }
+  .l4-about-principles { padding-top: 80px; padding-bottom: 86px; }
+  .l4-about-principles-list { grid-template-columns: minmax(0, 1fr); }
+  .l4-about-principle,.l4-about-principle + .l4-about-principle { padding: 22px 0 24px; border-left: 0; border-bottom: 1px solid #373737; }
+  .l4-about-principle h3 { margin: 18px 0 10px; font-size: 34px; }
+  .l4-about-principle p { font-size: 14px; }
+  .l4-about-founders { gap: 34px; padding-top: 72px; padding-bottom: 76px; }
+  .l4-about-founders h2 { margin: 22px 0 16px; font-size: clamp(58px, 15vw, 82px); }
+  .l4-about-founders-intro p { font-size: 15px; }
+  .l4-about-founders-names { gap: 10px; padding-bottom: 12px; }
+  .l4-about-founders-names span { font-size: clamp(48px, 14vw, 70px); }
+  .l4-about-founders-names i { font-size: 26px; }
+  .l4-about-closing-inner { padding-top: 82px; padding-bottom: 94px; }
+  .l4-about-closing h2 { margin: 27px 0 24px; font-size: clamp(54px, 14vw, 72px); }
+  .l4-about-closing p { font-size: 15px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .l4-about *,
+  .l4-about *::before,
+  .l4-about *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .l4-about [data-reveal],
+  .l4-about.is-reveal-ready [data-reveal]:not(.is-visible) { opacity: 1; transform: none; }
+}

@@ -10,6 +10,8 @@ export type Product = {
   imageBanner?: string;
   category?: string;
   stock?: number;
+  hasVariants?: boolean;
+  hasSellableVariants?: boolean;
   salesMode?: "STOCK" | "PREORDER";
   productionBatch?: BatchPreview | null;
   rating?: number;

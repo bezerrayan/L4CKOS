@@ -1,4 +1,6 @@
 vi.mock("./payments/webhookInbox", () => ({ receiveWebhook: async (payload: unknown, process: (value: unknown) => Promise<unknown>) => process(payload) }));
+vi.mock('./database/webhookTransaction',async original=>({...await original<typeof import('./database/webhookTransaction')>(),webhookDb:()=>({})}));
+vi.mock('./payments/webhookRecovery',()=>({assertNoRecoveryHold:vi.fn(async()=>{}),assertWebhookBusinessEffectsAllowed:vi.fn()}));
 import { describe, expect, it, vi } from "vitest";
 import { TRPCError } from "@trpc/server";
 import cors from "cors";
@@ -42,6 +44,16 @@ vi.mock("./services/asaasService", async () => {
   };
 });
 
+vi.mock("./payments/paymentRecord", () => ({
+  validatePaymentBinding: vi.fn(async () => {}),
+  validatePaymentObservationBinding: vi.fn(async () => {}),
+  recordTrustedPaymentReceipt: vi.fn(async () => {}),
+}));
+vi.mock("./payments/paymentNotificationOutbox", () => ({
+  enqueuePaymentApproved: vi.fn(async () => {}),
+  deliverPaymentNotifications: vi.fn(async () => ({ sent: 1, blocked: false })),
+}));
+
 vi.mock("./services/emailService.js", () => ({
   sendInternalLowStockAlertEmail: vi.fn(),
   sendInternalNewSaleAlertEmail: vi.fn(),
@@ -67,21 +79,22 @@ describe("security hardening contracts", () => {
     }finally{if(token===undefined)delete process.env.ASAAS_WEBHOOK_TOKEN;else process.env.ASAAS_WEBHOOK_TOKEN=token;}
   });
   it.each(['PAYMENT_OVERDUE','PAYMENT_REFUNDED','PAYMENT_REFUND_IN_PROGRESS','PAYMENT_REFUND_DENIED','PAYMENT_PARTIALLY_REFUNDED','PAYMENT_DELETED'])('records %s for reconciliation without refund, cancellation, email or reservation mutations', async event => {
-    const db=await import('./db'), email=await import('./services/emailService.js');
+    const db=await import('./db'), email=await import('./services/emailService.js'), provider=await import('./services/asaasService');
     const {asaasWebhookHandler}=await import('./controllers/paymentController');
     const token=process.env.ASAAS_WEBHOOK_TOKEN;
     process.env.ASAAS_WEBHOOK_TOKEN='synthetic-exception-token';
     vi.mocked(db.getOrderById).mockResolvedValue({id:9007,userId:1,status:'paid',totalPrice:1000} as any);
+    vi.mocked(provider.getAsaasPayment).mockResolvedValue({id:'synthetic',externalReference:'9007',status:'OVERDUE',deleted:true,value:10});
     vi.mocked(db.runAsaasWebhookOnce).mockImplementation(async (_input,handler)=>({duplicate:false,result:await handler()}));
     vi.mocked(db.markOrderPaid).mockClear();vi.mocked(db.recordPaymentException).mockClear();vi.mocked(email.sendPaymentFailedEmail).mockClear();
     try {
       const res=createMockResponse();
-      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-exception-token'},body:{id:'evt-'+event,event,payment:{id:'synthetic',externalReference:'9007',status:event==='PAYMENT_DELETED'?'DELETED':undefined}}} as any,res as any);
+      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-exception-token'},body:{id:'evt-'+event,event,payment:{id:'synthetic',externalReference:'9007',status:event==='PAYMENT_DELETED'?'OVERDUE':undefined,deleted:event==='PAYMENT_DELETED'?true:undefined}}} as any,res as any);
       expect(res.statusCode).toBe(200);
       expect(db.recordPaymentException).toHaveBeenCalledOnce();
       expect(db.markOrderPaid).not.toHaveBeenCalled();expect(email.sendPaymentFailedEmail).not.toHaveBeenCalled();
       vi.mocked(db.runAsaasWebhookOnce).mockResolvedValueOnce({duplicate:true});
-      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-exception-token'},body:{id:'evt-'+event,event,payment:{id:'synthetic',externalReference:'9007',status:event==='PAYMENT_DELETED'?'DELETED':undefined}}} as any,createMockResponse() as any);
+      await asaasWebhookHandler({headers:{'asaas-access-token':'synthetic-exception-token'},body:{id:'evt-'+event,event,payment:{id:'synthetic',externalReference:'9007',status:event==='PAYMENT_DELETED'?'OVERDUE':undefined,deleted:event==='PAYMENT_DELETED'?true:undefined}}} as any,createMockResponse() as any);
       expect(db.recordPaymentException).toHaveBeenCalledOnce();
     } finally {if(token===undefined)delete process.env.ASAAS_WEBHOOK_TOKEN;else process.env.ASAAS_WEBHOOK_TOKEN=token;}
   });
@@ -386,8 +399,7 @@ describe("security hardening contracts", () => {
 
       expect(res.statusCode).toBe(409);
       expect(res.body).toMatchObject({
-        handled: false,
-        reason: "deleted_event_status_mismatch",
+        code: "PAYMENT_DELETION_INVALID",
       });
       expect(db.markOrderPaid).not.toHaveBeenCalled();
       expect(db.getOrderById).not.toHaveBeenCalled();
@@ -581,9 +593,10 @@ describe("security hardening contracts", () => {
     }
   });
 
-  it.each(["STOCK", "PREORDER", "MIXED"] as const)("payment webhook passes persisted %s snapshots to payment email", async mode => {
+  it.each(["STOCK", "PREORDER", "MIXED"] as const)("payment webhook passes persisted %s snapshots to the durable notification intent", async mode => {
     const db = await import("./db");
     const emails = await import("./services/emailService.js");
+    const outbox = await import("./payments/paymentNotificationOutbox");
     const { asaasWebhookHandler } = await import("./controllers/paymentController");
     const previousToken = process.env.ASAAS_WEBHOOK_TOKEN;
     const previousEnv = process.env.NODE_ENV;
@@ -594,7 +607,7 @@ describe("security hardening contracts", () => {
     vi.mocked(db.markOrderPaid).mockResolvedValue({ updated: true, lowStockProducts: [] } as any);
     vi.mocked(db.getUserById).mockResolvedValue({ id: 1, email: "synthetic@example.invalid", name: "Synthetic" } as any);
     vi.mocked(db.getOrderReservationItems).mockResolvedValue((mode === "STOCK" ? [{salesModeAtPurchase:"STOCK"}] : mode === "PREORDER" ? [{salesModeAtPurchase:"PREORDER"}] : [{salesModeAtPurchase:"STOCK"},{salesModeAtPurchase:"PREORDER"}]) as any);
-    vi.mocked(emails.sendPaymentApprovedEmail).mockClear();
+    vi.mocked(outbox.enqueuePaymentApproved).mockClear();
     vi.mocked(db.runAsaasWebhookOnce).mockImplementation(async (_input, handler) => ({ duplicate: false, result: await handler() }));
     vi.mocked(emails.sendInternalNewSaleAlertEmail).mockRejectedValueOnce(new Error("Missing env var: ALERTS_NOTIFICATION_EMAIL"));
     const res = createMockResponse();
@@ -604,7 +617,7 @@ describe("security hardening contracts", () => {
         payment: { id: "synthetic-payment", externalReference: "12", value: 10, status: "RECEIVED" },
       } } as any, res as any);
       expect(res.statusCode).toBe(200);
-      expect(emails.sendPaymentApprovedEmail).toHaveBeenCalledWith(expect.objectContaining({salesMode:mode,orderNumber:"12"}));
+      expect(outbox.enqueuePaymentApproved).toHaveBeenCalledWith(12,expect.objectContaining({salesMode:mode,orderNumber:"12"}));
       expect(warn).toHaveBeenCalled();
     } finally {
       warn.mockRestore();

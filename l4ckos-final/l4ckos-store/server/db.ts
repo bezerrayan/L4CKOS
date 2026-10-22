@@ -1,5 +1,6 @@
-import type { BatchPreview } from "../shared/preorder";
+import { batchAcceptsSales, batchHasCapacity, type BatchPreview } from "../shared/preorder";
 import { readShippingSnapshot } from "./database/orderShippingSnapshot";
+import { createVariantOptionKey, normalizeVariantLabel } from "./database/productVariantIdentity";
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createHash, randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import {
   orders,
   orderItems,
   productionBatches,
+  productionBatchProducts,
   favorites,
   productImages,
   productVariants,
@@ -25,6 +27,7 @@ import {
   userPaymentMethods,
   stockReservations,
   promoBanners,
+  homeHighlightSettings,
   waitlistEmails,
   emailUnsubscribes,
   passwordResetTokens,
@@ -32,6 +35,7 @@ import {
   orderEmailEvents,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { assertPublicCheckoutEnabled } from "./_core/publicStore";
 import {
   buildPaymentConfirmationValues,
   isTrustedPaymentConfirmation,
@@ -39,6 +43,11 @@ import {
 } from "./payments/confirmation";
 
 import { webhookDb, inWebhookTransaction } from "./database/webhookTransaction";
+import {assertNoRecoveryHold, assertOrderNotRecoveryHeld, assertWebhookBusinessEffectsAllowed} from './payments/webhookRecovery';
+import {confirmSelectedCheckoutStock} from './payments/selectedCheckoutStock';
+import {assertSelectedLedgerBinding,selectiveOrderAllowed} from './payments/stagingCheckoutAdmission';
+import { aggregateSalesReport } from "./reports/salesReport";
+import { isRestrictedPublicPurchase } from "./database/publicPurchasePolicy";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -185,6 +194,8 @@ export async function runAsaasWebhookOnce<T>(
 
   const db = await getDb();
   if (!db) throw new Error("Persistent webhook idempotency unavailable");
+  assertSelectedLedgerBinding(input);
+  await assertNoRecoveryHold(db,eventId);
 
   const payloadHash = input.sourcePayloadHash && /^[a-f0-9]{64}$/.test(input.sourcePayloadHash)
     ? input.sourcePayloadHash : hashWebhookPayload(input.payload);
@@ -578,7 +589,45 @@ export async function getProducts() {
   if (!db) return [];
   const productRows = await selectProductRows(db);
   const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
-  return enrichProductsWithBatch(db, mergeProductRowsWithImages(productRows, imageRows));
+  const productsWithBatch = await enrichProductsWithBatch(db, mergeProductRowsWithImages(productRows, imageRows));
+  const variantRows = await selectProductVariantRows(db, productRows.map(product => product.id));
+  if (!variantRows.length) return productsWithBatch.map(product => ({
+    ...product,
+    hasVariants: false,
+    hasSellableVariants: false,
+  }));
+  const reservations = await db.select({
+    variantId: stockReservations.variantId,
+    quantity: sql<number>`coalesce(sum(${stockReservations.quantity}), 0)`,
+  }).from(stockReservations).where(and(
+    eq(stockReservations.status, "active"),
+    gte(stockReservations.expiresAt, new Date()),
+    inArray(stockReservations.variantId, variantRows.map(variant => variant.id)),
+  )).groupBy(stockReservations.variantId);
+  const reserved = new Map(reservations.flatMap(row => row.variantId === null ? [] : [[row.variantId, Number(row.quantity ?? 0)] as const]));
+  const variantsByProduct = new Map<number, typeof variantRows>();
+  for (const variant of variantRows) variantsByProduct.set(variant.productId, [...(variantsByProduct.get(variant.productId) ?? []), variant]);
+  return productsWithBatch.map(product => {
+    const variants = variantsByProduct.get(product.id) ?? [];
+    const skuCounts = new Map<string, number>();
+    for (const variant of variants) {
+      const sku = String(variant.sku ?? "").normalize("NFKC").trim().toLowerCase();
+      if (sku) skuCounts.set(sku, (skuCounts.get(sku) ?? 0) + 1);
+    }
+    const hasSellableVariants = !isRestrictedPublicPurchase(product.name) && variants.some(variant => {
+      const color = typeof variant.color === "string" ? normalizeVariantLabel(variant.color) : "";
+      const size = typeof variant.size === "string" ? normalizeVariantLabel(variant.size) : "";
+      const sku = String(variant.sku ?? "").normalize("NFKC").trim().toLowerCase();
+      if (Number(variant.isActive) !== 1 || !color || !size || !sku || skuCounts.get(sku) !== 1 || !variant.optionKey) return false;
+      try { if (createVariantOptionKey(color, size) !== variant.optionKey) return false; } catch { return false; }
+      const effectivePrice = variant.price === null ? Number(product.price) : Number(variant.price);
+      if (!Number.isSafeInteger(effectivePrice) || effectivePrice <= 0) return false;
+      return product.salesMode === "PREORDER"
+        ? batchAcceptsSales(product.productionBatch) && batchHasCapacity(product.productionBatch)
+        : Number(variant.stock) - (reserved.get(variant.id) ?? 0) > 0;
+    });
+    return { ...product, hasVariants: variants.length > 0, hasSellableVariants };
+  });
 }
 
 export async function getProductById(id: number) {
@@ -1115,7 +1164,24 @@ export async function updateProduct(id: number, product: Partial<InsertProduct>)
 export async function deleteProduct(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await db.delete(products).where(eq(products.id, id));
+  return await db.transaction(async tx => {
+    const [product] = await tx.select({ id: products.id }).from(products).where(eq(products.id, id)).for("update");
+    if (!product) throw new ProductCatalogConflictError("Produto não encontrado.");
+    const references = await Promise.all([
+      tx.select({ id: orderItems.id }).from(orderItems).where(eq(orderItems.productId, id)).limit(1),
+      tx.select({ id: stockReservations.id }).from(stockReservations).where(eq(stockReservations.productId, id)).limit(1),
+      tx.select({ id: productionBatchProducts.id }).from(productionBatchProducts).where(eq(productionBatchProducts.productId, id)).limit(1),
+      tx.select({ id: productReviews.id }).from(productReviews).where(eq(productReviews.productId, id)).limit(1),
+      tx.select({ id: cartItems.id }).from(cartItems).where(eq(cartItems.productId, id)).limit(1),
+      tx.select({ id: favorites.id }).from(favorites).where(eq(favorites.productId, id)).limit(1),
+    ]);
+    if (references.some(rows => rows.length > 0)) {
+      throw new ProductCatalogConflictError("Este produto está vinculado a pedidos, reservas, avaliações, lotes, carrinhos ou favoritos e não pode ser excluído com segurança.");
+    }
+    await tx.delete(productImages).where(eq(productImages.productId, id));
+    await tx.delete(productVariants).where(eq(productVariants.productId, id));
+    return await tx.delete(products).where(eq(products.id, id));
+  });
 }
 
 // Carrinho
@@ -1151,6 +1217,7 @@ export async function clearCart(userId: number) {
 
 // Pedidos
 export async function createOrder(userId: number, totalPrice: number, shippingAddress?: OrderShippingSnapshotInput) {
+  assertPublicCheckoutEnabled();
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(orders).values({
@@ -1173,6 +1240,7 @@ export async function createOrder(userId: number, totalPrice: number, shippingAd
 }
 
 export async function createOrderWithId(userId: number, totalPrice: number, shippingAddress?: OrderShippingSnapshotInput) {
+  assertPublicCheckoutEnabled();
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -1293,6 +1361,7 @@ export async function getOrderReservationItems(orderId: number) {
       createdAt: stockReservations.createdAt,
       productName: sql<string>`case when ${orderItems.id} is null then ${products.name} else ${orderItems.productName} end`,
       productImage: sql<string>`case when ${orderItems.id} is null then ${products.imageUrl} else ${orderItems.imageUrl} end`,
+      sku: sql<string>`case when ${orderItems.id} is null then ${productVariants.sku} else ${orderItems.sku} end`,
       // Public DTO alias: productPrice is the frozen unitPrice for linked items.
       // Historical unlinked reservations retain their existing catalog fallback.
       productPrice: sql<number>`coalesce(${orderItems.unitPrice}, ${products.price})`,
@@ -1300,11 +1369,12 @@ export async function getOrderReservationItems(orderId: number) {
     .from(stockReservations)
     .leftJoin(orderItems, eq(orderItems.id, stockReservations.orderItemId))
     .leftJoin(products, eq(products.id, stockReservations.productId))
+    .leftJoin(productVariants, eq(productVariants.id, stockReservations.variantId))
     .where(eq(stockReservations.orderId, orderId))
     .orderBy(desc(stockReservations.id));
 
   const purchased = await db.select({
-    id: orderItems.id, orderId:orderItems.orderId, productId:orderItems.productId,
+    id: orderItems.id, orderId:orderItems.orderId, productId:orderItems.productId, sku:orderItems.sku,
     quantity:orderItems.quantity, productName:orderItems.productName, productImage:orderItems.imageUrl,
     productPrice:orderItems.unitPrice, size:orderItems.size, color:orderItems.color,
     salesModeAtPurchase:orderItems.salesModeAtPurchase, productionBatchId:orderItems.productionBatchId,
@@ -1354,7 +1424,7 @@ export async function updateOrderShippingAddress(
 export async function reserveStockForOrder(input: {
   userId: number;
   orderId: number;
-  items: Array<{ productId: number; quantity: number }>;
+  items: Array<{ productId: number; variantId?: number; orderItemId?: number; quantity: number }>;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1363,15 +1433,42 @@ export async function reserveStockForOrder(input: {
   const expiresAt = new Date(now.getTime() + 20 * 60 * 1000);
 
   await db.transaction(async tx => {
+    const [order] = await tx.select({ id: orders.id, userId: orders.userId, status: orders.status })
+      .from(orders).where(and(eq(orders.id, input.orderId), eq(orders.userId, input.userId))).for("update");
+    if (!order || order.status !== "pending") throw new Error("Order cannot receive a stock reservation.");
     await tx
       .update(stockReservations)
       .set({ status: "released" })
       .where(and(eq(stockReservations.orderId, input.orderId), eq(stockReservations.status, "active")));
 
     for (const item of input.items) {
-      const productRow = await tx.select().from(products).where(eq(products.id, item.productId)).limit(1);
-      if (productRow.length === 0) {
-        throw new Error(`Produto ${item.productId} nao encontrado.`);
+      if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) throw new Error("Invalid reservation quantity.");
+      const [product] = await tx.select().from(products).where(eq(products.id, item.productId)).for("update");
+      if (!product) throw new Error(`Produto ${item.productId} nao encontrado.`);
+      if (isRestrictedPublicPurchase(product.name)) throw new Error("Product requires server-side purchase authorization.");
+      if (product.salesMode === "PREORDER") throw new Error("Preorder items do not reserve physical stock.");
+      if (item.orderItemId === undefined) throw new Error("Stock reservation requires its order item.");
+      const [orderItem] = await tx.select().from(orderItems).where(and(
+        eq(orderItems.id, item.orderItemId), eq(orderItems.orderId, input.orderId),
+      )).for("update");
+      if (!orderItem || orderItem.productId !== item.productId || orderItem.quantity !== item.quantity ||
+        orderItem.salesModeAtPurchase !== "STOCK" || orderItem.variantId !== (item.variantId ?? null)) {
+        throw new Error("Stock reservation does not match its order item.");
+      }
+      const variants = await tx.select().from(productVariants).where(eq(productVariants.productId, item.productId)).orderBy(productVariants.id).for("update");
+      const variant = item.variantId === undefined ? null : variants.find(row => row.id === item.variantId);
+      if (variants.length > 0 && !item.variantId) throw new Error("Variant ID required for this product.");
+      if (item.variantId !== undefined && !variant) throw new Error("Variant does not belong to this product.");
+      if (variants.length === 0 && item.variantId !== undefined) throw new Error("Simple products cannot reserve variant stock.");
+      if (variant) {
+        const color = normalizeVariantLabel(String(variant.color ?? ""));
+        const size = normalizeVariantLabel(String(variant.size ?? ""));
+        if (Number(variant.isActive) !== 1 || !color || !size || !variant.sku?.trim() ||
+          !variant.optionKey || variant.optionKey !== createVariantOptionKey(color, size) ||
+          isRestrictedPublicPurchase(product.name, variant.sku)) throw new Error("Variant is not available for public reservation.");
+        if (orderItem.variantId !== variant.id) {
+          throw new Error("Variant reservation does not match its order item.");
+        }
       }
 
       const [reservedRow] = await tx
@@ -1382,21 +1479,24 @@ export async function reserveStockForOrder(input: {
         .where(
           and(
             eq(stockReservations.productId, item.productId),
+            variant ? eq(stockReservations.variantId, variant.id) : isNull(stockReservations.variantId),
             eq(stockReservations.status, "active"),
             gte(stockReservations.expiresAt, now),
           ),
         );
 
       const reservedQty = Number(reservedRow?.total ?? 0);
-      const available = Number(productRow[0].stock ?? 0) - reservedQty;
+      const available = Number(variant?.stock ?? product.stock ?? 0) - reservedQty;
       if (available < item.quantity) {
-        throw new Error(`Estoque insuficiente para ${productRow[0].name}. Disponivel: ${Math.max(0, available)}.`);
+        throw new Error(`Estoque insuficiente para ${product.name}. Disponivel: ${Math.max(0, available)}.`);
       }
 
       await tx.insert(stockReservations).values({
         orderId: input.orderId,
         userId: input.userId,
         productId: item.productId,
+        variantId: variant?.id ?? null,
+        orderItemId: item.orderItemId ?? null,
         quantity: item.quantity,
         status: "active",
         expiresAt,
@@ -1420,13 +1520,42 @@ export async function reserveExternalCheckoutCreation(orderId: number, userId: n
     if (!order || order.status !== "pending" || isTrustedPaymentConfirmation(order) || order.asaasCheckoutId || order.checkoutAttemptId) throw new Error("Checkout reconciliation required");
     const [attempt] = await tx.select({id:auditLogs.id}).from(auditLogs).where(and(eq(auditLogs.entity,"order"),eq(auditLogs.entityId,String(orderId)),eq(auditLogs.action,"checkout.external_creation_requested"))).limit(1);
     if (attempt) throw new Error("Checkout reconciliation required");
+    const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id).for("update");
+    const reservations = await tx.select().from(stockReservations).where(eq(stockReservations.orderId, orderId)).orderBy(stockReservations.id).for("update");
+    if (!items.length || items.some(item => item.salesModeAtPurchase !== "STOCK") || reservations.length !== items.length) {
+      throw new Error("Legacy checkout requires a complete, active stock reservation snapshot.");
+    }
+    const now = new Date();
+    for (const item of items) {
+      const matching = reservations.filter(reservation => reservation.orderItemId === item.id);
+      if (matching.length !== 1 || matching[0].userId !== userId || matching[0].productId !== item.productId ||
+        matching[0].variantId !== item.variantId || matching[0].quantity !== item.quantity ||
+        matching[0].status !== "active" || matching[0].expiresAt <= now) {
+        throw new Error("Legacy checkout reservation is absent, expired, or inconsistent.");
+      }
+      const [product] = await tx.select({ name: products.name }).from(products).where(eq(products.id, item.productId)).for("update");
+      if (!product || isRestrictedPublicPurchase(product.name, item.sku)) throw new Error("Product is not available for legacy checkout.");
+      const variants = await tx.select().from(productVariants).where(eq(productVariants.productId, item.productId)).orderBy(productVariants.id).for("update");
+      if (variants.length && item.variantId === null) throw new Error("Legacy checkout variant identity is missing.");
+      if (item.variantId !== null) {
+        const variant = variants.find(candidate => candidate.id === item.variantId);
+        const color = normalizeVariantLabel(String(variant?.color ?? ""));
+        const size = normalizeVariantLabel(String(variant?.size ?? ""));
+        if (!variant || Number(variant.isActive) !== 1 || !color || !size || !variant.sku?.trim() ||
+          !variant.optionKey || variant.optionKey !== createVariantOptionKey(color, size) ||
+          normalizeVariantLabel(String(item.color ?? "")) !== color || normalizeVariantLabel(String(item.size ?? "")) !== size ||
+          variants.filter(candidate => String(candidate.sku ?? "").normalize("NFKC").trim().toLowerCase() === variant.sku!.normalize("NFKC").trim().toLowerCase()).length !== 1) {
+          throw new Error("Legacy checkout variant is inactive or inconsistent.");
+        }
+      }
+    }
     await tx.insert(auditLogs).values({actorUserId:userId,actorType:"user",action:"checkout.external_creation_requested",entity:"order",entityId:String(orderId),metadata:JSON.stringify({recoveryRequiredOnUncertainResult:true})});
     return order;
   });
 }
 
 /** Immutable reconciliation evidence only; no financial or fulfillment mutation. */
-export async function recordPaymentException(input: { orderId: number; eventId: string; event: string; paymentId: string | null; checkoutId: string | null }) {
+export async function recordPaymentException(input: { orderId: number; eventId: string; event: string; paymentId: string | null; checkoutId: string | null; observation?: { eventDeleted: boolean; currentDeleted: boolean | null; currentStatus: string | null; currentAmountCents: number | null; eventAmountCents: number | null } }) {
   const db = await getDb();
   if (!db) throw new Error("Persistent reconciliation unavailable");
   await db.transaction(async tx => {
@@ -1441,10 +1570,12 @@ export async function markOrderPaid(
   orderId: number,
   confirmation: TrustedPaymentConfirmation,
 ) {
+  assertWebhookBusinessEffectsAllowed();
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   return await db.transaction(async tx => {
+    await assertOrderNotRecoveryHeld(tx,orderId);
     // Serializa webhook e confirmação manual concorrentes para impedir baixa
     // duplicada de estoque ou sobrescrita da evidência de pagamento.
     const current = await tx
@@ -1466,9 +1597,33 @@ export async function markOrderPaid(
       return { updated: false, status: order.status, lowStockProducts: [] } as const;
     }
 
+    if(selectiveOrderAllowed(orderId))return confirmSelectedCheckoutStock(tx,orderId,buildPaymentConfirmationValues(confirmation));
+
     const reservations = await tx.select().from(stockReservations).where(eq(stockReservations.orderId, orderId)).for("update");
-    if (reservations.some(r => r.status !== "active" || r.expiresAt.getTime() < Date.now())) {
+    const purchasedItems = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id).for("update");
+    const expiryTime = new Date();
+    if (reservations.some(r => r.status !== "active" || r.expiresAt.getTime() <= expiryTime.getTime())) {
+      await tx.update(stockReservations).set({ status: "expired" }).where(and(
+        eq(stockReservations.orderId, orderId),
+        eq(stockReservations.status, "active"),
+        lte(stockReservations.expiresAt, expiryTime),
+      ));
       await tx.insert(auditLogs).values({ actorType: "system", action: "payment.reconciliation_required", entity: "order", entityId: String(orderId), metadata: JSON.stringify({ reason: "stock_reservation_unavailable", source: confirmation.source, reconciliationRequired: true, financialMutation: false }) });
+      return { updated: false, invalidTransition: true, status: order.status, lowStockProducts: [] } as const;
+    }
+    const reservationLinkInvalid = purchasedItems.some(item => {
+      if (item.salesModeAtPurchase !== "STOCK") return reservations.some(reservation => reservation.orderItemId === item.id);
+      const matching = reservations.filter(reservation => reservation.orderItemId === item.id);
+      return matching.length !== 1 || matching[0].productId !== item.productId ||
+        matching[0].variantId !== item.variantId || matching[0].quantity !== item.quantity ||
+        matching[0].userId !== order.userId;
+    }) || reservations.some(reservation => {
+      if (reservation.orderItemId === null || reservation.userId !== order.userId) return true;
+      const item = purchasedItems.find(candidate => candidate.id === reservation.orderItemId);
+      return !item || item.productId !== reservation.productId || item.variantId !== reservation.variantId || item.quantity !== reservation.quantity;
+    });
+    if (reservationLinkInvalid) {
+      await tx.insert(auditLogs).values({ actorType: "system", action: "payment.reconciliation_required", entity: "order", entityId: String(orderId), metadata: JSON.stringify({ reason: "stock_reservation_item_mismatch", source: confirmation.source, reconciliationRequired: true, financialMutation: false, reservationMutation: false }) });
       return { updated: false, invalidTransition: true, status: order.status, lowStockProducts: [] } as const;
     }
 
@@ -1501,16 +1656,7 @@ export async function markOrderPaid(
     }
 
     const now = new Date();
-    const activeReservations = await tx
-      .select()
-      .from(stockReservations)
-      .where(
-        and(
-          eq(stockReservations.orderId, orderId),
-          eq(stockReservations.status, "active"),
-          gte(stockReservations.expiresAt, now),
-        ),
-      );
+    const activeReservations = reservations.filter(reservation => reservation.status === "active" && reservation.expiresAt.getTime() >= now.getTime());
 
     for (const reservation of activeReservations) {
       const productRows = await tx
@@ -1521,7 +1667,10 @@ export async function markOrderPaid(
         })
         .from(products)
         .where(eq(products.id, reservation.productId))
-        .limit(1);
+        .limit(1)
+        .for("update");
+      const product = productRows[0];
+      if (!product) throw new Error("Reserved product no longer exists");
 
       if (reservation.variantId) {
         const [variant] = await tx.select().from(productVariants)
@@ -1529,9 +1678,21 @@ export async function markOrderPaid(
         if (!variant || variant.stock < reservation.quantity) throw new Error("Reserved variant stock unavailable");
         await tx.update(productVariants).set({ stock: sql`${productVariants.stock} - ${reservation.quantity}` })
           .where(eq(productVariants.id, variant.id));
+        const [stockTotal] = await tx.select({ total: sql<number>`coalesce(sum(${productVariants.stock}), 0)` })
+          .from(productVariants).where(eq(productVariants.productId, reservation.productId));
+        const aggregateBefore = Number(product.stock ?? 0);
+        const aggregateAfter = Number(stockTotal.total ?? 0);
+        await tx.update(products).set({ stock: aggregateAfter }).where(eq(products.id, product.id));
+        if (aggregateBefore > 5 && aggregateAfter <= 5) {
+          lowStockProducts.push({ id: Number(product.id), name: product.name, stock: aggregateAfter });
+        }
+        continue;
       }
-      const product = productRows[0];
+      const [hasVariants] = await tx.select({ id: productVariants.id }).from(productVariants)
+        .where(eq(productVariants.productId, reservation.productId)).limit(1).for("update");
+      if (hasVariants) throw new Error("Variant reservation ID missing; reconciliation required");
       const currentStock = Number(product?.stock ?? 0);
+      if (currentStock < reservation.quantity) throw new Error("Reserved product stock unavailable");
       const nextStock = currentStock - reservation.quantity;
 
       await tx
@@ -2004,6 +2165,7 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
   if (!db) throw new Error("Database not available");
 
   return await db.transaction(async tx => {
+    await assertOrderNotRecoveryHeld(tx,orderId);
     const rows = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1).for("update");
     const previousOrder = rows[0];
     if (!previousOrder) throw new Error("Order not found");
@@ -2046,12 +2208,14 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
 export const ORDER_EMAIL_PROCESSING_LEASE_MS = 15 * 60 * 1000;
 
 export async function claimOrderEmailEvent(orderId: number, eventType: OrderEmailEventType) {
+  assertWebhookBusinessEffectsAllowed();
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = new Date();
   const staleBefore = new Date(now.getTime() - ORDER_EMAIL_PROCESSING_LEASE_MS);
 
   return await db.transaction(async tx => {
+    await assertOrderNotRecoveryHeld(tx,orderId);
     const rows = await tx
       .select({
         id: orderEmailEvents.id,
@@ -2151,73 +2315,362 @@ export async function replaceProductImages(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  try {
-    await db.delete(productImages).where(eq(productImages.productId, productId));
-  } catch (error) {
-    if (isMissingDatabaseObjectError(error)) {
-      throw new Error("A estrutura de fotos do catálogo não está disponível no banco de dados.");
-    }
-    throw error;
+  await db.transaction(async tx => {
+    await syncProductImages(tx as unknown as ProductDatabase, productId, imageUrls);
+  });
+}
+
+export async function replaceProductVariants(
+  productId: number,
+  variants: ProductVariantWrite[],
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async tx => {
+    const txDb = tx as unknown as ProductDatabase;
+    const rows = extractExecutedRows(await txDb.execute(sql`select price from products where id = ${productId} for update`));
+    if (!rows.length) throw new Error("Produto não encontrado.");
+    await syncProductVariants(txDb, productId, variants, Number(rows[0].price ?? 0));
+  });
+}
+
+type ProductDatabase = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+export type ProductVariantWrite = {
+  id?: number;
+  name?: string;
+  color?: string | null;
+  size?: string | null;
+  sku?: string | null;
+  price?: number | null;
+  stock?: number;
+  isActive?: boolean;
+};
+type NormalizedProductVariantWrite = {
+  id?: number;
+  name: string;
+  color: string | null;
+  size: string | null;
+  optionKey: string | null;
+  sku: string | null;
+  price: number | null;
+  stock: number;
+  isActive: 0 | 1;
+};
+export class ProductCatalogConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProductCatalogConflictError";
   }
-  if (imageUrls.length > 0) {
-    const nextRows = imageUrls.map((item, index) => ({
+}
+export function assertVariantStockCoversReservations(variantName: string, proposedStock: number, activeReserved: number) {
+  if (proposedStock < activeReserved) {
+    throw new ProductCatalogConflictError(`O estoque da variante “${variantName}” não pode ficar abaixo das ${activeReserved} unidades reservadas ativas.`);
+  }
+}
+type ProductImageWrite = string | {
+  imageUrl: string;
+  imageThumbnailUrl?: string | null;
+  imageDetailUrl?: string | null;
+  imageBannerUrl?: string | null;
+  color?: string | null;
+  alt?: string | null;
+};
+
+function normalizeProductImageInput(productId: number, values: ProductImageWrite[]) {
+  const seen = new Set<string>();
+  return values.map((item, order) => {
+    const image = typeof item === "string" ? { imageUrl: item } : item;
+    const imageUrl = String(image.imageUrl ?? "").trim();
+    if (!imageUrl || seen.has(imageUrl)) return null;
+    seen.add(imageUrl);
+    return {
       productId,
-      imageUrl: typeof item === "string" ? item : item.imageUrl,
+      imageUrl,
       imageThumbnailUrl: typeof item === "string" ? null : item.imageThumbnailUrl ?? null,
       imageDetailUrl: typeof item === "string" ? null : item.imageDetailUrl ?? null,
       imageBannerUrl: typeof item === "string" ? null : item.imageBannerUrl ?? null,
       color: typeof item === "string" ? null : item.color ?? null,
       alt: typeof item === "string" ? null : item.alt ?? null,
-      order: index,
-    }));
+      order,
+    };
+  }).filter((row): row is NonNullable<typeof row> => row !== null);
+}
 
-    try {
-      await db.insert(productImages).values(nextRows);
-    } catch (error) {
-      if (!isMissingDatabaseObjectError(error)) throw error;
-      if (!/unknown column/i.test(getDatabaseErrorMessage(error))) return;
-      try {
-      await db.insert(productImages).values(
-        nextRows.map(({ imageThumbnailUrl, imageDetailUrl, imageBannerUrl, color, alt, ...legacyRow }) => legacyRow),
-      );
-    } catch (legacyError) {
-        if (isMissingDatabaseObjectError(legacyError)) {
-          throw new Error("Não foi possível gravar as fotos adicionais do produto.");
-        }
-        throw legacyError;
+async function syncProductImages(db: ProductDatabase, productId: number, imageValues: ProductImageWrite[]) {
+  const nextRows = normalizeProductImageInput(productId, imageValues);
+  let columns: DatabaseColumnInfo[];
+  try {
+    columns = await getDatabaseTableColumns(db, "productImages");
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error) && nextRows.length === 0) return;
+    if (isMissingDatabaseObjectError(error)) throw new ProductCatalogConflictError("A estrutura de fotos do catálogo não está disponível; as alterações foram canceladas.");
+    throw error;
+  }
+  const available = new Set(columns.map(column => column.Field));
+  if (!["id", "productId", "imageUrl", "order"].every(column => available.has(column))) {
+    if (nextRows.length === 0) return;
+    throw new ProductCatalogConflictError("A estrutura atual de fotos não permite persistir a galeria com segurança.");
+  }
+  for (const row of nextRows) {
+    for (const field of ["imageThumbnailUrl", "imageDetailUrl", "imageBannerUrl", "color", "alt"] as const) {
+      if (row[field] != null && !available.has(field)) {
+        throw new ProductCatalogConflictError(`A estrutura atual de fotos não suporta ${field}; nenhuma alteração foi gravada.`);
       }
+    }
+  }
+
+  const existing = extractExecutedRows(await db.execute(
+    sql`select * from productImages where productId = ${productId} order by \`order\` asc, id asc for update`,
+  )).map(normalizeProductImageRow);
+  const byUrl = new Map<string, typeof existing[number]>();
+  for (const row of existing) {
+    if (byUrl.has(String(row.imageUrl))) throw new ProductCatalogConflictError("Há imagens duplicadas no catálogo; revise a galeria antes de editá-la.");
+    byUrl.set(String(row.imageUrl), row);
+  }
+  const nextUrls = new Set(nextRows.map(row => row.imageUrl));
+  const removeIds = existing.filter(row => !nextUrls.has(String(row.imageUrl))).map(row => row.id);
+  if (removeIds.length) await db.delete(productImages).where(inArray(productImages.id, removeIds));
+
+  for (const row of nextRows) {
+    const current = byUrl.get(row.imageUrl);
+    const values = Object.fromEntries(Object.entries(row).filter(([key]) => available.has(key)));
+    if (current) {
+      const { id: _id, productId: _productId, ...updateValues } = values;
+      await db.update(productImages).set(updateValues as any).where(eq(productImages.id, current.id));
+    } else {
+      await db.insert(productImages).values(values as any);
     }
   }
 }
 
-export async function replaceProductVariants(
-  productId: number,
-  variants: Array<{ name: string; sku?: string | null; price?: number | null; stock: number }>,
+export function planProductVariantSync(
+  existing: Array<{ id: number; name: string; sku: string | null; price: number | null; stock: number; color?: string | null; size?: string | null; optionKey?: string | null; isActive?: number | null }>,
+  incoming: ProductVariantWrite[],
+  referencedVariantIds: number[] = [],
 ) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  try {
-    await db.delete(productVariants).where(eq(productVariants.productId, productId));
-  } catch (error) {
-    if (isMissingDatabaseObjectError(error)) return;
-    throw error;
+  const ids = new Set<number>();
+  const update: Array<{ id: number; value: NormalizedProductVariantWrite }> = [];
+  const insert: Array<NormalizedProductVariantWrite> = [];
+
+  for (const variant of incoming) {
+    let match: typeof existing[number] | undefined;
+    if (variant.id !== undefined) {
+      if (ids.has(variant.id)) throw new ProductCatalogConflictError("Uma variante foi enviada mais de uma vez.");
+      ids.add(variant.id);
+      match = existing.find(row => row.id === variant.id);
+      if (!match) throw new ProductCatalogConflictError("A variante informada não pertence a este produto; recarregue o catálogo.");
+    } else if (variant.color == null || variant.size == null || variant.sku == null || variant.stock === undefined || variant.isActive === undefined) {
+      throw new ProductCatalogConflictError("Uma nova variante precisa de cor, tamanho, SKU, estoque e disponibilidade explícitos.");
+    }
+
+    const isActive: 0 | 1 = variant.isActive === undefined ? Number(match?.isActive ?? 0) === 1 ? 1 : 0 : variant.isActive ? 1 : 0;
+    const merged = {
+      ...variant,
+      name: variant.name?.trim() || match?.name || `${variant.color ?? match?.color ?? ""} ${variant.size ?? match?.size ?? ""}`.trim(),
+      color: variant.color === undefined ? match?.color ?? null : variant.color,
+      size: variant.size === undefined ? match?.size ?? null : variant.size,
+      sku: variant.sku === undefined ? match?.sku ?? null : variant.sku,
+      price: variant.price === undefined ? match?.price ?? null : variant.price,
+      stock: variant.stock === undefined ? match?.stock ?? 0 : variant.stock,
+      isActive,
+    };
+    const color = merged.color == null ? null : normalizeVariantLabel(merged.color);
+    const size = merged.size == null ? null : normalizeVariantLabel(merged.size);
+    let optionKey: string | null = null;
+    if (color && size) optionKey = createVariantOptionKey(color, size);
+    if (merged.isActive === 1 && (!color || !size || !optionKey || !merged.sku?.trim())) {
+      throw new ProductCatalogConflictError("Uma variante só pode ser ativada após revisão explícita de cor, tamanho, SKU e combinação.");
+    }
+    if (!merged.name || merged.name.length > 120) throw new ProductCatalogConflictError("O nome de exibição da variante é inválido.");
+    if (!Number.isSafeInteger(merged.stock) || merged.stock < 0) throw new ProductCatalogConflictError("O estoque da variante deve ser um inteiro não negativo.");
+    if (merged.price !== null && (!Number.isSafeInteger(merged.price) || merged.price < 0)) throw new ProductCatalogConflictError("O preço da variante deve ser nulo (herdado) ou um valor em centavos não negativo.");
+    const value: NormalizedProductVariantWrite = { ...merged, id: match?.id, color, size, optionKey, isActive };
+    if (match) update.push({ id: match.id, value });
+    else insert.push({ ...value, color: color!, size: size!, optionKey: optionKey! });
   }
-  if (variants.length > 0) {
-    try {
-      await db.insert(productVariants).values(
-        variants.map(variant => ({
-          productId,
-          name: variant.name,
-          sku: variant.sku ?? null,
-          price: variant.price ?? null,
-          stock: variant.stock,
-        })),
-      );
-    } catch (error) {
-      if (isMissingDatabaseObjectError(error)) return;
-      throw error;
+
+  const finalRows: NormalizedProductVariantWrite[] = existing.map(row => {
+    const change = update.find(item => item.id === row.id)?.value;
+    return change ?? {
+      id: row.id, name: row.name, color: row.color ?? null, size: row.size ?? null, optionKey: row.optionKey ?? null,
+      sku: row.sku, price: row.price, stock: row.stock, isActive: Number(row.isActive ?? 0) === 1 ? 1 : 0,
+    };
+  });
+  finalRows.push(...insert);
+  const newlyActivatedIds = new Set([
+    ...update.filter(item => item.value.isActive === 1 && Number(existing.find(row => row.id === item.id)?.isActive ?? 0) !== 1).map(item => item.id),
+    ...insert.filter(item => item.isActive === 1).map((_, index) => -(index + 1)),
+  ]);
+  if (newlyActivatedIds.size > 0) {
+    const activatingRows = finalRows.filter(row => row.id !== undefined ? newlyActivatedIds.has(row.id) : row.isActive === 1);
+    for (const candidate of activatingRows) {
+      const unresolvedPeer = finalRows.some(row => row !== candidate && (!row.color || !row.size || !row.optionKey));
+      if (unresolvedPeer) throw new ProductCatalogConflictError("Classifique explicitamente ou mantenha inativas as variantes legadas sem identidade antes de ativar novas combinações.");
     }
   }
+  const keys = new Set<string>();
+  const skus = new Set<string>();
+  for (const row of finalRows) {
+    if (row.color && row.size) {
+      const key = createVariantOptionKey(row.color, row.size);
+      if (keys.has(key)) throw new ProductCatalogConflictError("Já existe uma variante com esta combinação de cor e tamanho.");
+      keys.add(key);
+      if (row.optionKey && row.optionKey !== key) throw new ProductCatalogConflictError("A chave da combinação não corresponde à cor e ao tamanho informados.");
+    }
+    if (row.sku?.trim()) {
+      const skuKey = row.sku.normalize("NFKC").trim().toLocaleLowerCase("pt-BR");
+      if (skus.has(skuKey)) throw new ProductCatalogConflictError("Já existe uma variante com este SKU.");
+      skus.add(skuKey);
+    }
+  }
+  return { update, insert, remove: [] as number[], referencedVariantIds };
+}
+
+async function syncProductVariants(db: ProductDatabase, productId: number, incoming: ProductVariantWrite[], basePriceCents: number) {
+  let existing: Array<{ id: number; name: string; sku: string | null; price: number | null; stock: number; color: string | null; size: string | null; optionKey: string | null; isActive: number }>;
+  try {
+    existing = extractExecutedRows(await db.execute(
+      sql`select id, name, sku, price, stock, color, size, optionKey, isActive from productVariants where productId = ${productId} order by id for update`,
+    )).map(row => ({ id: Number(row.id), name: String(row.name), sku: row.sku ?? null, price: row.price == null ? null : Number(row.price), stock: Number(row.stock ?? 0), color: row.color ?? null, size: row.size ?? null, optionKey: row.optionKey ?? null, isActive: Number(row.isActive ?? 0) }));
+  } catch (error) {
+    if (isMissingDatabaseObjectError(error) && incoming.length === 0) return;
+    if (isMissingDatabaseObjectError(error)) throw new ProductCatalogConflictError("A estrutura de variantes não está disponível; nenhuma alteração foi gravada.");
+    throw error;
+  }
+
+  const referencedRows = existing.length
+    ? extractExecutedRows(await db.execute(sql`
+        select variantId from orderItems where variantId in (${sql.join(existing.map(row => sql`${row.id}`), sql`, `)})
+        union
+        select variantId from stockReservations where variantId in (${sql.join(existing.map(row => sql`${row.id}`), sql`, `)})
+      `))
+    : [];
+  const referencedIds = referencedRows.map(row => Number(row.variantId));
+  const plan = planProductVariantSync(existing, incoming, referencedIds);
+  if (plan.update.some(item => item.value.isActive === 1 && item.value.price === null)
+    || plan.insert.some(item => item.isActive === 1 && item.price === null)) {
+    if (!Number.isSafeInteger(basePriceCents) || basePriceCents <= 0) {
+      throw new ProductCatalogConflictError("Variantes com preço herdado exigem preço base válido no produto.");
+    }
+  }
+
+  const stockReductions = plan.update.filter(item => item.value.stock < (existing.find(row => row.id === item.id)?.stock ?? 0));
+  const reservations = stockReductions.length ? await db.select({ variantId: stockReservations.variantId, quantity: stockReservations.quantity })
+    .from(stockReservations)
+    .where(and(
+      eq(stockReservations.productId, productId),
+      eq(stockReservations.status, "active"),
+      gte(stockReservations.expiresAt, new Date()),
+    ))
+    .for("update") : [];
+  const reservedByVariant = new Map<number, number>();
+  for (const reservation of reservations) {
+    if (reservation.variantId == null) continue;
+    reservedByVariant.set(reservation.variantId, (reservedByVariant.get(reservation.variantId) ?? 0) + Number(reservation.quantity));
+  }
+  for (const item of plan.update) {
+    const reserved = reservedByVariant.get(item.id) ?? 0;
+    assertVariantStockCoversReservations(item.value.name, item.value.stock, reserved);
+  }
+
+  for (const item of plan.update) {
+    await db.update(productVariants).set({
+      name: item.value.name.trim(),
+      sku: item.value.sku,
+      price: item.value.price,
+      stock: item.value.stock,
+      color: item.value.color,
+      size: item.value.size,
+      optionKey: item.value.optionKey,
+      isActive: item.value.isActive,
+    }).where(and(eq(productVariants.id, item.id), eq(productVariants.productId, productId)));
+  }
+  if (plan.insert.length) await db.insert(productVariants).values(plan.insert.map(item => ({
+    productId,
+    name: item.name.trim(),
+    sku: item.sku,
+    price: item.price,
+    stock: item.stock,
+    color: item.color,
+    size: item.size,
+    optionKey: item.optionKey,
+    isActive: item.isActive,
+  })));
+  if (existing.length === 0 && plan.insert.length === 0) return;
+  const [stockTotal] = await db.select({ total: sql<number>`coalesce(sum(${productVariants.stock}), 0)` })
+    .from(productVariants).where(eq(productVariants.productId, productId));
+  await db.update(products).set({ stock: Number(stockTotal?.total ?? 0) }).where(eq(products.id, productId));
+}
+
+export async function createProductWithCatalog(input: {
+  product: InsertProduct;
+  images: ProductImageWrite[];
+  variants: ProductVariantWrite[];
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async tx => {
+    const txDb = tx as unknown as ProductDatabase;
+    let result: any;
+    try {
+      result = await insertProductFromActualColumns(txDb, input.product);
+    } catch (error) {
+      console.warn("[db.createProductWithCatalog] dynamic insert failed, using legacy-compatible insert", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      result = await insertProductWithLegacyFallback(txDb, input.product);
+    }
+    const productId = Number((result as any)?.[0]?.insertId ?? (result as any)?.insertId ?? 0);
+    if (!Number.isSafeInteger(productId) || productId <= 0) throw new Error("Não foi possível confirmar o cadastro do produto.");
+    await syncProductImages(txDb, productId, input.images);
+    await syncProductVariants(txDb, productId, input.variants, Number(input.product.price ?? 0));
+    return productId;
+  });
+}
+
+export async function updateProductWithCatalog(input: {
+  id: number;
+  product: Partial<InsertProduct>;
+  images?: ProductImageWrite[];
+  variants?: ProductVariantWrite[];
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async tx => {
+    const txDb = tx as unknown as ProductDatabase;
+    const rows = extractExecutedRows(await txDb.execute(sql`select * from products where id = ${input.id} for update`));
+    if (!rows.length) throw new Error("Produto não encontrado.");
+    const product = normalizeProductRow(rows[0]);
+    const existingVariants = await txDb.select({ id: productVariants.id }).from(productVariants).where(eq(productVariants.productId, input.id)).for("update");
+    const requestedStock = input.product.stock;
+    if (existingVariants.length > 0 && requestedStock !== undefined) {
+      throw new ProductCatalogConflictError("O estoque agregado de um produto com variantes é calculado pelas variantes; edite o estoque de cada combinação.");
+    }
+    if (requestedStock !== undefined && requestedStock < Number(product.stock)) {
+      const reservations = await txDb.select({ quantity: stockReservations.quantity }).from(stockReservations).where(and(
+        eq(stockReservations.productId, input.id),
+        eq(stockReservations.status, "active"),
+        gte(stockReservations.expiresAt, new Date()),
+      )).for("update");
+      const activeReserved = reservations.reduce((sum, reservation) => sum + Number(reservation.quantity), 0);
+      if (requestedStock < activeReserved) {
+        throw new ProductCatalogConflictError(`O estoque do produto não pode ficar abaixo das ${activeReserved} unidades reservadas ativas.`);
+      }
+    }
+
+    try {
+      await updateProductFromActualColumns(txDb, input.id, input.product);
+    } catch (error) {
+      console.warn("[db.updateProductWithCatalog] dynamic update failed, using legacy-compatible update", {
+        productId: input.id,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      await updateProductWithLegacyFallback(txDb, input.id, input.product);
+    }
+    if (input.images !== undefined) await syncProductImages(txDb, input.id, input.images);
+    if (input.variants !== undefined) await syncProductVariants(txDb, input.id, input.variants, Number(input.product.price ?? product.price ?? 0));
+    return { success: true } as const;
+  });
 }
 
 export async function getProductsAdmin() {
@@ -2226,6 +2679,15 @@ export async function getProductsAdmin() {
   const productRows = await selectProductRows(db);
   const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
   const variantRows = await selectProductVariantRows(db, productRows.map(product => product.id));
+  const variantIds = variantRows.map(variant => variant.id);
+  const [orderReferences, reservationReferences] = variantIds.length ? await Promise.all([
+    db.select({ variantId: orderItems.variantId, count: sql<number>`count(*)` })
+      .from(orderItems).where(inArray(orderItems.variantId, variantIds)).groupBy(orderItems.variantId),
+    db.select({ variantId: stockReservations.variantId, count: sql<number>`count(*)` })
+      .from(stockReservations).where(inArray(stockReservations.variantId, variantIds)).groupBy(stockReservations.variantId),
+  ]) : [[], []];
+  const orderReferenceCounts = new Map(orderReferences.map(row => [Number(row.variantId), Number(row.count)]));
+  const reservationReferenceCounts = new Map(reservationReferences.map(row => [Number(row.variantId), Number(row.count)]));
 
   const imagesMap = new Map<number, typeof imageRows>();
   for (const item of imageRows) {
@@ -2237,7 +2699,11 @@ export async function getProductsAdmin() {
   const variantsMap = new Map<number, typeof variantRows>();
   for (const item of variantRows) {
     const current = variantsMap.get(item.productId) ?? [];
-    current.push(item);
+    current.push({
+      ...item,
+      historicalOrderReferences: orderReferenceCounts.get(item.id) ?? 0,
+      historicalReservationReferences: reservationReferenceCounts.get(item.id) ?? 0,
+    });
     variantsMap.set(item.productId, current);
   }
 
@@ -2247,6 +2713,50 @@ export async function getProductsAdmin() {
     images: imagesMap.get(product.id) ?? [],
     variants: variantsMap.get(product.id) ?? [],
   }));
+}
+
+/** Read-only, sellable variant projection for the public catalog; it does not participate in checkout. */
+export async function getPublicProductVariants(productId: number) {
+  const db = await getDb();
+  if (!db) return { product: null, hasVariants: false, variants: [] as Array<{ variantId: number; color: string; size: string; price: number; availableUnits: number | null }> };
+  const product = await getProductByIdWithDetails(productId);
+  if (!product) return { product: null, hasVariants: false, variants: [] as Array<{ variantId: number; color: string; size: string; price: number; availableUnits: number | null }> };
+  const sourceVariants = product.variants ?? [];
+  if (sourceVariants.length === 0) return { product, hasVariants: false, variants: [] };
+  const skuCounts = new Map<string, number>();
+  for (const variant of sourceVariants) {
+    const sku = String(variant.sku ?? "").normalize("NFKC").trim().toLowerCase();
+    if (sku) skuCounts.set(sku, (skuCounts.get(sku) ?? 0) + 1);
+  }
+
+  const reservationRows = await db.select({ variantId: stockReservations.variantId, quantity: sql<number>`coalesce(sum(${stockReservations.quantity}), 0)` })
+    .from(stockReservations)
+    .where(and(
+      eq(stockReservations.productId, productId),
+      eq(stockReservations.status, "active"),
+      gte(stockReservations.expiresAt, new Date()),
+    ))
+    .groupBy(stockReservations.variantId);
+  const reserved = new Map<number, number>();
+  for (const row of reservationRows) if (row.variantId != null) reserved.set(row.variantId, Number(row.quantity ?? 0));
+
+  const variants = sourceVariants.flatMap(variant => {
+    const color = typeof variant.color === "string" ? normalizeVariantLabel(variant.color) : "";
+    const size = typeof variant.size === "string" ? normalizeVariantLabel(variant.size) : "";
+    if (Number(variant.isActive) !== 1 || !color || !size || !variant.optionKey || !variant.sku?.trim()) return [];
+    if (skuCounts.get(variant.sku.normalize("NFKC").trim().toLowerCase()) !== 1) return [];
+    let canonicalKey: string;
+    try { canonicalKey = createVariantOptionKey(color, size); } catch { return []; }
+    if (canonicalKey !== variant.optionKey) return [];
+    const price = variant.price == null ? Number(product.price) : Number(variant.price);
+    if (!Number.isSafeInteger(price) || price <= 0) return [];
+    const availableUnits: number | null = product.salesMode === "PREORDER"
+      ? null
+      : Math.max(0, Number(variant.stock ?? 0) - (reserved.get(variant.id) ?? 0));
+    if (product.salesMode !== "PREORDER" && (availableUnits === null || availableUnits <= 0)) return [];
+    return [{ variantId: variant.id, color, size, price, availableUnits }];
+  });
+  return { product, hasVariants: true, variants };
 }
 
 export async function createCoupon(payload: {
@@ -2363,6 +2873,61 @@ export async function getPromoBanners(options?: { activeOnly?: boolean }) {
     : await db.select().from(promoBanners).orderBy(promoBanners.sortOrder, desc(promoBanners.id));
 
   return rows.map(item => ({ ...item, isActive: item.isActive === 1 }));
+}
+
+export const HOME_HIGHLIGHT_DEFAULTS = { displayMode: "single" as const, rotationIntervalSeconds: 8 as const };
+
+export async function getHomeHighlightSettings() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.select().from(homeHighlightSettings).where(eq(homeHighlightSettings.id, 1)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function updateHomeHighlightSettings(input: {
+  displayMode: "single" | "rotate";
+  rotationIntervalSeconds: 5 | 8 | 10;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async tx => {
+    const existing = await tx.select({ id: homeHighlightSettings.id })
+      .from(homeHighlightSettings)
+      .where(eq(homeHighlightSettings.id, 1))
+      .limit(1);
+    if (!existing.length) throw new Error("Home highlight settings row missing; apply migration 0024 before updating settings.");
+    await tx.update(homeHighlightSettings).set(input).where(eq(homeHighlightSettings.id, 1));
+  });
+  return await getHomeHighlightSettings();
+}
+
+export async function getPublicHomeHighlights() {
+  const db = await getDb();
+  if (!db) return { ...HOME_HIGHLIGHT_DEFAULTS, campaigns: [] };
+  return await db.transaction(async tx => {
+    let displayMode: "single" | "rotate" = HOME_HIGHLIGHT_DEFAULTS.displayMode;
+    let rotationIntervalSeconds: 5 | 8 | 10 = HOME_HIGHLIGHT_DEFAULTS.rotationIntervalSeconds;
+    try {
+      const settingsRows = await tx.select().from(homeHighlightSettings).where(eq(homeHighlightSettings.id, 1)).limit(1);
+      if (settingsRows[0]) {
+        displayMode = settingsRows[0].displayMode;
+        rotationIntervalSeconds = settingsRows[0].rotationIntervalSeconds as 5 | 8 | 10;
+      }
+    } catch (error) {
+      const databaseError = error as { code?: string; errno?: number };
+      if (databaseError.code !== "ER_NO_SUCH_TABLE" && databaseError.errno !== 1146) throw error;
+      // Keep the public Home compatible during a staged rollout. The admin query
+      // deliberately does not use this fallback, so a missing migration stays visible there.
+    }
+    const campaigns = await tx.select().from(promoBanners)
+      .where(eq(promoBanners.isActive, 1))
+      .orderBy(promoBanners.sortOrder, desc(promoBanners.id));
+    return {
+      displayMode,
+      rotationIntervalSeconds,
+      campaigns: campaigns.map(item => ({ ...item, isActive: item.isActive === 1 })),
+    };
+  });
 }
 
 export async function createPromoBanner(payload: {
@@ -2522,25 +3087,50 @@ export async function getDashboardKpis() {
   };
 }
 
-export async function getSalesByPeriod(from: Date, to: Date) {
+export const SALES_REPORT_MAX_ORDERS = 5000;
+
+export class SalesReportTooLargeError extends Error {
+  constructor() {
+    super(`O período contém mais de ${SALES_REPORT_MAX_ORDERS} pedidos. Selecione um intervalo menor.`);
+    this.name = "SalesReportTooLargeError";
+  }
+}
+
+export async function getAdminSalesReport(from: Date, to: Date) {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) throw new Error("Database not available");
 
   const rows = await db
     .select({
-      day: sql<string>`date(${orders.createdAt})`,
-      totalSales: sql<number>`coalesce(sum(${orders.totalPrice}), 0)`,
-      ordersCount: sql<number>`count(*)`,
+      id: orders.id,
+      createdAt: orders.createdAt,
+      status: orders.status,
+      paymentStatus: orders.paymentStatus,
+      totalPrice: orders.totalPrice,
     })
     .from(orders)
     .where(and(gte(orders.createdAt, from), lte(orders.createdAt, to)))
-    .groupBy(sql`date(${orders.createdAt})`)
-    .orderBy(sql`date(${orders.createdAt}) asc`);
+    .orderBy(desc(orders.createdAt), desc(orders.id))
+    .limit(SALES_REPORT_MAX_ORDERS + 1);
 
-  return rows.map(row => ({
+  if (rows.length > SALES_REPORT_MAX_ORDERS) throw new SalesReportTooLargeError();
+  const items = rows.length
+    ? await db.select({
+      orderId: orderItems.orderId,
+      productId: orderItems.productId,
+      productName: orderItems.productName,
+      quantity: orderItems.quantity,
+    }).from(orderItems).where(inArray(orderItems.orderId, rows.map(row => row.id)))
+    : [];
+  return aggregateSalesReport(rows, from, to, items);
+}
+
+export async function getSalesByPeriod(from: Date, to: Date) {
+  const report = await getAdminSalesReport(from, to);
+  return report.daily.map(row => ({
     day: row.day,
-    totalSales: Number(row.totalSales),
-    ordersCount: Number(row.ordersCount),
+    totalSales: row.totalCents,
+    ordersCount: row.ordersCount,
   }));
 }
 

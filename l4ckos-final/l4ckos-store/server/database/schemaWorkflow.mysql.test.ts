@@ -1,12 +1,13 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { readFile, readdir } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { Connection } from "mysql2/promise";
 import audited from "../../docs/database/audited-physical-schema.json";
 import { openBackupConnection, backupDatabase, restoreDatabase } from "./backupRestore";
-import { readContract, bootstrapArtifacts, ROOT } from "../../database/schema/artifacts";
-import { normalizeDefault, readStructuralSchema, sha256, structuralHash, quote, rows } from "../../database/schema/fingerprint";
-import { assertLocalSchemaTarget } from "../../database/schema/safety";
+import { readContract, readReleaseContract, bootstrapArtifacts, ROOT } from "../../database/schema/artifacts";
+import { normalizeDefault, normalizeExtra, normalizePreorderV7CheckClause, readStructuralSchema, sha256, structuralHash, quote, rows } from "../../database/schema/fingerprint";
+import { assertLocalSchemaTarget, safeDiagnosticCause, SchemaError } from "../../database/schema/safety";
 import { baselineDatabase } from "../../database/schema/baseline";
 import { bootstrapDatabase } from "../../database/bootstrap/bootstrap";
 import { migrateDatabase, loadLineage, type LineageManifest } from "../../database/migrations/runner";
@@ -14,6 +15,8 @@ import { ledgerRows, type OperationContext } from "../../database/schema/governa
 
 const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const url = (name: string) => `mysql://root@localhost/${name}`;
+const runId = randomUUID().replaceAll("-", "").slice(0, 12);
+const schemaName = (suffix: string) => `l4ckos_test_workflow_${runId}_${suffix}`;
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 let root: Connection;
 let expected: Awaited<ReturnType<typeof readContract>>;
@@ -23,7 +26,7 @@ const databases: string[] = [];
 const connections: Connection[] = [];
 const context = (name: string): OperationContext => ({ url: url(name), socketPath, applicationCommit: commit, approvedFingerprint: expected.fingerprint, lockTimeoutSeconds: 0 });
 async function database(suffix: string) {
-  const name = `l4ckos_test_workflow_${suffix}`;
+  const name = schemaName(suffix);
   await root.query(`CREATE DATABASE ${quote(name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   databases.push(name);
   const c = await openBackupConnection(url(name), socketPath);
@@ -51,6 +54,64 @@ describe("local schema safety and reviewed artifacts", () => {
     expect(normalizeDefault("(now())", "timestamp")).toBe("CURRENT_TIMESTAMP(0)");
     expect(normalizeDefault("CURRENT_TIMESTAMP(3)", "timestamp(3)")).toBe("CURRENT_TIMESTAMP(3)");
     expect(normalizeDefault("now()", "varchar(30)")).toBe("now()");
+    expect(normalizeExtra("DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3)")).toBe("on update CURRENT_TIMESTAMP(3)");
+    expect(normalizeExtra("on update current_timestamp()")).toBe("on update CURRENT_TIMESTAMP(0)");
+    expect(normalizeExtra("auto_increment")).toBe("auto_increment");
+    expect(structuralHash({ type: "timestamp(3)", datetimePrecision: 3, extra: normalizeExtra("on update CURRENT_TIMESTAMP(3)") }))
+      .not.toBe(structuralHash({ type: "timestamp", datetimePrecision: 0, extra: normalizeExtra("on update CURRENT_TIMESTAMP(0)") }));
+  });
+  it("canonicalizes MySQL v7 CHECK serialization while retaining condition semantics", () => {
+    const cases = [
+      [
+        "(`salesState` in ('review_required','accepting','sales_closed','settling','consolidated','reconciliation_required'))",
+        "(`salesState` in (_utf8mb4'review_required',_utf8mb4'accepting',_utf8mb4'sales_closed',_utf8mb4'settling',_utf8mb4'consolidated',_utf8mb4'reconciliation_required'))",
+      ],
+      [
+        "((`paymentMethod` = 'CARD' and `commercialExpiresAt` is null) or (`paymentMethod` in ('PIX','BOLETO') and `commercialExpiresAt` is not null))",
+        "(((`paymentMethod` = _utf8mb4'CARD') and (`commercialExpiresAt` is null)) or ((`paymentMethod` in (_utf8mb4'PIX',_utf8mb4'BOLETO')) and (`commercialExpiresAt` is not null)))",
+      ],
+      [
+        "((`state` = 'exception' and `reconciliationCode` is not null) or (`state` <> 'exception' and `reconciliationCode` is null))",
+        "(((`state` = _utf8mb4'exception') and (`reconciliationCode` is not null)) or ((`state` <> _utf8mb4'exception') and (`reconciliationCode` is null)))",
+      ],
+      [
+        "(`paymentMethod` in ('PIX','CARD','BOLETO'))",
+        "(`paymentMethod` in (_utf8mb4'PIX',_utf8mb4'CARD',_utf8mb4'BOLETO'))",
+      ],
+      [
+        "(`state` in ('active','allocated','released','expired','exception'))",
+        "(`state` in (_utf8mb4'active',_utf8mb4'allocated',_utf8mb4'released',_utf8mb4'expired',_utf8mb4'exception'))",
+      ],
+    ] as const;
+    for (const [expected, mysql] of cases) {
+      expect(normalizePreorderV7CheckClause(mysql)).toBe(expected);
+      expect(normalizePreorderV7CheckClause(mysql.replace(/'/g, "\\'"))).toBe(expected);
+    }
+    expect(normalizePreorderV7CheckClause(cases[3][1].replace("'BOLETO'", "'CASH'"))).not.toBe(cases[3][0]);
+    expect(normalizePreorderV7CheckClause("(`quantity` > 0)")).not.toBe(normalizePreorderV7CheckClause("(`quantity` >= 0)"));
+    expect(normalizePreorderV7CheckClause("(`quantity` between 1 and 10)")).toBe("(`quantity` between 1 and 10)");
+    expect(normalizePreorderV7CheckClause("(`a` = 1 and (`b` = 2 or `c` = 3))"))
+      .not.toBe(normalizePreorderV7CheckClause("((`a` = 1 and `b` = 2) or `c` = 3)"));
+  });
+  it("keeps a sanitized cause chain when recovery evidence cannot be fingerprinted", () => {
+    const driver = Object.assign(new Error("query failed: mysql://secret@example.invalid/db"), { code: "ER_PARSE_ERROR" });
+    const root = new Error("UNSUPPORTED_PREORDER_V7_CHECK_EXPRESSION", { cause: driver });
+    const wrapped = new SchemaError("RECOVERY_REQUIRED", undefined, { cause: safeDiagnosticCause(root) });
+    expect(wrapped.code).toBe("RECOVERY_REQUIRED");
+    const cause = wrapped.cause as Error;
+    expect(cause.message).toBe("UNSUPPORTED_PREORDER_V7_CHECK_EXPRESSION");
+    expect((cause.cause as Error).message).toBe("ER_PARSE_ERROR");
+    expect(`${cause.message}:${(cause.cause as Error).message}`).not.toContain("secret");
+  });
+  it("keeps every v6 physical extra value stable under the corrected normalizer", async () => {
+    expect((await readContract()).fingerprint).toBe("f2baf7519cb425c955bfd0f697da10afa670ee57763e3f641b61a09ba75b7f8d");
+    const release = await readReleaseContract();
+    expect(release.fingerprint).toBe("38b664bdad6d26873fcb3b539c17234ee4214cf6654aecf0bc13286622cc0d04");
+    for (const table of release.schema.tables) {
+      for (const column of table.columns) {
+        if (column.extra) expect(normalizeExtra(column.extra), `${table.name}.${column.name}`).toBe(column.extra);
+      }
+    }
   });
   it("rejects remote/production/Railway/unidentified/URL override targets", () => {
     const env = { NODE_ENV: "test", L4CKOS_LOCAL_SCHEMA: "1" };
@@ -145,7 +206,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 schema / ledge
     }
   });
   it("refuses a nonempty bootstrap target and wrong accepted fingerprint without changing it", async () => {
-    await expect(bootstrapDatabase(fresh1, context("l4ckos_test_workflow_fresh1"))).rejects.toThrow("BOOTSTRAP_TARGET_NOT_EMPTY");
+    await expect(bootstrapDatabase(fresh1, context(schemaName("fresh1")))).rejects.toThrow("BOOTSTRAP_TARGET_NOT_EMPTY");
     const { c, ctx } = await database("wrong_acceptance");
     await expect(bootstrapDatabase(c, { ...ctx, approvedFingerprint: "b".repeat(64) })).rejects.toThrow("APPROVED_FINGERPRINT_REQUIRED");
     expect((await readStructuralSchema(c)).tables).toHaveLength(0);
@@ -188,9 +249,9 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 schema / ledge
   it("rejects altered SQL checksum and wrong precondition before executing anything", async () => {
     const manifest = await fixtureManifest(expected.fingerprint);
     manifest.migrations[0].checksum = "b".repeat(64);
-    await expect(migrateDatabase(fresh1, context("l4ckos_test_workflow_fresh1"), manifest)).rejects.toThrow("MIGRATION_CHECKSUM_MISMATCH");
+    await expect(migrateDatabase(fresh1, context(schemaName("fresh1")), manifest)).rejects.toThrow("MIGRATION_CHECKSUM_MISMATCH");
     manifest.migrations[0].expectedPreFingerprint = "a".repeat(64);
-    await expect(migrateDatabase(fresh1, context("l4ckos_test_workflow_fresh1"), manifest)).rejects.toThrow("INVALID_LINEAGE_MANIFEST");
+    await expect(migrateDatabase(fresh1, context(schemaName("fresh1")), manifest)).rejects.toThrow("INVALID_LINEAGE_MANIFEST");
     expect(await historySize(fresh1)).toBe(1);
   });
   it("serializes two runner instances, aborts the competitor and executes only once", async () => {
@@ -270,7 +331,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("MySQL 8.4 schema / ledge
     }
     const backup = await backupDatabase(fresh1);
     expect(Object.keys(backup.tables)).toHaveLength(26);
-    expect(await restoreDatabase(fresh2, JSON.parse(JSON.stringify(backup)), { url: url("l4ckos_test_workflow_fresh2"), socketPath })).toEqual({ tables: 26, rows: 26 });
+    expect(await restoreDatabase(fresh2, JSON.parse(JSON.stringify(backup)), { url: url(schemaName("fresh2")), socketPath })).toEqual({ tables: 26, rows: 26 });
     const restored = await backupDatabase(fresh2);
     for (const table of Object.keys(backup.tables)) expect(restored.tables[table].checksum).toBe(backup.tables[table].checksum);
     expect(structuralHash(await readStructuralSchema(fresh1))).toBe(expected.fingerprint);

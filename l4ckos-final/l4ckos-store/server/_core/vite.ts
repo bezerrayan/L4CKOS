@@ -5,8 +5,7 @@ import { type Server } from "http";
 import { nanoid } from "nanoid";
 import path from "path";
 import { fileURLToPath } from "node:url";
-import { createServer as createViteServer } from "vite";
-import viteConfig from "../../vite.config";
+import { createServer as createViteServer, loadConfigFromFile } from "vite";
 import { isKnownClientRoute } from "./static";
 
 export { isKnownClientRoute } from "./static";
@@ -19,6 +18,14 @@ if (typeof crypto.hash !== "function") {
 const CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export async function setupVite(app: Express, server: Server) {
+  const loadedConfig = await loadConfigFromFile(
+    { command: "serve", mode: "development" },
+    path.resolve(CORE_DIR, "../../vite.config.ts"),
+  );
+  if (!loadedConfig) {
+    throw new Error("Vite development configuration could not be loaded.");
+  }
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
@@ -26,7 +33,7 @@ export async function setupVite(app: Express, server: Server) {
   };
 
   const vite = await createViteServer({
-    ...viteConfig,
+    ...loadedConfig.config,
     configFile: false,
     server: serverOptions,
     appType: "custom",

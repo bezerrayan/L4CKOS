@@ -1,0 +1,28 @@
+{
+  "version": 5,
+  "baseFingerprint": "0ba16c9b19b698d4933d0abad9a5e4679052fd2aaf78800da42d480e396ef5d2",
+  "fingerprint": "7fe98896cff3da47b18a522c668fc429355e0397d74afa26c864585f102d649e",
+  "tables": [
+    {
+      "name": "homeHighlightSettings",
+      "type": "BASE TABLE",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_unicode_ci",
+      "options": "",
+      "columns": [
+        {"name":"id","position":1,"type":"tinyint unsigned","nullable":false,"defaultValue":null,"extra":"","generationExpression":"","charset":null,"collation":null,"length":null,"numericPrecision":3,"numericScale":0,"datetimePrecision":null},
+        {"name":"displayMode","position":2,"type":"enum('single','rotate')","nullable":false,"defaultValue":"single","extra":"","generationExpression":"","charset":"utf8mb4","collation":"utf8mb4_unicode_ci","length":6,"numericPrecision":null,"numericScale":null,"datetimePrecision":null},
+        {"name":"rotationIntervalSeconds","position":3,"type":"tinyint unsigned","nullable":false,"defaultValue":"8","extra":"","generationExpression":"","charset":null,"collation":null,"length":null,"numericPrecision":3,"numericScale":0,"datetimePrecision":null},
+        {"name":"updatedAt","position":4,"type":"timestamp","nullable":false,"defaultValue":"CURRENT_TIMESTAMP(0)","extra":"on update CURRENT_TIMESTAMP(0)","generationExpression":"","charset":null,"collation":null,"length":null,"numericPrecision":null,"numericScale":null,"datetimePrecision":0}
+      ],
+      "indexes": [
+        {"primary":true,"unique":true,"type":"BTREE","visible":true,"columns":[{"name":"id","direction":"A","prefixLength":null,"expression":null}]}
+      ],
+      "foreignKeys": [],
+      "checks": [
+        {"clause":"(`id` = 1)","enforced":true},
+        {"clause":"(`rotationIntervalSeconds` in (5,8,10))","enforced":true}
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-/** Eventos de funil sem dados pessoais, prontos para um coletor consentido (ex.: GTM). */
+/** Eventos internos da interface; não são encaminhados a serviços externos. */
 export type StoreEventName =
   | "product_viewed"
   | "product_option_selected"
@@ -13,10 +13,6 @@ export type StoreEventName =
 
 type SafeEventData = Record<string, string | number | boolean | null | undefined>;
 
-declare global {
-  interface Window { dataLayer?: Array<Record<string, unknown>>; }
-}
-
 export function trackStoreEvent(name: StoreEventName, data: SafeEventData = {}) {
   if (typeof window === "undefined") return;
 
@@ -27,6 +23,5 @@ export function trackStoreEvent(name: StoreEventName, data: SafeEventData = {}) 
   };
 
   window.dispatchEvent(new CustomEvent("l4ckos:analytics", { detail: payload }));
-  window.dataLayer?.push(payload);
   if (import.meta.env.DEV) console.info("[analytics]", payload);
 }

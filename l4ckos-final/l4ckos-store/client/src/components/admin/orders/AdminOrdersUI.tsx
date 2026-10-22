@@ -3,6 +3,13 @@ import { AdminEmptyState, AdminFilterPills, AdminMetricCards, AdminStatusBadge, 
 import { formatPrice } from "../../../lib/utils";
 
 import { CANCELLATION_NOTICE } from "../../../../../shared/paymentExceptions";
+const reservationStateLabels: Record<string, string> = {
+  active: "Reservada",
+  consumed: "Consumida",
+  released: "Liberada",
+  expired: "Expirada",
+  restocked: "Reposta ao estoque",
+};
 export type OrderListFilter = "all" | "pending" | "paid" | "processing" | "shipped" | "delivered" | "cancelled" | "withoutTracking";
 
 export type AdminOrderView = {
@@ -15,6 +22,7 @@ export type AdminOrderView = {
   paymentConfirmationSource?: string | null;
   paymentConfirmedAt?: Date | string | null;
   paymentConfirmedBy?: number | null;
+  paymentConfirmationReference?: string | null;
   totalPrice?: number | string | null;
   trackingCode?: string | null;
   createdAt?: Date | string | null;
@@ -30,9 +38,19 @@ export type AdminOrderView = {
     zipCode?: string | null;
   } | null;
   items?: Array<{
+    id?: number | null;
     productId?: number | null;
     productName?: string | null;
     quantity?: number | string | null;
+    productPrice?: number | string | null;
+    productImage?: string | null;
+    variantName?: string | null;
+    size?: string | null;
+    color?: string | null;
+    salesModeAtPurchase?: "STOCK" | "PREORDER" | null;
+    productionBatchNameAtPurchase?: string | null;
+    productionStatus?: string | null;
+    status?: string | null;
   }> | null;
 };
 
@@ -64,13 +82,13 @@ export function OrdersSummaryCards({ summary }: { summary: OrdersSummary }) {
   const cards: Array<{ label: string; value: string | number; tone?: "danger" | "warning" | "success" }> = [
     { label: "Total", value: summary.total },
     { label: "Pendentes", value: summary.pending, tone: "warning" },
-    { label: "Pagos", value: summary.paid, tone: "success" },
+    { label: "Aguardando preparação", value: summary.paid },
     { label: "Em separação", value: summary.processing },
     { label: "Enviados", value: summary.shipped },
     { label: "Entregues", value: summary.delivered, tone: "success" },
     { label: "Cancelados", value: summary.cancelled, tone: "danger" },
     { label: "Sem rastreio", value: summary.withoutTracking, tone: "warning" },
-    { label: "Faturamento carregado", value: formatPrice(summary.revenueCents / 100), tone: "success" },
+    { label: "Valor dos pedidos carregados", value: formatPrice(summary.revenueCents / 100) },
   ];
 
   return <AdminMetricCards cards={cards} />;
@@ -142,13 +160,16 @@ export function OrderDetailPanel({
   const itemCount = items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
 
   return (
-    <aside style={styles.detailPanel}>
+    <aside className="admin-order-detail" style={styles.detailPanel}>
       <div style={styles.detailHeader}>
         <div>
           <span style={styles.detailEyebrow}>Pedido</span>
           <strong style={styles.detailTitle}>#{order.id}</strong>
         </div>
-        <OrderStatusBadge status={String(order.status ?? "")} label={statusLabel(String(order.status ?? ""))} tone={statusTone(String(order.status ?? ""))} />
+        <div style={styles.detailStateGroup}>
+          <span style={styles.stateCaption}>Situação do pedido</span>
+          <OrderStatusBadge status={String(order.status ?? "")} label={statusLabel(String(order.status ?? ""))} tone={statusTone(String(order.status ?? ""))} />
+        </div>
       </div>
 
       <div style={styles.detailGrid}>
@@ -159,6 +180,7 @@ export function OrderDetailPanel({
         <DetailInfo label="Rastreio" value={order.trackingCode || "Ainda não informado"} />
         <DetailInfo label="Itens" value={`${itemCount} item(ns)`} />
       </div>
+      <p style={styles.secondaryText}>Total final retornado para o pedido; esta consulta não discrimina produtos, frete ou desconto.</p>
 
       <section style={styles.detailSection}>
         <strong style={styles.detailSubtitle}>Pagamento</strong>
@@ -169,13 +191,17 @@ export function OrderDetailPanel({
             <span style={styles.secondaryText}>
               {order.paymentConfirmationSource === "manual"
                 ? `Confirmação manual pelo admin #${order.paymentConfirmedBy ?? "—"}`
-                : "Confirmação recebida pelo webhook validado do Asaas"}
+                : order.paymentConfirmationSource === "asaas_webhook"
+                  ? "Confirmação recebida pelo webhook validado do Asaas"
+                  : order.paymentConfirmationSource
+                    ? `Origem registrada: ${order.paymentConfirmationSource}`
+                    : "Origem da confirmação não informada"}
             </span>
             <span style={styles.secondaryText}>{formatDateTime(order.paymentConfirmedAt)}</span>
           </div>
         ) : (
           <div style={styles.paymentPending}>
-            <strong style={styles.itemName}>Pagamento ainda não comprovado</strong>
+            <strong style={styles.itemName}>Pagamento não confirmado</strong>
             <span style={styles.secondaryText}>
               O status de entrega não confirma pagamento. Use esta ação somente após conferir o recebimento.
             </span>
@@ -191,6 +217,11 @@ export function OrderDetailPanel({
             ) : null}
           </div>
         )}
+      </section>
+
+      <section style={styles.detailSection}>
+        <strong style={styles.detailSubtitle}>Reserva de estoque</strong>
+        <span style={styles.secondaryText}>A situação aparece junto ao item somente quando a consulta a disponibiliza. A ausência do estado não significa que a reserva esteja ativa.</span>
       </section>
 
       <section style={styles.detailSection}>
@@ -215,15 +246,24 @@ export function OrderDetailPanel({
       </section>
 
       <section style={styles.detailSection}>
-        <strong style={styles.detailSubtitle}>Itens reservados</strong>
+        <strong style={styles.detailSubtitle}>Itens do pedido</strong>
         {items.length === 0 ? (
           <AdminEmptyState title="Sem itens detalhados" description="Este pedido ainda não possui itens detalhados na reserva." />
         ) : (
           <div style={styles.itemsList}>
             {items.map((item, index) => (
-              <div key={`${order.id}-${item.productId}-${index}`} style={styles.itemRow}>
-                <span style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</span>
-                <span style={styles.secondaryText}>Quantidade: {item.quantity}</span>
+              <div key={`${order.id}-${item.id ?? item.productId}-${index}`} style={styles.itemRow}>
+                {item.productImage ? <img src={item.productImage} alt="" loading="lazy" style={styles.itemImage} /> : null}
+                <span style={styles.itemDescription}>
+                  <span style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</span>
+                  <span style={styles.secondaryText}>
+                    {[item.variantName, item.color, item.size].filter(Boolean).join(" · ") || "Variante não informada"}
+                    {item.salesModeAtPurchase === "PREORDER" && item.productionBatchNameAtPurchase ? ` · Pré-venda: ${item.productionBatchNameAtPurchase}` : ""}
+                  </span>
+                  {item.status && reservationStateLabels[item.status] ? <span className="admin-reservation-state">Reserva: {reservationStateLabels[item.status]}</span> : null}
+                  {item.productPrice !== undefined && item.productPrice !== null ? <span style={styles.secondaryText}>Valor unitário {formatPrice(Number(item.productPrice) / 100)}</span> : null}
+                </span>
+                <span style={styles.itemQuantity}>Qtd. {item.quantity}</span>
               </div>
             ))}
           </div>
@@ -246,7 +286,7 @@ function formatDateTime(value: Date | string | null | undefined) {
   if (!value) return "Não informado";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Não informado";
-  return date.toLocaleString("pt-BR");
+  return date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -363,6 +403,8 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     minWidth: 0,
   },
+  detailStateGroup: { display: "grid", justifyItems: "end", gap: 5 },
+  stateCaption: { color: "#8f8f8f", fontSize: 11 },
   detailEyebrow: {
     display: "block",
     color: "#9ca3af",
@@ -446,14 +488,18 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
   },
   itemRow: {
-    display: "grid",
-    gap: 4,
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
     padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid #202020",
     background: "#121212",
     minWidth: 0,
   },
+  itemImage: { width: 42, height: 52, flex: "0 0 42px", objectFit: "contain", alignSelf: "flex-start" },
+  itemDescription: { display: "grid", gap: 4, minWidth: 0, flex: "1 1 auto" },
+  itemQuantity: { flex: "0 0 auto", color: "#d7d7d7", fontSize: 13, fontVariantNumeric: "tabular-nums" },
   itemName: {
     color: "#f0ede8",
     fontSize: 13,

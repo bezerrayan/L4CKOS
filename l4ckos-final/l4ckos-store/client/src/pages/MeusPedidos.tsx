@@ -1,35 +1,14 @@
 import { Link } from "react-router-dom";
-import type { CSSProperties } from "react";
 import { PackageSearch } from "lucide-react";
 import EmptyState from "../components/EmptyState";
 import { useUser } from "../contexts/UserContext";
 import { useOrders } from "../hooks/useOrders";
-
-type OrderStatus = "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled";
-
-const statusLabel: Record<OrderStatus, string> = {
-  pending: "Aguardando pagamento",
-  processing: "Em separacao",
-  paid: "Pagamento confirmado",
-  shipped: "Em transporte",
-  delivered: "Entregue",
-  cancelled: "Cancelado",
-};
-
-const statusColor: Record<OrderStatus, string> = {
-  pending: "#b45309",
-  processing: "#0f766e",
-  paid: "#15803d",
-  shipped: "#1d4ed8",
-  delivered: "#166534",
-  cancelled: "#b91c1c",
-};
+import { getOrderStatusLabel } from "../utils/orderStatus";
+import { AccountOrdersPreview } from "./AccountPreview";
+import "./MeusPedidos.css";
 
 function formatMoney(cents: number) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format((Number(cents) || 0) / 100);
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format((Number(cents) || 0) / 100);
 }
 
 function formatDate(value: unknown) {
@@ -37,29 +16,18 @@ function formatDate(value: unknown) {
   const date = new Date(value as string);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/Sao_Paulo",
+    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo",
   });
 }
 
-export default function MeusPedidos() {
+function MeusPedidosAuthenticated() {
   const { isAuthenticated } = useUser();
   const ordersQuery = useOrders();
 
   if (!isAuthenticated) {
-    return (
-      <section style={styles.wrapper}>
-        <h1 style={styles.title}>Meus pedidos</h1>
-        <p style={styles.muted}>Você precisa entrar para ver seu histórico de compras.</p>
-        <Link to="/login" style={styles.primaryButton}>
-          Entrar na conta
-        </Link>
-      </section>
-    );
+    return <main className="l4-orders-page">
+      <header className="l4-orders-header"><div><p className="l4-orders-eyebrow">Minha conta</p><h1>Meus pedidos</h1><p>Entre para consultar seu histórico de compras.</p></div><Link className="l4-orders-button is-primary" to="/login">Entrar na conta</Link></header>
+    </main>;
   }
 
   const orders = (ordersQuery.data ?? [])
@@ -67,186 +35,43 @@ export default function MeusPedidos() {
     .slice()
     .sort((a, b) => Number(b.id) - Number(a.id));
 
-  return (
-    <section style={styles.wrapper}>
-      <div style={styles.headerRow}>
-        <div>
-          <h1 style={styles.title}>Meus pedidos</h1>
-          <p style={styles.muted}>Acompanhe status, total pago e rastreio de cada compra.</p>
-        </div>
-        <Link to="/acompanhar-pedido" style={styles.secondaryButton}>
-          Rastrear pedido
-        </Link>
-      </div>
+  return <main className="l4-orders-page">
+    <header className="l4-orders-header">
+      <div><p className="l4-orders-eyebrow">Minha conta</p><h1>Meus pedidos</h1><p>Acompanhe status, total e rastreio de cada compra.</p></div>
+      <Link to="/acompanhar-pedido" className="l4-orders-button">Rastrear pedido</Link>
+    </header>
 
-      {ordersQuery.isLoading ? <p style={styles.muted}>Carregando pedidos...</p> : null}
-      {ordersQuery.isError ? <p style={styles.error}>Não foi possível carregar seus pedidos agora.</p> : null}
+    {ordersQuery.isLoading ? <p className="l4-orders-message">Carregando pedidos...</p> : null}
+    {ordersQuery.isError ? <p className="l4-orders-error" role="alert">Não foi possível carregar seus pedidos agora.</p> : null}
+    {!ordersQuery.isLoading && !ordersQuery.isError && orders.length === 0 ? <EmptyState icon={PackageSearch} title="VOCÊ AINDA NÃO TEM PEDIDOS" text="Quando realizar uma compra, poderá acompanhar as atualizações por aqui." action={{ label: "EXPLORAR PRODUTOS", to: "/produtos" }} /> : null}
 
-      {!ordersQuery.isLoading && !ordersQuery.isError && orders.length === 0 ? (
-        <EmptyState
-          icon={PackageSearch}
-          title="VOCÊ AINDA NÃO TEM PEDIDOS"
-          text="Quando realizar uma compra, poderá acompanhar as atualizações por aqui."
-          action={{ label: "EXPLORAR PRODUTOS", to: "/produtos" }}
-        />
-      ) : null}
-
-      <div style={styles.list}>
-        {orders.map(order => {
-          const status = order.status as OrderStatus;
-          return (
-            <article key={order.id} style={styles.card}>
-              <div style={styles.cardTop}>
-                <div>
-                  <strong style={styles.orderId}>Pedido #{order.id}</strong>
-                  <p style={styles.meta}>Criado em {formatDate(order.createdAt)}</p>
-                </div>
-                <span style={{ ...styles.badge, background: `${statusColor[status]}22`, color: statusColor[status] }}>
-                  {order.awaitingProduction ? "Acompanhando produção" : statusLabel[status]}
-                </span>
-              </div>
-
-              <div style={styles.grid}>
-                <div>
-                  <p style={styles.metaLabel}>Total</p>
-                  <p style={styles.metaStrong}>{formatMoney(Number(order.totalPrice))}</p>
-                </div>
-                <div>
-                  <p style={styles.metaLabel}>Rastreio</p>
-                  <p style={styles.metaStrong}>{order.trackingCode || "Ainda não informado"}</p>
-                </div>
-              </div>
-
-              <div style={styles.cardActions}>
-                <Link to={`/meus-pedidos/${order.id}`} style={styles.secondaryButton}>
-                  Ver detalhes
-                </Link>
-                <Link to={`/acompanhar-pedido?pedido=${order.id}`} style={styles.primaryButton}>
-                  Acompanhar pedido
-                </Link>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
+    <div className="l4-orders-list">
+      {orders.map(order => {
+        const status = String(order.status);
+        const statusLabel = order.awaitingProduction ? "Acompanhando produção" : getOrderStatusLabel(status);
+        return <article key={order.id} className="l4-order-row">
+          <div className="l4-order-heading">
+            <div><h2>Pedido #{order.id}</h2><p>Criado em {formatDate(order.createdAt)}</p></div>
+            <span className={`l4-order-status is-${status}`} aria-label={`Status do pedido: ${statusLabel}`}>{statusLabel}</span>
+          </div>
+          <dl className="l4-order-summary">
+            <div><dt>Total</dt><dd>{formatMoney(Number(order.totalPrice))}</dd></div>
+            <div><dt>Rastreio</dt><dd>{order.trackingCode || "Ainda não informado"}</dd></div>
+          </dl>
+          <div className="l4-order-actions">
+            <Link to={`/meus-pedidos/${order.id}`} className="l4-orders-button">Ver detalhes</Link>
+            <Link to={`/acompanhar-pedido?pedido=${order.id}`} className="l4-orders-button is-primary">Acompanhar pedido</Link>
+          </div>
+        </article>;
+      })}
+    </div>
+  </main>;
 }
 
-const styles: Record<string, CSSProperties> = {
-  wrapper: {
-    maxWidth: 980,
-    margin: "0 auto",
-    display: "grid",
-    gap: 16,
-    color: "#f0ede8",
-  },
-  headerRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  title: {
-    margin: 0,
-    fontSize: 32,
-    fontWeight: 800,
-    color: "#f0ede8",
-  },
-  muted: {
-    margin: 0,
-    color: "#a1a1aa",
-    fontSize: 15,
-  },
-  error: {
-    margin: 0,
-    color: "#b91c1c",
-    fontSize: 15,
-    fontWeight: 600,
-  },
-  list: {
-    display: "grid",
-    gap: 12,
-  },
-  card: {
-    background: "#101010",
-    border: "1px solid #2b2b2b",
-    borderRadius: 12,
-    padding: 16,
-    boxShadow: "0 10px 28px rgba(0, 0, 0, 0.32)",
-    display: "grid",
-    gap: 14,
-  },
-  cardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  orderId: {
-    fontSize: 18,
-    color: "#f0ede8",
-  },
-  meta: {
-    margin: "4px 0 0",
-    color: "#a1a1aa",
-    fontSize: 13,
-  },
-  grid: {
-    display: "grid",
-    gap: 12,
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-  },
-  metaLabel: {
-    margin: 0,
-    color: "#a1a1aa",
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  metaStrong: {
-    margin: "4px 0 0",
-    color: "#f0ede8",
-    fontSize: 15,
-    fontWeight: 700,
-  },
-  badge: {
-    borderRadius: 999,
-    fontSize: 12,
-    fontWeight: 700,
-    padding: "6px 10px",
-  },
-  cardActions: {
-    display: "flex",
-    gap: 8,
-    justifyContent: "flex-end",
-    flexWrap: "wrap",
-  },
-  primaryButton: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "linear-gradient(135deg, #1a1a1a 0%, #3a3a3a 100%)",
-    color: "white",
-    textDecoration: "none",
-    fontWeight: 700,
-    fontSize: 14,
-    borderRadius: 8,
-    padding: "10px 14px",
-  },
-  secondaryButton: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    border: "1px solid #2f2f2f",
-    color: "#f0ede8",
-    textDecoration: "none",
-    fontWeight: 700,
-    fontSize: 14,
-    borderRadius: 8,
-    padding: "10px 14px",
-    background: "#0f0f0f",
-  },
-};
+export default function MeusPedidos() {
+  if (import.meta.env.DEV) {
+    const preview = new URLSearchParams(window.location.search).get("accountPreview");
+    if (preview === "empty" || preview === "populated") return <AccountOrdersPreview scenario={preview} />;
+  }
+  return <MeusPedidosAuthenticated />;
+}

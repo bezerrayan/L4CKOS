@@ -14,41 +14,59 @@ type StoredCookiePreferences = {
   };
 };
 
-const necessaryCookies = [
+const cookies = [
   {
     name: "app_session_id",
-    provider: "L4CKOS",
     purpose: "Mantém o acesso à conta e protege áreas autenticadas.",
-    duration: "Sessão configurada pelo servidor.",
-    type: "Persistente durante a sessão configurada.",
+    duration: "Duração configurada pelo servidor.",
   },
   {
     name: "l4ckos_csrf",
-    provider: "L4CKOS",
     purpose: "Protege formulários e ações autenticadas contra CSRF.",
-    duration: "Sessão configurada pelo servidor.",
-    type: "Persistente durante a sessão configurada.",
+    duration: "Duração configurada pelo servidor.",
   },
   {
     name: "oauth_state",
-    provider: "L4CKOS / Google OAuth",
     purpose: "Valida temporariamente o retorno do login com Google.",
     duration: "Temporário, durante o fluxo de autenticação.",
-    type: "Sessão/temporário.",
   },
   {
+    name: "sidebar_state",
+    purpose: "Guarda o estado aberto/fechado de uma barra lateral quando o componente é utilizado.",
+    duration: "Até 7 dias.",
+  },
+];
+
+const browserStorage = [
+  {
     name: "loja-escoteira:cart",
-    provider: "L4CKOS",
     purpose: "Mantém os itens da sacola no navegador.",
     duration: "Até remoção pelo usuário ou limpeza do navegador.",
-    type: "localStorage.",
+    type: "localStorage",
   },
   {
     name: "l4ckos:cookie-preferences",
-    provider: "L4CKOS",
-    purpose: "Registra a preferência de cookies desta versão da política.",
-    duration: "Até alteração da política ou limpeza do navegador.",
-    type: "localStorage.",
+    purpose: "Registra localmente que o aviso foi encerrado; não controla o carregamento de scripts de medição.",
+    duration: "Permanece até limpeza do navegador; uma nova versão pode solicitar uma nova escolha sem remover o registro anterior.",
+    type: "localStorage",
+  },
+  {
+    name: "app-user-info",
+    purpose: "Cache local de dados retornados pela consulta da conta autenticada.",
+    duration: "Removido quando essa consulta não retorna usuário autenticado.",
+    type: "localStorage",
+  },
+  {
+    name: "theme / sidebar-width",
+    purpose: "Preferências da interface em componentes administrativos que as utilizam.",
+    duration: "Até alteração ou limpeza do navegador.",
+    type: "localStorage",
+  },
+  {
+    name: "l4ckos:checkout-attempt:[digest]",
+    purpose: "Mantém UUID e hash derivados da solicitação para identificar tentativa de checkout em caso de repetição; o armazenamento não grava os campos brutos da solicitação.",
+    duration: "sessionStorage; permanece na sessão do navegador.",
+    type: "sessionStorage",
   },
 ];
 
@@ -77,7 +95,7 @@ export function openCookiePreferences() {
   window.dispatchEvent(new Event("l4ckos:open-cookie-preferences"));
 }
 
-export default function CookiePreferences() {
+export default function CookiePreferences({ adminLayout = false }: { adminLayout?: boolean }) {
   const [visible, setVisible] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
@@ -138,7 +156,7 @@ export default function CookiePreferences() {
 
   function persistChoice(closePanel = true) {
     saveEssentialPreferences();
-    setSavedMessage("Preferências salvas.");
+    setSavedMessage("Aviso encerrado e registro local atualizado.");
     setVisible(false);
     if (closePanel) {
       setPanelOpen(false);
@@ -146,14 +164,19 @@ export default function CookiePreferences() {
     }
   }
 
+  function closePanel() {
+    setPanelOpen(false);
+    previousFocusRef.current?.focus();
+  }
+
   return (
     <>
       {visible && !panelOpen ? (
-        <section className="l4-cookie-banner" aria-labelledby="cookie-banner-title">
+        <section className={`l4-cookie-banner${adminLayout ? " l4-cookie-banner--admin" : ""}`} aria-labelledby="cookie-banner-title">
           <div>
-            <h2 id="cookie-banner-title">COOKIES ESSENCIAIS</h2>
+            <h2 id="cookie-banner-title">AVISO SOBRE COOKIES</h2>
             <p>
-              Utilizamos cookies necessários para manter sua sessão, sua sacola e os recursos de segurança da loja funcionando corretamente.
+              O site usa cookies de sessão e segurança e armazenamento local para a sacola e preferências. O código local desta versão não carrega o Google Analytics; integrações injetadas fora do frontend não foram verificadas.
             </p>
           </div>
           <div className="l4-cookie-actions">
@@ -177,61 +200,48 @@ export default function CookiePreferences() {
           >
             <div className="l4-cookie-modal-head">
               <div>
-                <h2 id="cookie-modal-title">PREFERÊNCIAS DE COOKIES</h2>
+                <h2 id="cookie-modal-title">INFORMAÇÕES SOBRE COOKIES</h2>
                 <p id="cookie-modal-description">
-                  Escolha quais categorias opcionais você autoriza. No momento, a L4CKOS utiliza apenas cookies e armazenamentos necessários.
+                  Esta interface não oferece seleção por categoria. O botão “Entendi” oculta o aviso e registra essa ação no navegador; não configura consentimento de medição. O frontend desta versão não carrega o Google Analytics.
                 </p>
               </div>
-              <button type="button" className="l4-cookie-close" onClick={() => setPanelOpen(false)} aria-label="Fechar preferências de cookies">
+              <button type="button" className="l4-cookie-close" onClick={closePanel} aria-label="Fechar informações sobre cookies">
                 ×
               </button>
             </div>
 
             <section className="l4-cookie-category">
               <div>
-                <h3>Cookies necessários</h3>
-                <p>
-                  Permanecem ativos porque são indispensáveis ao funcionamento da loja, à segurança, à sacola e à autenticação.
-                </p>
+                <h3>Cookies do site</h3>
+                <p>Os cookies abaixo são definidos por recursos do site; sua finalidade e duração dependem da função descrita.</p>
               </div>
-              <span>Sempre ativos</span>
             </section>
 
-            <div className="l4-cookie-table-wrap" aria-label="Cookies e armazenamentos necessários">
-              <table className="l4-cookie-table">
-                <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Provedor</th>
-                    <th>Finalidade</th>
-                    <th>Duração</th>
-                    <th>Tipo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {necessaryCookies.map(cookie => (
-                    <tr key={cookie.name}>
-                      <td>{cookie.name}</td>
-                      <td>{cookie.provider}</td>
-                      <td>{cookie.purpose}</td>
-                      <td>{cookie.duration}</td>
-                      <td>{cookie.type}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="l4-cookie-inventory">
+              {cookies.map(cookie => <li key={cookie.name}><code>{cookie.name}</code><span>{cookie.purpose} {cookie.duration}</span></li>)}
+            </ul>
+
+            <section className="l4-cookie-category l4-cookie-category--storage">
+              <div>
+                <h3>Armazenamento do navegador — não são cookies</h3>
+                <p>O navegador também guarda dados em localStorage ou sessionStorage para recursos próprios da loja.</p>
+              </div>
+            </section>
+
+            <ul className="l4-cookie-inventory">
+              {browserStorage.map(item => <li key={item.name}><code>{item.name} · {item.type}</code><span>{item.purpose} {item.duration}</span></li>)}
+            </ul>
 
             <p className="l4-cookie-note">
-              Não foram identificados cookies analíticos, marketing comportamental, pixels ou ferramentas de gravação de sessão carregados no site público.
+              O Google Analytics identificado anteriormente está desativado neste código local: o frontend não carrega a tag nem encaminha eventos a um coletor. Este aviso não confirma o comportamento de outros ambientes ou de scripts injetados fora do frontend versionado. Consulte a Política de Privacidade para detalhes.
             </p>
 
             <div className="l4-cookie-modal-actions">
-              <button type="button" className="secondary" onClick={() => persistChoice()}>
-                REJEITAR NÃO ESSENCIAIS
+              <button type="button" className="secondary" onClick={closePanel}>
+                FECHAR SEM SALVAR
               </button>
               <button type="button" onClick={() => persistChoice()}>
-                SALVAR PREFERÊNCIAS
+                ENTENDI E FECHAR
               </button>
             </div>
             <p className="l4-cookie-live" aria-live="polite">{savedMessage}</p>

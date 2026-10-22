@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ChevronDown, MapPin, Package, Pencil, ShieldCheck, Trash2 } from "lucide-react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { ChevronDown, MapPin, Pencil, ShieldCheck, Trash2 } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
 import { useToast } from "../contexts/ToastContext";
 import { trpc } from "../lib/trpc";
 import { getApiErrorDisplay } from "../utils/apiError";
+import { getOrderStatusLabel } from "../utils/orderStatus";
 import { useOrders } from "../hooks/useOrders";
 import { ReviewPurchaseArea } from "../components/reviews/ReviewPurchaseArea";
+import AccountPreview from "./AccountPreview";
 import "./Perfil.css";
 
 type SavedAddress = { id: string; label: string; recipient: string; zipCode: string; street: string; number: string; complement: string; neighborhood: string; city: string; state: string; isDefault: boolean };
@@ -16,7 +18,7 @@ const defaultAddressDraft: Omit<SavedAddress, "id"> = { label: "Casa", recipient
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const friendlyError = (error: unknown, fallback: string) => getApiErrorDisplay(error, fallback).message;
 
-export default function Perfil() {
+function PerfilAuthenticated() {
   const navigate = useNavigate();
   const { user, logout, setUser, isAuthenticated } = useUser();
   const { showToast } = useToast();
@@ -82,24 +84,22 @@ export default function Perfil() {
       <button className="l4-profile-primary-action" onClick={() => { selectSection("personal"); setIsEditingProfile(true); }}><Pencil size={15} aria-hidden="true" />Editar perfil</button>
     </header>
     <nav className="l4-profile-nav" aria-label="Navegação da conta">
-      <button className={activeSection === "overview" ? "is-active" : ""} onClick={() => selectSection("overview")}>Visão geral</button>
-      <Link to="/meus-pedidos">Meus pedidos</Link>
-      <button className={activeSection === "addresses" ? "is-active" : ""} onClick={() => selectSection("addresses")}>Endereços</button>
-      <button className={activeSection === "personal" ? "is-active" : ""} onClick={() => selectSection("personal")}>Dados pessoais</button>
-      <button className={activeSection === "preferences" ? "is-active" : ""} onClick={() => selectSection("preferences")}>Preferências e segurança</button>
+      <button type="button" aria-pressed={activeSection === "overview"} className={activeSection === "overview" ? "is-active" : ""} onClick={() => selectSection("overview")}>Visão geral</button>
+      <NavLink to="/meus-pedidos" className={({ isActive }) => isActive ? "is-active" : undefined}>Meus pedidos</NavLink>
+      <button type="button" aria-pressed={activeSection === "addresses"} className={activeSection === "addresses" ? "is-active" : ""} onClick={() => selectSection("addresses")}>Endereços</button>
+      <button type="button" aria-pressed={activeSection === "personal"} className={activeSection === "personal" ? "is-active" : ""} onClick={() => selectSection("personal")}>Dados pessoais</button>
+      <button type="button" aria-pressed={activeSection === "preferences"} className={activeSection === "preferences" ? "is-active" : ""} onClick={() => selectSection("preferences")}>Preferências e segurança</button>
     </nav>
 
     {activeSection === "overview" ? <section className="l4-profile-content" aria-label="Visão geral da conta">
       <div className="l4-profile-section-heading"><div><p>Visão geral</p><h2>O essencial da sua conta</h2></div><Link to="/meus-pedidos" className="l4-profile-text-action">Ver pedidos</Link></div>
       <div className="l4-profile-overview-grid">
-        <article className="l4-profile-summary"><Package size={18} aria-hidden="true" /><div><h3>Meus pedidos</h3><p>Acompanhe compras, pagamentos e entregas.</p></div><Link to="/meus-pedidos">Acessar</Link></article>
-        <article className="l4-profile-summary"><MapPin size={18} aria-hidden="true" /><div><h3>Endereço principal</h3><p>{primaryAddress ? `${primaryAddress.street}, ${primaryAddress.number} · ${primaryAddress.city}/${primaryAddress.state}` : "Nenhum endereço salvo."}</p></div><button onClick={() => selectSection("addresses")}>{primaryAddress ? "Editar" : "Adicionar"}</button></article>
-        <article className="l4-profile-summary"><Package size={18} aria-hidden="true" /><div><h3>Pedidos recentes</h3><p>{recentOrders.length ? `${recentOrders.length} pedido${recentOrders.length > 1 ? "s" : ""} recente${recentOrders.length > 1 ? "s" : ""}.` : "Você ainda não tem pedidos."}</p></div><Link to="/meus-pedidos">Ver histórico</Link></article>
-        <article className="l4-profile-summary"><ShieldCheck size={18} aria-hidden="true" /><div><h3>Precisa de ajuda?</h3><p>Fale com o suporte pelos canais oficiais.</p></div><button onClick={() => navigate("/contato")}>Falar com suporte</button></article>
+        <article className="l4-profile-summary"><MapPin size={18} aria-hidden="true" /><div><h3>Endereço principal</h3><p>{primaryAddress ? `${primaryAddress.street}, ${primaryAddress.number} · ${primaryAddress.city}/${primaryAddress.state}` : "Nenhum endereço salvo."}</p></div><button type="button" onClick={() => selectSection("addresses")}>{primaryAddress ? "Editar endereço" : "Adicionar endereço"}</button></article>
+        <article className="l4-profile-summary"><ShieldCheck size={18} aria-hidden="true" /><div><h3>Precisa de ajuda?</h3><p>Fale com o suporte pelos canais oficiais.</p></div><button type="button" onClick={() => navigate("/contato")}>Falar com suporte</button></article>
       </div>
       <ReviewPurchaseArea />
       <section className="l4-profile-subsection"><div className="l4-profile-section-heading"><div><h2>Meus pedidos</h2><p>Compras recentes da sua conta.</p></div><Link to="/meus-pedidos" className="l4-profile-text-action">Histórico completo</Link></div>
-        {ordersQuery.isLoading ? <p className="l4-profile-empty-line">Carregando pedidos...</p> : recentOrders.length ? <div className="l4-profile-list">{recentOrders.map(order => <article className="l4-profile-list-item" key={order.id}><div><strong>Pedido #{order.id}</strong><p>Status: {String(order.status)} · Total: R$ {(Number(order.totalPrice || 0) / 100).toFixed(2).replace(".", ",")}</p></div><Link className="l4-profile-text-action" to={`/meus-pedidos/${order.id}`}>Ver pedido</Link></article>)}</div> : <div className="l4-profile-empty-line"><p>Quando realizar uma compra, seus pedidos aparecerão aqui.</p><Link className="l4-profile-secondary-action" to="/meus-pedidos">Ver histórico</Link></div>}
+        {ordersQuery.isLoading ? <p className="l4-profile-empty-line">Carregando pedidos...</p> : recentOrders.length ? <div className="l4-profile-list">{recentOrders.map(order => <article className="l4-profile-list-item" key={order.id}><div><strong>Pedido #{order.id}</strong><p>Status: {getOrderStatusLabel(String(order.status))} · Total: R$ {(Number(order.totalPrice || 0) / 100).toFixed(2).replace(".", ",")}</p></div><Link className="l4-profile-text-action" to={`/meus-pedidos/${order.id}`}>Ver pedido</Link></article>)}</div> : <div className="l4-profile-empty-line"><p>Quando realizar uma compra, seus pedidos aparecerão aqui.</p><Link className="l4-profile-secondary-action" to="/meus-pedidos">Ver histórico</Link></div>}
       </section>
     </section> : null}
 
@@ -118,6 +118,14 @@ export default function Perfil() {
       <div className="l4-profile-close-account"><button type="button" onClick={() => setConfirmCloseOpen(open => !open)} aria-expanded={confirmCloseOpen}>Encerrar conta <ChevronDown size={16} className={confirmCloseOpen ? "is-open" : ""} aria-hidden="true" /></button>{confirmCloseOpen ? <div><p>Esta solicitação será enviada ao suporte para confirmação.</p><button className="l4-profile-danger-action" onClick={() => navigate("/contato")}>Solicitar encerramento da conta</button></div> : null}</div>
     </section> : null}
   </main>;
+}
+
+export default function Perfil() {
+  if (import.meta.env.DEV) {
+    const preview = new URLSearchParams(window.location.search).get("accountPreview");
+    if (preview === "empty" || preview === "populated") return <AccountPreview scenario={preview} />;
+  }
+  return <PerfilAuthenticated />;
 }
 
 function AddressForm({ draft, setDraft, editing, onSave, onCancel, saving }: { draft: Omit<SavedAddress, "id">; setDraft: React.Dispatch<React.SetStateAction<Omit<SavedAddress, "id">>>; editing: boolean; onSave: () => void; onCancel: () => void; saving: boolean }) {

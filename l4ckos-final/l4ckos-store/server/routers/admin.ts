@@ -4,7 +4,7 @@ import { adminProcedure, router } from "../_core/trpc";
 import {
   createAuditLog,
   createCoupon,
-  createProduct,
+  createProductWithCatalog,
   deleteProduct,
   deleteCoupon,
   getCartItems,
@@ -12,6 +12,8 @@ import {
   getBackupPayload,
   getCoupons,
   getPromoBanners,
+  getHomeHighlightSettings,
+  updateHomeHighlightSettings,
   createPromoBanner,
   updatePromoBanner,
   deletePromoBanner,
@@ -23,21 +25,23 @@ import {
   getProductsByIds,
   getUserById,
   getOrdersByFilters,
+  getAdminSalesReport,
+  SalesReportTooLargeError,
+  SALES_REPORT_MAX_ORDERS,
   getProductsAdmin,
   getAdminProductReviews,
   markOrderPaid,
-  getSalesByPeriod,
   getUsersWithStats,
-  replaceProductImages,
-  replaceProductVariants,
+  ProductCatalogConflictError,
   restoreBackupPayload,
   updateOrderAndReserveDeliveredEmailEvents,
   setUserFlags,
   moderateProductReview,
-  updateProduct,
+  updateProductWithCatalog,
   updateCoupon,
   updateUserRole,
 } from "../db";
+import { renderSalesReportPdf } from "../reports/salesReport";
 import { reviewModerationInputSchema } from "../reviews/policy";
 import {
   isTrustedPaymentConfirmation,
@@ -46,8 +50,9 @@ import {
 import { resolveAnnouncementUrl } from "../services/email/publicUrls";
 import { ENV } from "../_core/env";
 import { TRPCError } from "@trpc/server";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { createBackupFile, listBackupFileNames } from "../database/backupFiles";
 import {
   sendAbandonedCartReminder1Email,
   sendAbandonedCartReminder2Email,
@@ -66,6 +71,34 @@ import {
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { dispatchOrderEmailEvent } from "../services/orderEmailDelivery";
 
+const variantCreateSchema = z.object({
+  color: z.string().trim().min(1).max(60),
+  size: z.string().trim().min(1).max(60),
+  name: z.string().trim().min(1).max(120).optional(),
+  sku: z.string().trim().min(1).max(120),
+  price: z.number().int().min(0).nullable(),
+  stock: z.number().int().min(0),
+  isActive: z.boolean(),
+}).strict();
+
+const variantUpdateSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  color: z.string().trim().max(60).nullable().optional(),
+  size: z.string().trim().max(60).nullable().optional(),
+  sku: z.string().trim().max(120).nullable().optional(),
+  price: z.number().int().min(0).nullable().optional(),
+  stock: z.number().int().min(0).optional(),
+  isActive: z.boolean().optional(),
+}).strict().superRefine((variant, ctx) => {
+  if (variant.id === undefined && (!variant.color || !variant.size || !variant.sku || variant.stock === undefined || variant.isActive === undefined || variant.price === undefined)) {
+    ctx.addIssue({ code: "custom", message: "Nova variante exige cor, tamanho, SKU, preço, estoque e disponibilidade explícitos." });
+  }
+  if (variant.isActive === true && (!variant.color || !variant.size || !variant.sku)) {
+    ctx.addIssue({ code: "custom", message: "Para ativar, informe cor, tamanho e SKU revisados." });
+  }
+});
+
 const orderStatusSchema = z.enum([
   "pending",
   "processing",
@@ -76,6 +109,20 @@ const orderStatusSchema = z.enum([
 ]);
 const backupFileNameSchema = z.string().trim().regex(/^[A-Za-z0-9._-]+\.json$/);
 const productImageUrlSchema = z.string().trim().max(500, "A URL da imagem deve ter no máximo 500 caracteres.");
+function isSafePromoUrl(value: string) {
+  const target = value.trim();
+  if (!target) return true;
+  if (/[\u0000-\u001f\u007f]/.test(target) || target.includes("\\")) return false;
+  if (target.startsWith("/")) return !target.startsWith("//");
+  try {
+    const parsed = new URL(target);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+const promoImageUrlSchema = z.string().trim().max(500).refine(isSafePromoUrl, "Use um caminho local ou uma URL HTTP(S) válida.");
+const promoLinkUrlSchema = z.string().trim().max(500).refine(isSafePromoUrl, "O destino deve ser um caminho local ou uma URL HTTP(S) válida.");
 
 type ProductImageInput = {
   imageUrl: string;
@@ -97,6 +144,7 @@ export function buildProductImageList(
         imageDetailUrl: cover.imageDetailUrl ?? null,
         imageBannerUrl: cover.imageBannerUrl ?? null,
         color: null,
+        ...(cover.alt !== undefined ? { alt: cover.alt } : {}),
       }]
     : [];
 
@@ -110,7 +158,8 @@ function sleep(ms: number) {
 }
 
 function csvCell(value: unknown) {
-  const text = value === null || value === undefined ? "" : String(value);
+  let text = value === null || value === undefined ? "" : String(value);
+  if (typeof value === "string" && /^[\u0000-\u0020]*[=+@-]/.test(text)) text = `'${text}`;
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
@@ -237,7 +286,17 @@ export const adminRouter = router({
 
   usersList: adminProcedure.query(async () => {
     const users = await getUsersWithStats();
-    return users;
+    return users.map(user => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isVip: user.isVip,
+      isBlocked: user.isBlocked,
+      ordersCount: user.ordersCount,
+      createdAt: user.createdAt,
+      lastSignedIn: user.lastSignedIn,
+    }));
   }),
 
   userSetRole: adminProcedure
@@ -322,19 +381,10 @@ export const adminRouter = router({
             imageDetailUrl: productImageUrlSchema.nullable().optional(),
             imageBannerUrl: productImageUrlSchema.nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
+            alt: z.string().trim().max(255).nullable().optional(),
           }),
         ).optional().default([]),
-        variants: z
-          .array(
-            z.object({
-              name: z.string().min(1),
-              sku: z.string().optional().nullable(),
-              price: z.number().optional().nullable(),
-              stock: z.number().int().min(0),
-            }),
-          )
-          .optional()
-          .default([]),
+        variants: z.array(variantCreateSchema).optional().default([]),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -345,30 +395,25 @@ export const adminRouter = router({
         optionSizes: optionSizes.length > 0 ? JSON.stringify(optionSizes) : null,
         sizeType,
       };
-      const result = await createProduct(productData);
-      const insertedId = Number((result as any)?.[0]?.insertId ?? 0);
-      if (insertedId > 0) {
-        const allImages = buildProductImageList(productData, images);
-        try {
-          await replaceProductImages(insertedId, allImages);
-        } catch (error) {
-          console.error("[admin.productCreate] image sync failed", {
-            productId: insertedId,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "O produto foi criado, mas as fotos adicionais não puderam ser salvas. Abra-o para editar e tente enviar as fotos novamente.",
-          });
+      let insertedId: number;
+      try {
+        insertedId = await createProductWithCatalog({
+          product: productData,
+          images: buildProductImageList(productData, images),
+          variants,
+        });
+      } catch (error) {
+        if (error instanceof ProductCatalogConflictError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message, cause: error });
         }
-        try {
-          await replaceProductVariants(insertedId, variants);
-        } catch (error) {
-          console.warn("[admin.productCreate] optional variant sync failed", {
-            productId: insertedId,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-        }
+        console.error("[admin.productCreate] catalog transaction failed", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Não foi possível salvar o produto e seus dados de catálogo. Nenhuma alteração parcial foi mantida.",
+          cause: error,
+        });
       }
       await createAuditLog({
         actorUserId: ctx.user.id,
@@ -404,18 +449,10 @@ export const adminRouter = router({
             imageDetailUrl: productImageUrlSchema.nullable().optional(),
             imageBannerUrl: productImageUrlSchema.nullable().optional(),
             color: z.string().trim().max(60).nullable().optional(),
+            alt: z.string().trim().max(255).nullable().optional(),
           }),
         ).optional(),
-        variants: z
-          .array(
-            z.object({
-              name: z.string().min(1),
-              sku: z.string().optional().nullable(),
-              price: z.number().optional().nullable(),
-              stock: z.number().int().min(0),
-            }),
-          )
-          .optional(),
+        variants: z.array(variantUpdateSchema).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -430,30 +467,26 @@ export const adminRouter = router({
           : {}),
         ...(sizeType !== undefined ? { sizeType } : {}),
       };
-      await updateProduct(id, data);
-      if (images) {
-        try {
-          await replaceProductImages(id, buildProductImageList(data, images));
-        } catch (error) {
-          console.error("[admin.productUpdate] image sync failed", {
-            productId: id,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "As alterações do produto foram salvas, mas as fotos adicionais não puderam ser gravadas. Tente novamente.",
-          });
+      try {
+        await updateProductWithCatalog({
+          id,
+          product: data,
+          ...(images !== undefined ? { images: buildProductImageList(data, images) } : {}),
+          ...(variants !== undefined ? { variants } : {}),
+        });
+      } catch (error) {
+        if (error instanceof ProductCatalogConflictError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message, cause: error });
         }
-      }
-      if (variants) {
-        try {
-          await replaceProductVariants(id, variants);
-        } catch (error) {
-          console.warn("[admin.productUpdate] optional variant sync failed", {
-            productId: id,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-        }
+        console.error("[admin.productUpdate] catalog transaction failed", {
+          productId: id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Não foi possível salvar as alterações do produto e do catálogo. Nenhuma alteração parcial foi mantida.",
+          cause: error,
+        });
       }
       await createAuditLog({
         actorUserId: ctx.user.id,
@@ -468,7 +501,14 @@ export const adminRouter = router({
   productDelete: adminProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      await deleteProduct(input.id);
+      try {
+        await deleteProduct(input.id);
+      } catch (error) {
+        if (error instanceof ProductCatalogConflictError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message, cause: error });
+        }
+        throw error;
+      }
       await createAuditLog({
         actorUserId: ctx.user.id,
         action: "product.delete",
@@ -736,6 +776,76 @@ export const adminRouter = router({
     return await getPromoBanners();
   }),
 
+  homeHighlightSettingsGet: adminProcedure.query(async () => {
+    let settings: Awaited<ReturnType<typeof getHomeHighlightSettings>>;
+    try {
+      settings = await getHomeHighlightSettings();
+    } catch (error) {
+      const databaseError = error as { code?: string; errno?: number };
+      if (databaseError.code === "ER_NO_SUCH_TABLE" || databaseError.errno === 1146) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "As configurações dos destaques da Home ainda não estão disponíveis nesta versão do banco. Verifique a migration 0024.",
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    if (!settings) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "As configurações dos destaques da Home não estão disponíveis. Verifique a versão do banco de dados.",
+      });
+    }
+    return {
+      id: settings.id,
+      displayMode: settings.displayMode,
+      rotationIntervalSeconds: settings.rotationIntervalSeconds as 5 | 8 | 10,
+      updatedAt: settings.updatedAt,
+    };
+  }),
+
+  homeHighlightSettingsUpdate: adminProcedure
+    .input(z.object({
+      displayMode: z.enum(["single", "rotate"]),
+      rotationIntervalSeconds: z.union([z.literal(5), z.literal(8), z.literal(10)]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      let settings: Awaited<ReturnType<typeof updateHomeHighlightSettings>>;
+      try {
+        settings = await updateHomeHighlightSettings(input);
+      } catch (error) {
+        const databaseError = error as { code?: string; errno?: number; message?: string };
+        if (databaseError.code === "ER_NO_SUCH_TABLE" || databaseError.errno === 1146 || databaseError.message?.includes("row missing")) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "As configurações dos destaques da Home não estão disponíveis. Verifique se a migration 0024 foi aplicada.",
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      if (!settings) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "As configurações dos destaques da Home não estão disponíveis.",
+        });
+      }
+      await createAuditLog({
+        actorUserId: ctx.user.id,
+        action: "homeHighlights.settings.update",
+        entity: "homeHighlightSettings",
+        entityId: "1",
+        metadata: { displayMode: settings.displayMode, rotationIntervalSeconds: settings.rotationIntervalSeconds },
+      });
+      return {
+        id: settings.id,
+        displayMode: settings.displayMode,
+        rotationIntervalSeconds: settings.rotationIntervalSeconds as 5 | 8 | 10,
+        updatedAt: settings.updatedAt,
+      };
+    }),
+
   promoBannerCreate: adminProcedure
     .input(
       z.object({
@@ -743,10 +853,10 @@ export const adminRouter = router({
         title: z.string().min(1).max(255),
         description: z.string().min(1).max(1000),
         ctaLabel: z.string().min(1).max(120),
-        imageUrl: z.string().trim().max(500).optional().default(""),
-        mobileImageUrl: z.string().trim().max(500).optional().default(""),
+        imageUrl: promoImageUrlSchema.optional().default(""),
+        mobileImageUrl: promoImageUrlSchema.optional().default(""),
         imageAlt: z.string().trim().max(255).optional().default(""),
-        linkUrl: z.string().trim().max(500).optional().default(""),
+        linkUrl: promoLinkUrlSchema.optional().default(""),
         discountText: z.string().trim().max(60).optional().default(""),
         discountLabel: z.string().trim().max(40).optional().default("OFF"),
         bgStyle: z.string().min(1).max(255),
@@ -774,10 +884,10 @@ export const adminRouter = router({
         title: z.string().min(1).max(255).optional(),
         description: z.string().min(1).max(1000).optional(),
         ctaLabel: z.string().min(1).max(120).optional(),
-        imageUrl: z.string().trim().max(500).nullable().optional(),
-        mobileImageUrl: z.string().trim().max(500).nullable().optional(),
+        imageUrl: promoImageUrlSchema.nullable().optional(),
+        mobileImageUrl: promoImageUrlSchema.nullable().optional(),
         imageAlt: z.string().trim().max(255).nullable().optional(),
-        linkUrl: z.string().trim().max(500).nullable().optional(),
+        linkUrl: promoLinkUrlSchema.nullable().optional(),
         discountText: z.string().trim().max(60).optional(),
         discountLabel: z.string().trim().max(40).optional(),
         bgStyle: z.string().min(1).max(255).optional(),
@@ -815,17 +925,27 @@ export const adminRouter = router({
       z.object({
         from: z.string().datetime(),
         to: z.string().datetime(),
-      }),
+      }).refine(({ from, to }) => new Date(from).getTime() <= new Date(to).getTime(), "A data inicial deve ser anterior ou igual à data final."),
     )
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const from = new Date(input.from);
       const to = new Date(input.to);
-      const [summaryRows, ordersRows] = await Promise.all([
-        getSalesByPeriod(from, to),
-        getOrdersByFilters({ from, to }),
-      ]);
-      const totalSalesCents = summaryRows.reduce((sum, row) => sum + Number(row.totalSales ?? 0), 0);
-      const totalOrders = summaryRows.reduce((sum, row) => sum + Number(row.ordersCount ?? 0), 0);
+      let report;
+      try {
+        report = await getAdminSalesReport(from, to);
+      } catch (error) {
+        if (error instanceof SalesReportTooLargeError) {
+          throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: error.message });
+        }
+        throw error;
+      }
+      const ordersRows = await getOrdersByFilters({ from, to });
+      if (ordersRows.length > SALES_REPORT_MAX_ORDERS) {
+        throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: `O período contém mais de ${SALES_REPORT_MAX_ORDERS} pedidos. Selecione um intervalo menor.` });
+      }
+      const summaryRows = report.daily.map(row => ({ day: row.day, totalSales: row.totalCents, ordersCount: row.ordersCount }));
+      const totalSalesCents = report.ordersTotalCents;
+      const totalOrders = report.ordersCount;
       const lines = [
         csvRow(["L4CKOS - Relatorio de vendas"]),
         csvRow(["periodFrom", input.from]),
@@ -864,9 +984,49 @@ export const adminRouter = router({
           order.items?.map(item => `${item.productName || `Produto #${item.productId}`} x${item.quantity}`).join("; ") ?? "",
         ])),
       ];
+      await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.csv", entity: "report", metadata: { from: input.from, to: input.to, rows: ordersRows.length } });
       return {
         fileName: `sales-report-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.csv`,
         csv: lines.join("\n"),
+      };
+    }),
+
+  reportsSummary: adminProcedure
+    .input(z.object({
+      from: z.string().datetime(),
+      to: z.string().datetime(),
+    }).refine(({ from, to }) => new Date(from).getTime() <= new Date(to).getTime(), "A data inicial deve ser anterior ou igual à data final."))
+    .query(async ({ input }) => {
+      try {
+        return await getAdminSalesReport(new Date(input.from), new Date(input.to));
+      } catch (error) {
+        if (error instanceof SalesReportTooLargeError) {
+          throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: error.message });
+        }
+        throw error;
+      }
+    }),
+
+  reportsSalesPdf: adminProcedure
+    .input(z.object({
+      from: z.string().datetime(),
+      to: z.string().datetime(),
+    }).refine(({ from, to }) => new Date(from).getTime() <= new Date(to).getTime(), "A data inicial deve ser anterior ou igual à data final."))
+    .mutation(async ({ ctx, input }) => {
+      let report;
+      try {
+        report = await getAdminSalesReport(new Date(input.from), new Date(input.to));
+      } catch (error) {
+        if (error instanceof SalesReportTooLargeError) {
+          throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: error.message });
+        }
+        throw error;
+      }
+      const pdf = renderSalesReportPdf(report);
+      await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.pdf", entity: "report", metadata: { from: input.from, to: input.to, orders: report.ordersCount } });
+      return {
+        fileName: `relatorio-pedidos-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.pdf`,
+        pdfBase64: pdf.toString("base64"),
       };
     }),
 
@@ -877,26 +1037,22 @@ export const adminRouter = router({
     }),
 
   backupManual: adminProcedure.mutation(async ({ ctx }) => {
-    const backup = await getBackupPayload();
-    const dir = process.env.BACKUP_DIR || "backups";
-    const fileName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-    const filePath = path.join(dir, fileName);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(filePath, JSON.stringify(backup, null, 2), { encoding: "utf-8", mode: 0o600, flag: "wx" });
-    await createAuditLog({
-      actorUserId: ctx.user.id,
-      action: "backup.manual",
-      entity: "backup",
-      entityId: fileName,
-    });
-    return { fileName, filePath };
+    try {
+      const { fileName } = await createBackupFile(process.env.BACKUP_DIR || "backups", "manual", getBackupPayload);
+      await createAuditLog({
+        actorUserId: ctx.user.id,
+        action: "backup.manual",
+        entity: "backup",
+        entityId: fileName,
+      });
+      return { fileName };
+    } catch {
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "BACKUP_OPERATION_FAILED" });
+    }
   }),
 
   backupsList: adminProcedure.query(async () => {
-    const dir = process.env.BACKUP_DIR || "backups";
-    await mkdir(dir, { recursive: true });
-    const files = await readdir(dir);
-    return files.filter(name => name.endsWith(".json")).sort().reverse();
+    return listBackupFileNames(process.env.BACKUP_DIR || "backups");
   }),
 
   backupRestore: adminProcedure

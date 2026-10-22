@@ -36,13 +36,13 @@ const statusDescription: Record<OrderStatus, string> = {
   cancelled: "Este pedido foi cancelado. Se precisar, fale com o suporte.",
 };
 
-const statusTone: Record<OrderStatus, { bg: string; color: string; border: string }> = {
-  pending: { bg: "rgba(180, 83, 9, 0.14)", color: "#fbbf24", border: "rgba(180, 83, 9, 0.28)" },
-  processing: { bg: "rgba(15, 118, 110, 0.14)", color: "#5eead4", border: "rgba(15, 118, 110, 0.28)" },
-  paid: { bg: "rgba(21, 128, 61, 0.14)", color: "#86efac", border: "rgba(21, 128, 61, 0.28)" },
-  shipped: { bg: "rgba(29, 78, 216, 0.14)", color: "#93c5fd", border: "rgba(29, 78, 216, 0.28)" },
-  delivered: { bg: "rgba(22, 101, 52, 0.14)", color: "#bbf7d0", border: "rgba(22, 101, 52, 0.28)" },
-  cancelled: { bg: "rgba(185, 28, 28, 0.14)", color: "#fca5a5", border: "rgba(185, 28, 28, 0.28)" },
+const statusTone: Record<OrderStatus, { color: string }> = {
+  pending: { color: "#fbbf24" },
+  processing: { color: "#5eead4" },
+  paid: { color: "#86efac" },
+  shipped: { color: "#93c5fd" },
+  delivered: { color: "#bbf7d0" },
+  cancelled: { color: "#fca5a5" },
 };
 
 const timelineSteps: Array<{ key: Exclude<OrderStatus, "cancelled">; label: string }> = [
@@ -104,20 +104,57 @@ export default function AcompanharPedido() {
   const { isAuthenticated } = useUser();
   const [params] = useSearchParams();
 
+  const requestedPreview = import.meta.env.DEV ? params.get("trackingPreview") : null;
+  const previewStatus = requestedPreview === "cancelled" || requestedPreview === "processing"
+    ? requestedPreview
+    : null;
+
   const presetOrder = params.get("pedido") ?? "";
   const [searchMode, setSearchMode] = useState<"pedido" | "codigo">("pedido");
   const [searchValue, setSearchValue] = useState(presetOrder);
   const [payload, setPayload] = useState<{ orderId?: number; trackingCode?: string } | undefined>(
-    presetOrder && Number.isFinite(Number(presetOrder)) ? { orderId: Number(presetOrder) } : undefined,
+    !previewStatus && presetOrder && Number.isFinite(Number(presetOrder)) ? { orderId: Number(presetOrder) } : undefined,
   );
 
   const query = useTrackOrder(payload);
 
-  const currentStatus = (query.data?.status as OrderStatus | undefined) ?? "pending";
-  const hasPreorder = query.data?.items.some(item => item.salesModeAtPurchase === "PREORDER") ?? false;
-  const awaitingProduction = ["paid", "processing"].includes(currentStatus) && (query.data?.items.some(item => item.salesModeAtPurchase === "PREORDER" && !["RECEIVED", "SHIPPING", "COMPLETED"].includes(item.productionStatus ?? "")) ?? false);
+  const previewOrder = previewStatus ? ({
+    id: previewStatus === "cancelled" ? 9001 : 9002,
+    status: previewStatus,
+    totalPrice: 17980,
+    createdAt: "2026-10-12T12:00:00.000Z",
+    updatedAt: "2026-10-13T15:30:00.000Z",
+    trackingCode: previewStatus === "processing" ? "DEMO-0000" : null,
+    shippingAddress: {
+      recipient: "Cliente fictício",
+      street: "Rua de demonstração",
+      number: "00",
+      complement: "",
+      neighborhood: "Centro",
+      city: "Brasília",
+      state: "DF",
+      zipCode: "70000-000",
+    },
+    shippingAtPurchase: { id: "demo", label: "Entrega de demonstração", minDays: 5, maxDays: 8 },
+    items: [{
+      id: 99001,
+      productId: 990,
+      quantity: 2,
+      status: previewStatus,
+      productName: "Camiseta de demonstração — dados fictícios",
+      productImage: null,
+      productPrice: 8990,
+      salesModeAtPurchase: "STANDARD",
+    }],
+  } as unknown as NonNullable<typeof query.data>) : null;
+  const orderData = previewOrder ?? query.data;
+  const isVisualPreview = Boolean(previewOrder);
+
+  const currentStatus = (orderData?.status as OrderStatus | undefined) ?? "pending";
+  const hasPreorder = orderData?.items.some(item => item.salesModeAtPurchase === "PREORDER") ?? false;
+  const awaitingProduction = ["paid", "processing"].includes(currentStatus) && (orderData?.items.some(item => item.salesModeAtPurchase === "PREORDER" && !["RECEIVED", "SHIPPING", "COMPLETED"].includes(item.productionStatus ?? "")) ?? false);
   const displayedStatus = awaitingProduction ? "Acompanhando produção" : statusLabel[currentStatus];
-  const displayedTone = hasPreorder && currentStatus !== "cancelled" ? { bg: "#191919", color: "#E6D6C2", border: "rgba(230,214,194,.3)" } : statusTone[currentStatus];
+  const displayedTone = hasPreorder && currentStatus !== "cancelled" ? { color: "#E6D6C2" } : statusTone[currentStatus];
   const timelineIndex = timelineSteps.findIndex(step => {
     if (currentStatus === "paid" && step.key === "processing") return true;
     return step.key === currentStatus;
@@ -128,7 +165,7 @@ export default function AcompanharPedido() {
     [searchMode],
   );
 
-  const orderItems: TrackedOrderItem[] = (query.data?.items ?? []).map(item => ({
+  const orderItems: TrackedOrderItem[] = (orderData?.items ?? []).map(item => ({
     ...item,
     id: item.id,
     productId: item.productId,
@@ -156,20 +193,29 @@ export default function AcompanharPedido() {
     setPayload({ trackingCode: trimmed });
   };
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !(import.meta.env.DEV && isVisualPreview)) {
     return (
-      <section className="l4-tracking" style={styles.wrapper}>
-        <h1 style={styles.title}>Acompanhar pedido</h1>
-        <p style={styles.muted}>Para acompanhar seus pedidos, entre com a sua conta.</p>
-        <Link to="/login" style={styles.primaryButton}>
-          Entrar
-        </Link>
+      <section className="l4-tracking l4-tracking-guest">
+        <div className="l4-tracking-guest-content">
+          <p className="l4-tracking-guest-eyebrow">Pós-venda</p>
+          <h1 className="l4-tracking-guest-title">Acompanhe seu pedido</h1>
+          <p className="l4-tracking-guest-copy">
+            Entre na sua conta para consultar seus pedidos e acompanhar as atualizações.
+          </p>
+          <Link to="/login" className="l4-tracking-guest-primary">
+            Entrar para acompanhar <span aria-hidden="true">→</span>
+          </Link>
+          <p className="l4-tracking-guest-help">
+            Precisa de ajuda? <Link to="/contato">Fale com a L4CKOS</Link>.
+          </p>
+        </div>
       </section>
     );
   }
 
   return (
-    <section className="l4-tracking" style={styles.wrapper}>
+    <section className="l4-tracking l4-tracking-auth" style={styles.wrapper}>
+      {import.meta.env.DEV && isVisualPreview ? <p className="l4-tracking-preview-note">Pré-visualização local · dados inteiramente fictícios</p> : null}
       <div className="l4-tracking-hero" style={styles.hero}>
         <div>
           <p style={styles.eyebrow}>Pos-venda</p>
@@ -183,10 +229,11 @@ export default function AcompanharPedido() {
         </div>
       </div>
 
-      <form style={styles.form} onSubmit={handleSubmit}>
-        <div style={styles.modeRow}>
+      <form className="l4-tracking-search" style={styles.form} onSubmit={handleSubmit} aria-label="Consultar pedido">
+        <div className="l4-tracking-mode-row" style={styles.modeRow} role="group" aria-label="Tipo de consulta">
           <button
             type="button"
+            aria-pressed={searchMode === "pedido"}
             onClick={() => setSearchMode("pedido")}
             style={{ ...styles.modeButton, ...(searchMode === "pedido" ? styles.modeButtonActive : {}) }}
           >
@@ -194,6 +241,7 @@ export default function AcompanharPedido() {
           </button>
           <button
             type="button"
+            aria-pressed={searchMode === "codigo"}
             onClick={() => setSearchMode("codigo")}
             style={{ ...styles.modeButton, ...(searchMode === "codigo" ? styles.modeButtonActive : {}) }}
           >
@@ -206,6 +254,7 @@ export default function AcompanharPedido() {
             value={searchValue}
             onChange={event => setSearchValue(event.target.value)}
             placeholder={searchPlaceholder}
+            aria-label={searchMode === "pedido" ? "Número do pedido" : "Código de rastreio"}
             style={styles.input}
           />
           <button type="submit" style={styles.primaryButton}>
@@ -215,52 +264,42 @@ export default function AcompanharPedido() {
       </form>
 
       {query.isLoading ? <p style={styles.muted}>Buscando pedido...</p> : null}
-      {query.isError ? <p style={styles.error}>Não foi possível localizar este pedido na sua conta.</p> : null}
+      {query.isError ? <p style={styles.error} role="alert">Não foi possível localizar este pedido na sua conta.</p> : null}
 
-      {query.data ? (
-        <article style={styles.card}>
-          <div style={styles.cardHead}>
+      {orderData ? (
+        <article className="l4-tracking-result" style={styles.card}>
+          <div className="l4-tracking-result-head" style={styles.cardHead}>
             <div>
-              <p style={styles.cardLabel}>Pedido #{query.data.id}</p>
-              <h2 style={styles.cardTitle}>{displayedStatus}</h2>
-              <p style={styles.cardDescription}>{["paid", "processing"].includes(currentStatus) && query.data.items.some(item => item.salesModeAtPurchase === "PREORDER") ? "Pagamento confirmado. Acompanhe a produção dos itens de pré-venda abaixo." : statusDescription[currentStatus]}</p>
+              <p style={styles.cardLabel}>Pedido #{orderData.id}</p>
+              <h2 className="l4-tracking-status-title" style={{ ...styles.cardTitle, color: displayedTone.color }}>{displayedStatus}</h2>
+              <p style={styles.cardDescription}>{["paid", "processing"].includes(currentStatus) && orderData.items.some(item => item.salesModeAtPurchase === "PREORDER") ? "Pagamento confirmado. Acompanhe a produção dos itens de pré-venda abaixo." : statusDescription[currentStatus]}</p>
             </div>
-            <span
-              style={{
-                ...styles.badge,
-                background: displayedTone.bg,
-                color: displayedTone.color,
-                borderColor: displayedTone.border,
-              }}
-            >
-              {displayedStatus}
-            </span>
           </div>
 
-          <PurchasedMixedShippingNotice items={query.data.items} />
-          <PurchasedTransportInfo option={query.data.shippingAtPurchase} status={currentStatus} />
+          <PurchasedMixedShippingNotice items={orderData.items} />
+          <PurchasedTransportInfo option={orderData.shippingAtPurchase} status={currentStatus} />
           <div className="l4-tracking-summary" style={styles.summaryGrid}>
-            <div style={styles.summaryCard}>
+            <div className="l4-tracking-summary-item" style={styles.summaryCard}>
               <p style={styles.metaLabel}>Total do pedido</p>
-              <p style={styles.metaStrong}>{formatMoney(Number(query.data.totalPrice))}</p>
+              <p style={styles.metaStrong}>{formatMoney(Number(orderData.totalPrice))}</p>
             </div>
-            <div style={styles.summaryCard}>
+            <div className="l4-tracking-summary-item" style={styles.summaryCard}>
               <p style={styles.metaLabel}>Itens</p>
               <p style={styles.metaStrong}>
                 {orderItems.length} produto{orderItems.length === 1 ? "" : "s"} • {totalUnits} unidade{totalUnits === 1 ? "" : "s"}
               </p>
             </div>
-            <div style={styles.summaryCard}>
+            <div className="l4-tracking-summary-item" style={styles.summaryCard}>
               <p style={styles.metaLabel}>Criado em</p>
-              <p style={styles.metaStrong}>{formatDate(query.data.createdAt)}</p>
+              <p style={styles.metaStrong}>{formatDate(orderData.createdAt)}</p>
             </div>
-            <div style={styles.summaryCard}>
+            <div className="l4-tracking-summary-item" style={styles.summaryCard}>
               <p style={styles.metaLabel}>Ultima atualizacao</p>
-              <p style={styles.metaStrong}>{formatDate(query.data.updatedAt)}</p>
+              <p style={styles.metaStrong}>{formatDate(orderData.updatedAt)}</p>
             </div>
-            <div style={styles.summaryCard}>
+            <div className="l4-tracking-summary-item" style={styles.summaryCard}>
               <p style={styles.metaLabel}>Rastreio</p>
-              <p style={styles.metaStrong}>{query.data.trackingCode || "Ainda não informado"}</p>
+              <p style={styles.metaStrong}>{orderData.trackingCode || "Ainda não informado"}</p>
             </div>
           </div>
 
@@ -280,19 +319,17 @@ export default function AcompanharPedido() {
                 );
               })}
             </div>
-          ) : (
-            <p style={styles.cancelled}>Este pedido foi cancelado. Se precisar, fale com o suporte pelos canais oficiais.</p>
-          )}
+          ) : null}
 
-          <div style={styles.section}>
-            <div style={styles.sectionHead}>
+          <div className="l4-tracking-section" style={styles.section}>
+            <div className="l4-tracking-section-head" style={styles.sectionHead}>
               <h3 style={styles.sectionTitle}>Entrega</h3>
               <span style={styles.sectionHint}>Endereço confirmado para esta compra.</span>
             </div>
 
-            {query.data.shippingAddress ? (
+            {orderData.shippingAddress ? (
               <div style={styles.addressBox}>
-                {formatShippingAddress(query.data.shippingAddress).map(line => (
+                {formatShippingAddress(orderData.shippingAddress).map(line => (
                   <p key={line} style={styles.addressLine}>{line}</p>
                 ))}
               </div>
@@ -301,13 +338,13 @@ export default function AcompanharPedido() {
             )}
           </div>
 
-          <div style={styles.section}>
-            <div style={styles.sectionHead}>
+          <div className="l4-tracking-section" style={styles.section}>
+            <div className="l4-tracking-section-head" style={styles.sectionHead}>
               <h3 style={styles.sectionTitle}>Itens do pedido</h3>
               <span style={styles.sectionHint}>Tudo o que foi selecionado nesta compra.</span>
             </div>
 
-            {orderItems.length > 0 ? (
+          {orderItems.length > 0 ? (
               <div style={styles.itemsList}>
                 {orderItems.map(item => (
                   <div key={item.id} className="l4-tracking-itemCard" style={styles.itemCard}>
@@ -343,15 +380,15 @@ export default function AcompanharPedido() {
           </div>
 
           <div className="l4-tracking-actions" style={styles.actions}>
-            {canEditShippingAddress(query.data.status) ? (
-              <Link to={`/meus-pedidos/${query.data.id}`} style={styles.secondaryButton}>
+            {!isVisualPreview && canEditShippingAddress(orderData.status) ? (
+              <Link to={`/meus-pedidos/${orderData.id}`} style={styles.secondaryButton}>
                  Ajustar endereço
               </Link>
             ) : null}
             <Link to="/meus-pedidos" style={styles.secondaryButton}>
               Ver meus pedidos
             </Link>
-            <button type="button" style={styles.primaryButton} onClick={() => void query.refetch()}>
+            <button type="button" style={styles.primaryButton} onClick={() => void query.refetch()} disabled={isVisualPreview}>
               Atualizar agora
             </button>
           </div>
@@ -363,39 +400,42 @@ export default function AcompanharPedido() {
 
 const styles: Record<string, CSSProperties> = {
   wrapper: {
-    maxWidth: 1080,
+    maxWidth: 1240,
     margin: "0 auto",
     display: "grid",
-    gap: 16,
+    gap: "clamp(24px, 4vw, 42px)",
     color: "#f0ede8",
   },
   hero: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(240px, 320px)",
-    gap: 16,
-    alignItems: "end",
+    gridTemplateColumns: "minmax(0, 1fr)",
+    gap: 10,
+    alignItems: "start",
   },
   eyebrow: {
     margin: "0 0 8px 0",
-    color: "#c7a76c",
+    color: "#e8002a",
     fontSize: 12,
     textTransform: "uppercase",
     letterSpacing: 1.6,
     fontWeight: 800,
   },
   heroHint: {
-    border: "1px solid #2b2b2b",
-    borderRadius: 12,
-    background: "linear-gradient(135deg, #111111 0%, #161616 100%)",
-    padding: 14,
-    color: "#cbd5e1",
+    border: "none",
+    borderRadius: 0,
+    background: "transparent",
+    padding: 0,
+    color: "#a9a6a2",
     fontSize: 13,
-    lineHeight: 1.7,
+    lineHeight: 1.55,
   },
   title: {
     margin: 0,
-    fontSize: 32,
-    fontWeight: 800,
+    fontFamily: "Bebas Neue, sans-serif",
+    fontSize: 44,
+    fontWeight: 400,
+    lineHeight: 1,
+    letterSpacing: 0.3,
     color: "#f0ede8",
   },
   muted: {
@@ -412,30 +452,31 @@ const styles: Record<string, CSSProperties> = {
   },
   form: {
     display: "grid",
-    gap: 10,
-    background: "#111111",
-    borderRadius: 14,
-    border: "1px solid #2b2b2b",
-    padding: 16,
+    gap: 14,
+    background: "transparent",
+    borderRadius: 0,
+    border: "none",
+    padding: "8px 0 0",
+    maxWidth: 760,
   },
   modeRow: {
     display: "flex",
-    gap: 8,
+    gap: 22,
     flexWrap: "wrap",
   },
   modeButton: {
-    border: "1px solid #2f2f2f",
-    borderRadius: 999,
-    background: "#0f0f0f",
-    color: "#a1a1aa",
+    border: "none",
+    borderRadius: 0,
+    background: "transparent",
+    color: "#aaa6a2",
     fontWeight: 700,
-    padding: "8px 12px",
+    fontSize: 13,
+    padding: "10px 0",
     cursor: "pointer",
   },
   modeButtonActive: {
-    background: "#1f2937",
+    background: "transparent",
     color: "white",
-    borderColor: "#111827",
   },
   inputRow: {
     display: "grid",
@@ -444,22 +485,22 @@ const styles: Record<string, CSSProperties> = {
   },
   input: {
     minWidth: 0,
-    border: "1px solid #2f2f2f",
-    borderRadius: 10,
+    border: "1px solid #383838",
+    borderRadius: 0,
     fontSize: 15,
     padding: "12px 14px",
-    outline: "none",
     background: "#0b0b0b",
     color: "#f0ede8",
   },
   card: {
-    background: "linear-gradient(180deg, #101010 0%, #0b0b0b 100%)",
-    border: "1px solid #2b2b2b",
-    borderRadius: 16,
-    padding: 18,
+    background: "transparent",
+    border: "none",
+    borderTop: "1px solid #303030",
+    borderRadius: 0,
+    padding: "24px 0 0",
     display: "grid",
-    gap: 18,
-    boxShadow: "0 18px 40px rgba(0, 0, 0, 0.32)",
+    gap: 24,
+    boxShadow: "none",
   },
   cardHead: {
     display: "flex",
@@ -477,11 +518,13 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
   },
   cardTitle: {
-    margin: "6px 0 0 0",
-    fontSize: 28,
+    margin: "8px 0 0",
+    fontFamily: "Bebas Neue, sans-serif",
+    fontSize: 36,
     color: "#f0ede8",
-    fontWeight: 900,
-    lineHeight: 1.05,
+    fontWeight: 400,
+    lineHeight: 1,
+    letterSpacing: 0.3,
   },
   cardDescription: {
     margin: "8px 0 0 0",
@@ -490,23 +533,18 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.7,
     maxWidth: 720,
   },
-  badge: {
-    borderRadius: 999,
-    fontWeight: 800,
-    fontSize: 12,
-    padding: "9px 12px",
-    border: "1px solid transparent",
-  },
   summaryGrid: {
     display: "grid",
-    gap: 12,
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: "18px 0",
+    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+    paddingBlock: 18,
+    borderTop: "1px solid #2a2a2a",
+    borderBottom: "1px solid #2a2a2a",
   },
   summaryCard: {
-    border: "1px solid #252525",
-    borderRadius: 12,
-    background: "#111111",
-    padding: 14,
+    borderRadius: 0,
+    background: "transparent",
+    padding: "0 14px",
   },
   metaLabel: {
     margin: 0,
@@ -543,8 +581,8 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 1,
   },
   dotActive: {
-    background: "#2563eb",
-    boxShadow: "0 0 0 4px rgba(37, 99, 235, 0.16)",
+    background: "#e8002a",
+    boxShadow: "0 0 0 4px rgba(232, 0, 42, 0.14)",
   },
   line: {
     position: "absolute",
@@ -555,7 +593,7 @@ const styles: Record<string, CSSProperties> = {
     background: "#3f3f46",
   },
   lineActive: {
-    background: "#2563eb",
+    background: "#e8002a",
   },
   stepLabel: {
     margin: 0,
@@ -565,21 +603,12 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
   },
   stepLabelActive: {
-    color: "#93c5fd",
-  },
-  cancelled: {
-    margin: 0,
-    borderRadius: 10,
-    padding: "12px 14px",
-    background: "rgba(127, 29, 29, 0.18)",
-    border: "1px solid rgba(185, 28, 28, 0.28)",
-    color: "#fca5a5",
-    fontWeight: 700,
-    fontSize: 13,
+    color: "#f0ede8",
   },
   section: {
     display: "grid",
-    gap: 12,
+    gap: 16,
+    paddingTop: 8,
   },
   sectionHead: {
     display: "flex",
@@ -587,12 +616,16 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 12,
     flexWrap: "wrap",
+    paddingBottom: 10,
+    borderBottom: "1px solid #292929",
   },
   sectionTitle: {
     margin: 0,
     color: "#f0ede8",
-    fontSize: 20,
-    fontWeight: 800,
+    fontFamily: "Bebas Neue, sans-serif",
+    fontSize: 24,
+    fontWeight: 400,
+    letterSpacing: 0.25,
   },
   sectionHint: {
     color: "#9ca3af",
@@ -601,10 +634,10 @@ const styles: Record<string, CSSProperties> = {
   addressBox: {
     display: "grid",
     gap: 6,
-    border: "1px solid #252525",
-    borderRadius: 14,
-    background: "#101010",
-    padding: 14,
+    border: "none",
+    borderRadius: 0,
+    background: "transparent",
+    padding: "2px 0",
   },
   addressLine: {
     margin: 0,
@@ -614,17 +647,18 @@ const styles: Record<string, CSSProperties> = {
   },
   itemsList: {
     display: "grid",
-    gap: 10,
+    gap: 0,
   },
   itemCard: {
     display: "flex",
     justifyContent: "space-between",
     gap: 14,
     flexWrap: "wrap",
-    border: "1px solid #252525",
-    borderRadius: 14,
-    background: "#101010",
-    padding: 14,
+    border: "none",
+    borderBottom: "1px solid #292929",
+    borderRadius: 0,
+    background: "transparent",
+    padding: "16px 0",
   },
   itemIdentity: {
     display: "flex",
@@ -634,18 +668,18 @@ const styles: Record<string, CSSProperties> = {
     flex: 1,
   },
   itemImageWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 12,
+    width: 84,
+    height: 96,
+    borderRadius: 0,
     overflow: "hidden",
-    border: "1px solid #262626",
-    background: "#0a0a0a",
+    border: "none",
+    background: "transparent",
     flexShrink: 0,
   },
   itemImage: {
     width: "100%",
     height: "100%",
-    objectFit: "cover",
+    objectFit: "contain",
     display: "block",
   },
   itemImageFallback: {
@@ -713,10 +747,11 @@ const styles: Record<string, CSSProperties> = {
     background: "#e8002a",
     color: "white",
     border: "none",
-    borderRadius: 10,
+    borderRadius: 0,
     fontWeight: 800,
     fontSize: 14,
-    padding: "11px 15px",
+    minHeight: 46,
+    padding: "11px 18px",
     textDecoration: "none",
     cursor: "pointer",
   },
@@ -726,12 +761,13 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     border: "1px solid #2f2f2f",
     color: "#f0ede8",
-    borderRadius: 10,
+    borderRadius: 0,
     fontWeight: 700,
     fontSize: 14,
-    padding: "11px 15px",
+    minHeight: 46,
+    padding: "11px 18px",
     textDecoration: "none",
-    background: "#0f0f0f",
+    background: "transparent",
     cursor: "pointer",
   },
 };

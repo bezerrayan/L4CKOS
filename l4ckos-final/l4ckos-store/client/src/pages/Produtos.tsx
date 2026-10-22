@@ -86,15 +86,16 @@ export default function Produtos() {
   const showSearch = hasCatalog;
 
   return (
-    <div>
+    <div className="l4-catalog-page">
       <div
         style={{
           ...styles.header,
-          marginBottom: isMobile ? 28 : styles.header.marginBottom,
-          paddingBottom: isMobile ? 20 : styles.header.paddingBottom,
+          marginBottom: isMobile ? 20 : styles.header.marginBottom,
+          paddingBottom: isMobile ? 16 : styles.header.paddingBottom,
         }}
       >
         <div>
+          <p className="l4-eyebrow">L4CKOS / COLEÇÃO</p>
           <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Produtos</h1>
           <p style={{ ...styles.subtitle, fontSize: isMobile ? 15 : styles.subtitle.fontSize }}>
             {activeCategoryLabel
@@ -118,10 +119,8 @@ export default function Produtos() {
         <div style={{ ...styles.categoryBar, gap: isMobile ? 8 : styles.categoryBar.gap }}>
           <button
             type="button"
-            style={{
-              ...styles.categoryChip,
-              ...(!selectedCategory ? styles.categoryChipActive : {}),
-            }}
+            className="l4-catalog-category"
+            aria-pressed={!selectedCategory}
             onClick={() => navigate("/produtos")}
           >
             Todos
@@ -130,10 +129,8 @@ export default function Produtos() {
             <button
               key={category.value}
               type="button"
-              style={{
-                ...styles.categoryChip,
-                ...(selectedCategory === category.value ? styles.categoryChipActive : {}),
-              }}
+              className="l4-catalog-category"
+              aria-pressed={selectedCategory === category.value}
               onClick={() => navigate(`/categorias/${category.value}`)}
             >
               {category.label}
@@ -143,7 +140,7 @@ export default function Produtos() {
       ) : null}
 
       {showSearch ? (
-        <div style={{ ...styles.searchContainer, marginBottom: isMobile ? 30 : styles.searchContainer.marginBottom }}>
+        <div style={styles.searchContainer}>
           <input
             type="search"
             placeholder="Buscar por produto ou categoria..."
@@ -160,8 +157,8 @@ export default function Produtos() {
         </div>
       ) : null}
 
-      {productsQuery.isLoading ? <p style={styles.resultInfo}>Carregando produtos...</p> : null}
-      {productsQuery.isError ? <p style={styles.resultInfo}>Não foi possível carregar os produtos agora.</p> : null}
+      {productsQuery.isLoading ? <div role="status" aria-label="Carregando produtos" className="l4-catalog-skeleton"><span className="l4-sr-only">Carregando produtos...</span>{Array.from({ length: 4 }, (_, index) => <div key={index} className="l4-skeleton-card" aria-hidden="true" />)}</div> : null}
+      {productsQuery.isError ? <div className="l4-feedback" role="alert"><h2>Não conseguimos carregar a coleção</h2><p>Verifique sua conexão e tente novamente.</p><button type="button" onClick={() => void productsQuery.refetch()}>Tentar novamente</button></div> : null}
 
       {!productsQuery.isLoading && produtos.length > 0 ? (
         <div>
@@ -171,17 +168,11 @@ export default function Produtos() {
                 ? `Mostrando ${produtos.length} resultado(s) para "${searchTerm}"`
                 : activeCategoryLabel
                   ? `Exibindo ${produtos.length} produto(s) em ${activeCategoryLabel}`
-                  : `Exibindo ${produtos.length} produtos disponíveis`}
+                  : `Exibindo ${produtos.length} produtos`}
             </p>
           </div>
 
-          <div
-            style={{
-              ...styles.productsGrid,
-              gridTemplateColumns: isMobile ? "1fr" : styles.productsGrid.gridTemplateColumns,
-              gap: isMobile ? 16 : styles.productsGrid.gap,
-            }}
-          >
+          <div className="l4-catalog-grid l4-minimal-products">
             {produtos.map((produto, idx) => (
               <div
                 key={produto.id}
@@ -194,14 +185,14 @@ export default function Produtos() {
             ))}
           </div>
         </div>
-      ) : !productsQuery.isLoading && !hasCatalog ? (
+      ) : !productsQuery.isLoading && !productsQuery.isError && !hasCatalog ? (
         <EmptyState
           icon={PackageOpen}
           title="NOVAS PEÇAS EM PREPARAÇÃO"
           text="O catálogo da L4CKOS está sendo preparado. Acompanhe os canais oficiais para conhecer os próximos lançamentos."
           action={{ label: "ENTRAR NA LISTA", to: "/em-breve" }}
         />
-      ) : !productsQuery.isLoading ? (
+      ) : !productsQuery.isLoading && !productsQuery.isError ? (
         <EmptyState
           icon={SearchX}
           title="NENHUM PRODUTO ENCONTRADO"
@@ -216,8 +207,8 @@ export default function Produtos() {
 
 const styles: Record<string, CSSProperties> = {
   header: {
-    marginBottom: 48,
-    paddingBottom: 24,
+    marginBottom: 24,
+    paddingBottom: 20,
     borderBottom: "1px solid #262626",
   },
   title: {
@@ -235,7 +226,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
-    marginBottom: 28,
+    marginBottom: 16,
   },
   categoryHero: {
     border: "1px solid #252525",
@@ -286,14 +277,14 @@ const styles: Record<string, CSSProperties> = {
   },
   searchContainer: {
     position: "relative",
-    maxWidth: 500,
-    marginBottom: 48,
+    maxWidth: 640,
+    marginBottom: 20,
   },
   searchInput: {
     width: "100%",
-    padding: "14px 20px",
+    padding: "14px 56px 14px 16px",
     border: "1px solid #2f2f2f",
-    borderRadius: 10,
+    borderRadius: 4,
     fontSize: 16,
     transition: "all 0.3s ease",
     backgroundColor: "#111111",
@@ -302,24 +293,24 @@ const styles: Record<string, CSSProperties> = {
   },
   clearButton: {
     position: "absolute",
-    right: 16,
+    right: 6,
     top: "50%",
     transform: "translateY(-50%)",
     border: "none",
     fontSize: 18,
     cursor: "pointer",
-    color: "#6b7280",
+    color: "#c4c0ba",
     background: "transparent",
     padding: 0,
-    width: 24,
-    height: 24,
+    width: 44,
+    height: 44,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     transition: "color 0.2s ease",
   },
   resultInfo: {
-    marginBottom: 24,
+    marginBottom: 16,
     color: "#9ca3af",
     fontSize: 14,
   },

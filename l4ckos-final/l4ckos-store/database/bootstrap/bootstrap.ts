@@ -44,7 +44,7 @@ export async function bootstrapCurrentDatabase(connection: Connection, context: 
   return {...migrated,status:'BOOTSTRAPPED_CURRENT',tables:current.schema.tables.length};
 }
 
-/** Fresh RC2 schema: preserve baseline history, then apply 0021, 0022, 0023. */
+/** Fresh release schema: preserve baseline history, then apply the approved forward lineage. */
 export async function bootstrapReleaseDatabase(connection: Connection, context: OperationContext) {
   const { readReleaseContract, readContract } = await import('../schema/artifacts');
   const { migrateDatabase, readReleaseManifest } = await import('../migrations/runner');

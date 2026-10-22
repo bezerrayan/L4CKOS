@@ -1,13 +1,14 @@
 import { Link } from "react-router-dom";
-import { Instagram, Mail, MessageCircle } from "lucide-react";
+import { Instagram, Mail } from "lucide-react";
+import { FaWhatsapp } from "react-icons/fa";
 import { openCookiePreferences } from "./CookiePreferences";
-import { contactChannels, getWhatsAppUrl } from "../config/site";
+import { contactChannels } from "../config/site";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Footer.css";
 
 export default function Footer() {
   const year = new Date().getFullYear();
-  const whatsappUrl = getWhatsAppUrl();
+  const whatsappUrl = "https://wa.me/5561984716602";
 
   return (
     <footer className="l4-footer">
@@ -22,12 +23,10 @@ export default function Footer() {
               <Instagram size={14} aria-hidden="true" />
               <span>Instagram</span>
             </a>
-            {whatsappUrl ? (
-              <a href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="WhatsApp L4CKOS">
-                <MessageCircle size={14} aria-hidden="true" />
-                <span>WhatsApp</span>
-              </a>
-            ) : null}
+            <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp L4CKOS">
+              <FaWhatsapp size={14} aria-hidden="true" />
+              <span>WhatsApp</span>
+            </a>
             <a href={`mailto:${contactChannels.email}`} aria-label="E-mail L4CKOS">
               <Mail size={14} aria-hidden="true" />
               <span>E-mail</span>
@@ -68,7 +67,7 @@ export default function Footer() {
           <ul>
             <li><Link to="/termos">Termos</Link></li>
             <li><Link to="/privacidade">Privacidade</Link></li>
-            <li><button className="l4-footer-link-button" type="button" onClick={openCookiePreferences}>Preferências de cookies</button></li>
+            <li><button className="l4-footer-link-button" type="button" onClick={openCookiePreferences}>Informações sobre cookies</button></li>
           </ul>
         </div>
       </div>

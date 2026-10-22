@@ -22,6 +22,7 @@ vi.mock("./services/emailService.js", () => ({ sendWelcomeAccountEmail: vi.fn(),
 let appRouter: typeof import("./routers").appRouter;
 let sdk: typeof import("./_core/sdk").sdk;
 let env: typeof import("./_core/env").ENV;
+let isConfiguredAdmin: typeof import("./_core/authz").isConfiguredAdmin;
 const password = "Synthetic-Password-42!";
 const email = "release-fixture@example.invalid";
 function context(user: any = null) {
@@ -43,6 +44,7 @@ beforeAll(async () => {
   vi.stubEnv("NODE_ENV", "test");
   vi.stubEnv("ADMIN_EMAILS", "release-operator@example.invalid");
   ({ appRouter } = await import("./routers"));
+  ({ isConfiguredAdmin } = await import("./_core/authz"));
   ({ sdk } = await import("./_core/sdk"));
   ({ ENV: env } = await import("./_core/env"));
 });
@@ -93,6 +95,15 @@ describe("release public authentication (isolated adapters)", () => {
       await expect(caller.auth.localSignup({ name: "Release Fixture", email, password })).rejects.toThrow("desativado");
       await expect(caller.auth.localLogin({ email, password })).rejects.toThrow("desativado");
       expect(fixture.user).toBeNull();
+    } finally { Object.assign(env, saved); }
+  });
+  it("does not treat the local development admin fallback as an authorized production administrator", () => {
+    const saved = { adminEmails: env.adminEmails, ownerOpenId: env.ownerOpenId };
+    try {
+      Object.assign(env, { adminEmails: [], ownerOpenId: "" });
+      expect(isConfiguredAdmin({ id: 7, role: "admin", email: "admin@local.dev", openId: "local" } as any)).toBe(false);
+      Object.assign(env, { adminEmails: ["release-operator@example.invalid"] });
+      expect(isConfiguredAdmin({ id: 8, role: "admin", email: "release-operator@example.invalid", openId: "stage" } as any)).toBe(true);
     } finally { Object.assign(env, saved); }
   });
   it("does not reveal whether an unknown account exists in password recovery", async () => {

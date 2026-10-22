@@ -17,7 +17,7 @@ export type RemoteIdentity = Pick<
   WindowPlan,
   "target" | "deploymentId" | "serverUuid" | "endpointHash"
 >;
-export function assertRemoteEnvironment(p: RemoteIdentity) {
+export function assertRemoteEnvironment(p: RemoteIdentity, mysqlDeployment?: string) {
   if (
     digest(p.target) !== digest(TARGET) ||
     !/^[a-f0-9-]{36}$/.test(p.serverUuid) ||
@@ -28,10 +28,11 @@ export function assertRemoteEnvironment(p: RemoteIdentity) {
   for (const [k, v] of Object.entries({
     RAILWAY_PROJECT_ID: TARGET.projectId,
     RAILWAY_ENVIRONMENT_ID: TARGET.environmentId,
-    RAILWAY_SERVICE_ID: TARGET.serviceId,
-    RAILWAY_DEPLOYMENT_ID: p.deploymentId,
+    RAILWAY_SERVICE_ID: mysqlDeployment ? TARGET.mysqlServiceId : TARGET.serviceId,
+    RAILWAY_DEPLOYMENT_ID: mysqlDeployment || p.deploymentId,
   }))
     if (process.env[k] !== v) fail("STAGING_RUNTIME_IDENTITY_MISMATCH");
+  if(mysqlDeployment&&!/^[a-f0-9-]{36}$/.test(mysqlDeployment))fail('STAGING_MYSQL_RUNTIME_REQUIRED');
 }
 export function assertPrivateUrl(value: string, p: RemoteIdentity) {
   let url: URL;
@@ -53,8 +54,12 @@ export function assertPrivateUrl(value: string, p: RemoteIdentity) {
     fail("STAGING_ENDPOINT_NOT_APPROVED");
   return url;
 }
-export async function verifyRemoteIdentity(c: Connection, p: RemoteIdentity) {
-  assertRemoteEnvironment(p);
+export async function verifyRemoteIdentity(c: Connection, p: RemoteIdentity, mysqlDeployment?:string) {
+  assertRemoteEnvironment(p,mysqlDeployment);
+  if(mysqlDeployment) {
+    if(c.config.socketPath!=='/var/run/mysqld/mysqld.sock'||c.config.database!==TARGET.database||
+       (await rows(c,'SELECT CURRENT_USER() account'))[0].account!=='root@localhost')fail('STAGING_SOCKET_BINDING_MISMATCH');
+  }else{
   if (
     !c.config.host?.endsWith(".railway.internal") ||
     c.config.socketPath ||
@@ -63,6 +68,7 @@ export async function verifyRemoteIdentity(c: Connection, p: RemoteIdentity) {
       p.endpointHash
   )
     fail("STAGING_CONNECTION_BINDING_MISMATCH");
+  }
   const r = (
     await rows(
       c,
@@ -82,10 +88,11 @@ export async function verifyRemoteIdentity(c: Connection, p: RemoteIdentity) {
 }
 export async function remoteCapability(
   c: Connection,
-  p: WindowPlan
+  p: WindowPlan,
+  mysqlDeployment?:string
 ): Promise<Capability> {
   assertPlan(p);
-  const verify = () => verifyRemoteIdentity(c, p);
+  const verify = () => verifyRemoteIdentity(c, p, mysqlDeployment);
   await verify();
   const token = Object.freeze({});
   grants.set(token, { connection: c, planDigest: digest(p), verify });

@@ -59,6 +59,37 @@ describe("frontend API destination isolation", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each(["VITE_API_URL", "VITE_BACKEND_URL"])("rejects a remote %s in development before the client can send requests", async variable => {
+    const network = vi.fn();
+    vi.stubGlobal("fetch", network);
+    vi.stubEnv("DEV", true);
+    vi.stubEnv("VITE_DEPLOY_TARGET", "");
+    vi.stubEnv("VITE_API_URL", variable === "VITE_API_URL" ? "https://api-staging.l4ckos.com.br" : "");
+    vi.stubEnv("VITE_BACKEND_URL", variable === "VITE_BACKEND_URL" ? "https://api-staging.l4ckos.com.br" : "");
+
+    await expect(import("../client/src/const")).rejects.toThrowError(
+      expect.objectContaining({ code: "DEV_API_REMOTE_DISABLED" }),
+    );
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to staging when the local backend is unavailable", async () => {
+    const network = vi.fn().mockRejectedValue(new Error("ECONNREFUSED local test"));
+    vi.stubGlobal("fetch", network);
+    vi.stubEnv("DEV", true);
+    vi.stubEnv("VITE_DEPLOY_TARGET", "");
+    vi.stubEnv("VITE_API_URL", "");
+    vi.stubEnv("VITE_BACKEND_URL", "");
+    const client = await import("../client/src/const");
+    const csrf = await import("../client/src/lib/csrf");
+
+    await expect(csrf.csrfFetch(client.apiUrl("/api/trpc/products.list"), { method: "GET" }))
+      .rejects.toThrow("ECONNREFUSED local test");
+
+    expect(network).toHaveBeenCalledOnce();
+    expect(new URL(network.mock.calls[0][0]).origin).toBe("http://localhost:3010");
+  });
+
   it.each([undefined, "invalid URL", "https://api.l4ckos.com.br"])(
     "the real CSRF client cannot initialize or send requests with invalid staging config %s",
     async apiUrl => {
@@ -115,6 +146,24 @@ describe("frontend API destination isolation", () => {
       .toBe("https://api.l4ckos.com.br");
     expect(resolveApiUrl({ isDevelopment: true }).origin).toBe("http://localhost:3010");
     expect(resolveApiUrl({ isDevelopment: true, apiUrl: "http://127.0.0.1:3010" }).origin).toBe("http://127.0.0.1:3010");
+  });
+
+  it("keeps development on loopback and rejects staging, production, legacy remote, and ambiguous targets", () => {
+    for (const input of [
+      { isDevelopment: true, target: "staging", apiUrl: "https://api-staging.l4ckos.com.br" },
+      { isDevelopment: true, apiUrl: "https://api-staging.l4ckos.com.br" },
+      { isDevelopment: true, apiUrl: "https://api.l4ckos.com.br" },
+      { isDevelopment: true, legacyBackendUrl: "https://api-staging.l4ckos.com.br" },
+    ]) {
+      expect(() => resolveApiUrl(input)).toThrowError(
+        expect.objectContaining({ code: input.target ? "DEV_API_TARGET_DISABLED" : "DEV_API_REMOTE_DISABLED" }),
+      );
+    }
+
+    expect(resolveApiUrl({ isDevelopment: true, apiUrl: "/api", currentOrigin: "http://localhost:5173" }).origin)
+      .toBe("http://localhost:5173");
+    expect(() => resolveApiUrl({ isDevelopment: true, apiUrl: "/api", currentOrigin: "https://staging.l4ckos.com.br" }))
+      .toThrowError(expect.objectContaining({ code: "DEV_API_REMOTE_DISABLED" }));
   });
 
   it("does not silently use legacy or same-origin defaults in a release build", () => {

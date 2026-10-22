@@ -7,6 +7,7 @@ import {
   manufacturingEstimate,
   civilDate,
 } from "../../../../../shared/preorder";
+import { AdminBatchDateField } from "./AdminBatchDateField";
 import "./AdminBatches.css";
 const empty = {
   name: "",
@@ -39,9 +40,16 @@ const actions: Record<BatchStatus, string> = {
   COMPLETED: "Completar",
   CANCELLED: "Cancelar lote",
 };
+function formatUtcInstant(value: Date | string | null | undefined) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(date)} UTC`;
+}
 export function AdminBatches() {
   const [selected, setSelected] = useState<number | null>(null);
   const [editId, setEditId] = useState<number | undefined>();
+  const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(empty);
   const [error, setError] = useState("");
   const [associations, setAssociations] = useState<number[] | null>(null);
@@ -65,6 +73,7 @@ export function AdminBatches() {
       setSelected(value.id);
       setEditId(undefined);
       setForm(empty);
+      setFormOpen(false);
       await refresh();
     },
     onError,
@@ -128,6 +137,17 @@ export function AdminBatches() {
         ])
       ),
     } as typeof empty);
+    setFormOpen(true);
+  }
+  function startNewBatch() {
+    setEditId(undefined);
+    setForm(empty);
+    setFormOpen(true);
+  }
+  function closeForm() {
+    setEditId(undefined);
+    setForm(empty);
+    setFormOpen(false);
   }
   function advance(status: BatchStatus) {
     if (!selected) return;
@@ -159,12 +179,55 @@ export function AdminBatches() {
           {error}
         </p>
       )}
-      <div className={`l4-batches-layout ${selected ? "l4-batches-layout--selected" : ""}`}>
+      {!formOpen && <div className="l4-batches-toolbar">
+        <p>Consulte a situação dos lotes e abra um registro para acompanhar a produção.</p>
+        <button type="button" className="l4-batches-primary" onClick={startNewBatch}>Novo lote</button>
+      </div>}
+      {formOpen ? (
+        <section className="l4-batches-editor" aria-labelledby="l4-batches-form-title">
+          <div className="l4-batches-editor-heading">
+            <div>
+              <span className="l4-batches-kicker">{editId ? `LOTE #${editId}` : "NOVO REGISTRO"}</span>
+              <h3 id="l4-batches-form-title">{editId ? "Editar lote" : "Novo lote"}</h3>
+            </div>
+            <button type="button" onClick={closeForm} disabled={busy}>Voltar</button>
+          </div>
+          <form className="l4-batches-form" onSubmit={submit}>
+            <section className="l4-batches-form-section">
+              <h4>Informações gerais</h4>
+              <label className="l4-batches-field-wide">Nome do lote<input required maxLength={255} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
+              <div className="l4-batches-pair">
+                <label>Quantidade mínima informativa<input type="number" min="0" step="1" required value={form.minimumQuantity} onChange={e => setForm({ ...form, minimumQuantity: e.target.value })} /></label>
+                <label>Quantidade máxima opcional<input type="number" min="1" step="1" value={form.maximumQuantity} placeholder="Sem limite" onChange={e => setForm({ ...form, maximumQuantity: e.target.value })} /></label>
+              </div>
+            </section>
+            <section className="l4-batches-form-section">
+              <h4>Período de vendas e postagem</h4>
+              <div className="l4-batches-form-grid">
+                {dateKeys.map((key, i) => <AdminBatchDateField key={key} name={key} label={dateLabels[i]} value={form[key]} onChange={value => setForm(current => ({ ...current, [key]: value }))} zone="UTC" withTime />)}
+              </div>
+              <p>As datas de vendas e postagem são informadas em UTC. A janela de postagem não inclui o transporte.</p>
+            </section>
+            <section className="l4-batches-form-section">
+              <h4>Cronograma de fabricação</h4>
+              <div className="l4-batches-form-grid">
+                {(["estimatedManufacturingStart", "estimatedManufacturingEnd"] as const).map((key, i) => <AdminBatchDateField key={key} name={key} label={i === 0 ? "Início estimado da fabricação" : "Término estimado da fabricação"} value={form[key]} onChange={value => setForm(current => ({ ...current, [key]: value }))} zone="Brasília" />)}
+              </div>
+              <p>Fabricação usa datas civis de Brasília, conforme o compromisso do fornecedor. Antes de abrir vendas, o lote precisa ter início e término de fabricação. A postagem não pode anteceder o fim estimado da fabricação.</p>
+            </section>
+            <p className="l4-batches-form-note">Alterar o lote atualiza o catálogo, mas não substitui as condições registradas em pedidos anteriores. Comunique as alterações aos clientes afetados.</p>
+            <div className="l4-batches-actions">
+              <button disabled={busy} type="submit">{save.isPending ? "Salvando…" : editId ? "Salvar alterações" : "Criar lote"}</button>
+              <button type="button" onClick={closeForm} disabled={busy}>Cancelar</button>
+            </div>
+          </form>
+        </section>
+      ) : <div className={`l4-batches-layout ${selected ? "l4-batches-layout--selected" : ""}`}>
         <aside>
           <h3>Lançamentos</h3>
-          {list.isLoading && <p>Carregando lotes…</p>}
+          {list.isLoading && <p aria-live="polite">Carregando lotes…</p>}
           {list.isError && (
-            <p role="alert">Não foi possível carregar os lotes.</p>
+            <div role="alert" className="l4-batches-query-error"><p>Não foi possível carregar os lotes.</p><button type="button" disabled={list.isFetching} onClick={() => void list.refetch()}>Tentar novamente</button></div>
           )}
           {!list.isLoading && list.data?.length === 0 && (
             <p>Nenhum lote criado.</p>
@@ -182,85 +245,11 @@ export function AdminBatches() {
               <span>{labels[b.status as BatchStatus]}</span>
             </button>
           ))}
-          <details key={`${selected}-${editId}`} className="l4-batches-new" open={Boolean(editId) || !selected}>
-            <summary>{editId ? "Editar lote" : "Novo lote"}</summary>
-          <form onSubmit={submit}>
-            <h3>{editId ? "Editar lote" : "Novo lote"}</h3>
-            <label>
-              Nome
-              <input
-                required
-                maxLength={255}
-                value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-              />
-            </label>
-            {dateKeys.map((key, i) => (
-              <label key={key}>
-                {dateLabels[i]} (UTC)
-                <input
-                  type="datetime-local"
-                  value={form[key]}
-                  onChange={e => setForm({ ...form, [key]: e.target.value })}
-                />
-              </label>
-            ))}
-            {(["estimatedManufacturingStart", "estimatedManufacturingEnd"] as const).map((key, i) => <label key={key}>
-              {i === 0 ? "Início estimado da fabricação" : "Término estimado da fabricação"} (data de Brasília)
-              <input type="date" value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} />
-            </label>)}
-            <p>Fabricação: datas civis de Brasília, cadastradas conforme compromisso do fornecedor. Novos lotes exigem início e término antes de abrir vendas. Postagem não pode ocorrer em dia anterior ao término da fabricação.</p>
-            <p>Datas acima em UTC (Brasília: UTC−3). A janela de postagem não inclui o transporte nem configura o período de fabricação. Informe apenas estimativas acordadas com o fornecedor; datas vencidas exigem revisão do cronograma.</p>
-            <p>Alterar o lote atualiza o catálogo, mas não substitui as condições registradas em pedidos anteriores. Comunique alterações aos clientes afetados.</p>
-            <div className="l4-batches-pair">
-              <label>
-                Mínimo informativo
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  required
-                  value={form.minimumQuantity}
-                  onChange={e =>
-                    setForm({ ...form, minimumQuantity: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                Máximo opcional
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.maximumQuantity}
-                  placeholder="Sem limite"
-                  onChange={e =>
-                    setForm({ ...form, maximumQuantity: e.target.value })
-                  }
-                />
-              </label>
-            </div>
-            <button disabled={busy} type="submit">
-              {editId ? "Salvar alterações" : "Criar lote"}
-            </button>
-            {editId && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditId(undefined);
-                  setForm(empty);
-                }}
-              >
-                Voltar para novo lote
-              </button>
-            )}
-          </form>
-          </details>
         </aside>
         <article>
           {detail.isLoading && selected && <p>Carregando produção…</p>}
           {detail.isError && (
-            <p role="alert">Não foi possível carregar o lote.</p>
+            <div role="alert" className="l4-batches-query-error"><p>Não foi possível carregar o lote.</p><button type="button" disabled={detail.isFetching} onClick={() => void detail.refetch()}>Tentar novamente</button></div>
           )}
           {!selected && <p>Selecione um lote para acompanhar a produção.</p>}
           {batch && detail.data && (
@@ -281,6 +270,26 @@ export function AdminBatches() {
                 </div>
                 <button onClick={edit}>Editar</button>
               </div>
+              {[
+                ["Produção iniciada", batch.productionStartedAt],
+                ["Produção recebida", batch.receivedAt],
+                ["Envios iniciados", batch.shippingStartedAt],
+                ["Lote concluído", batch.completedAt],
+              ].some(([, value]) => Boolean(value)) && (
+                <section className="l4-batches-timeline" aria-label="Etapas registradas do lote">
+                  <h3>Etapas registradas</h3>
+                  <dl>
+                    {([
+                      ["Produção iniciada", batch.productionStartedAt],
+                      ["Produção recebida", batch.receivedAt],
+                      ["Envios iniciados", batch.shippingStartedAt],
+                      ["Lote concluído", batch.completedAt],
+                    ] as const).filter(([, value]) => Boolean(value)).map(([label, value]) => (
+                      <div key={label}><dt>{label}</dt><dd>{formatUtcInstant(value)}</dd></div>
+                    ))}
+                  </dl>
+                </section>
+              )}
               <div className="l4-batches-actions">
                 {BATCH_TRANSITIONS[batch.status as BatchStatus].map(status => (
                   <button
@@ -399,6 +408,7 @@ export function AdminBatches() {
                         detail.data.products.map(p => Number(p.id))
                       )
                     }
+                    disabled={busy}
                   >
                     Carregar associações atuais
                   </button>
@@ -411,6 +421,7 @@ export function AdminBatches() {
                       <label key={p.id}>
                         <input
                           type="checkbox"
+                          disabled={busy || products.isLoading}
                           checked={chosen.includes(p.id)}
                           onChange={e =>
                             setAssociations(
@@ -437,7 +448,7 @@ export function AdminBatches() {
             </>
           )}
         </article>
-      </div>
+      </div>}
     </section>
   );
 }

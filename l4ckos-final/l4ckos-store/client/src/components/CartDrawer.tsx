@@ -73,12 +73,11 @@ export default function CartDrawer() {
               <MixedShippingNotice items={cart.items} />
             {hasUnavailableItems ? (
                 <p className="l4-preorder" role="alert">
-                  A disponibilidade da pré-venda mudou. Ajuste a sacola antes de
-                  finalizar.
+                  Não foi possível confirmar a combinação ou disponibilidade de um item. Remova-o e selecione novamente na página do produto.
                 </p>
               ) : null}
             {cart.items.map(item => (
-                <article key={`${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
+                <article key={item.variant ? `${item.product.id}-variant-${item.variant.variantId}` : `${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
                   <img
                     className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image"
                     src={item.product.imageThumbnail || item.product.image}
@@ -95,11 +94,11 @@ export default function CartDrawer() {
                     <span>{formatPrice(item.product.price)} cada</span>
                     <div className="l4-cart-drawer-item-actions">
                       <div className="l4-cart-drawer-quantity" aria-label={`Quantidade de ${item.product.name}`}>
-                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.selectedOptions)} aria-label="Diminuir quantidade"><Minus size={14} /></button>
+                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.selectedOptions, item.variant?.variantId)} aria-label="Diminuir quantidade"><Minus size={14} /></button>
                         <span>{item.quantity}</span>
-                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} aria-label="Aumentar quantidade"><Plus size={14} /></button>
+                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)} aria-label="Aumentar quantidade"><Plus size={14} /></button>
                       </div>
-                      <button type="button" className="l4-cart-drawer-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions)} aria-label={`Remover ${item.product.name}`}>
+                      <button type="button" className="l4-cart-drawer-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)} aria-label={`Remover ${item.product.name}`}>
                         <Trash2 size={16} />
                       </button>
                     </div>

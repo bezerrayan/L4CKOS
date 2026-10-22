@@ -74,6 +74,7 @@ export default function Header() {
 
   return (
     <header className="l4-header">
+      <a className="l4-skip-link" href="#l4-main-content">Pular para o conteúdo</a>
       <div className="l4-header-inner">
         <button
           className="l4-header-menu-btn"
@@ -92,7 +93,7 @@ export default function Header() {
 
         <nav id="l4-header-nav" className={`l4-header-nav ${isMobile ? "mobile" : ""} ${menuOpen ? "open" : ""}`} aria-label="Navegação principal">
           {navItems.map(item => (
-            <Link key={item.to} to={item.to} className={`l4-header-link ${item.active ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
+            <Link key={item.to} to={item.to} className={`l4-header-link ${item.active ? "active" : ""}`} aria-current={item.active ? "page" : undefined} onClick={() => setMenuOpen(false)}>
               {item.label}
             </Link>
           ))}

@@ -3,7 +3,7 @@ import type { Connection } from "mysql2/promise";
 import { performance } from "node:perf_hooks";
 import { readArtifact, readContract } from "./artifacts";
 import { readStructuralSchema, rows, sha256, structuralHash } from "./fingerprint";
-import { verifyLocalConnection, SchemaError, type LocalTarget } from "./safety";
+import { verifyLocalConnection, safeDiagnosticCause, SchemaError, type LocalTarget } from "./safety";
 
 export const RUNNER_VERSION = "2.0.0";
 export type OperationContext = LocalTarget & { applicationCommit: string; approvedFingerprint: string; lockTimeoutSeconds?: number };
@@ -92,11 +92,11 @@ export async function execution(connection: Connection, context: LedgerContext, 
       completed++;
       await connection.query("UPDATE _l4ckos_schema_executions SET completedStatements=? WHERE id=? AND state='STARTED'", [completed, id]);
     }, id);
-  } catch {
+  } catch (error) {
     let observed: string | null = null;
     try { observed = structuralHash(await readStructuralSchema(connection)); } catch { /* Evidence unavailable; never infer rollback. */ }
     try { await connection.query("UPDATE _l4ckos_schema_executions SET state='FAILED', observedFingerprint=?,errorCode='RECOVERY_REQUIRED',finishedAt=CURRENT_TIMESTAMP(3) WHERE id=? AND state='STARTED'", [observed, id]); } catch { /* STARTED itself blocks retry if connection was lost. */ }
-    throw new SchemaError("RECOVERY_REQUIRED", { operation: input.name, completedStatements: completed, preFingerprint: input.preFingerprint, observedFingerprint: observed });
+    throw new SchemaError("RECOVERY_REQUIRED", { operation: input.name, completedStatements: completed, preFingerprint: input.preFingerprint, observedFingerprint: observed }, { cause: safeDiagnosticCause(error) });
   }
   return id as number;
 }

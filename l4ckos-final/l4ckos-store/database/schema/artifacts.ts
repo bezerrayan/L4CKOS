@@ -72,14 +72,48 @@ export async function currentBootstrapArtifacts() {
 }
 
 export async function readReleaseContract() {
-  const bytes = await readArtifact('database/schema/contract-v4.json', 'database/schema');
-  const delta = JSON.parse(bytes.toString('utf8')) as { version: number; baseFingerprint: string; fingerprint: string; tables: StructuralSchema['tables'] };
+  const v4Bytes = await readArtifact('database/schema/contract-v4.json', 'database/schema');
+  const v4 = JSON.parse(v4Bytes.toString('utf8')) as { version: number; baseFingerprint: string; fingerprint: string; tables: StructuralSchema['tables'] };
   const base = await readCurrentContract();
-  if (delta.version !== 4 || delta.baseFingerprint !== base.fingerprint || delta.tables.length !== 1 ||
-    delta.tables[0].name !== 'asaasWebhookInbox' || base.schema.tables.some(t => t.name === delta.tables[0].name))
+  if (v4.version !== 4 || v4.baseFingerprint !== base.fingerprint || v4.tables.length !== 1 ||
+    v4.tables[0].name !== 'asaasWebhookInbox' || base.schema.tables.some(t => t.name === v4.tables[0].name))
+    throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  base.schema.tables.push(...v4.tables);
+  base.schema.tables.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  if (structuralHash(base.schema) !== v4.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+
+  const bytes = await readArtifact('database/schema/contract-v5.json', 'database/schema');
+  const delta = JSON.parse(bytes.toString('utf8')) as { version: number; baseFingerprint: string; fingerprint: string; tables: StructuralSchema['tables'] };
+  if (delta.version !== 5 || delta.baseFingerprint !== v4.fingerprint || delta.tables.length !== 1 ||
+    delta.tables[0].name !== 'homeHighlightSettings' || base.schema.tables.some(t => t.name === delta.tables[0].name))
     throw new SchemaError('INVALID_APPROVED_CONTRACT');
   base.schema.tables.push(...delta.tables);
   base.schema.tables.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   if (structuralHash(base.schema) !== delta.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
-  return { version: 4, fingerprint: delta.fingerprint, schema: base.schema, checksum: sha256(bytes) };
+
+  const variantBytes = await readArtifact('database/schema/contract-v6.json', 'database/schema');
+  const variants = JSON.parse(variantBytes.toString('utf8')) as {
+    version: number;
+    baseFingerprint: string;
+    fingerprint: string;
+    additions: Record<string, StructuralSchema['tables'][number]['columns']>;
+    checks: Record<string, StructuralSchema['tables'][number]['checks']>;
+  };
+  if (variants.version !== 6 || variants.baseFingerprint !== delta.fingerprint ||
+      Object.keys(variants.additions).length !== 1 || Object.keys(variants.checks).length !== 1 ||
+      !variants.additions.productVariants || !variants.checks.productVariants)
+    throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  const variantTable = base.schema.tables.find(table => table.name === 'productVariants');
+  if (!variantTable || variants.additions.productVariants.length !== 1 ||
+      variants.additions.productVariants[0].name !== 'isActive' ||
+      variants.additions.productVariants[0].position !== variantTable.columns.length + 1 ||
+      variantTable.columns.some(column => column.name === 'isActive') ||
+      variants.checks.productVariants.length !== 1 || variants.checks.productVariants[0].enforced !== true ||
+      variantTable.checks.some(check => check.clause === variants.checks.productVariants[0].clause))
+    throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  variantTable.columns.push(...variants.additions.productVariants);
+  variantTable.checks.push(...variants.checks.productVariants);
+  variantTable.checks.sort((a, b) => a.clause < b.clause ? -1 : a.clause > b.clause ? 1 : 0);
+  if (structuralHash(base.schema) !== variants.fingerprint) throw new SchemaError('INVALID_APPROVED_CONTRACT');
+  return { version: 6, fingerprint: variants.fingerprint, schema: base.schema, checksum: sha256(variantBytes) };
 }

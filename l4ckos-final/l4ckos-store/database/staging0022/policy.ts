@@ -16,6 +16,15 @@ export const PRE =
   "6654c63ea42bbcb84af99e7640f24d3963581128a6a5387898b12b34cbbca93a";
 export const POST =
   "a7c2774e783e83f34c0304e970a91278f4df9e8c2b0a1fd5576c2694c1b9011e";
+export const APPLICATION_RC = "aa25a3fbdc9d1824529ed02c1c012262c88cd213";
+export const NAME23 = "0023_asaas_webhook_inbox";
+export const SQL_SHA23 = "b0b588463e5318fdc63761fd6a8261827478fe058f2152a8a630fa5fa87bae8a";
+export const POST23 = "0ba16c9b19b698d4933d0abad9a5e4679052fd2aaf78800da42d480e396ef5d2";
+export function migrationPhase(checksum: string) {
+  if (checksum === SQL_SHA) return { name: NAME, checksum: SQL_SHA, pre: PRE, post: POST, source: RC };
+  if (checksum === SQL_SHA23) return { name: NAME23, checksum: SQL_SHA23, pre: POST, post: POST23, source: APPLICATION_RC };
+  return fail("MIGRATION_SCOPE_INVALID");
+}
 export const TTL = 15 * 60 * 1000;
 export const digest = (v: unknown) => sha256(canonical(v));
 export function exactKeys(value: unknown, keys: string[]) {
@@ -52,8 +61,8 @@ export type BackupProof = {
 export type WindowPlan = {
   version: 1;
   applicationCommit: string;
-  sqlSourceCommit: typeof RC;
-  sqlChecksum: typeof SQL_SHA;
+  sqlSourceCommit: typeof RC | typeof APPLICATION_RC;
+  sqlChecksum: typeof SQL_SHA | typeof SQL_SHA23;
   target: typeof TARGET;
   deploymentId: string;
   serverUuid: string;
@@ -111,7 +120,7 @@ export function assertProof(p: BackupProof, now = Date.now()) {
         "tables",
         "ledgerHash",
       ]) ||
-      s.fingerprint !== PRE ||
+      ![PRE, POST].includes(s.fingerprint) ||
       s.governanceFingerprint !==
         "47462fe9f093c89f83444b2b849ecf488ae7de04557a79e11286bf48484f693b" ||
       Object.keys(s.tables).length !== 30 ||
@@ -154,8 +163,8 @@ export function assertPlan(p: WindowPlan, now = Date.now()) {
     ]) ||
     p.version !== 1 ||
     !/^[a-f0-9]{40}$/.test(p.applicationCommit) ||
-    p.sqlSourceCommit !== RC ||
-    p.sqlChecksum !== SQL_SHA ||
+    p.sqlSourceCommit !== migrationPhase(p.sqlChecksum).source ||
+    (p.sqlChecksum === SQL_SHA23 && p.applicationCommit !== APPLICATION_RC) ||
     digest(p.target) !== digest(TARGET) ||
     !/^[a-f0-9-]{36}$/.test(p.deploymentId) ||
     !/^[a-f0-9-]{36}$/.test(p.serverUuid) ||
@@ -173,4 +182,6 @@ export function assertPlan(p: WindowPlan, now = Date.now()) {
   )
     fail("WINDOW_EXPIRED");
   assertProof(p.backup, now);
+  if (p.backup.sourceAfter.fingerprint !== migrationPhase(p.sqlChecksum).pre)
+    fail("BACKUP_WRONG_MIGRATION_PHASE");
 }

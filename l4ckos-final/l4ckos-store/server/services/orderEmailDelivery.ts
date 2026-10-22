@@ -7,6 +7,7 @@ import {
 } from "../db";
 import { sendOrderDeliveredEmail, sendReviewRequestEmail } from "./emailService.js";
 import { getReviewRequestScheduledAt } from "../utils/email/reviewRequestSchedule";
+import { assertEmailRecipientsAllowed, EmailPolicyError } from "./email/recipientPolicy.js";
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown email provider error";
@@ -41,6 +42,14 @@ export async function dispatchOrderEmailEvent(input: {
   customerName: string;
   appBaseUrl: string;
 }) {
+  // A denied notification must not acquire/reclaim a historical lease, consume
+  // an attempt or be represented as provider acceptance. No retry is scheduled.
+  try {
+    assertEmailRecipientsAllowed({ to: input.customerEmail });
+  } catch (error) {
+    if (!(error instanceof EmailPolicyError)) throw error;
+    return { dispatched: false, reason: "policy_blocked" as const };
+  }
   const claimed = await claimOrderEmailEvent(input.orderId, input.eventType);
   if (!claimed) return { dispatched: false, reason: "already_reserved_or_sent" as const };
 

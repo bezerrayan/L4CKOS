@@ -46,13 +46,15 @@ export function AdminPageHeader({
   title,
   subtitle,
   actions,
+  className,
 }: {
   title: string;
   subtitle: string;
   actions?: HeaderAction[];
+  className?: string;
 }) {
   return (
-    <div style={styles.headerShell}>
+    <div className={className} style={styles.headerShell}>
       <div style={styles.headerContent}>
         <span style={styles.headerEyebrow}>Admin</span>
         <h1 style={styles.headerTitle}>{title}</h1>
@@ -80,6 +82,7 @@ export function AdminStatCard({ label, value, icon, tone = "neutral", hint }: St
 
   return (
     <div
+      className="admin-kpi"
       style={{
         ...styles.statCard,
         border: `1px solid ${palette.border}`,
@@ -108,7 +111,7 @@ export function AdminSurface({
   aside?: ReactNode;
 }) {
   return (
-    <section style={styles.surface}>
+    <section className="admin-surface" style={styles.surface}>
       <div style={styles.surfaceHeader}>
         <div style={styles.surfaceHeaderText}>
           <h2 style={styles.surfaceTitle}>{title}</h2>
@@ -127,7 +130,7 @@ export function AdminQuickActions({
   actions: Array<{ label: string; caption: string; onClick: () => void }>;
 }) {
   return (
-    <div style={styles.quickActions}>
+    <div className="admin-quick-actions" style={styles.quickActions}>
       {actions.map(action => (
         <button key={action.label} type="button" style={styles.quickActionCard} onClick={action.onClick}>
           <strong style={styles.quickActionTitle}>{action.label}</strong>
@@ -163,16 +166,21 @@ export function AdminSummaryPill({ children }: { children: ReactNode }) {
 
 export function AdminMetricCards({
   cards,
+  compact = false,
+  style,
 }: {
   cards: Array<{ label: string; value: string | number; tone?: AdminMetricTone }>;
+  compact?: boolean;
+  style?: CSSProperties;
 }) {
   return (
-    <div style={styles.metricGrid}>
+    <div className="admin-secondary-metrics" style={{ ...styles.metricGrid, ...(compact ? styles.metricGridCompact : {}), ...style }}>
       {cards.map(card => (
         <div
           key={card.label}
           style={{
             ...styles.metricCard,
+            ...(compact ? styles.metricCardCompact : {}),
             ...(card.tone === "danger"
               ? styles.metricCardDanger
               : card.tone === "warning"
@@ -464,6 +472,22 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 135px), 1fr))",
     gap: 10,
+  },
+  metricGridCompact: {
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: 0,
+    padding: "10px 0",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+  metricCardCompact: {
+    display: "flex",
+    minHeight: 0,
+    padding: "4px 14px",
+    border: 0,
+    borderRadius: 0,
+    background: "transparent",
+    boxShadow: "none",
   },
   metricCard: {
     display: "grid",

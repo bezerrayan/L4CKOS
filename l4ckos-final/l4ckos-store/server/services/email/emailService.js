@@ -98,8 +98,7 @@ async function sendEmail({
 
   console.info("[Email] sent", {
     templateName,
-    subject,
-    to: recipients,
+    recipientCount: recipients.length,
     emailId: data?.id ?? null,
   });
 
@@ -229,7 +228,8 @@ export async function sendPasswordResetEmail({ email, name, resetUrl }) {
   });
 }
 
-export async function sendOrderCreatedEmail({ customerEmail, customerName, orderNumber, total, items, orderUrl }) {
+export async function sendOrderCreatedEmail({ customerEmail, customerName, orderNumber, total, items, orderUrl, idempotencyKey,
+}) {
   return sendEmail({
     templateName: "orderCreated",
     subjectKey: "orderCreated",
@@ -244,10 +244,12 @@ export async function sendOrderCreatedEmail({ customerEmail, customerName, order
     from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
+    idempotencyKey,
   });
 }
 
-export async function sendPaymentPendingEmail({ customerEmail, customerName, orderNumber, total, paymentUrl, dueLabel }) {
+export async function sendPaymentPendingEmail({ customerEmail, customerName, orderNumber, total, paymentUrl, dueLabel, idempotencyKey,
+}) {
   return sendEmail({
     templateName: "paymentPending",
     subjectKey: "paymentPending",
@@ -256,6 +258,7 @@ export async function sendPaymentPendingEmail({ customerEmail, customerName, ord
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
+    idempotencyKey,
   });
 }
 
@@ -278,7 +281,7 @@ export async function sendPaymentNotFinishedEmail({
   });
 }
 
-export async function sendPaymentApprovedEmail({ customerEmail, customerName, orderNumber, total, salesMode = "STOCK", scheduleMessages = [] }) {
+export async function sendPaymentApprovedEmail({ customerEmail, customerName, orderNumber, total, salesMode = "STOCK", scheduleMessages = [], idempotencyKey }) {
   return sendEmail({
     templateName: "paymentApproved",
     subjectKey: "paymentApproved",
@@ -287,6 +290,7 @@ export async function sendPaymentApprovedEmail({ customerEmail, customerName, or
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
+    idempotencyKey,
   });
 }
 

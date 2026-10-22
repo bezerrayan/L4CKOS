@@ -1,5 +1,6 @@
+import "../components/admin/AdminStage1.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
-﻿import { useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { trpc } from "../lib/trpc";
@@ -21,6 +22,7 @@ import {
   AdminTableWrapper,
 } from "../components/admin/AdminUI";
 import { AdminDashboard } from "../components/admin/dashboard/AdminDashboard";
+import { AdminSidebarProfile } from "../components/admin/AdminSidebarProfile";
 import {
   ProductOptionPreview,
   ProductStockBadge,
@@ -37,47 +39,19 @@ import {
   OrderStatusBadge,
   type OrderListFilter,
 } from "../components/admin/orders/AdminOrdersUI";
+import { AdminCustomersPanel } from "../components/admin/customers/AdminCustomersPanel";
+import { AdminCouponsPanel } from "../components/admin/coupons/AdminCouponsPanel";
 import {
-  CustomerDateMeta,
-  CustomerOrdersCount,
-  CustomerProfileCell,
-  CustomerRoleBadge,
-  CustomerStatusBadges,
-  CustomersFilters,
-  CustomersSummaryCards,
-  type CustomerListFilter,
-} from "../components/admin/customers/AdminCustomersUI";
-import {
-  CouponCodeCell,
-  CouponFormPreview,
-  CouponOperationalAlerts,
-  CouponsFilters,
-  CouponsSummaryCards,
-  CouponStatusBadge,
-  CouponTypeBadge,
-  CouponUsageBadge,
-  CouponValidity,
-  CouponValue,
-  getCouponStatus,
-  type CouponListFilter,
-} from "../components/admin/coupons/AdminCouponsUI";
-import {
-  PromotionBannerPreview,
-  PromotionCampaignCell,
-  PromotionMediaBadge,
-  PromotionsSummaryCards,
-  PromotionStatusBadge,
-} from "../components/admin/promotions/AdminPromotionsUI";
-import {
-  AdminCriticalAlert,
   AuditLogTable,
-  BackupFileList,
-  BackupInfoCard,
-  ReportsExportCard,
-  SystemMetricCards,
 } from "../components/admin/system/AdminSystemUI";
+import { AdminBackupPanel } from "../components/admin/system/AdminBackupPanel";
 import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 import { AdminReviewsPanel } from "../components/admin/reviews/AdminReviewsPanel";
+import { AdminAuditPanel } from "../components/admin/system/AdminAuditPanel";
+import { AdminProductsPanel } from "../components/admin/products/AdminProductsPanel";
+import { AdminHomeHighlightsPanel } from "../components/admin/promotions/AdminHomeHighlightsPanel";
+import { AdminReportsPanel } from "../components/admin/reports/AdminReportsPanel";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 
 type Section =
   | "batches"
@@ -131,22 +105,6 @@ type ProductImageEntry = {
   color?: string | null;
 };
 
-const emptyPromoForm = {
-  badge: "PROMOÇÃO",
-  title: "",
-  description: "",
-  ctaLabel: "Aproveitar oferta",
-  imageUrl: "",
-  mobileImageUrl: "",
-  imageAlt: "",
-  linkUrl: "",
-  discountText: "",
-  discountLabel: "OFF",
-  bgStyle: "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)",
-  sortOrder: "0",
-  isActive: true,
-};
-
 function resolveAdminImageUrl(imageUrl?: string | null) {
   if (!imageUrl) return "";
   if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://") || imageUrl.startsWith("data:")) {
@@ -158,9 +116,6 @@ function resolveAdminImageUrl(imageUrl?: string | null) {
   return apiUrl(`/${imageUrl}`);
 }
 
-function getPromotionLinkedProductId(linkUrl?: string | null) {
-  return linkUrl?.trim().match(/^\/produto\/(\d+)\/?$/)?.[1] ?? "";
-}
 
 function normalizeAdminImageValue(imageUrl?: string | null) {
   const value = String(imageUrl ?? "").trim();
@@ -335,9 +290,9 @@ function buildVariantDraft(name: string, colorsCsv: string, sizesCsv: string, pr
 function getOrderStatusLabel(status: string) {
   switch (status) {
     case "pending":
-      return "Aguardando pagamento";
+      return "Pendente";
     case "paid":
-      return "Pagamento confirmado";
+      return "Aguardando preparação";
     case "processing":
       return "Em separação";
     case "shipped":
@@ -393,27 +348,53 @@ function confirmAdminAction(message: string) {
 
 export default function Admin() {
   const navigate = useNavigate();
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile(900);
   const isCompactAdmin = useIsMobile(1180);
-  const { user, isAuthenticated } = useUser();
+  const { user, isAuthenticated, logout } = useUser();
   const { showToast } = useToast();
   const utils = trpc.useUtils();
 
   const [section, setSection] = useState<Section>("overview");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const menuPanelRef = useRef<HTMLElement | null>(null);
+  const sectionNav = [
+    { heading: "Visão geral", items: [{ key: "overview", label: "Dashboard / KPIs" }] },
+    { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "batches", label: "Lotes / Pré-venda" }] },
+    { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "reviews", label: "Avaliações" }] },
+    { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
+  ] as const;
+
+  useEffect(() => {
+    if (!isMobile && mobileNavOpen) setMobileNavOpen(false);
+  }, [isMobile, mobileNavOpen]);
+
+  useEffect(() => {
+    if (!mobileNavOpen || !isMobile) return;
+    const priorOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    menuPanelRef.current?.querySelector<HTMLButtonElement>("button[aria-current='page'], button[aria-pressed='true']")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileNavOpen(false);
+        menuButtonRef.current?.focus();
+      }
+      if (event.key === "Tab" && menuPanelRef.current) {
+        const focusable = Array.from(menuPanelRef.current.querySelectorAll<HTMLElement>("button:not(:disabled)"));
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.body.style.overflow = priorOverflow; document.removeEventListener("keydown", onKeyDown); };
+  }, [mobileNavOpen, isMobile]);
   const [orderFilterStatus, setOrderFilterStatus] = useState<string>("");
-  const [customerSearch, setCustomerSearch] = useState("");
-  const [customerFilter, setCustomerFilter] = useState<CustomerListFilter>("all");
   const [productSearch, setProductSearch] = useState("");
   const [productFilter, setProductFilter] = useState<ProductListFilter>("all");
   const [orderSearch, setOrderSearch] = useState("");
   const [orderQuickFilter, setOrderQuickFilter] = useState<OrderListFilter>("all");
-  const [couponSearch, setCouponSearch] = useState("");
-  const [couponFilter, setCouponFilter] = useState<CouponListFilter>("all");
-  const [reportFrom, setReportFrom] = useState("");
-  const [reportTo, setReportTo] = useState("");
-  const [reportExporting, setReportExporting] = useState(false);
-  const [restoreFileName, setRestoreFileName] = useState("");
-  const [newCoupon, setNewCoupon] = useState({ code: "", type: "percent", value: "10", maxUses: "" });
   const [launchEmailForm, setLaunchEmailForm] = useState({
     couponCode: "lançamento15",
     discountPercent: "15",
@@ -432,16 +413,11 @@ export default function Admin() {
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [editProduct, setEditProduct] = useState({ ...emptyProductForm });
   const [quickProductEdits, setQuickProductEdits] = useState<Record<number, { price: string; stock: string }>>({});
-  const [newPromo, setNewPromo] = useState({ ...emptyPromoForm });
-  const [editingPromoId, setEditingPromoId] = useState<number | null>(null);
-  const [draggingPromoId, setDraggingPromoId] = useState<number | null>(null);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const createMainImageInputRef = useRef<HTMLInputElement | null>(null);
   const createGalleryImageInputRef = useRef<HTMLInputElement | null>(null);
   const editMainImageInputRef = useRef<HTMLInputElement | null>(null);
   const editGalleryImageInputRef = useRef<HTMLInputElement | null>(null);
-  const promoImageInputRef = useRef<HTMLInputElement | null>(null);
-  const promoMobileImageInputRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = user?.role === "admin";
 
   async function uploadAdminImages(files: FileList | null, mode: "single" | "multiple", target: string) {
@@ -498,49 +474,21 @@ export default function Admin() {
     }
   }
 
-  async function reorderPromoBanners(draggedId: number, targetId: number) {
-    const currentRows = [...(promoBannersQuery.data ?? [])];
-    if (currentRows.length <= 1 || draggedId === targetId) return;
-
-    const draggedIndex = currentRows.findIndex(row => row.id === draggedId);
-    const targetIndex = currentRows.findIndex(row => row.id === targetId);
-    if (draggedIndex < 0 || targetIndex < 0) return;
-
-    const reordered = [...currentRows];
-    const [draggedRow] = reordered.splice(draggedIndex, 1);
-    reordered.splice(targetIndex, 0, draggedRow);
-
-    try {
-      for (let index = 0; index < reordered.length; index += 1) {
-        const row = reordered[index];
-        if (Number(row.sortOrder ?? 0) === index) continue;
-        await reorderPromoBannerMutation.mutateAsync({ id: row.id, sortOrder: index });
-      }
-      showToast({ message: "Ordem dos banners atualizada", duration: 2200 });
-      void promoBannersQuery.refetch();
-    } catch {}
-  }
-
   const dashboardQuery = trpc.admin.dashboard.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
-  const customersQuery = trpc.admin.usersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
+  const dashboardOrdersQuery = trpc.admin.ordersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "overview" });
+  const customersQuery = trpc.admin.usersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "customers" });
+  const reviewsQuery = trpc.admin.reviewsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "reviews" });
   const productsQuery = trpc.admin.productsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const ordersQuery = trpc.admin.ordersList.useQuery(
     orderFilterStatus ? { status: orderFilterStatus as any } : undefined,
-    { enabled: isAuthenticated && isAdmin },
+    { enabled: isAuthenticated && isAdmin && section === "orders" },
   );
   const promoBannersQuery = trpc.admin.promoBannersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
+  const homeHighlightSettingsQuery = trpc.admin.homeHighlightSettingsGet.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "promos" });
   const couponsQuery = trpc.admin.couponsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const auditQuery = trpc.admin.auditList.useQuery({ limit: 200 }, { enabled: isAuthenticated && isAdmin });
-  const backupsQuery = trpc.admin.backupsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
+  const backupsQuery = trpc.admin.backupsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "backup" });
   const settingsStatusQuery = trpc.admin.settingsStatus.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
-
-  const setRoleMutation = trpc.admin.userSetRole.useMutation({
-    onSuccess: () => {
-      showToast({ message: "Role atualizada", duration: 2000 });
-      void customersQuery.refetch();
-    },
-    onError: error => showToast({ message: error.message, duration: 2600 }),
-  });
 
   const setFlagsMutation = trpc.admin.userSetFlags.useMutation({
     onSuccess: () => {
@@ -548,6 +496,14 @@ export default function Admin() {
       void customersQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
+  });
+
+  const reviewModerateMutation = trpc.admin.reviewModerate.useMutation({
+    onSuccess: () => {
+      showToast({ message: "Moderação atualizada", duration: 2200 });
+      void reviewsQuery.refetch();
+    },
+    onError: error => showToast({ message: error.message, duration: 2800 }),
   });
 
   const createProductMutation = trpc.admin.productCreate.useMutation({
@@ -601,7 +557,14 @@ export default function Admin() {
   const couponCreateMutation = trpc.admin.couponCreate.useMutation({
     onSuccess: () => {
       showToast({ message: "Cupom criado", duration: 2000 });
-      setNewCoupon({ code: "", type: "percent", value: "10", maxUses: "" });
+      void couponsQuery.refetch();
+    },
+    onError: error => showToast({ message: error.message, duration: 2600 }),
+  });
+
+  const couponUpdateMutation = trpc.admin.couponUpdate.useMutation({
+    onSuccess: () => {
+      showToast({ message: "Cupom atualizado", duration: 2000 });
       void couponsQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
@@ -644,24 +607,29 @@ export default function Admin() {
 
   const createPromoBannerMutation = trpc.admin.promoBannerCreate.useMutation({
     onSuccess: () => {
-      showToast({ message: "Banner promocional criado", duration: 2000 });
-      setNewPromo({ ...emptyPromoForm });
+      showToast({ message: "Destaque criado", duration: 2000 });
       void promoBannersQuery.refetch();
+      void utils.products.homeHighlights.invalidate();
+      void utils.products.promotions.invalidate();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
   const updatePromoBannerMutation = trpc.admin.promoBannerUpdate.useMutation({
     onSuccess: () => {
-      showToast({ message: "Banner promocional atualizado", duration: 2000 });
-      setEditingPromoId(null);
-      setNewPromo({ ...emptyPromoForm });
+      showToast({ message: "Destaque atualizado", duration: 2000 });
       void promoBannersQuery.refetch();
+      void utils.products.homeHighlights.invalidate();
+      void utils.products.promotions.invalidate();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
   const reorderPromoBannerMutation = trpc.admin.promoBannerUpdate.useMutation({
+    onSuccess: () => {
+      void utils.products.homeHighlights.invalidate();
+      void utils.products.promotions.invalidate();
+    },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
@@ -669,94 +637,34 @@ export default function Admin() {
     onSuccess: () => {
       showToast({ message: "Banner promocional removido", duration: 2000 });
       void promoBannersQuery.refetch();
+      void utils.products.homeHighlights.invalidate();
+      void utils.products.promotions.invalidate();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
+  });
+
+  const updateHomeHighlightSettingsMutation = trpc.admin.homeHighlightSettingsUpdate.useMutation({
+    onSuccess: async () => {
+      showToast({ message: "Apresentação da Home atualizada", duration: 2200 });
+      await Promise.all([
+        homeHighlightSettingsQuery.refetch(),
+        utils.products.homeHighlights.invalidate(),
+      ]);
+    },
+    onError: error => showToast({ message: error.message, duration: 3000 }),
   });
 
   const backupManualMutation = trpc.admin.backupManual.useMutation({
-    onSuccess: data => {
-      showToast({ message: `Backup criado: ${data.fileName}`, duration: 2600 });
+    onSuccess: async data => {
+      showToast({ message: `Arquivo JSON gravado localmente: ${data.fileName}. Durabilidade e integridade não verificadas.`, duration: 3800 });
+      await backupsQuery.refetch();
+    },
+    onError: () => {
+      showToast({ message: "Não foi possível confirmar a criação do arquivo. Atualize a lista para verificar o estado.", duration: 3800 });
       void backupsQuery.refetch();
     },
-    onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
-  const backupRestoreMutation = trpc.admin.backupRestore.useMutation({
-    onSuccess: () => {
-      showToast({ message: "Backup restaurado", duration: 2600 });
-      void Promise.all([
-        customersQuery.refetch(),
-        productsQuery.refetch(),
-        ordersQuery.refetch(),
-        couponsQuery.refetch(),
-        auditQuery.refetch(),
-      ]);
-    },
-    onError: error => showToast({ message: error.message, duration: 2600 }),
-  });
-
-  const searchedCustomers = useMemo(() => {
-    const normalizedSearch = customerSearch.trim().toLowerCase();
-    return [...(customersQuery.data ?? [])]
-      .filter(row => {
-        if (!normalizedSearch) return true;
-        return [row.name, row.email, String(row.id)]
-          .some(value => String(value ?? "").toLowerCase().includes(normalizedSearch));
-      })
-      .sort((a, b) => b.id - a.id);
-  }, [customerSearch, customersQuery.data]);
-  const customerSummary = useMemo(() => {
-    const rows = customersQuery.data ?? [];
-    const recentCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-
-    return {
-      total: rows.length,
-      admins: rows.filter(row => row.role === "admin").length,
-      customers: rows.filter(row => row.role === "user").length,
-      vip: rows.filter(row => Boolean(row.isVip)).length,
-      blocked: rows.filter(row => Boolean(row.isBlocked)).length,
-      active: rows.filter(row => !row.isBlocked).length,
-      recent: rows.filter(row => {
-        const createdAt = new Date(row.createdAt as any).getTime();
-        return Number.isFinite(createdAt) && createdAt >= recentCutoff;
-      }).length,
-    };
-  }, [customersQuery.data]);
-  const customerFilterOptions = useMemo(
-    () => [
-      { key: "all" as const, label: "Todos", count: searchedCustomers.length },
-      { key: "admins" as const, label: "Admins", count: searchedCustomers.filter(row => row.role === "admin").length },
-      { key: "customers" as const, label: "Clientes", count: searchedCustomers.filter(row => row.role === "user").length },
-      { key: "vip" as const, label: "VIP", count: searchedCustomers.filter(row => Boolean(row.isVip)).length },
-      { key: "blocked" as const, label: "Bloqueados", count: searchedCustomers.filter(row => Boolean(row.isBlocked)).length },
-      { key: "active" as const, label: "Ativos", count: searchedCustomers.filter(row => !row.isBlocked).length },
-      {
-        key: "recent" as const,
-        label: "Recentes",
-        count: searchedCustomers.filter(row => {
-          const createdAt = new Date(row.createdAt as any).getTime();
-          return Number.isFinite(createdAt) && createdAt >= Date.now() - 30 * 24 * 60 * 60 * 1000;
-        }).length,
-      },
-    ],
-    [searchedCustomers],
-  );
-  const customers = useMemo(() => {
-    const recentCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-
-    return searchedCustomers.filter(row => {
-      if (customerFilter === "admins") return row.role === "admin";
-      if (customerFilter === "customers") return row.role === "user";
-      if (customerFilter === "vip") return Boolean(row.isVip);
-      if (customerFilter === "blocked") return Boolean(row.isBlocked);
-      if (customerFilter === "active") return !row.isBlocked;
-      if (customerFilter === "recent") {
-        const createdAt = new Date(row.createdAt as any).getTime();
-        return Number.isFinite(createdAt) && createdAt >= recentCutoff;
-      }
-      return true;
-    });
-  }, [customerFilter, searchedCustomers]);
   const searchedProducts = useMemo(() => {
     const normalizedSearch = productSearch.trim().toLowerCase();
     return [...(productsQuery.data ?? [])]
@@ -831,7 +739,7 @@ export default function Admin() {
     () => [
       { key: "all" as const, label: "Todos", count: searchedOrders.length },
       { key: "pending" as const, label: "Pendentes", count: searchedOrders.filter(row => row.status === "pending").length },
-      { key: "paid" as const, label: "Pagos", count: searchedOrders.filter(row => row.status === "paid").length },
+      { key: "paid" as const, label: "Aguardando preparação", count: searchedOrders.filter(row => row.status === "paid").length },
       { key: "processing" as const, label: "Separação", count: searchedOrders.filter(row => row.status === "processing").length },
       { key: "shipped" as const, label: "Enviados", count: searchedOrders.filter(row => row.status === "shipped").length },
       { key: "delivered" as const, label: "Entregues", count: searchedOrders.filter(row => row.status === "delivered").length },
@@ -851,99 +759,10 @@ export default function Admin() {
       return row.status === orderQuickFilter;
     });
   }, [orderQuickFilter, searchedOrders]);
-  const promoSummary = useMemo(() => {
-    const rows = promoBannersQuery.data ?? [];
-    return {
-      total: rows.length,
-      active: rows.filter(row => Boolean(row.isActive)).length,
-      inactive: rows.filter(row => !row.isActive).length,
-      withDesktopImage: rows.filter(row => Boolean(resolveAdminImageUrl(row.imageUrl))).length,
-      withMobileImage: rows.filter(row => Boolean(resolveAdminImageUrl(row.mobileImageUrl))).length,
-      withoutImage: rows.filter(row => !resolveAdminImageUrl(row.imageUrl)).length,
-    };
-  }, [promoBannersQuery.data]);
-  const searchedCoupons = useMemo(() => {
-    const normalizedSearch = couponSearch.trim().toLowerCase();
-    return [...(couponsQuery.data ?? [])].filter(row => {
-      if (!normalizedSearch) return true;
-      return [row.code, row.type, String(row.id)]
-        .some(value => String(value ?? "").toLowerCase().includes(normalizedSearch));
-    });
-  }, [couponSearch, couponsQuery.data]);
-  const couponSummary = useMemo(() => {
-    const rows = couponsQuery.data ?? [];
-    return {
-      total: rows.length,
-      active: rows.filter(row => getCouponStatus(row) === "active").length,
-      inactive: rows.filter(row => getCouponStatus(row) === "inactive").length,
-      expired: rows.filter(row => getCouponStatus(row) === "expired").length,
-      future: rows.filter(row => getCouponStatus(row) === "future").length,
-      unlimited: rows.filter(row => row.maxUses == null).length,
-      limited: rows.filter(row => row.maxUses != null).length,
-      percent: rows.filter(row => row.type === "percent").length,
-      fixed: rows.filter(row => row.type === "fixed").length,
-    };
-  }, [couponsQuery.data]);
-  const couponFilterOptions = useMemo(
-    () => [
-      { key: "all" as const, label: "Todos", count: searchedCoupons.length },
-      { key: "active" as const, label: "Ativos", count: searchedCoupons.filter(row => getCouponStatus(row) === "active").length },
-      { key: "inactive" as const, label: "Inativos", count: searchedCoupons.filter(row => getCouponStatus(row) === "inactive").length },
-      { key: "expired" as const, label: "Expirados", count: searchedCoupons.filter(row => getCouponStatus(row) === "expired").length },
-      { key: "future" as const, label: "Agendados", count: searchedCoupons.filter(row => getCouponStatus(row) === "future").length },
-      { key: "percent" as const, label: "Percentual", count: searchedCoupons.filter(row => row.type === "percent").length },
-      { key: "fixed" as const, label: "Valor fixo", count: searchedCoupons.filter(row => row.type === "fixed").length },
-      { key: "unlimited" as const, label: "Sem limite", count: searchedCoupons.filter(row => row.maxUses == null).length },
-      { key: "limited" as const, label: "Com limite", count: searchedCoupons.filter(row => row.maxUses != null).length },
-    ],
-    [searchedCoupons],
-  );
-  const coupons = useMemo(() => {
-    return searchedCoupons.filter(row => {
-      if (couponFilter === "active") return getCouponStatus(row) === "active";
-      if (couponFilter === "inactive") return getCouponStatus(row) === "inactive";
-      if (couponFilter === "expired") return getCouponStatus(row) === "expired";
-      if (couponFilter === "future") return getCouponStatus(row) === "future";
-      if (couponFilter === "percent") return row.type === "percent";
-      if (couponFilter === "fixed") return row.type === "fixed";
-      if (couponFilter === "unlimited") return row.maxUses == null;
-      if (couponFilter === "limited") return row.maxUses != null;
-      return true;
-    });
-  }, [couponFilter, searchedCoupons]);
-  const couponOperationalAlerts = useMemo(() => {
-    const rows = couponsQuery.data ?? [];
-    const now = Date.now();
-    const sevenDaysFromNow = now + 7 * 24 * 60 * 60 * 1000;
-    const activeExpired = rows.filter(row => Boolean(row.isActive) && getCouponStatus(row) === "expired").length;
-    const expiringSoon = rows.filter(row => {
-      if (!row.expiresAt || getCouponStatus(row) !== "active") return false;
-      const expiresAt = new Date(row.expiresAt as any).getTime();
-      return Number.isFinite(expiresAt) && expiresAt >= now && expiresAt <= sevenDaysFromNow;
-    }).length;
-    const nearLimit = rows.filter(row => {
-      if (row.maxUses == null) return false;
-      const maxUses = Number(row.maxUses);
-      const usedCount = Number(row.usedCount ?? 0);
-      return maxUses > 0 && usedCount < maxUses && usedCount / maxUses >= 0.8;
-    }).length;
-    const withoutExpiry = rows.filter(row => Boolean(row.isActive) && !row.expiresAt).length;
-
-    return [
-      ...(activeExpired > 0
-        ? [{ title: `${activeExpired} cupom(ns) ativo(s) expirado(s)`, description: "Cupons expirados não aplicam no checkout, mas ainda aparecem no admin para revisão.", tone: "danger" as const }]
-        : []),
-      ...(expiringSoon > 0
-        ? [{ title: `${expiringSoon} cupom(ns) vencem em até 7 dias`, description: "Revise campanhas próximas do fim para evitar comunicação desatualizada.", tone: "warning" as const }]
-        : []),
-      ...(nearLimit > 0
-        ? [{ title: `${nearLimit} cupom(ns) perto do limite de uso`, description: "Cupons com 80% ou mais do limite utilizado merecem acompanhamento.", tone: "warning" as const }]
-        : []),
-      ...(withoutExpiry > 0
-        ? [{ title: `${withoutExpiry} cupom(ns) ativo(s) sem validade`, description: "Campanhas sem data de expiração ficam disponíveis até remoção ou atualização manual.", tone: "neutral" as const }]
-        : []),
-    ];
-  }, [couponsQuery.data]);
+  // O Dashboard precisa refletir o conjunto completo retornado pela API,
+  // independentemente da busca e dos filtros usados na aba Pedidos.
+  const dashboardOrders = useMemo(() => dashboardOrdersQuery.data ?? [], [dashboardOrdersQuery.data]);
+  const dashboardProducts = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
   const orderOperationalAlerts = useMemo(() => {
     const rows = ordersQuery.data ?? [];
     const paidWithoutTracking = rows.filter(row => row.status === "paid" && !row.trackingCode).length;
@@ -959,7 +778,7 @@ export default function Admin() {
 
     return [
       ...(paidWithoutTracking > 0
-        ? [{ title: `${paidWithoutTracking} pedido(s) pago(s) sem rastreio`, description: "Revise pedidos pagos aguardando envio ou código de rastreio.", tone: "warning" as const }]
+        ? [{ title: `${paidWithoutTracking} pedido(s) aguardando preparação sem rastreio`, description: "Revise os pedidos que ainda não têm código de rastreio.", tone: "warning" as const }]
         : []),
       ...(shippedWithoutTracking > 0
         ? [{ title: `${shippedWithoutTracking} pedido(s) enviado(s) sem rastreio`, description: "Pedidos enviados deveriam ter rastreio conferido no painel.", tone: "danger" as const }]
@@ -982,16 +801,16 @@ export default function Admin() {
       orderStatuses.map(status => ({
         status,
         label: getOrderStatusLabel(status),
-        count: orders.filter(order => order.status === status).length,
+        count: dashboardOrders.filter(order => order.status === status).length,
       })),
-    [orders],
+    [dashboardOrders],
   );
   const operationalAlerts = useMemo(() => {
     const alerts: Array<{ title: string; description: string; tone: "danger" | "warning" | "neutral" }> = [];
-    const pendingOrders = orders.filter(order => order.status === "pending").length;
-    const paidOrders = orders.filter(order => order.status === "paid").length;
-    const emptyStockProducts = products.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) <= 0).length;
-    const lowStockTotal = products.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) > 0 && Number(product.stock ?? 0) <= 5).length;
+    const pendingOrders = dashboardOrders.filter(order => order.status === "pending").length;
+    const paidOrders = dashboardOrders.filter(order => order.status === "paid").length;
+    const emptyStockProducts = dashboardProducts.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) <= 0).length;
+    const lowStockTotal = dashboardProducts.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) > 0 && Number(product.stock ?? 0) <= 5).length;
 
     if (pendingOrders > 0) {
       alerts.push({
@@ -1023,7 +842,7 @@ export default function Admin() {
     }
 
     return alerts;
-  }, [orders, products]);
+  }, [dashboardOrders, dashboardProducts]);
   const quickActions = useMemo(
     () => [
       { label: "Novo produto", caption: "Cadastre ou atualize o catálogo", onClick: () => setSection("products") },
@@ -1060,55 +879,79 @@ export default function Admin() {
   }
 
   return (
-    <div className="l4-admin" style={styles.container}>
+    <div className="l4-admin">
       <style>{adminCss}</style>
-      <AdminPageHeader
-        title="Painel Administrativo"
-        subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
-        actions={[
-          { label: "Ver pedidos", onClick: () => setSection("orders") },
-          { label: "Abrir produtos", onClick: () => setSection("products") },
-        ]}
-      />
-
-      <div style={styles.tabs}>
-        {[
-          { key: "overview", label: "KPIs" },
-          { key: "customers", label: "Clientes" },
-          { key: "products", label: "Produtos" },
-          { key: "batches", label: "Lotes / Pré-venda" },
-          { key: "promos", label: "Promoções" },
-          { key: "orders", label: "Pedidos" },
-          { key: "reviews", label: "Avaliações" },
-          { key: "coupons", label: "Cupons" },
-          { key: "reports", label: "Relatórios" },
-          { key: "audit", label: "Auditoria" },
-          { key: "backup", label: "Backup" },
-          { key: "settings", label: "Configurações" },
-        ].map(tab => (
-          <button
-            key={tab.key}
-            style={{ ...styles.tabBtn, ...(section === tab.key ? styles.tabBtnActive : {}) }}
-            onClick={() => setSection(tab.key as Section)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <button
+        ref={menuButtonRef}
+        className="l4-admin-menu-trigger"
+        type="button"
+        aria-expanded={mobileNavOpen}
+        aria-controls="l4-admin-navigation"
+        aria-haspopup="dialog"
+        onClick={() => setMobileNavOpen(true)}
+      >☰ <span>Menu administrativo</span></button>
+      {mobileNavOpen && isMobile ? <button className="l4-admin-backdrop" type="button" aria-label="Fechar menu administrativo" onClick={() => { setMobileNavOpen(false); menuButtonRef.current?.focus(); }} /> : null}
+      <div className="l4-admin-layout">
+        <aside id="l4-admin-navigation" ref={menuPanelRef} className={`l4-admin-sidebar${mobileNavOpen ? " is-open" : ""}`} aria-label="Navegação administrativa" role={isMobile && mobileNavOpen ? "dialog" : undefined} aria-modal={isMobile && mobileNavOpen ? true : undefined} inert={isMobile && !mobileNavOpen}>
+          <div className="l4-admin-brand"><strong>L4CKOS</strong><span>GESTÃO</span></div>
+          <button className="l4-admin-menu-close" type="button" onClick={() => { setMobileNavOpen(false); menuButtonRef.current?.focus(); }}>Fechar menu</button>
+          <nav className="l4-admin-nav-scroll" aria-label="Seções da gestão">
+            <div role="group" aria-label="Áreas da gestão">
+              {sectionNav.map(group => (
+                <div className="l4-admin-nav-group" key={group.heading}>
+                  <h2>{group.heading}</h2>
+                  {group.items.map(item => (
+                    <button key={item.key} type="button" aria-current={section === item.key ? "page" : undefined}
+                      onClick={() => { setSection(item.key as Section); setMobileNavOpen(false); if (isMobile) menuButtonRef.current?.focus(); }}>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </nav>
+          <AdminSidebarProfile
+            name={user?.name && user.name !== "Usuário" ? user.name : undefined}
+            email={user?.email}
+            onProfile={() => { setMobileNavOpen(false); navigate("/perfil"); }}
+            onLogout={() => { setMobileNavOpen(false); logout(); }}
+          />
+        </aside>
+        <main className="l4-admin-main">
+          <AdminPageHeader
+            className="l4-admin-page-header"
+            title="Painel Administrativo"
+            subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
+            actions={[
+              { label: "Ver pedidos", onClick: () => setSection("orders") },
+              { label: "Abrir produtos", onClick: () => setSection("products") },
+            ]}
+          />
 
       {section === "overview" && (
         <AdminDashboard
           dashboardData={dashboardQuery.data}
+          dashboardLoading={dashboardQuery.isLoading}
+          dashboardError={dashboardQuery.isError}
+          onRetryDashboard={() => { void dashboardQuery.refetch(); }}
           isMobile={isMobile}
           isCompact={isCompactAdmin}
-          orders={orders}
-          products={products}
+          orders={dashboardOrders}
+          products={dashboardProducts}
           promoBanners={promoBannersQuery.data ?? []}
           coupons={couponsQuery.data ?? []}
           recentAudit={recentAudit}
           quickActions={quickActions}
-          ordersLoading={ordersQuery.isLoading}
+          ordersLoading={dashboardOrdersQuery.isLoading}
+          ordersError={dashboardOrdersQuery.isError}
           productsLoading={productsQuery.isLoading}
+          productsError={productsQuery.isError}
+          promoBannersLoading={promoBannersQuery.isLoading}
+          promoBannersError={promoBannersQuery.isError}
+          couponsLoading={couponsQuery.isLoading}
+          couponsError={couponsQuery.isError}
+          auditLoading={auditQuery.isLoading}
+          auditError={auditQuery.isError}
           orderStatusSummary={orderStatusSummary}
           operationalAlerts={operationalAlerts}
           getOrderStatusLabel={getOrderStatusLabel}
@@ -1126,6 +969,13 @@ export default function Admin() {
 
       {section === "reviews" && (
         <AdminReviewsPanel
+          reviews={reviewsQuery.data}
+          isLoading={reviewsQuery.isLoading}
+          isError={reviewsQuery.isError}
+          onRetry={() => { void reviewsQuery.refetch(); }}
+          isPending={reviewModerateMutation.isPending}
+          pendingReviewId={reviewModerateMutation.isPending ? reviewModerateMutation.variables?.reviewId : undefined}
+          onModerate={async input => { await reviewModerateMutation.mutateAsync(input); }}
           onOpenOrder={orderId => {
             setOrderSearch(String(orderId));
             setOrderQuickFilter("all");
@@ -1141,969 +991,33 @@ export default function Admin() {
       )}
 
       {section === "customers" && (
-        <AdminSurface
-          title="Clientes e usuários"
-          description="Gerencie perfis, permissões e sinais operacionais dos usuários cadastrados com mais clareza."
-        >
-          <CustomersSummaryCards summary={customerSummary} />
-          <div style={styles.inlineRow}>
-            <input
-              style={{ ...styles.input, minWidth: 260 }}
-              placeholder="Buscar por nome, e-mail ou ID"
-              value={customerSearch}
-              onChange={e => setCustomerSearch(e.target.value)}
-            />
-            <AdminSummaryPill>Exibindo: {customers.length}</AdminSummaryPill>
-            <AdminSummaryPill>Busca: {searchedCustomers.length}</AdminSummaryPill>
-          </div>
-          <CustomersFilters
-            value={customerFilter}
-            onChange={setCustomerFilter}
-            options={customerFilterOptions}
-          />
-          {customersQuery.isLoading ? (
-            <AdminLoadingState>Carregando clientes...</AdminLoadingState>
-          ) : (customersQuery.data ?? []).length === 0 ? (
-            <AdminEmptyState
-              title="Nenhum cliente cadastrado"
-              description="Quando houver usuários cadastrados, eles aparecerão aqui com seus indicadores principais."
-            />
-          ) : customers.length === 0 ? (
-            <AdminEmptyState
-              title="Nenhum cliente encontrado"
-              description="Ajuste a busca ou os filtros para encontrar outros usuários carregados."
-            />
-          ) : (
-            <AdminTableWrapper>
-              <table style={styles.table}>
-                <thead><tr><th>Cliente</th><th>Role</th><th>Status</th><th>Pedidos</th><th>Datas</th><th>Ações</th></tr></thead>
-                <tbody>
-                  {customers.map(row => (
-                    <tr key={row.id}>
-                      <td><CustomerProfileCell customer={row} /></td>
-                      <td><CustomerRoleBadge role={row.role} /></td>
-                      <td><CustomerStatusBadges customer={row} /></td>
-                      <td><CustomerOrdersCount value={row.ordersCount} /></td>
-                      <td><CustomerDateMeta createdAt={row.createdAt} lastSignedIn={row.lastSignedIn} /></td>
-                      <td style={styles.actionsCell}>
-                        <button
-                          style={styles.smallBtn}
-                          onClick={() => {
-                            const nextRole = row.role === "admin" ? "user" : "admin";
-                            const action = nextRole === "admin" ? "tornar admin" : "remover admin";
-                            if (!confirmAdminAction(`Confirmar ${action} para ${row.email || row.name || `#${row.id}`}?`)) return;
-                            setRoleMutation.mutate({ userId: row.id, role: nextRole });
-                          }}
-                        >
-                          {row.role === "admin" ? "Remover admin" : "Tornar admin"}
-                        </button>
-                        <button
-                          style={styles.smallBtn}
-                          onClick={() => {
-                            const action = row.isVip ? "remover VIP de" : "marcar como VIP";
-                            if (!confirmAdminAction(`Confirmar ${action} ${row.email || row.name || `#${row.id}`}?`)) return;
-                            setFlagsMutation.mutate({ userId: row.id, isVip: !row.isVip });
-                          }}
-                        >
-                          {row.isVip ? "Remover VIP" : "Marcar VIP"}
-                        </button>
-                        <button
-                          style={styles.dangerBtn}
-                          onClick={() => {
-                            const action = row.isBlocked ? "desbloquear" : "bloquear";
-                            if (!confirmAdminAction(`Confirmar ${action} o usuário ${row.email || `#${row.id}`}?`)) return;
-                            setFlagsMutation.mutate({ userId: row.id, isBlocked: !row.isBlocked });
-                          }}
-                        >
-                          {row.isBlocked ? "Desbloquear" : "Bloquear"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </AdminTableWrapper>
-          )}
-        </AdminSurface>
+        <AdminCustomersPanel
+          customers={customersQuery.data}
+          isLoading={customersQuery.isLoading}
+          isError={customersQuery.isError}
+          onRetry={() => { void customersQuery.refetch(); }}
+          pendingCustomerId={setFlagsMutation.isPending ? setFlagsMutation.variables?.userId : undefined}
+          onToggleBlocked={async (userId, isBlocked) => {
+            await setFlagsMutation.mutateAsync({ userId, isBlocked });
+          }}
+        />
       )}
 
       {section === "products" && (
-        <AdminSurface
-          title="Produtos"
-          description="Cadastre, revise estoque, organize imagens e acompanhe a saúde operacional do catálogo."
-        >
-          <ProductsSummaryCards summary={productSummary} />
-          <div style={styles.inlineRow}>
-            <input
-              style={{ ...styles.input, minWidth: 280 }}
-              placeholder="Buscar produto por nome, categoria ou ID"
-              value={productSearch}
-              onChange={e => setProductSearch(e.target.value)}
-            />
-            <AdminSummaryPill>Exibindo: {products.length}</AdminSummaryPill>
-            <AdminSummaryPill>Busca: {searchedProducts.length}</AdminSummaryPill>
-          </div>
-          <ProductsFilters
-            value={productFilter}
-            onChange={setProductFilter}
-            options={productFilterOptions}
-          />
-          <div style={styles.productAdminHeader}>
-            <div>
-              <h3 style={styles.productAdminTitle}>Criar produto</h3>
-              <p style={styles.productAdminText}>Preencha as informações principais, organize a categoria e publique o item com uma estrutura mais clara.</p>
-            </div>
-          </div>
-            <div style={styles.formGrid}>
-              <input style={styles.input} placeholder="Nome do produto" value={newProduct.name} onChange={e => setNewProduct(prev => ({ ...prev, name: e.target.value }))} />
-              <select style={styles.select} value={newProduct.category} onChange={e => setNewProduct(prev => ({ ...prev, category: e.target.value }))}>
-                <option value="">Selecione a categoria</option>
-                {PRODUCT_CATEGORIES.map(cat => (
-                  <option key={cat.value} value={cat.value}>{cat.label}</option>
-                ))}
-              </select>
-            <div style={styles.categoryPreviewBox}>
-              <span style={styles.categoryPreviewLabel}>Prévia da categoria</span>
-              <strong style={styles.categoryPreviewValue}>{newProduct.category ? getCategoryLabel(newProduct.category) : "Selecione uma categoria"}</strong>
-              <span style={styles.categoryPreviewHint}>Essa categoria define onde o produto aparece para o cliente na vitrine e nas páginas dedicadas.</span>
-            </div>
-            <input style={styles.input} placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct(prev => ({ ...prev, price: e.target.value }))} />
-            <input style={styles.input} placeholder="Estoque disponível" value={newProduct.stock} onChange={e => setNewProduct(prev => ({ ...prev, stock: e.target.value }))} />
-            <div style={mediumFieldStyle}>
-              <input style={styles.input} placeholder="Cores (CSV: preto, branco, verde)" value={newProduct.colorsCsv} onChange={e => setNewProduct(prev => ({ ...prev, colorsCsv: e.target.value }))} />
-              <div style={styles.quickPickRow}>
-                {productColorSuggestions.map(color => (
-                  <button key={color} style={styles.quickPickBtn} onClick={() => setNewProduct(prev => ({ ...prev, colorsCsv: appendCsvToken(prev.colorsCsv, color) }))}>
-                    {color}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <select style={styles.select} value={newProduct.sizeType} onChange={e => setNewProduct(prev => ({ ...prev, sizeType: e.target.value }))}>
-              <option value="alpha">Tamanho alfabético (PP, P, M...)</option>
-              <option value="numeric">Tamanho numérico (36, 38, 40...)</option>
-              <option value="custom">Tamanho customizado</option>
-            </select>
-            <div style={mediumFieldStyle}>
-              <input style={styles.input} placeholder="Tamanhos (CSV: PP, P, M, G, GG ou 36, 38, 40)" value={newProduct.sizesCsv} onChange={e => setNewProduct(prev => ({ ...prev, sizesCsv: e.target.value }))} />
-              <div style={styles.quickPickRow}>
-                {(newProduct.sizeType === "numeric" ? numericSizeSuggestions : alphaSizeSuggestions).map(size => (
-                  <button key={size} style={styles.quickPickBtn} onClick={() => setNewProduct(prev => ({ ...prev, sizesCsv: appendCsvToken(prev.sizesCsv, size) }))}>
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={mediumFieldStyle}>
-              <input style={styles.input} placeholder="Imagem principal" value={newProduct.imageUrl} onChange={e => setNewProduct(prev => ({ ...prev, imageUrl: e.target.value }))} />
-              <div style={styles.mediaActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => createMainImageInputRef.current?.click()}
-                  disabled={uploadingField === "create-main"}
-                >
-                  {uploadingField === "create-main" ? "Enviando capa..." : "Upload da capa"}
-                </button>
-                <span style={styles.mediaHint}>Prefira PNG ou WebP com fundo transparente; o fundo padrão é aplicado pela loja.</span>
-              </div>
-              <input
-                ref={createMainImageInputRef}
-                type="file"
-                accept="image/*"
-                style={styles.hiddenFileInput}
-                onChange={async e => {
-                  const urls = await uploadAdminImages(e.target.files, "single", "create-main");
-                  if (urls[0]) {
-                    setNewProduct(prev => ({
-                      ...prev,
-                      imageUrl: urls[0].detailUrl || urls[0].url,
-                      imageThumbnailUrl: urls[0].thumbnailUrl || "",
-                      imageDetailUrl: urls[0].detailUrl || urls[0].url,
-                      imageBannerUrl: urls[0].bannerUrl || "",
-                    }));
-                  }
-                  e.currentTarget.value = "";
-                }}
-              />
-              {resolveAdminImageUrl(newProduct.imageUrl) ? (
-                <AdminImagePreview
-                  src={resolveAdminImageUrl(newProduct.imageUrl)}
-                  alt="Prévia da capa"
-                  caption="Capa pronta para o card e para a página do produto."
-                />
-              ) : null}
-            </div>
-            <div style={wideFieldStyle}>
-              <input style={styles.input} placeholder="Outras imagens (CSV)" value={newProduct.imagesCsv} onChange={e => setNewProduct(prev => ({ ...prev, imagesCsv: e.target.value }))} />
-              <select
-                style={styles.select}
-                value={newProduct.galleryColor}
-                onChange={e => setNewProduct(prev => ({ ...prev, galleryColor: e.target.value }))}
-              >
-                <option value="">Galeria sem cor específica</option>
-                {newProduct.colorsCsv
-                  .split(",")
-                  .map(item => item.trim())
-                  .filter(Boolean)
-                  .map(color => (
-                    <option key={color} value={color}>
-                      Vincular à cor {color}
-                    </option>
-                  ))}
-              </select>
-              <div style={styles.mediaActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => createGalleryImageInputRef.current?.click()}
-                  disabled={uploadingField === "create-gallery"}
-                >
-                  {uploadingField === "create-gallery" ? "Enviando galeria..." : "Upload da galeria"}
-                </button>
-                <span style={styles.mediaHint}>Você pode selecionar várias imagens transparentes de uma vez.</span>
-              </div>
-              <input
-                ref={createGalleryImageInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                style={styles.hiddenFileInput}
-                onChange={async e => {
-                  const urls = await uploadAdminImages(e.target.files, "multiple", "create-gallery");
-                  if (urls.length > 0) {
-                    setNewProduct(prev => ({
-                      ...prev,
-                      imagesCsv: joinImageCsvEntries(prev.imagesCsv, urls, prev.galleryColor || null),
-                    }));
-                  }
-                  e.currentTarget.value = "";
-                }}
-              />
-              <span style={styles.mediaHint}>Use `url|cor` para vincular uma imagem a uma cor específica do produto.</span>
-              {parseImageCsvEntries(newProduct.imagesCsv).length > 0 ? (
-                <div style={styles.galleryPreviewGrid}>
-                  {parseImageCsvEntries(newProduct.imagesCsv).map((item, index) => (
-                    <div key={`${item.imageUrl}-${index}`} style={styles.galleryPreviewCard}>
-                      <img className="l4-product-media-surface l4-product-media-image" src={item.imageUrl} alt={`Galeria ${index + 1}`} style={styles.galleryPreviewImage} />
-                      <div style={styles.galleryPreviewMeta}>
-                        <strong style={styles.galleryPreviewTitle}>Imagem {index + 1}</strong>
-                        <span style={styles.galleryPreviewText}>{item.color ? `Cor: ${item.color}` : "Sem cor vinculada"}</span>
-                      </div>
-                      <div style={styles.galleryPreviewActions}>
-                        <button
-                          style={styles.inlineBtn}
-                          onClick={() =>
-                            setNewProduct(prev => ({
-                              ...prev,
-                              ...moveImageCsvEntryToCover(prev.imagesCsv, item.imageUrl, prev.imageUrl),
-                            }))
-                          }
-                        >
-                          Usar como capa
-                        </button>
-                        <button
-                          style={styles.inlineBtnDanger}
-                          onClick={() =>
-                            setNewProduct(prev => ({
-                              ...prev,
-                              imagesCsv: removeImageCsvEntry(prev.imagesCsv, item.imageUrl),
-                            }))
-                          }
-                        >
-                          Remover
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div style={wideFieldStyle}>
-              <input style={styles.input} placeholder="Variantes (nome|sku|preço|estoque;...)" value={newProduct.variantsCsv} onChange={e => setNewProduct(prev => ({ ...prev, variantsCsv: e.target.value }))} />
-              <div style={styles.mediaActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() =>
-                    setNewProduct(prev => ({
-                      ...prev,
-                      variantsCsv: buildVariantDraft(prev.name.trim() || "Produto", prev.colorsCsv, prev.sizesCsv, prev.price || "0"),
-                    }))
-                  }
-                >
-                  Gerar variantes
-                </button>
-                <span style={styles.mediaHint}>Gera combinações a partir das cores e tamanhos informados.</span>
-              </div>
-              <span style={styles.mediaHint}>Exemplo: Camiseta P|CAM-P|89.90|10; Camiseta M|CAM-M|89.90|8</span>
-            </div>
-            <input style={{ ...styles.input, gridColumn: "1 / -1" }} placeholder="Descrição curta" value={newProduct.description} onChange={e => setNewProduct(prev => ({ ...prev, description: e.target.value }))} />
-          </div>
-          <div style={styles.productAdminActions}>
-          <button
-            style={styles.primaryBtn}
-            onClick={() => {
-              const price = parseMoneyToCents(newProduct.price);
-              const stock = Number(newProduct.stock);
-              if (!newProduct.name.trim() || !newProduct.category.trim() || !Number.isFinite(price) || price <= 0) {
-                showToast({ message: "Preencha nome, categoria e preço válidos", duration: 2400 });
-                return;
-              }
-
-              const images = parseImageCsvEntries(newProduct.imagesCsv);
-              const optionColors = newProduct.colorsCsv
-                .split(",")
-                .map(item => item.trim())
-                .filter(Boolean);
-              const optionSizes = newProduct.sizesCsv
-                .split(",")
-                .map(item => item.trim())
-                .filter(Boolean);
-
-              const variants = newProduct.variantsCsv
-                .split(";")
-                .map(raw => raw.trim())
-                .filter(Boolean)
-                .map(raw => {
-                  const [name, sku, variantPrice, variantStock] = raw.split("|").map(part => part?.trim() ?? "");
-                  return {
-                    name,
-                    sku: sku || null,
-                    price: variantPrice ? parseMoneyToCents(variantPrice) : null,
-                    stock: Number(variantStock || "0"),
-                  };
-                })
-                .filter(item => item.name && Number.isFinite(item.stock) && (item.price === null || Number.isFinite(item.price)));
-
-              createProductMutation.mutate({
-                name: newProduct.name.trim(),
-                category: normalizeCategoryValue(newProduct.category),
-                price,
-                stock: Number.isFinite(stock) && stock >= 0 ? stock : 0,
-                imageUrl: normalizeAdminImageValue(newProduct.imageUrl) || undefined,
-                imageThumbnailUrl: normalizeAdminImageValue(newProduct.imageThumbnailUrl) || undefined,
-                imageDetailUrl: normalizeAdminImageValue(newProduct.imageDetailUrl) || undefined,
-                imageBannerUrl: normalizeAdminImageValue(newProduct.imageBannerUrl) || undefined,
-                optionColors,
-                optionSizes,
-                  sizeType: newProduct.sizeType as "alpha" | "numeric" | "custom",
-                  images,
-                variants,
-                description: newProduct.description.trim() || undefined,
-              });
-            }}
-          >
-            Criar produto
-          </button>
-          </div>
-
-          <div style={styles.productAdminHeader}>
-            <div>
-              <h3 style={styles.productAdminTitle}>Editar produto</h3>
-              <p style={styles.productAdminText}>Selecione um item já cadastrado para revisar preço, estoque, imagens, variantes e categoria.</p>
-            </div>
-          </div>
-          <div style={styles.inlineRow}>
-            <select
-              style={{ ...styles.select, minWidth: 280 }}
-              value={editingProductId ?? ""}
-              onChange={e => {
-                const nextId = Number(e.target.value);
-                if (!Number.isFinite(nextId) || nextId <= 0) {
-                  setEditingProductId(null);
-                  setEditProduct({ ...emptyProductForm });
-                  return;
-                }
-
-                const selected = products.find(product => product.id === nextId);
-                if (!selected) {
-                  setEditingProductId(null);
-                  setEditProduct({ ...emptyProductForm });
-                  return;
-                }
-
-                setEditingProductId(selected.id);
-                const selectedColors = (() => {
-                  if (!selected.optionColors) return [];
-                  try {
-                    const parsed = JSON.parse(selected.optionColors);
-                    return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                  } catch {
-                    return [];
-                  }
-                })();
-                const selectedSizes = (() => {
-                  if (!selected.optionSizes) return [];
-                  try {
-                    const parsed = JSON.parse(selected.optionSizes);
-                    return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                  } catch {
-                    return [];
-                  }
-                })();
-                setEditProduct({
-                  name: selected.name ?? "",
-                  category: selected.category ?? "",
-                  price: centsToMoneyInput(selected.price),
-                  stock: String(selected.stock ?? 0),
-                  imageUrl: normalizeAdminImageValue(selected.imageUrl),
-                  imageThumbnailUrl: normalizeAdminImageValue((selected as any).imageThumbnailUrl),
-                  imageDetailUrl: normalizeAdminImageValue((selected as any).imageDetailUrl),
-                  imageBannerUrl: normalizeAdminImageValue((selected as any).imageBannerUrl),
-                  galleryColor: "",
-                  colorsCsv: selectedColors.join(", "),
-                  sizesCsv: selectedSizes.join(", "),
-                  sizeType: selected.sizeType ?? "alpha",
-                  imagesCsv: (selected.images ?? [])
-                    .map(item => formatImageCsvEntry(
-                      typeof item === "string"
-                        ? item
-                        : {
-                            imageUrl: item?.imageUrl ?? "",
-                            imageThumbnailUrl: (item as any)?.imageThumbnailUrl ?? null,
-                            imageDetailUrl: (item as any)?.imageDetailUrl ?? null,
-                            imageBannerUrl: (item as any)?.imageBannerUrl ?? null,
-                            color: item?.color ?? null,
-                          },
-                      typeof item === "string" ? null : item?.color ?? null,
-                    ))
-                    .filter(Boolean)
-                    .join(", "),
-                  variantsCsv: (selected.variants ?? [])
-                    .map(item => {
-                      const name = item?.name ?? "";
-                      const sku = item?.sku ?? "";
-                      const variantPrice = centsToMoneyInput(item?.price);
-                      const variantStock = item?.stock ?? 0;
-                      return `${name}|${sku}|${variantPrice}|${variantStock}`;
-                    })
-                    .filter(Boolean)
-                    .join("; "),
-                  description: selected.description ?? "",
-                });
-              }}
-            >
-              <option value="">Selecione um produto</option>
-              {products.map(product => (
-                <option key={product.id} value={product.id}>
-                  #{product.id} - {product.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {editingProductId ? (
-            <>
-              <div style={styles.formGrid}>
-                <input style={styles.input} placeholder="Nome do produto" value={editProduct.name} onChange={e => setEditProduct(prev => ({ ...prev, name: e.target.value }))} />
-                <select style={styles.select} value={editProduct.category} onChange={e => setEditProduct(prev => ({ ...prev, category: e.target.value }))}>
-                  <option value="">Selecione a categoria</option>
-                  {PRODUCT_CATEGORIES.map(cat => (
-                    <option key={cat.value} value={cat.value}>{cat.label}</option>
-                  ))}
-                </select>
-                <div style={styles.categoryPreviewBox}>
-                  <span style={styles.categoryPreviewLabel}>Prévia da categoria</span>
-                  <strong style={styles.categoryPreviewValue}>{editProduct.category ? getCategoryLabel(editProduct.category) : "Selecione uma categoria"}</strong>
-                  <span style={styles.categoryPreviewHint}>Essa categoria será usada na navegação da loja e no filtro que o cliente vê.</span>
-                </div>
-                <input style={styles.input} placeholder="Preço (R$)" value={editProduct.price} onChange={e => setEditProduct(prev => ({ ...prev, price: e.target.value }))} />
-                <input style={styles.input} placeholder="Estoque disponível" value={editProduct.stock} onChange={e => setEditProduct(prev => ({ ...prev, stock: e.target.value }))} />
-                <div style={mediumFieldStyle}>
-                  <input style={styles.input} placeholder="Cores (CSV: preto, branco, verde)" value={editProduct.colorsCsv} onChange={e => setEditProduct(prev => ({ ...prev, colorsCsv: e.target.value }))} />
-                  <div style={styles.quickPickRow}>
-                    {productColorSuggestions.map(color => (
-                      <button key={color} style={styles.quickPickBtn} onClick={() => setEditProduct(prev => ({ ...prev, colorsCsv: appendCsvToken(prev.colorsCsv, color) }))}>
-                        {color}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <select style={styles.select} value={editProduct.sizeType} onChange={e => setEditProduct(prev => ({ ...prev, sizeType: e.target.value }))}>
-                  <option value="alpha">Tamanho alfabético (PP, P, M...)</option>
-                  <option value="numeric">Tamanho numérico (36, 38, 40...)</option>
-                  <option value="custom">Tamanho customizado</option>
-                </select>
-                <div style={mediumFieldStyle}>
-                  <input style={styles.input} placeholder="Tamanhos (CSV: PP, P, M, G, GG ou 36, 38, 40)" value={editProduct.sizesCsv} onChange={e => setEditProduct(prev => ({ ...prev, sizesCsv: e.target.value }))} />
-                  <div style={styles.quickPickRow}>
-                    {(editProduct.sizeType === "numeric" ? numericSizeSuggestions : alphaSizeSuggestions).map(size => (
-                      <button key={size} style={styles.quickPickBtn} onClick={() => setEditProduct(prev => ({ ...prev, sizesCsv: appendCsvToken(prev.sizesCsv, size) }))}>
-                        {size}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div style={mediumFieldStyle}>
-                  <input style={styles.input} placeholder="Imagem principal" value={editProduct.imageUrl} onChange={e => setEditProduct(prev => ({ ...prev, imageUrl: e.target.value }))} />
-                  <div style={styles.mediaActions}>
-                    <button
-                      style={styles.secondaryBtn}
-                      onClick={() => editMainImageInputRef.current?.click()}
-                      disabled={uploadingField === "edit-main"}
-                    >
-                      {uploadingField === "edit-main" ? "Enviando capa..." : "Trocar capa"}
-                    </button>
-                    <span style={styles.mediaHint}>Prefira PNG ou WebP com fundo transparente; o fundo padrão é aplicado pela loja.</span>
-                  </div>
-                  <input
-                    ref={editMainImageInputRef}
-                    type="file"
-                    accept="image/*"
-                    style={styles.hiddenFileInput}
-                    onChange={async e => {
-                      const urls = await uploadAdminImages(e.target.files, "single", "edit-main");
-                      if (urls[0]) {
-                        setEditProduct(prev => ({
-                          ...prev,
-                          imageUrl: urls[0].detailUrl || urls[0].url,
-                          imageThumbnailUrl: urls[0].thumbnailUrl || "",
-                          imageDetailUrl: urls[0].detailUrl || urls[0].url,
-                          imageBannerUrl: urls[0].bannerUrl || "",
-                        }));
-                      }
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                  {resolveAdminImageUrl(editProduct.imageUrl) ? (
-                    <AdminImagePreview
-                      src={resolveAdminImageUrl(editProduct.imageUrl)}
-                      alt="Prévia da capa"
-                      caption="Essa será a imagem principal exibida na vitrine."
-                    />
-                  ) : null}
-                </div>
-                <div style={wideFieldStyle}>
-                  <input style={styles.input} placeholder="Outras imagens (CSV)" value={editProduct.imagesCsv} onChange={e => setEditProduct(prev => ({ ...prev, imagesCsv: e.target.value }))} />
-                  <select
-                    style={styles.select}
-                    value={editProduct.galleryColor}
-                    onChange={e => setEditProduct(prev => ({ ...prev, galleryColor: e.target.value }))}
-                  >
-                    <option value="">Galeria sem cor específica</option>
-                    {editProduct.colorsCsv
-                      .split(",")
-                      .map(item => item.trim())
-                      .filter(Boolean)
-                      .map(color => (
-                        <option key={color} value={color}>
-                          Vincular à cor {color}
-                        </option>
-                      ))}
-                  </select>
-                  <div style={styles.mediaActions}>
-                    <button
-                      style={styles.secondaryBtn}
-                      onClick={() => editGalleryImageInputRef.current?.click()}
-                      disabled={uploadingField === "edit-gallery"}
-                    >
-                      {uploadingField === "edit-gallery" ? "Enviando galeria..." : "Adicionar na galeria"}
-                    </button>
-                    <span style={styles.mediaHint}>As novas imagens transparentes serão adicionadas ao CSV atual.</span>
-                  </div>
-                  <input
-                    ref={editGalleryImageInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    style={styles.hiddenFileInput}
-                    onChange={async e => {
-                      const urls = await uploadAdminImages(e.target.files, "multiple", "edit-gallery");
-                      if (urls.length > 0) {
-                        setEditProduct(prev => ({
-                          ...prev,
-                          imagesCsv: joinImageCsvEntries(prev.imagesCsv, urls, prev.galleryColor || null),
-                        }));
-                      }
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                  <span style={styles.mediaHint}>Você também pode usar `url|cor` para trocar a imagem conforme a cor escolhida.</span>
-                  {parseImageCsvEntries(editProduct.imagesCsv).length > 0 ? (
-                    <div style={styles.galleryPreviewGrid}>
-                      {parseImageCsvEntries(editProduct.imagesCsv).map((item, index) => (
-                        <div key={`${item.imageUrl}-${index}`} style={styles.galleryPreviewCard}>
-                        <img className="l4-product-media-surface l4-product-media-image" src={item.imageUrl} alt={`Galeria ${index + 1}`} style={styles.galleryPreviewImage} />
-                          <div style={styles.galleryPreviewMeta}>
-                            <strong style={styles.galleryPreviewTitle}>Imagem {index + 1}</strong>
-                            <span style={styles.galleryPreviewText}>{item.color ? `Cor: ${item.color}` : "Sem cor vinculada"}</span>
-                          </div>
-                          <div style={styles.galleryPreviewActions}>
-                            <button
-                              style={styles.inlineBtn}
-                              onClick={() =>
-                                setEditProduct(prev => ({
-                                  ...prev,
-                                  ...moveImageCsvEntryToCover(prev.imagesCsv, item.imageUrl, prev.imageUrl),
-                                }))
-                              }
-                            >
-                              Usar como capa
-                            </button>
-                            <button
-                              style={styles.inlineBtnDanger}
-                              onClick={() =>
-                                setEditProduct(prev => ({
-                                  ...prev,
-                                  imagesCsv: removeImageCsvEntry(prev.imagesCsv, item.imageUrl),
-                                }))
-                              }
-                            >
-                              Remover
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <div style={wideFieldStyle}>
-                  <input style={styles.input} placeholder="Variantes (nome|sku|preço|estoque;...)" value={editProduct.variantsCsv} onChange={e => setEditProduct(prev => ({ ...prev, variantsCsv: e.target.value }))} />
-                  <div style={styles.mediaActions}>
-                    <button
-                      style={styles.secondaryBtn}
-                      onClick={() =>
-                        setEditProduct(prev => ({
-                          ...prev,
-                          variantsCsv: buildVariantDraft(prev.name.trim() || "Produto", prev.colorsCsv, prev.sizesCsv, prev.price || "0"),
-                        }))
-                      }
-                    >
-                      Gerar variantes
-                    </button>
-                    <span style={styles.mediaHint}>Monta a base das variantes para você só revisar SKU, preço e estoque.</span>
-                  </div>
-                  <span style={styles.mediaHint}>Exemplo: Camiseta P|CAM-P|89.90|10; Camiseta M|CAM-M|89.90|8</span>
-                </div>
-                <input style={{ ...styles.input, gridColumn: "1 / -1" }} placeholder="Descrição curta" value={editProduct.description} onChange={e => setEditProduct(prev => ({ ...prev, description: e.target.value }))} />
-              </div>
-              <div style={styles.productAdminActions}>
-                <button
-                  style={styles.primaryBtn}
-                  onClick={() => {
-                    if (!editingProductId) return;
-
-                    const price = parseMoneyToCents(editProduct.price);
-                    const stock = Number(editProduct.stock);
-                    if (!editProduct.name.trim() || !editProduct.category.trim() || !Number.isFinite(price) || price <= 0) {
-                        showToast({ message: "Preencha nome, categoria e preço válidos", duration: 2400 });
-                        return;
-                      }
-
-                    const images = parseImageCsvEntries(editProduct.imagesCsv);
-                    const optionColors = editProduct.colorsCsv
-                      .split(",")
-                      .map(item => item.trim())
-                      .filter(Boolean);
-                    const optionSizes = editProduct.sizesCsv
-                      .split(",")
-                      .map(item => item.trim())
-                      .filter(Boolean);
-
-                    const variants = editProduct.variantsCsv
-                      .split(";")
-                      .map(raw => raw.trim())
-                      .filter(Boolean)
-                      .map(raw => {
-                        const [name, sku, variantPrice, variantStock] = raw.split("|").map(part => part?.trim() ?? "");
-                        return {
-                          name,
-                          sku: sku || null,
-                          price: variantPrice ? parseMoneyToCents(variantPrice) : null,
-                          stock: Number(variantStock || "0"),
-                        };
-                      })
-                      .filter(item => item.name && Number.isFinite(item.stock) && (item.price === null || Number.isFinite(item.price)));
-
-                    updateProductMutation.mutate({
-                      id: editingProductId,
-                      name: editProduct.name.trim(),
-                      category: normalizeCategoryValue(editProduct.category),
-                      price,
-                      stock: Number.isFinite(stock) && stock >= 0 ? stock : 0,
-                      imageUrl: normalizeAdminImageValue(editProduct.imageUrl) || undefined,
-                      imageThumbnailUrl: normalizeAdminImageValue(editProduct.imageThumbnailUrl) || undefined,
-                      imageDetailUrl: normalizeAdminImageValue(editProduct.imageDetailUrl) || undefined,
-                      imageBannerUrl: normalizeAdminImageValue(editProduct.imageBannerUrl) || undefined,
-                      optionColors,
-                      optionSizes,
-                      sizeType: editProduct.sizeType as "alpha" | "numeric" | "custom",
-                      images,
-                      variants,
-                      description: editProduct.description.trim() || undefined,
-                    });
-                  }}
-                >
-                  Salvar edição
-                </button>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => {
-                    setEditingProductId(null);
-                    setEditProduct({ ...emptyProductForm });
-                  }}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </>
-          ) : (
-            <div style={styles.productAdminEmpty}>
-              Selecione um produto acima para liberar o formulário de edição.
-            </div>
-          )}
-
-          {productsQuery.isLoading ? (
-            <AdminLoadingState>Carregando produtos...</AdminLoadingState>
-          ) : products.length === 0 ? (
-            <AdminEmptyState
-              title="Nenhum produto encontrado"
-              description="Ajuste a busca ou filtro para visualizar itens do catálogo."
-            />
-          ) : (
-            <AdminTableWrapper>
-              <table style={styles.table}>
-                <thead><tr><th>Visual</th><th>Produto</th><th>Operação</th><th>Ações</th></tr></thead>
-                <tbody>
-                  {products.map(row => {
-                    const optionColors = parseProductOptionList(row.optionColors);
-                    const optionSizes = parseProductOptionList(row.optionSizes);
-                    const galleryImages = [
-                      row.imageUrl
-                        ? {
-                            imageUrl: row.imageUrl,
-                            imageThumbnailUrl: (row as any).imageThumbnailUrl ?? null,
-                            color: null,
-                          }
-                        : null,
-                      ...(row.images ?? []),
-                    ]
-                      .filter(Boolean)
-                      .filter((item, index, list) => {
-                        const imageUrl = typeof item === "string" ? item : item?.imageUrl;
-                        if (!imageUrl) return false;
-                        return list.findIndex(candidate => {
-                          const candidateUrl = typeof candidate === "string" ? candidate : candidate?.imageUrl;
-                          return candidateUrl === imageUrl;
-                        }) === index;
-                      });
-                    return (
-                    <tr key={row.id}>
-                      <td>
-                        <div style={styles.productVisualCell}>
-                          {resolveAdminImageUrl(row.imageUrl) ? (
-                            <AdminImagePreview
-                              src={resolveAdminImageUrl(row.imageUrl)}
-                              alt={row.name}
-                              variant="thumb"
-                            />
-                          ) : (
-                            <AdminImagePreview alt={row.name} variant="thumb" />
-                          )}
-                          {galleryImages.length > 0 ? (
-                            <div style={styles.productThumbStrip}>
-                              {galleryImages.slice(0, 5).map((item, index) => {
-                                const imageUrl = typeof item === "string" ? item : item?.imageThumbnailUrl || item?.imageUrl;
-                                const color = typeof item === "string" ? null : item?.color ?? null;
-                                return (
-                                  <a
-                                    key={`${imageUrl}-${index}`}
-                                    href={resolveAdminImageUrl(imageUrl)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={styles.productThumbLink}
-                                    title={color ? `Cor: ${color}` : `Imagem ${index + 1}`}
-                                  >
-                                    <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={resolveAdminImageUrl(imageUrl)} alt={`${row.name} ${index + 1}`} style={styles.productThumbImage} />
-                                  </a>
-                                );
-                              })}
-                              {galleryImages.length > 5 ? <span style={styles.productThumbMore}>+{galleryImages.length - 5}</span> : null}
-                            </div>
-                          ) : null}
-                          <ProductVisualMeta>
-                            {galleryImages.length > 1 ? `${galleryImages.length} imagens` : "Só capa"}
-                          </ProductVisualMeta>
-                        </div>
-                      </td>
-                      <td>
-                        <div style={styles.productTableCell}>
-                          <strong style={styles.productTableName}>#{row.id} · {row.name}</strong>
-                          <span style={styles.productTableMeta}>
-                            {row.description?.trim() ? row.description : "Sem descrição curta"}
-                          </span>
-                          <div style={styles.productMetaRow}>
-                            <span style={styles.categoryTableBadge}>{getCategoryLabel(row.category)}</span>
-                            <ProductStockBadge salesMode={row.salesMode} stock={Number(quickProductEdits[row.id]?.stock ?? row.stock)} />
-                            <span style={styles.variantCountBadge}>{row.variants?.length ?? 0} var.</span>
-                          </div>
-                          <ProductOptionPreview label="Cores" values={optionColors} />
-                          <ProductOptionPreview label="Tamanhos" values={optionSizes} />
-                          <span style={styles.productTableMeta}>
-                            Criado: {row.createdAt ? new Date(row.createdAt).toLocaleDateString("pt-BR") : "-"} · Atualizado: {row.updatedAt ? new Date(row.updatedAt).toLocaleDateString("pt-BR") : "-"}
-                          </span>
-                        </div>
-                      </td>
-                      <td>
-                        <div
-                          style={{
-                            ...styles.quickEditGrid,
-                            ...(isCompactAdmin ? { gridTemplateColumns: "1fr", minWidth: 180, maxWidth: "100%" } : {}),
-                          }}
-                        >
-                          <label style={styles.quickEditField}>
-                            <span style={styles.quickEditLabel}>Preço</span>
-                            <input
-                              style={styles.input}
-                              value={quickProductEdits[row.id]?.price ?? centsToMoneyInput(row.price)}
-                              onChange={e => {
-                                const value = e.target.value;
-                                setQuickProductEdits(prev => ({
-                                  ...prev,
-                                  [row.id]: {
-                                    price: value,
-                                    stock: prev[row.id]?.stock ?? String(row.stock),
-                                  },
-                                }));
-                              }}
-                            />
-                          </label>
-                          <label style={styles.quickEditField}>
-                            <span style={styles.quickEditLabel}>Estoque</span>
-                            <input
-                              style={{
-                                ...styles.input,
-                                ...(Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 0
-                                  ? styles.stockInputEmpty
-                                  : Number(quickProductEdits[row.id]?.stock ?? row.stock) <= 3
-                                    ? styles.stockInputLow
-                                    : {}),
-                              }}
-                              value={quickProductEdits[row.id]?.stock ?? String(row.stock)}
-                              onChange={e => {
-                                const value = e.target.value;
-                                setQuickProductEdits(prev => ({
-                                  ...prev,
-                                  [row.id]: {
-                                    price: prev[row.id]?.price ?? centsToMoneyInput(row.price),
-                                    stock: value,
-                                  },
-                                }));
-                              }}
-                            />
-                          </label>
-                        </div>
-                      </td>
-                      <td style={styles.actionsCell}>
-                      <button
-                        style={styles.smallBtn}
-                        onClick={() => {
-                          const price = parseMoneyToCents(quickProductEdits[row.id]?.price ?? centsToMoneyInput(row.price));
-                          const stock = Number(quickProductEdits[row.id]?.stock ?? row.stock);
-                          if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(stock) || stock < 0) {
-                            showToast({ message: "Preço/estoque inválidos", duration: 2400 });
-                            return;
-                          }
-                          quickUpdateProductMutation.mutate(
-                            { id: row.id, price, stock },
-                            {
-                              onSuccess: () => {
-                                setQuickProductEdits(prev => {
-                                  const next = { ...prev };
-                                  delete next[row.id];
-                                  return next;
-                                });
-                              },
-                            },
-                          );
-                        }}
-                      >
-                        Salvar rápido
-                      </button>
-                      <button
-                        style={styles.smallBtn}
-                        onClick={() => {
-                          const rowColors = (() => {
-                            if (!row.optionColors) return [];
-                            try {
-                              const parsed = JSON.parse(row.optionColors);
-                              return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                            } catch {
-                              return [];
-                            }
-                          })();
-                          const rowSizes = (() => {
-                            if (!row.optionSizes) return [];
-                            try {
-                              const parsed = JSON.parse(row.optionSizes);
-                              return Array.isArray(parsed) ? parsed.map((item: any) => String(item)) : [];
-                            } catch {
-                              return [];
-                            }
-                          })();
-                          setEditingProductId(row.id);
-                          setEditProduct({
-                            name: row.name ?? "",
-                            category: row.category ?? "",
-                            price: centsToMoneyInput(row.price),
-                            stock: String(row.stock ?? 0),
-                            imageUrl: normalizeAdminImageValue(row.imageUrl),
-                            imageThumbnailUrl: normalizeAdminImageValue((row as any).imageThumbnailUrl),
-                            imageDetailUrl: normalizeAdminImageValue((row as any).imageDetailUrl),
-                            imageBannerUrl: normalizeAdminImageValue((row as any).imageBannerUrl),
-                            galleryColor: "",
-                            colorsCsv: rowColors.join(", "),
-                            sizesCsv: rowSizes.join(", "),
-                            sizeType: row.sizeType ?? "alpha",
-                            imagesCsv: (row.images ?? [])
-                              .map(item =>
-                                formatImageCsvEntry(
-                                  typeof item === "string"
-                                    ? item
-                                    : {
-                                        imageUrl: item?.imageUrl ?? "",
-                                        imageThumbnailUrl: (item as any)?.imageThumbnailUrl ?? null,
-                                        imageDetailUrl: (item as any)?.imageDetailUrl ?? null,
-                                        imageBannerUrl: (item as any)?.imageBannerUrl ?? null,
-                                        color: item?.color ?? null,
-                                      },
-                                  typeof item === "string" ? null : item?.color ?? null,
-                                ),
-                              )
-                              .filter(Boolean)
-                              .join(", "),
-                            variantsCsv: (row.variants ?? [])
-                              .map(item => {
-                                const name = item?.name ?? "";
-                                const sku = item?.sku ?? "";
-                                const variantPrice = centsToMoneyInput(item?.price);
-                                const variantStock = item?.stock ?? 0;
-                                return `${name}|${sku}|${variantPrice}|${variantStock}`;
-                              })
-                              .filter(Boolean)
-                              .join("; "),
-                            description: row.description ?? "",
-                          });
-                        }}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => {
-                          if (!confirmAdminAction(`Excluir o produto "${row.name}"? Esta ação não pode ser desfeita pelo painel.`)) return;
-                          deleteProductMutation.mutate({ id: row.id });
-                        }}
-                      >
-                        Excluir
-                      </button>
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </AdminTableWrapper>
-          )}
-        </AdminSurface>
+        <AdminProductsPanel
+          products={productsQuery.data}
+          isLoading={productsQuery.isLoading}
+          isError={productsQuery.isError}
+          onRetry={() => { void productsQuery.refetch(); }}
+          isSaving={createProductMutation.isPending || updateProductMutation.isPending || quickUpdateProductMutation.isPending || deleteProductMutation.isPending}
+          onCreate={input => createProductMutation.mutateAsync(input)}
+          onUpdate={input => updateProductMutation.mutateAsync(input)}
+          onDelete={id => deleteProductMutation.mutateAsync({ id })}
+          onUpload={uploadAdminImages}
+          isUploading={uploadingField !== null}
+          imageSource={resolveAdminImageUrl}
+          initialSearch={productSearch}
+        />
       )}
 
       {section === "batches" && <AdminBatches />}
@@ -2121,15 +1035,20 @@ export default function Admin() {
                 onChange={e => setOrderSearch(e.target.value)}
               />
               <label>Status:</label>
-              <select style={styles.select} value={orderFilterStatus} onChange={e => setOrderFilterStatus(e.target.value)}>
-                <option value="">Todos</option>
-                {orderStatuses.map(status => <option key={status} value={status}>{getOrderStatusLabel(status)}</option>)}
-              </select>
-              <button style={styles.smallBtn} onClick={() => ordersQuery.refetch()}>Filtrar</button>
+              <Select value={orderFilterStatus || "all"} onValueChange={value => setOrderFilterStatus(value === "all" ? "" : value)}>
+                <SelectTrigger className="admin-order-select-trigger" aria-label="Filtrar pedidos por situação"><SelectValue /></SelectTrigger>
+                <SelectContent className="admin-order-select-content" position="popper" sideOffset={6} collisionPadding={12}>
+                  <SelectItem value="all">Todas as situações</SelectItem>
+                  {orderStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <button style={styles.smallBtn} onClick={() => void ordersQuery.refetch()} disabled={ordersQuery.isFetching}>Atualizar</button>
             </div>
           }
         >
+          <div className="admin-orders-real">
           <OrdersSummaryCards summary={ordersSummary} />
+          <p className="admin-orders-accounting-note">O valor soma os pedidos atualmente carregados; o filtro por situação altera esse conjunto. Não representa valor recebido ou receita confirmada.</p>
           <div style={styles.inlineRow}>
             <AdminSummaryPill>Exibindo: {orders.length}</AdminSummaryPill>
             <AdminSummaryPill>Busca: {searchedOrders.length}</AdminSummaryPill>
@@ -2138,6 +1057,11 @@ export default function Admin() {
           <OrderOperationalAlerts alerts={orderOperationalAlerts} />
           {ordersQuery.isLoading ? (
             <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
+          ) : ordersQuery.isError ? (
+            <div className="admin-orders-query-error" role="alert">
+              <p>Não foi possível carregar os pedidos.</p>
+              <button type="button" style={styles.smallBtn} onClick={() => void ordersQuery.refetch()} disabled={ordersQuery.isFetching}>Tentar novamente</button>
+            </div>
           ) : orders.length === 0 ? (
             <AdminEmptyState
               title="Nenhum pedido encontrado"
@@ -2152,7 +1076,7 @@ export default function Admin() {
             >
               <AdminTableWrapper>
                 <table style={styles.table}>
-                  <thead><tr><th>Pedido</th><th>Cliente</th><th>Total</th><th>Status</th><th>Rastreio</th><th>Itens</th><th>Ações</th></tr></thead>
+                  <thead><tr><th>Pedido</th><th>Cliente</th><th>Total</th><th>Situação do pedido / pagamento</th><th>Rastreio</th><th>Itens</th><th>Ações</th></tr></thead>
                   <tbody>
                     {orders.map(row => (
                       <tr
@@ -2163,7 +1087,7 @@ export default function Admin() {
                         <td>
                           <div style={styles.orderPrimaryText}>#{row.id}</div>
                           <div style={styles.orderSecondaryText}>
-                            {new Date(row.createdAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                            {new Date(row.createdAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" })}
                           </div>
                         </td>
                         <td>
@@ -2176,11 +1100,16 @@ export default function Admin() {
                           <div style={styles.orderPrimaryText}>{formatPrice(Number(row.totalPrice) / 100)}</div>
                         </td>
                         <td>
+                          <div className="admin-order-state-pair">
                           <OrderStatusBadge
                             status={String(row.status)}
                             label={getOrderStatusLabel(String(row.status))}
                             tone={getOrderStatusTone(String(row.status))}
                           />
+                            <span className={`admin-payment-state ${row.paymentStatus === "confirmed" ? "is-confirmed" : "is-unconfirmed"}`}>
+                              Pagamento: {row.paymentStatus === "confirmed" ? "Confirmado" : "Não confirmado"}
+                            </span>
+                          </div>
                         </td>
                         <td>
                           <div style={styles.orderPrimaryText}>{row.trackingCode || "Pendente"}</div>
@@ -2199,19 +1128,25 @@ export default function Admin() {
                           ) : null}
                         </td>
                         <td style={styles.actionsCell} onClick={event => event.stopPropagation()}>
-                          <select
-                            style={styles.select}
-                            value={row.status}
-                            onChange={e => {
-                              const nextStatus = e.target.value as any;
+                          <button type="button" style={styles.smallBtn} onClick={() => setSelectedOrderId(row.id)} aria-label={`Ver detalhes do pedido ${row.id}`}>
+                            Ver detalhes
+                          </button>
+                          <Select
+                            value={String(row.status)}
+                            onValueChange={value => {
+                              const nextStatus = value as typeof orderStatuses[number];
                               if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === 'cancelled' ? ' Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas.' : ''}`)) return;
                               updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
                             }}
                           >
-                            {orderStatuses.map(status => <option key={status} value={status}>{getOrderStatusLabel(status)}</option>)}
-                          </select>
+                            <SelectTrigger className="admin-order-select-trigger" aria-label={`Atualizar situação do pedido ${row.id}`} disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
+                            <SelectContent className="admin-order-select-content" position="popper" side="bottom" align="end" sideOffset={6} collisionPadding={12}>
+                              {orderStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
                           <button
                             style={styles.smallBtn}
+                            disabled={updateOrderMutation.isPending}
                             onClick={() => {
                               const tracking = window.prompt("Código de rastreio:", row.trackingCode || "");
                               if (tracking === null) return;
@@ -2242,546 +1177,62 @@ export default function Admin() {
               />
             </div>
           )}
+          </div>
         </AdminSurface>
       )}
 
       {section === "promos" && (
         <AdminSurface
-          title="Promoções e banners"
-          description="Organize as campanhas do carrossel principal da home sem alterar o funcionamento público dos banners."
+          title="Destaques da Home"
+          description="Edite, ordene e ative as campanhas apresentadas na página inicial."
         >
-          <PromotionsSummaryCards summary={promoSummary} />
-          <div style={styles.formGrid}>
-            <input style={styles.input} placeholder="Badge" value={newPromo.badge} onChange={e => setNewPromo(prev => ({ ...prev, badge: e.target.value }))} />
-            <input style={styles.input} placeholder="Título" value={newPromo.title} onChange={e => setNewPromo(prev => ({ ...prev, title: e.target.value }))} />
-            <input style={styles.input} placeholder="Descrição" value={newPromo.description} onChange={e => setNewPromo(prev => ({ ...prev, description: e.target.value }))} />
-            <input style={styles.input} placeholder="CTA" value={newPromo.ctaLabel} onChange={e => setNewPromo(prev => ({ ...prev, ctaLabel: e.target.value }))} />
-            <div style={styles.mediaField}>
-              <strong style={styles.mediaFieldTitle}>Imagem da promoção</strong>
-              <span style={styles.mediaHint}>Envie uma arte exclusiva. Ela não será puxada nem substituída pelo produto vinculado.</span>
-              <input style={styles.input} placeholder="URL da imagem" value={newPromo.imageUrl} onChange={e => setNewPromo(prev => ({ ...prev, imageUrl: e.target.value }))} />
-              <div style={styles.mediaActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => promoImageInputRef.current?.click()}
-                  disabled={uploadingField === "promo-image"}
-                >
-                  {uploadingField === "promo-image" ? "Enviando banner..." : "Upload do banner"}
-                </button>
-                {resolveAdminImageUrl(newPromo.imageUrl) ? (
-                  <>
-                    <a
-                      href={resolveAdminImageUrl(newPromo.imageUrl) as string}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={styles.secondaryBtn}
-                    >
-                      Abrir imagem
-                    </a>
-                    <button
-                      style={styles.smallBtn}
-                      onClick={() => setNewPromo(prev => ({ ...prev, imageUrl: "" }))}
-                    >
-                      Limpar imagem
-                    </button>
-                  </>
-                ) : null}
-                <span style={styles.mediaHint}>Você também pode colar uma URL manualmente.</span>
-              </div>
-              <input
-                ref={promoImageInputRef}
-                type="file"
-                accept="image/*"
-                style={styles.hiddenFileInput}
-                onChange={async e => {
-                  const urls = await uploadAdminImages(e.target.files, "single", "promo-image");
-                  if (urls[0]) {
-                    setNewPromo(prev => ({
-                      ...prev,
-                      imageUrl: urls[0].bannerUrl || urls[0].url,
-                      imageAlt: prev.imageAlt.trim() || prev.title.trim() || "Banner promocional",
-                    }));
-                  }
-                  e.currentTarget.value = "";
-                }}
-              />
-              {resolveAdminImageUrl(newPromo.imageUrl) ? (
-                <PromotionBannerPreview
-                  src={resolveAdminImageUrl(newPromo.imageUrl)}
-                  alt="Prévia do banner"
-                  label="Desktop"
-                />
-              ) : null}
-              <span style={styles.mediaHint}>Proporção sugerida para desktop: 1600x900 ou 1920x1080.</span>
-            </div>
-            <div style={styles.mediaField}>
-              <strong style={styles.mediaFieldTitle}>Imagem mobile da promoção</strong>
-              <input
-                style={styles.input}
-                placeholder="URL da imagem mobile (opcional)"
-                value={newPromo.mobileImageUrl}
-                onChange={e => setNewPromo(prev => ({ ...prev, mobileImageUrl: e.target.value }))}
-              />
-              <div style={styles.mediaActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => promoMobileImageInputRef.current?.click()}
-                  disabled={uploadingField === "promo-image-mobile"}
-                >
-                  {uploadingField === "promo-image-mobile" ? "Enviando versão mobile..." : "Upload mobile"}
-                </button>
-                {resolveAdminImageUrl(newPromo.mobileImageUrl) ? (
-                  <>
-                    <a
-                      href={resolveAdminImageUrl(newPromo.mobileImageUrl) as string}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={styles.secondaryBtn}
-                    >
-                      Abrir mobile
-                    </a>
-                    <button
-                      style={styles.smallBtn}
-                      onClick={() => setNewPromo(prev => ({ ...prev, mobileImageUrl: "" }))}
-                    >
-                      Limpar mobile
-                    </button>
-                  </>
-                ) : null}
-                <span style={styles.mediaHint}>Se vazio, o carrossel reutiliza a imagem principal no celular.</span>
-              </div>
-              <input
-                ref={promoMobileImageInputRef}
-                type="file"
-                accept="image/*"
-                style={styles.hiddenFileInput}
-                onChange={async e => {
-                  const urls = await uploadAdminImages(e.target.files, "single", "promo-image-mobile");
-                  if (urls[0]) {
-                    setNewPromo(prev => ({ ...prev, mobileImageUrl: urls[0].bannerUrl || urls[0].url }));
-                  }
-                  e.currentTarget.value = "";
-                }}
-              />
-              {resolveAdminImageUrl(newPromo.mobileImageUrl) ? (
-                <PromotionBannerPreview
-                  src={resolveAdminImageUrl(newPromo.mobileImageUrl)}
-                  alt="Prévia mobile do banner"
-                  label="Mobile"
-                  variant="mobile"
-                />
-              ) : null}
-              <span style={styles.mediaHint}>Proporção sugerida para mobile: 1080x1350 ou 1080x1440.</span>
-            </div>
-            <input style={styles.input} placeholder="Texto alternativo da imagem" value={newPromo.imageAlt} onChange={e => setNewPromo(prev => ({ ...prev, imageAlt: e.target.value }))} />
-            <div style={{ ...styles.mediaField, gridColumn: "1 / -1" }}>
-              <strong style={styles.mediaFieldTitle}>Destino da promoção (opcional)</strong>
-              <span style={styles.mediaHint}>Vincular um produto altera somente o destino do botão. A imagem promocional acima continua independente.</span>
-              <label style={styles.promoDestinationField}>
-                <span style={styles.mediaHint}>Produto vinculado</span>
-                <select
-                  style={styles.input}
-                  value={getPromotionLinkedProductId(newPromo.linkUrl)}
-                  onChange={event => {
-                    const productId = event.target.value;
-                    setNewPromo(prev => ({ ...prev, linkUrl: productId ? `/produto/${productId}` : "" }));
-                  }}
-                >
-                  <option value="">Nenhum produto vinculado</option>
-                  {(productsQuery.data ?? []).map((product: any) => (
-                    <option key={product.id} value={String(product.id)}>
-                      #{product.id} · {product.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={styles.promoDestinationField}>
-                <span style={styles.mediaHint}>Ou use um link manual</span>
-                <input
-                  style={styles.input}
-                  placeholder="/produtos, /categoria/camisas ou URL externa"
-                  value={newPromo.linkUrl}
-                  onChange={event => setNewPromo(prev => ({ ...prev, linkUrl: event.target.value }))}
-                />
-              </label>
-            </div>
-            <input style={styles.input} placeholder="Desconto opcional (ex: 30%)" value={newPromo.discountText} onChange={e => setNewPromo(prev => ({ ...prev, discountText: e.target.value }))} />
-            <input style={styles.input} placeholder="Label desconto opcional" value={newPromo.discountLabel} onChange={e => setNewPromo(prev => ({ ...prev, discountLabel: e.target.value }))} />
-            <input style={styles.input} placeholder="Background CSS" value={newPromo.bgStyle} onChange={e => setNewPromo(prev => ({ ...prev, bgStyle: e.target.value }))} />
-            <input style={styles.input} placeholder="Ordem" value={newPromo.sortOrder} onChange={e => setNewPromo(prev => ({ ...prev, sortOrder: e.target.value }))} />
-          </div>
-          <div style={styles.promoPreviewCard}>
-            <div style={styles.promoPreviewMediaGroup}>
-              <div style={{ ...styles.promoPreviewMedia, background: newPromo.bgStyle.trim() || "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)" }}>
-                {resolveAdminImageUrl(newPromo.imageUrl) ? (
-                  <img
-                    src={resolveAdminImageUrl(newPromo.imageUrl) as string}
-                    alt={newPromo.imageAlt.trim() || newPromo.title.trim() || "Banner promocional"}
-                    style={styles.promoPreviewImage}
-                  />
-                ) : (
-                  <div style={styles.promoPreviewPlaceholder}>Sem imagem</div>
-                )}
-              </div>
-              <div style={styles.promoPreviewMobileWrap}>
-                <span style={styles.promoPreviewDeviceLabel}>Mobile</span>
-                <div style={{ ...styles.promoPreviewMobile, background: newPromo.bgStyle.trim() || "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)" }}>
-                  {resolveAdminImageUrl(newPromo.mobileImageUrl || newPromo.imageUrl) ? (
-                    <img
-                      src={resolveAdminImageUrl(newPromo.mobileImageUrl || newPromo.imageUrl) as string}
-                      alt={newPromo.imageAlt.trim() || newPromo.title.trim() || "Banner mobile"}
-                      style={styles.promoPreviewMobileImage}
-                    />
-                  ) : (
-                    <div style={styles.promoPreviewPlaceholder}>Sem mobile</div>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div style={styles.promoPreviewContent}>
-              <span style={styles.promoPreviewEyebrow}>Prévia do banner</span>
-              <span style={styles.promoPreviewBadge}>{newPromo.badge.trim() || "PROMOÇÃO"}</span>
-              <strong style={styles.promoPreviewTitle}>{newPromo.title.trim() || "Título do banner"}</strong>
-              <span style={styles.promoPreviewDescription}>
-                {newPromo.description.trim() || "A descrição aparece logo abaixo do título no carrossel da home."}
-              </span>
-              {newPromo.discountText.trim() ? (
-                <div style={styles.promoPreviewMetaRow}>
-                  <span style={styles.promoPreviewDiscount}>{newPromo.discountText.trim()}</span>
-                  <span style={styles.promoPreviewDiscountLabel}>{newPromo.discountLabel.trim() || "OFF"}</span>
-                </div>
-              ) : null}
-              <div style={styles.promoPreviewFooter}>
-                <span style={styles.promoPreviewCta}>{newPromo.ctaLabel.trim() || "Aproveitar oferta"}</span>
-                <span style={styles.promoPreviewLink}>{newPromo.linkUrl.trim() || "/produtos"}</span>
-              </div>
-              {!resolveAdminImageUrl(newPromo.mobileImageUrl) ? (
-                <span style={styles.promoPreviewWarning}>Sem arte mobile dedicada. O carrossel vai reutilizar a versão desktop no celular.</span>
-              ) : null}
-              <span style={styles.promoPreviewOrderHint}>Depois de criar os banners, arraste as linhas abaixo para reorganizar o carrossel.</span>
-            </div>
-          </div>
-          <div style={styles.inlineRow}>
-            <label>
-              <input type="checkbox" checked={newPromo.isActive} onChange={e => setNewPromo(prev => ({ ...prev, isActive: e.target.checked }))} /> Ativo
-            </label>
-            <button
-              style={styles.primaryBtn}
-              onClick={() => {
-                const sortOrder = Number(newPromo.sortOrder || "0");
-                if (!newPromo.title.trim() || !newPromo.description.trim()) {
-                  showToast({ message: "Preencha título e descrição", duration: 2400 });
-                  return;
-                }
-
-                const payload = {
-                  badge: newPromo.badge.trim() || "PROMOÇÃO",
-                  title: newPromo.title.trim(),
-                  description: newPromo.description.trim(),
-                  ctaLabel: newPromo.ctaLabel.trim() || "Aproveitar oferta",
-                  imageUrl: normalizeAdminImageValue(newPromo.imageUrl),
-                  mobileImageUrl: normalizeAdminImageValue(newPromo.mobileImageUrl),
-                  imageAlt: newPromo.imageAlt.trim(),
-                  linkUrl: newPromo.linkUrl.trim(),
-                  discountText: newPromo.discountText.trim(),
-                  discountLabel: newPromo.discountLabel.trim() || "OFF",
-                  bgStyle: newPromo.bgStyle.trim() || "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)",
-                  sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
-                  isActive: newPromo.isActive,
-                };
-
-                if (editingPromoId) {
-                  updatePromoBannerMutation.mutate({ id: editingPromoId, ...payload });
-                } else {
-                  createPromoBannerMutation.mutate(payload);
-                }
-              }}
-            >
-              {editingPromoId ? "Salvar banner" : "Criar banner"}
-            </button>
-            {editingPromoId ? (
-              <button
-                style={styles.smallBtn}
-                onClick={() => {
-                  setEditingPromoId(null);
-                  setNewPromo({ ...emptyPromoForm });
-                }}
-              >
-                Cancelar edicao
-              </button>
-            ) : null}
-          </div>
-
-          {promoBannersQuery.isLoading ? (
-            <AdminLoadingState>Carregando banners...</AdminLoadingState>
-          ) : !(promoBannersQuery.data ?? []).length ? (
-            <AdminEmptyState
-              title="Nenhum banner cadastrado"
-              description="Crie o primeiro banner promocional para alimentar o carrossel principal da home."
-            />
-          ) : (
-            <AdminTableWrapper>
-              <table style={styles.table}>
-                <thead><tr><th>Ordem</th><th>Campanha</th><th>Previews</th><th>Status</th><th>CTA e link</th><th>Ações</th></tr></thead>
-                <tbody>
-                  {(promoBannersQuery.data ?? []).map((row: any) => (
-                  <tr
-                    key={row.id}
-                    draggable
-                    onDragStart={() => setDraggingPromoId(row.id)}
-                    onDragEnd={() => setDraggingPromoId(null)}
-                    onDragOver={event => event.preventDefault()}
-                    onDrop={async event => {
-                      event.preventDefault();
-                      if (draggingPromoId && draggingPromoId !== row.id) {
-                        await reorderPromoBanners(draggingPromoId, row.id);
-                      }
-                      setDraggingPromoId(null);
-                    }}
-                    style={draggingPromoId === row.id ? { opacity: 0.55 } : undefined}
-                  >
-                    <td>
-                      <div style={styles.dragHandle}>
-                        <span style={styles.dragGrip}>⋮⋮</span>
-                        <span>#{row.sortOrder}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <PromotionCampaignCell
-                        badge={row.badge}
-                        title={row.title}
-                        description={row.description}
-                      />
-                    </td>
-                    <td>
-                      <div style={styles.promoTablePreviewGroup}>
-                        <PromotionBannerPreview
-                          src={resolveAdminImageUrl(row.imageUrl)}
-                          alt={row.title || "Banner"}
-                          label="Desktop"
-                        />
-                        <PromotionBannerPreview
-                          src={resolveAdminImageUrl(row.mobileImageUrl || row.imageUrl)}
-                          alt={row.title || "Banner mobile"}
-                          label="Mobile"
-                          variant="mobile"
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <div style={styles.promoStatusStack}>
-                        <PromotionStatusBadge active={Boolean(row.isActive)} />
-                        <div style={styles.promoMediaBadgeRow}>
-                          <PromotionMediaBadge tone={resolveAdminImageUrl(row.imageUrl) ? "success" : "warning"}>
-                            {resolveAdminImageUrl(row.imageUrl) ? "Desktop ok" : "Sem desktop"}
-                          </PromotionMediaBadge>
-                          <PromotionMediaBadge tone={resolveAdminImageUrl(row.mobileImageUrl) ? "success" : "neutral"}>
-                            {resolveAdminImageUrl(row.mobileImageUrl) ? "Mobile ok" : "Usa desktop"}
-                          </PromotionMediaBadge>
-                        </div>
-                        {row.discountText ? (
-                          <PromotionMediaBadge tone="warning">
-                            {row.discountText} {row.discountLabel || "OFF"}
-                          </PromotionMediaBadge>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td>
-                      <div style={styles.productTableCell}>
-                        <span style={styles.productTableName}>{row.ctaLabel || "Sem CTA"}</span>
-                        <span style={styles.productTableMeta}>{row.linkUrl || "Sem link"}</span>
-                        <span style={styles.productTableMeta}>ID #{row.id}</span>
-                      </div>
-                    </td>
-                    <td style={styles.actionsCell}>
-                      <button
-                        style={styles.smallBtn}
-                        onClick={() => {
-                          setEditingPromoId(row.id);
-                          setNewPromo({
-                            badge: row.badge ?? "PROMOÇÃO",
-                            title: row.title ?? "",
-                            description: row.description ?? "",
-                            ctaLabel: row.ctaLabel ?? "Aproveitar oferta",
-                            imageUrl: normalizeAdminImageValue(row.imageUrl),
-                            mobileImageUrl: normalizeAdminImageValue(row.mobileImageUrl),
-                            imageAlt: row.imageAlt ?? "",
-                            linkUrl: row.linkUrl ?? "",
-                            discountText: row.discountText ?? "",
-                            discountLabel: row.discountLabel ?? "OFF",
-                            bgStyle: row.bgStyle ?? "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)",
-                            sortOrder: String(row.sortOrder ?? 0),
-                            isActive: Boolean(row.isActive),
-                          });
-                        }}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        style={styles.smallBtn}
-                        onClick={() => updatePromoBannerMutation.mutate({ id: row.id, isActive: !row.isActive })}
-                      >
-                        {row.isActive ? "Desativar" : "Ativar"}
-                      </button>
-                      <button
-                        style={styles.smallBtn}
-                        onClick={() => {
-                          setEditingPromoId(null);
-                          setNewPromo({
-                            badge: row.badge ?? "PROMOÇÃO",
-                            title: `${row.title ?? ""} (Cópia)`.trim(),
-                            description: row.description ?? "",
-                            ctaLabel: row.ctaLabel ?? "Aproveitar oferta",
-                            imageUrl: normalizeAdminImageValue(row.imageUrl),
-                            mobileImageUrl: normalizeAdminImageValue(row.mobileImageUrl),
-                            imageAlt: row.imageAlt ?? "",
-                            linkUrl: row.linkUrl ?? "",
-                            discountText: row.discountText ?? "",
-                            discountLabel: row.discountLabel ?? "OFF",
-                            bgStyle: row.bgStyle ?? "linear-gradient(135deg, #1a1a1a 0%, #333333 100%)",
-                            sortOrder: String((row.sortOrder ?? 0) + 1),
-                            isActive: Boolean(row.isActive),
-                          });
-                          showToast({ message: "Banner duplicado para edição", duration: 2200 });
-                        }}
-                      >
-                        Duplicar
-                      </button>
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => {
-                          if (!confirmAdminAction(`Excluir o banner "${row.title || `#${row.id}`}"?`)) return;
-                          deletePromoBannerMutation.mutate({ id: row.id });
-                        }}
-                      >
-                        Excluir
-                      </button>
-                    </td>
-                  </tr>
-                  ))}
-                </tbody>
-              </table>
-            </AdminTableWrapper>
-          )}
+          <AdminHomeHighlightsPanel
+            records={promoBannersQuery.data ?? []}
+            settings={homeHighlightSettingsQuery.data ?? null}
+            settingsLoading={homeHighlightSettingsQuery.isLoading}
+            settingsError={homeHighlightSettingsQuery.isError}
+            settingsSaving={updateHomeHighlightSettingsMutation.isPending}
+            isLoading={promoBannersQuery.isLoading}
+            isError={promoBannersQuery.isError}
+            isSaving={createPromoBannerMutation.isPending || updatePromoBannerMutation.isPending || reorderPromoBannerMutation.isPending}
+            isDeleting={deletePromoBannerMutation.isPending}
+            onRefresh={() => { void promoBannersQuery.refetch(); }}
+            onUpdateSettings={input => updateHomeHighlightSettingsMutation.mutateAsync(input)}
+            onCreate={input => createPromoBannerMutation.mutateAsync(input)}
+            onUpdate={input => {
+              if ("sortOrder" in input && Object.keys(input).length === 2) {
+                return reorderPromoBannerMutation.mutateAsync(input);
+              }
+              return updatePromoBannerMutation.mutateAsync(input);
+            }}
+            onDelete={id => deletePromoBannerMutation.mutateAsync({ id })}
+            onUpload={async (file, mobile) => {
+              const transfer = new DataTransfer();
+              transfer.items.add(file);
+              const uploaded = await uploadAdminImages(transfer.files, "single", mobile ? "promo-image-mobile" : "promo-image");
+              return uploaded[0]?.url ?? null;
+            }}
+          />
         </AdminSurface>
       )}
 
       {section === "coupons" && (
         <AdminSurface
-          title="Cupons e descontos"
-          description="Controle os cupons promocionais da loja com leitura rápida de status, uso e validade."
+          title="Cupons"
+          description="Consulte, cadastre e atualize os cupons promocionais da loja."
         >
-          <CouponsSummaryCards summary={couponSummary} />
-          <CouponOperationalAlerts alerts={couponOperationalAlerts} />
-          <div style={styles.productAdminHeader}>
-            <div>
-              <h3 style={styles.productAdminTitle}>Criar cupom</h3>
-              <p style={styles.productAdminText}>Preencha os dados principais do desconto. O envio para o backend permanece no mesmo formato atual.</p>
-            </div>
-          </div>
-          <div style={{ ...styles.couponCreateLayout, ...(isCompactAdmin ? styles.couponCreateLayoutCompact : {}) }}>
-            <div style={styles.formGrid}>
-              <label style={styles.couponField}>
-                <span style={styles.mediaHint}>Código do cupom</span>
-                <input style={styles.input} placeholder="Ex: LANCAMENTO15" value={newCoupon.code} onChange={e => setNewCoupon(prev => ({ ...prev, code: e.target.value }))} />
-              </label>
-              <label style={styles.couponField}>
-                <span style={styles.mediaHint}>Tipo de desconto</span>
-                <select style={styles.select} value={newCoupon.type} onChange={e => setNewCoupon(prev => ({ ...prev, type: e.target.value }))}>
-                  <option value="percent">Percentual</option>
-                  <option value="fixed">Valor fixo</option>
-                </select>
-              </label>
-              <label style={styles.couponField}>
-                <span style={styles.mediaHint}>Valor</span>
-                <input style={styles.input} placeholder={newCoupon.type === "percent" ? "Ex: 15" : "Ex: 20"} value={newCoupon.value} onChange={e => setNewCoupon(prev => ({ ...prev, value: e.target.value }))} />
-              </label>
-              <label style={styles.couponField}>
-                <span style={styles.mediaHint}>Limite de usos</span>
-                <input style={styles.input} placeholder="Vazio = sem limite" value={newCoupon.maxUses} onChange={e => setNewCoupon(prev => ({ ...prev, maxUses: e.target.value }))} />
-              </label>
-            </div>
-            <CouponFormPreview
-              code={newCoupon.code}
-              type={newCoupon.type}
-              value={newCoupon.value}
-              maxUses={newCoupon.maxUses}
-            />
-          </div>
-          <div style={styles.productAdminActions}>
-            <button
-              style={styles.primaryBtn}
-              onClick={() => {
-                couponCreateMutation.mutate({
-                  code: newCoupon.code,
-                  type: newCoupon.type as any,
-                  value: Number(newCoupon.value),
-                  maxUses: newCoupon.maxUses ? Number(newCoupon.maxUses) : null,
-                });
-              }}
-            >
-              Criar cupom
-            </button>
-          </div>
-
-          <div style={styles.inlineRow}>
-            <input
-              style={{ ...styles.input, minWidth: 260 }}
-              placeholder="Buscar por código, tipo ou ID"
-              value={couponSearch}
-              onChange={e => setCouponSearch(e.target.value)}
-            />
-            <AdminSummaryPill>Exibindo: {coupons.length}</AdminSummaryPill>
-            <AdminSummaryPill>Busca: {searchedCoupons.length}</AdminSummaryPill>
-          </div>
-          <CouponsFilters
-            value={couponFilter}
-            onChange={setCouponFilter}
-            options={couponFilterOptions}
+          <AdminCouponsPanel
+            records={couponsQuery.data ?? []}
+            isLoading={couponsQuery.isLoading}
+            isError={couponsQuery.isError}
+            isCreating={couponCreateMutation.isPending}
+            isUpdating={couponUpdateMutation.isPending}
+            isDeleting={couponDeleteMutation.isPending}
+            onRefresh={() => { void couponsQuery.refetch(); }}
+            onCreate={input => couponCreateMutation.mutateAsync(input)}
+            onUpdate={input => couponUpdateMutation.mutateAsync(input)}
+            onDelete={id => couponDeleteMutation.mutateAsync({ id })}
           />
-
-          {couponsQuery.isLoading ? (
-            <AdminLoadingState>Carregando cupons...</AdminLoadingState>
-          ) : !(couponsQuery.data ?? []).length ? (
-            <AdminEmptyState
-              title="Nenhum cupom cadastrado"
-              description="Crie o primeiro cupom para liberar descontos promocionais no checkout."
-            />
-          ) : coupons.length === 0 ? (
-            <AdminEmptyState
-              title="Nenhum cupom encontrado"
-              description="Ajuste a busca ou os filtros para visualizar outros cupons carregados."
-            />
-          ) : (
-            <AdminTableWrapper>
-              <table style={styles.table}>
-                <thead><tr><th>Código</th><th>Tipo</th><th>Valor</th><th>Status</th><th>Uso</th><th>Validade</th><th>Ação</th></tr></thead>
-                <tbody>
-                  {coupons.map(coupon => (
-                    <tr key={coupon.id}>
-                      <td><CouponCodeCell coupon={coupon} /></td>
-                      <td><CouponTypeBadge type={coupon.type} /></td>
-                      <td><CouponValue coupon={coupon} /></td>
-                      <td><CouponStatusBadge coupon={coupon} /></td>
-                      <td><CouponUsageBadge coupon={coupon} /></td>
-                      <td><CouponValidity coupon={coupon} /></td>
-                      <td>
-                        <button
-                          style={styles.dangerBtn}
-                          onClick={() => {
-                            if (!confirmAdminAction(`Excluir o cupom ${coupon.code}?`)) return;
-                            couponDeleteMutation.mutate({ id: coupon.id });
-                          }}
-                        >
-                          Excluir
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </AdminTableWrapper>
-          )}
           <div style={styles.launchCard}>
             <h3 style={styles.sectionTitle}>Avisar lista de espera sobre a abertura</h3>
             <p style={styles.muted}>
@@ -2875,148 +1326,35 @@ export default function Admin() {
       )}
 
       {section === "reports" && (
-        <AdminSurface
-          title="Relatórios"
-          description="Exporte o consolidado de vendas por período para análise externa ou conferência operacional."
-        >
-          <AdminCriticalAlert
-            tone="info"
-            title="Exportações podem conter dados operacionais sensíveis"
-            description="Baixe e compartilhe arquivos CSV apenas em canais internos e com pessoas autorizadas."
-          />
-          <ReportsExportCard
-            title="Vendas por período"
-            description="Exporta o consolidado de vendas no intervalo selecionado, preservando o formato CSV já usado pela operação."
-            aside={<AdminSummaryPill>Formato: CSV</AdminSummaryPill>}
-          >
-            <div style={styles.inlineRow}>
-              <input type="datetime-local" style={styles.input} value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
-              <input type="datetime-local" style={styles.input} value={reportTo} onChange={e => setReportTo(e.target.value)} />
-              <button
-                style={styles.primaryBtn}
-                disabled={reportExporting}
-                onClick={async () => {
-                  try {
-                    setReportExporting(true);
-                    const fromIso = reportFrom ? new Date(reportFrom).toISOString() : new Date(Date.now() - 7 * 86400000).toISOString();
-                    const toIso = reportTo ? new Date(reportTo).toISOString() : new Date().toISOString();
-                    const csvPayload = await utils.admin.reportsSalesCsv.fetch({ from: fromIso, to: toIso });
-                    const blob = new Blob([csvPayload.csv], { type: "text/csv;charset=utf-8;" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = csvPayload.fileName;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    showToast({ message: "CSV exportado", duration: 2200 });
-                  } catch (error) {
-                    showToast({ message: error instanceof Error ? error.message : "Falha ao exportar CSV", duration: 2800 });
-                  } finally {
-                    setReportExporting(false);
-                  }
-                }}
-              >
-                {reportExporting ? "Exportando..." : "Exportar CSV"}
-              </button>
-            </div>
-          </ReportsExportCard>
+        <AdminSurface title="Relatórios" description="Resumo operacional de pedidos criados no período selecionado.">
+          <AdminReportsPanel enabled={isAuthenticated && isAdmin && section === "reports"} onMessage={message => showToast({ message, duration: 2800 })} />
         </AdminSurface>
       )}
 
       {section === "audit" && (
-        <AdminSurface
-          title="Logs de auditoria"
-          description="Últimos registros administrativos para rastreabilidade, conferência e apoio à investigação."
-        >
-          <AdminCriticalAlert
-            tone="info"
-            title="Auditoria registra ações administrativas"
-            description="Use estes logs para conferência operacional. Metadados são exibidos de forma resumida para evitar exposição desnecessária."
+        <AdminSurface title="Auditoria" description="Consulte os eventos administrativos recentes registrados pelo sistema.">
+          <AdminAuditPanel
+            records={auditQuery.data ?? []}
+            isLoading={auditQuery.isLoading}
+            isError={auditQuery.isError}
+            onRefresh={() => { void auditQuery.refetch(); }}
           />
-          <SystemMetricCards
-            cards={[
-              { label: "Logs carregados", value: (auditQuery.data ?? []).length },
-              { label: "Ações críticas", value: (auditQuery.data ?? []).filter(log => String(log.action ?? "").includes("delete") || String(log.action ?? "").includes("restore")).length, tone: "warning" },
-              { label: "Backups registrados", value: (auditQuery.data ?? []).filter(log => String(log.entity ?? "") === "backup").length },
-            ]}
-          />
-          {auditQuery.isLoading ? (
-            <AdminLoadingState>Carregando auditoria...</AdminLoadingState>
-          ) : !(auditQuery.data ?? []).length ? (
-            <AdminEmptyState
-              title="Sem logs disponíveis"
-              description="Os registros administrativos aparecerão aqui conforme ações forem executadas no painel."
-            />
-          ) : (
-            <AuditLogTable logs={auditQuery.data ?? []} />
-          )}
         </AdminSurface>
       )}
 
       {section === "backup" && (
         <AdminSurface
-          title="Backup e restauração"
-          description="Use esta área com cautela. A restauração substitui dados atuais e deve ser feita apenas em casos controlados."
+          title="Backup"
+          description="Consulte os arquivos listados pelo servidor e os limites conhecidos do armazenamento."
         >
-          <AdminCriticalAlert
-            tone="danger"
-            title="Restaurar backup pode sobrescrever dados atuais"
-            description="Use esta ação apenas com certeza. A confirmação obrigatória foi mantida e o payload de restauração continua igual."
+          <AdminBackupPanel
+            files={backupsQuery.data ?? []}
+            isLoading={backupsQuery.isLoading}
+            isError={backupsQuery.isError}
+            isCreating={backupManualMutation.isPending}
+            onRefresh={() => { void backupsQuery.refetch(); }}
+            onCreateBackup={() => backupManualMutation.mutate()}
           />
-          <SystemMetricCards
-            cards={[
-              { label: "Backups disponíveis", value: (backupsQuery.data ?? []).length },
-              { label: "Ação crítica", value: "Restore", tone: "danger" },
-              { label: "Confirmação", value: "Obrigatória", tone: "warning" },
-            ]}
-          />
-          <div style={{ ...styles.systemSplitGrid, ...(isCompactAdmin ? styles.systemSplitGridCompact : {}) }}>
-            <BackupInfoCard
-              title="Criar backup manual"
-              description="Gera um arquivo JSON com os dados atuais usando o fluxo existente do admin."
-            >
-              <button
-                style={styles.primaryBtn}
-                onClick={() => backupManualMutation.mutate()}
-                disabled={backupManualMutation.isPending}
-              >
-                {backupManualMutation.isPending ? "Criando backup..." : "Backup manual"}
-              </button>
-            </BackupInfoCard>
-            <BackupInfoCard
-              title="Restaurar backup"
-              description="Informe exatamente o nome do arquivo disponível. A restauração substitui dados atuais."
-              tone="danger"
-            >
-              <div style={styles.inlineRow}>
-                <input style={styles.input} placeholder="arquivo-backup.json" value={restoreFileName} onChange={e => setRestoreFileName(e.target.value)} />
-                <button
-                  style={styles.dangerBtn}
-                  onClick={() => {
-                    if (!restoreFileName.trim()) {
-                      showToast({ message: "Informe o nome do arquivo de backup", duration: 2300 });
-                      return;
-                    }
-                    if (!confirmAdminAction(`Restaurar o backup "${restoreFileName.trim()}"? Isso substitui dados atuais e deve ser feito apenas com certeza.`)) return;
-                    backupRestoreMutation.mutate({ fileName: restoreFileName.trim(), confirmation: "RESTORE" });
-                  }}
-                  disabled={backupRestoreMutation.isPending}
-                >
-                  {backupRestoreMutation.isPending ? "Restaurando..." : "Restaurar"}
-                </button>
-              </div>
-            </BackupInfoCard>
-          </div>
-          {backupsQuery.isLoading ? (
-            <AdminLoadingState>Carregando backups...</AdminLoadingState>
-          ) : !(backupsQuery.data ?? []).length ? (
-            <AdminEmptyState
-              title="Nenhum backup disponível"
-              description="Crie um backup manual para que ele apareça listado aqui."
-            />
-          ) : (
-            <BackupFileList files={backupsQuery.data ?? []} />
-          )}
         </AdminSurface>
       )}
 
@@ -3025,19 +1363,17 @@ export default function Admin() {
           onSelectSection={nextSection => setSection(nextSection)}
           runtimeStatus={settingsStatusQuery.data}
           runtimeStatusLoading={settingsStatusQuery.isLoading}
+          runtimeStatusError={settingsStatusQuery.isError}
+          onRetryRuntimeStatus={() => { void settingsStatusQuery.refetch(); }}
         />
       )}
+        </main>
+      </div>
     </div>
   );
 }
 
 const adminCss = `
-.l4-admin {
-  background:
-    radial-gradient(circle at top right, rgba(220, 38, 38, 0.10), transparent 28%),
-    linear-gradient(180deg, #070707 0%, #0b0b0b 100%);
-  padding: clamp(14px, 2.4vw, 28px);
-}
 .l4-admin table th,
 .l4-admin table td {
   padding: 14px 14px;
@@ -3084,14 +1420,6 @@ const adminCss = `
 `;
 
 const styles: Record<string, CSSProperties> = {
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 22,
-    overflowX: "hidden",
-    color: "#f0ede8",
-    borderRadius: 24,
-  },
   centerCard: {
     maxWidth: 520,
     margin: "0 auto",

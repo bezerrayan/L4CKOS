@@ -1,0 +1,138 @@
+.l4-returns-page {
+  width: min(100% - 48px, 1180px);
+  margin: 0 auto;
+  padding: clamp(36px, 6vw, 72px) 0 88px;
+  color: #f0ede8;
+}
+
+.l4-returns-header {
+  max-width: 780px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid #292929;
+}
+
+.l4-returns-eyebrow {
+  color: #e8002a;
+  font: 700 10px/1.5 "Space Mono", monospace;
+  letter-spacing: .14em;
+}
+
+.l4-returns-header h1 {
+  margin: 12px 0 10px;
+  font-size: clamp(40px, 6vw, 68px);
+  line-height: .98;
+}
+
+.l4-returns-header > p,
+.l4-returns-section p,
+.l4-returns-contact p {
+  color: #c8c1ba;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.l4-returns-sections {
+  max-width: 920px;
+}
+
+.l4-returns-section {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 20px;
+  padding: 27px 0 29px;
+  border-bottom: 1px solid #292929;
+}
+
+.l4-returns-number {
+  padding-top: 4px;
+  color: #e8002a;
+  font: 700 12px/1.4 "Space Mono", monospace;
+}
+
+.l4-returns-section h2,
+.l4-returns-contact h2 {
+  margin: 0 0 10px;
+  color: #f0ede8;
+  font-size: clamp(22px, 3vw, 29px);
+}
+
+.l4-returns-section p + p {
+  margin-top: 10px;
+}
+
+.l4-returns-contact {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 28px;
+  max-width: 920px;
+  margin-top: 30px;
+  padding-left: 18px;
+  border-left: 2px solid #e8002a;
+}
+
+.l4-returns-contact h2 {
+  margin: 7px 0;
+}
+
+.l4-returns-contact p {
+  max-width: 640px;
+  margin: 0;
+}
+
+.l4-returns-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 18px;
+  background: #e8002a;
+  color: #fff;
+  font: 700 10px/1.4 "Space Mono", monospace;
+  letter-spacing: .08em;
+}
+
+.l4-returns-action:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+}
+
+@media (max-width: 700px) {
+  .l4-returns-page {
+    width: calc(100% - 36px);
+    padding-top: 34px;
+  }
+
+  .l4-returns-header {
+    padding-bottom: 23px;
+  }
+
+  .l4-returns-section {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 12px;
+    padding: 22px 0 24px;
+  }
+
+  .l4-returns-section p,
+  .l4-returns-header > p,
+  .l4-returns-contact p {
+    font-size: 14px;
+  }
+
+  .l4-returns-contact {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 18px;
+    margin-top: 24px;
+  }
+
+  .l4-returns-action {
+    align-self: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .l4-returns-action { transition: none; }
+}

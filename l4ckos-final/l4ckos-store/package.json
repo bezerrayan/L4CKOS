@@ -7,7 +7,7 @@
     "dev": "cross-env NODE_ENV=development PORT=3010 tsx watch server/_core/index.ts",
     "build": "pnpm build:client && pnpm build:server",
     "build:client": "vite build",
-    "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --splitting --jsx=automatic --outdir=dist",
+    "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --splitting --jsx=automatic --outdir=dist && pnpm build:asaas-hold-noop && pnpm build:staging-admission",
     "start": "cross-env NODE_ENV=production HOST=0.0.0.0 node dist/index.js",
     "check": "pnpm check:client && pnpm check:server",
     "check:client": "tsc --noEmit --project tsconfig.client.json",
@@ -22,7 +22,9 @@
     "db:staging:reconcile:prepare": "tsx scripts/staging-reconciliation.ts prepare",
     "db:staging:reconcile:apply": "tsx scripts/staging-reconciliation.ts apply",
     "db:staging:preorder:prepare": "tsx scripts/staging-preorder.ts prepare",
-    "db:staging:preorder:apply": "tsx scripts/staging-preorder.ts apply"
+    "db:staging:preorder:apply": "tsx scripts/staging-preorder.ts apply",
+    "build:staging-admission": "esbuild server/admin/stagingCheckoutAdmissionCli.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/staging-checkout-admission.js",
+    "build:asaas-hold-noop": "esbuild server/admin/asaasHoldNoopCli.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/asaas-hold-noop.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

@@ -4,6 +4,7 @@ import { formatPrice } from "../../../lib/utils";
 import {
   AdminEmptyState,
   AdminLoadingState,
+  AdminMetricCards,
   AdminQuickActions,
   AdminStatCard,
   AdminStatsGrid,
@@ -70,6 +71,9 @@ type DashboardKpis = {
 
 type AdminDashboardProps = {
   dashboardData?: DashboardKpis | null;
+  dashboardLoading?: boolean;
+  dashboardError?: boolean;
+  onRetryDashboard?: () => void;
   isMobile: boolean;
   isCompact: boolean;
   orders: DashboardOrder[];
@@ -79,7 +83,15 @@ type AdminDashboardProps = {
   recentAudit: DashboardAudit[];
   quickActions: Array<{ label: string; caption: string; onClick: () => void }>;
   ordersLoading: boolean;
+  ordersError?: boolean;
   productsLoading: boolean;
+  productsError?: boolean;
+  promoBannersLoading?: boolean;
+  promoBannersError?: boolean;
+  couponsLoading?: boolean;
+  couponsError?: boolean;
+  auditLoading?: boolean;
+  auditError?: boolean;
   orderStatusSummary: OrderStatusSummary[];
   operationalAlerts: DashboardAlert[];
   getOrderStatusLabel: (status: string) => string;
@@ -113,6 +125,9 @@ function formatOrderDate(value: Date | string | null | undefined) {
 
 export function AdminDashboard({
   dashboardData,
+  dashboardLoading = false,
+  dashboardError = false,
+  onRetryDashboard,
   isMobile,
   isCompact,
   orders,
@@ -122,7 +137,15 @@ export function AdminDashboard({
   recentAudit,
   quickActions,
   ordersLoading,
+  ordersError = false,
   productsLoading,
+  productsError = false,
+  promoBannersLoading = false,
+  promoBannersError = false,
+  couponsLoading = false,
+  couponsError = false,
+  auditLoading = false,
+  auditError = false,
   orderStatusSummary,
   operationalAlerts,
   getOrderStatusLabel,
@@ -133,7 +156,7 @@ export function AdminDashboard({
   const recentOrders = orders.slice(0, 6);
   const lowStockProducts = products.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) <= 5).slice(0, 6);
   const totalRevenue = orders.reduce((sum, order) => sum + asMoney(order.totalPrice), 0);
-  const averageTicket = orders.length > 0 ? totalRevenue / orders.length : 0;
+  const averageTicket = orders.length > 0 ? totalRevenue / orders.length : null;
   const paidOrders = orders.filter(order => order.status === "paid").length;
   const shippedOrders = orders.filter(order => order.status === "shipped").length;
   const cancelledOrders = orders.filter(order => order.status === "cancelled").length;
@@ -144,187 +167,421 @@ export function AdminDashboard({
 
   const derivedAlerts: DashboardAlert[] = [
     ...operationalAlerts,
-    ...(activeBanners === 0 && promoBanners.length > 0
+    ...(!promoBannersLoading && !promoBannersError && activeBanners === 0 && promoBanners.length > 0
       ? [{ title: "Nenhum banner ativo", description: "Há banners cadastrados, mas nenhum está ativo para campanha.", tone: "warning" as const }]
       : []),
-    ...(promoBanners.length === 0
+    ...(!promoBannersLoading && !promoBannersError && promoBanners.length === 0
       ? [{ title: "Nenhum banner cadastrado", description: "A home ainda não tem banners promocionais gerenciados pelo painel.", tone: "neutral" as const }]
       : []),
-    ...(ordersWithoutTracking > 0
+    ...(!ordersLoading && !ordersError && ordersWithoutTracking > 0
       ? [{ title: `${ordersWithoutTracking} pedido(s) sem rastreio`, description: "Pedidos pagos/em separação/enviados ainda sem código informado.", tone: "warning" as const }]
       : []),
-    ...(productsWithoutImage > 0
+    ...(!productsLoading && !productsError && productsWithoutImage > 0
       ? [{ title: `${productsWithoutImage} produto(s) sem imagem`, description: "Revise o cadastro visual para manter a vitrine consistente.", tone: "warning" as const }]
       : []),
   ];
 
+  const ordersAction = quickActions.find(action => action.label === "Pedidos");
+
   return (
-    <div style={styles.dashboardStack}>
-      <AdminStatsGrid
-        style={{
-          gridTemplateColumns: isMobile
-            ? "1fr"
-            : isCompact
-              ? "repeat(2, minmax(0, 1fr))"
-              : "repeat(3, minmax(0, 1fr))",
-        }}
+    <div
+      className="admin-dashboard dashboard-focused"
+      style={styles.dashboardStack}
+    >
+      <section
+        className="dashboard-day-summary"
+        aria-labelledby="dashboard-day-title"
       >
-        <AdminStatCard
-          label="Vendas de hoje"
-          value={formatPrice((dashboardData?.salesToday ?? 0) / 100)}
-          hint="Considera pedidos entregues no dia."
-          tone="success"
-          icon={<OverviewIcon><path d="M12 20V10"></path><path d="m18 20-6-6-6 6"></path><path d="M6 4h12"></path></OverviewIcon>}
-        />
-        <AdminStatCard
-          label="Pedidos pendentes"
-          value={String(dashboardData?.pendingOrders ?? 0)}
-          hint="Pedidos aguardando pagamento."
-          tone="warning"
-          icon={<OverviewIcon><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></OverviewIcon>}
-        />
-        <AdminStatCard
-          label="Pedidos hoje"
-          value={String(dashboardData?.ordersToday ?? 0)}
-          hint="Criados desde 00:00."
-          tone="info"
-          icon={<OverviewIcon><path d="M3 6h18"></path><path d="M8 6V3"></path><path d="M16 6V3"></path><rect x="3" y="6" width="18" height="15" rx="2"></rect></OverviewIcon>}
-        />
-        <AdminStatCard
-          label="Clientes"
-          value={String(dashboardData?.usersCount ?? 0)}
-          hint="Usuários com conta no sistema."
-          icon={<OverviewIcon><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></OverviewIcon>}
-        />
-        <AdminStatCard
-          label="Produtos ativos"
-          value={String(dashboardData?.productsCount ?? 0)}
-          hint="Itens disponíveis no catálogo."
-          icon={<OverviewIcon><path d="M6 7 3 9v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9l-3-2"></path><path d="M3 9h18"></path><path d="M8 12h8"></path><path d="M9 7V5a3 3 0 0 1 6 0v2"></path></OverviewIcon>}
-        />
-        <AdminStatCard
-          label="Estoque baixo"
-          value={String(dashboardData?.lowStockCount ?? 0)}
-          hint="Produtos com 5 unidades ou menos."
-          tone="warning"
-          icon={<OverviewIcon><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></OverviewIcon>}
-        />
-      </AdminStatsGrid>
+        <h2 id="dashboard-day-title">Resumo do dia</h2>
+        {dashboardLoading ? (
+          <AdminLoadingState>Carregando indicadores...</AdminLoadingState>
+        ) : dashboardError || !dashboardData ? (
+          <DashboardQueryState onRetry={onRetryDashboard} />
+        ) : <AdminStatsGrid
+          style={{
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))",
+          }}
+        >
+          <AdminStatCard
+            label="Valor de pedidos criados hoje e entregues"
+            value={formatPrice((dashboardData?.salesToday ?? 0) / 100)}
+            hint="Soma dos pedidos entregues criados hoje; não representa confirmação financeira."
+            tone="neutral"
+            icon={
+              <OverviewIcon>
+                <path d="M12 20V10"></path>
+                <path d="m18 20-6-6-6 6"></path>
+                <path d="M6 4h12"></path>
+              </OverviewIcon>
+            }
+          />
+          <AdminStatCard
+            label="Pedidos pendentes"
+            value={String(dashboardData?.pendingOrders ?? 0)}
+            hint="Pedidos aguardando pagamento."
+            tone="neutral"
+            icon={
+              <OverviewIcon>
+                <circle cx="12" cy="12" r="8"></circle>
+                <path d="M12 8v5l3 2"></path>
+              </OverviewIcon>
+            }
+          />
+          <AdminStatCard
+            label="Pedidos hoje"
+            value={String(dashboardData?.ordersToday ?? 0)}
+            hint="Criados desde o início do dia calculado no servidor."
+            tone="neutral"
+            icon={
+              <OverviewIcon>
+                <path d="M3 6h18"></path>
+                <path d="M8 6V3"></path>
+                <path d="M16 6V3"></path>
+                <rect x="3" y="6" width="18" height="15" rx="2"></rect>
+              </OverviewIcon>
+            }
+          />
+        </AdminStatsGrid>}
+      </section>
 
-      <AdminSurface title="Visão financeira e operação" description="Indicadores calculados somente com os pedidos carregados no painel.">
-        <div style={styles.metricGrid}>
-          <MetricCard label="Faturamento carregado" value={formatPrice(totalRevenue)} />
-          <MetricCard label="Ticket médio" value={formatPrice(averageTicket)} />
-          <MetricCard label="Pedidos pagos" value={String(paidOrders)} />
-          <MetricCard label="Pedidos enviados" value={String(shippedOrders)} />
-          <MetricCard label="Cancelados" value={String(cancelledOrders)} tone="danger" />
-          <MetricCard label="Banners ativos" value={`${activeBanners}/${promoBanners.length}`} />
-          <MetricCard label="Cupons ativos" value={`${activeCoupons}/${coupons.length}`} />
-          <MetricCard label="Produtos cadastrados" value={String(products.length)} />
-        </div>
-      </AdminSurface>
-
-      <div style={{ ...styles.dashboardColumns, gridTemplateColumns: isCompact ? "1fr" : styles.dashboardColumns.gridTemplateColumns }}>
-        <AdminSurface title="Ações rápidas" description="Atalhos para as rotinas mais frequentes do painel.">
-          <AdminQuickActions actions={quickActions} />
+      {ordersLoading || productsLoading ? (
+        <AdminSurface title="Precisa de atenção">
+          <AdminLoadingState>Verificando pedidos e estoque...</AdminLoadingState>
         </AdminSurface>
-
-        <AdminSurface title="Status do sistema" description="Resumo rápido da saúde operacional com base nos dados disponíveis hoje.">
-          <div style={styles.systemStatusList}>
-            <StatusRow label="Pedidos em aberto" value={String(dashboardData?.pendingOrders ?? 0)} />
-            <StatusRow label="Catálogo publicado" value={`${dashboardData?.productsCount ?? 0} itens`} />
-            <StatusRow label="Cadastros ativos" value={`${dashboardData?.usersCount ?? 0} usuários`} />
-          </div>
+      ) : ordersError || productsError ? (
+        <AdminSurface title="Precisa de atenção">
+          <AdminEmptyState title="Alertas indisponíveis" description="Não foi possível consultar pedidos e estoque para atualizar todos os alertas." />
         </AdminSurface>
-      </div>
+      ) : <DashboardAlerts alerts={derivedAlerts} />}
 
-      <div style={{ ...styles.dashboardColumns, gridTemplateColumns: isCompact ? "1fr" : styles.dashboardColumns.gridTemplateColumns }}>
-        <AdminSurface title="Pedidos por status" description="Distribuição rápida dos pedidos carregados no painel.">
-          <div style={styles.statusSummaryGrid}>
-            {orderStatusSummary.map(item => (
-              <div key={item.status} style={styles.statusSummaryCard}>
-                <AdminStatusBadge style={{ ...getOrderStatusTone(item.status), ...styles.statusSummaryBadge }}>{item.label}</AdminStatusBadge>
-                <strong style={styles.statusSummaryValue}>{item.count}</strong>
-              </div>
-            ))}
-          </div>
-        </AdminSurface>
-
-        <DashboardAlerts alerts={derivedAlerts} />
-      </div>
-
-      <div style={{ ...styles.dashboardColumns, gridTemplateColumns: isCompact ? "1fr" : styles.dashboardColumns.gridTemplateColumns }}>
-        <AdminSurface title="Últimos pedidos" description="Movimento recente com acesso direto ao painel de pedidos.">
-          {ordersLoading ? (
-            <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
-          ) : recentOrders.length === 0 ? (
-            <AdminEmptyState title="Sem pedidos carregados" description="Quando houver pedidos, os mais recentes aparecerão aqui." />
-          ) : (
-            <div style={styles.orderList}>
-              {recentOrders.map(order => (
-                <button key={order.id} type="button" style={styles.orderItemButton} onClick={() => onViewOrder(order.id)}>
-                  <span style={styles.orderItemMain}>
-                    <strong style={styles.compactListTitle}>Pedido #{order.id}</strong>
-                    <span style={styles.compactListMeta}>{order.customerName || order.customerEmail || `Cliente #${order.userId}`}</span>
-                    <span style={styles.compactListMeta}>{formatOrderDate(order.createdAt)}</span>
-                  </span>
-                  <span style={styles.orderItemSide}>
-                    <strong style={styles.orderAmount}>{formatPrice(asMoney(order.totalPrice))}</strong>
-                    <AdminStatusBadge style={getOrderStatusTone(String(order.status))}>{getOrderStatusLabel(String(order.status))}</AdminStatusBadge>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </AdminSurface>
-
-        <AdminSurface title="Produtos com baixo estoque" description="Itens com 5 unidades ou menos para priorizar revisão.">
-          {productsLoading ? (
-            <AdminLoadingState>Carregando produtos...</AdminLoadingState>
-          ) : lowStockProducts.length === 0 ? (
-            <AdminEmptyState title="Estoque saudável" description="Nenhum produto carregado está com estoque baixo." />
-          ) : (
-            <div style={styles.compactList}>
-              {lowStockProducts.map(product => (
-                <button key={product.id} type="button" style={styles.compactListItemButton} onClick={() => onViewProduct(product)}>
-                  <span style={styles.compactListTitle}>{product.name || `Produto #${product.id}`}</span>
-                  <span style={styles.compactListMeta}>{getCategoryLabel(product.category || "")}</span>
-                  <strong style={Number(product.stock ?? 0) <= 0 ? styles.stockTextEmpty : styles.stockTextLow}>
-                    {Number(product.stock ?? 0) <= 0 ? "Sem estoque" : `${product.stock} un.`}
-                  </strong>
-                </button>
-              ))}
-            </div>
-          )}
-        </AdminSurface>
-      </div>
-
-      <AdminSurface title="Atividade recente" description="Últimos eventos registrados na trilha de auditoria administrativa.">
-        {recentAudit.length === 0 ? (
-          <AdminEmptyState title="Sem atividade recente" description="Assim que o painel registrar ações administrativas, elas aparecerão aqui." />
+      <AdminSurface
+        title="Últimos pedidos"
+        aside={
+          ordersAction ? (
+            <button
+              type="button"
+              className="dashboard-view-orders"
+              onClick={ordersAction.onClick}
+            >
+              Ver todos os pedidos
+            </button>
+          ) : undefined
+        }
+      >
+        {ordersLoading ? (
+          <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
+        ) : ordersError ? (
+          <AdminEmptyState title="Pedidos indisponíveis" description="Não foi possível carregar a lista de pedidos agora." />
+        ) : recentOrders.length === 0 ? (
+          <AdminEmptyState
+            title="Sem pedidos carregados"
+            description="Quando houver pedidos, os mais recentes aparecerão aqui."
+          />
         ) : (
-          <div style={styles.activityList}>
-            {recentAudit.map(item => (
-              <div key={item.id} style={styles.activityItem}>
-                <div style={styles.activityBullet} />
-                <div style={styles.activityContent}>
-                  <strong style={styles.activityTitle}>{item.action}</strong>
-                  <span style={styles.activityMeta}>
-                    {item.entity} {item.entityId ? `#${item.entityId}` : ""} · {new Date(item.createdAt).toLocaleString("pt-BR")}
+          <div className="dashboard-orderList" style={styles.orderList}>
+            {recentOrders.map(order => (
+              <button
+                key={order.id}
+                type="button"
+                className="dashboard-orderItemButton"
+                style={styles.orderItemButton}
+                onClick={() => onViewOrder(order.id)}
+              >
+                <span
+                  className="dashboard-order-main"
+                  style={styles.orderItemMain}
+                >
+                  <strong style={styles.compactListTitle}>
+                    Pedido #{order.id}
+                  </strong>
+                  <span style={styles.compactListMeta}>
+                    {order.customerName ||
+                      order.customerEmail ||
+                      `Cliente #${order.userId}`}
                   </span>
-                </div>
-              </div>
+                  <span
+                    className="dashboard-order-date"
+                    style={styles.compactListMeta}
+                  >
+                    {formatOrderDate(order.createdAt)}
+                  </span>
+                </span>
+                <span
+                  className="dashboard-order-side"
+                  style={styles.orderItemSide}
+                >
+                  <strong style={styles.orderAmount}>
+                    {formatPrice(asMoney(order.totalPrice))}
+                  </strong>
+                  <AdminStatusBadge
+                    style={getOrderStatusTone(String(order.status))}
+                  >
+                    {getOrderStatusLabel(String(order.status))}
+                  </AdminStatusBadge>
+                </span>
+              </button>
             ))}
           </div>
         )}
       </AdminSurface>
+
+      <details className="dashboard-complementary">
+        <summary>
+          <span className="dashboard-complementary-title">
+            Informações complementares
+          </span>
+          <span className="dashboard-complementary-caption">
+            Financeiro, status, ações rápidas, estoque e atividade
+          </span>
+          <span className="dashboard-disclosure-icon" aria-hidden="true" />
+        </summary>
+        <div className="dashboard-complementary-content">
+          <AdminSurface
+            title="Visão financeira e operacional"
+            description="Os totais de pedidos incluem todos os status e não equivalem a pagamentos recebidos."
+          >
+            <AdminMetricCards
+              compact
+              cards={[
+                { label: "Usuários", value: dashboardData ? dashboardData.usersCount ?? 0 : "—" },
+                {
+                  label: "Produtos cadastrados",
+                  value: dashboardData ? dashboardData.productsCount ?? 0 : "—",
+                },
+                {
+                  label: "Estoque baixo",
+                  value: dashboardData ? dashboardData.lowStockCount ?? 0 : "—",
+                  tone:
+                    Number(dashboardData?.lowStockCount ?? 0) > 0
+                      ? "warning"
+                      : "neutral",
+                },
+              ]}
+            />
+            <div className="dashboard-metricGrid" style={styles.metricGrid}>
+              <MetricCard
+                label="Valor total dos pedidos"
+                value={ordersLoading || ordersError ? "—" : formatPrice(totalRevenue)}
+              />
+              <MetricCard
+                label="Média por pedido"
+                value={ordersLoading || ordersError || averageTicket === null ? "—" : formatPrice(averageTicket)}
+              />
+              <MetricCard label="Pedidos com status pago" value={ordersLoading || ordersError ? "—" : String(paidOrders)} />
+              <MetricCard
+                label="Pedidos enviados"
+                value={ordersLoading || ordersError ? "—" : String(shippedOrders)}
+              />
+              <MetricCard
+                label="Cancelados"
+                value={ordersLoading || ordersError ? "—" : String(cancelledOrders)}
+                tone="danger"
+              />
+              <MetricCard
+                label="Banners ativos"
+                value={promoBannersLoading || promoBannersError ? "—" : `${activeBanners}/${promoBanners.length}`}
+              />
+              <MetricCard
+                label="Cupons ativos"
+                value={couponsLoading || couponsError ? "—" : `${activeCoupons}/${coupons.length}`}
+              />
+              <MetricCard
+                label="Produtos cadastrados"
+                value={productsLoading || productsError ? "—" : String(products.length)}
+              />
+            </div>
+          </AdminSurface>
+
+          <div
+            className="dashboard-block-pair"
+            style={{
+              ...styles.dashboardColumns,
+              gridTemplateColumns: isCompact
+                ? "1fr"
+                : styles.dashboardColumns.gridTemplateColumns,
+            }}
+          >
+            <AdminSurface
+              title="Pedidos por status"
+              description="Distribuição dos pedidos retornados pela gestão."
+            >
+              {ordersLoading ? <AdminLoadingState>Carregando status...</AdminLoadingState> : ordersError ? (
+                <AdminEmptyState title="Status indisponíveis" description="Não foi possível consultar os pedidos." />
+              ) : (
+              <div
+                className="dashboard-statusSummaryGrid"
+                style={styles.statusSummaryGrid}
+              >
+                {orderStatusSummary.map(item => (
+                  <div
+                    key={item.status}
+                    className="dashboard-statusSummaryCard"
+                    style={styles.statusSummaryCard}
+                  >
+                    <AdminStatusBadge
+                      style={{
+                        ...getOrderStatusTone(item.status),
+                        ...styles.statusSummaryBadge,
+                      }}
+                    >
+                      {item.label}
+                    </AdminStatusBadge>
+                    <strong style={styles.statusSummaryValue}>
+                      {item.count}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+              )}
+            </AdminSurface>
+
+            <AdminSurface
+              title="Atendimento de pedidos"
+              description="Contagens por situação retornada pela gestão."
+            >
+              {ordersLoading ? <AdminLoadingState>Carregando pedidos...</AdminLoadingState> : ordersError ? (
+                <AdminEmptyState title="Atendimento indisponível" description="Não foi possível consultar os pedidos." />
+              ) : <div style={styles.systemStatusList}>
+                <StatusRow
+                  label="Pedidos pagos para separar"
+                  value={String(paidOrders)}
+                />
+                <StatusRow
+                  label="Pedidos enviados"
+                  value={String(shippedOrders)}
+                />
+                <StatusRow
+                  label="Pedidos cancelados"
+                  value={String(cancelledOrders)}
+                />
+              </div>}
+            </AdminSurface>
+          </div>
+
+          <div
+            className="dashboard-block-pair"
+            style={{
+              ...styles.dashboardColumns,
+              gridTemplateColumns: isCompact
+                ? "1fr"
+                : styles.dashboardColumns.gridTemplateColumns,
+            }}
+          >
+            <AdminSurface title="Ações rápidas">
+              <AdminQuickActions actions={quickActions} />
+            </AdminSurface>
+
+            <AdminSurface title="Status do sistema">
+              <div style={styles.systemStatusList}>
+                <StatusRow
+                  label="Pedidos aguardando pagamento"
+                  value={dashboardLoading || dashboardError || !dashboardData ? "—" : String(dashboardData.pendingOrders ?? 0)}
+                />
+                <StatusRow
+                  label="Produtos cadastrados"
+                  value={dashboardLoading || dashboardError || !dashboardData ? "Não disponível" : `${dashboardData.productsCount ?? 0} itens`}
+                />
+                <StatusRow
+                  label="Usuários cadastrados"
+                  value={dashboardLoading || dashboardError || !dashboardData ? "Não disponível" : `${dashboardData.usersCount ?? 0} usuários`}
+                />
+              </div>
+            </AdminSurface>
+          </div>
+
+          <AdminSurface
+            title="Produtos com baixo estoque"
+            description="Itens com 5 unidades ou menos para priorizar revisão."
+          >
+            {productsLoading ? (
+              <AdminLoadingState>Carregando produtos...</AdminLoadingState>
+            ) : productsError ? (
+              <AdminEmptyState title="Estoque indisponível" description="Não foi possível consultar os produtos agora." />
+            ) : lowStockProducts.length === 0 ? (
+              <AdminEmptyState
+                title="Estoque saudável"
+                description="Nenhum produto carregado está com estoque baixo."
+              />
+            ) : (
+              <div className="dashboard-compactList" style={styles.compactList}>
+                {lowStockProducts.map(product => (
+                  <button
+                    key={product.id}
+                    type="button"
+                    className="dashboard-compactListItemButton"
+                    style={styles.compactListItemButton}
+                    onClick={() => onViewProduct(product)}
+                  >
+                    <span style={styles.compactListTitle}>
+                      {product.name || `Produto #${product.id}`}
+                    </span>
+                    <span style={styles.compactListMeta}>
+                      {getCategoryLabel(product.category || "")}
+                    </span>
+                    <strong
+                      style={
+                        Number(product.stock ?? 0) <= 0
+                          ? styles.stockTextEmpty
+                          : styles.stockTextLow
+                      }
+                    >
+                      {Number(product.stock ?? 0) <= 0
+                        ? "Sem estoque"
+                        : `${product.stock} un.`}
+                    </strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </AdminSurface>
+          <AdminSurface
+            title="Atividade recente"
+            description="Últimos eventos registrados na trilha de auditoria administrativa."
+          >
+            {auditLoading ? (
+              <AdminLoadingState>Carregando atividade...</AdminLoadingState>
+            ) : auditError ? (
+              <AdminEmptyState title="Atividade indisponível" description="Não foi possível consultar os registros recentes." />
+            ) : recentAudit.length === 0 ? (
+              <AdminEmptyState
+                title="Sem atividade recente"
+                description="Assim que o painel registrar ações administrativas, elas aparecerão aqui."
+              />
+            ) : (
+              <div style={styles.activityList}>
+                {recentAudit.map(item => (
+                  <div
+                    key={item.id}
+                    className="dashboard-activityItem"
+                    style={styles.activityItem}
+                  >
+                    <div
+                      className="dashboard-activityBullet"
+                      style={styles.activityBullet}
+                    />
+                    <div style={styles.activityContent}>
+                      <strong style={styles.activityTitle}>
+                        {item.action}
+                      </strong>
+                      <span style={styles.activityMeta}>
+                        {item.entity} {item.entityId ? `#${item.entityId}` : ""}{" "}
+                        · {new Date(item.createdAt).toLocaleString("pt-BR")}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </AdminSurface>
+        </div>
+      </details>
     </div>
   );
 }
 
 function MetricCard({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "danger" }) {
   return (
-    <div style={{ ...styles.metricCard, ...(tone === "danger" ? styles.metricCardDanger : {}) }}>
+    <div className="dashboard-metricCard" style={{ ...styles.metricCard, ...(tone === "danger" ? styles.metricCardDanger : {}) }}>
       <span style={styles.metricLabel}>{label}</span>
       <strong style={styles.metricValue}>{value}</strong>
     </div>
@@ -333,23 +590,38 @@ function MetricCard({ label, value, tone = "neutral" }: { label: string; value: 
 
 function StatusRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={styles.systemStatusRow}>
+    <div className="dashboard-systemStatusRow" style={styles.systemStatusRow}>
       <span style={styles.systemStatusLabel}>{label}</span>
       <strong style={styles.systemStatusValue}>{value}</strong>
     </div>
   );
 }
 
-function DashboardAlerts({ alerts }: { alerts: DashboardAlert[] }) {
+function DashboardQueryState({ onRetry }: { onRetry?: () => void }) {
   return (
-    <AdminSurface title="Alertas operacionais" description="Sinais rápidos para priorizar a rotina da loja.">
+    <div className="dashboard-queryError" role="status">
+      <div>
+        <strong>Indicadores indisponíveis</strong>
+        <span>Não foi possível carregar o resumo agora.</span>
+      </div>
+      {onRetry ? <button type="button" onClick={onRetry}>Tentar novamente</button> : null}
+    </div>
+  );
+}
+
+function DashboardAlerts({ alerts }: { alerts: DashboardAlert[] }) {
+  const priority = { danger: 0, warning: 1, neutral: 2 };
+  const prioritizedAlerts = [...alerts].sort((a, b) => priority[a.tone] - priority[b.tone]);
+  return (
+    <AdminSurface title="Precisa de atenção">
       {alerts.length === 0 ? (
         <AdminEmptyState title="Sem alertas agora" description="Nenhum dado carregado exige atenção imediata." />
       ) : (
-        <div style={styles.alertList}>
-          {alerts.map(alert => (
+        <div className="dashboard-alertList" style={styles.alertList}>
+          {prioritizedAlerts.map(alert => (
             <div
               key={alert.title}
+              className={`dashboard-alert dashboard-alert--${alert.tone}`}
               style={{
                 ...styles.alertItem,
                 ...(alert.tone === "danger" ? styles.alertItemDanger : alert.tone === "warning" ? styles.alertItemWarning : {}),

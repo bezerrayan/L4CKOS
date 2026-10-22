@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, date, index, int, mysqlEnum, mysqlTable, text, timestamp, tinyint, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, check, date, foreignKey, index, int, mysqlEnum, mysqlTable, smallint, text, timestamp, tinyint, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -138,7 +138,17 @@ export const productVariants = mysqlTable("productVariants", {
   stock: int("stock").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+  size: varchar("size", { length: 60 }),
+  color: varchar("color", { length: 60 }),
+  optionKey: varchar("optionKey", { length: 191 }),
+  // Existing rows stay inactive until their color/size identity is reviewed.
+  isActive: tinyint("isActive").default(0).notNull(),
+}, table => [
+  uniqueIndex("productVariants_product_option_unique").on(table.productId, table.optionKey),
+  index("productVariants_productId_idx").on(table.productId),
+  check("product_variants_stock_nonnegative_chk", sql`${table.stock} >= 0`),
+  check("product_variants_active_boolean_chk", sql`${table.isActive} IN (0, 1)`),
+]);
 
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type InsertProductVariant = typeof productVariants.$inferInsert;
@@ -201,6 +211,57 @@ export const orderItems = mysqlTable("orderItems", {
 
 export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertOrderItem = typeof orderItems.$inferInsert;
+
+// Pré-venda: contrato estrutural v7. Essas tabelas descrevem capacidade do lote,
+// separada do estoque físico de products/productVariants.
+export const preorderBatchCapacityPolicies = mysqlTable("preorderBatchCapacityPolicies", {
+  batchId: int("batchId").notNull().primaryKey(),
+  salesState: mysqlEnum("salesState", ["review_required", "accepting", "sales_closed", "settling", "consolidated", "reconciliation_required"]).default("review_required").notNull(),
+  pixReservationMinutes: smallint("pixReservationMinutes", { unsigned: true }).default(30).notNull(),
+  boletoPreorderEnabled: tinyint("boletoPreorderEnabled").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  foreignKey({ name: "preorder_batch_capacity_policy_batch_fk", columns: [table.batchId], foreignColumns: [productionBatches.id] }).onDelete("restrict").onUpdate("restrict"),
+  check("preorder_batch_capacity_sales_state_chk", sql`${table.salesState} IN ('review_required','accepting','sales_closed','settling','consolidated','reconciliation_required')`),
+  check("preorder_batch_capacity_pix_minutes_chk", sql`${table.pixReservationMinutes} BETWEEN 1 AND 10080`),
+  check("preorder_batch_capacity_boleto_boolean_chk", sql`${table.boletoPreorderEnabled} IN (0, 1)`),
+]);
+
+export const preorderCapacityReservations = mysqlTable("preorderCapacityReservations", {
+  id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+  batchId: int("batchId").notNull(),
+  orderId: int("orderId").notNull(),
+  orderItemId: int("orderItemId").notNull(),
+  productId: int("productId").notNull(),
+  variantId: int("variantId"),
+  quantity: int("quantity", { unsigned: true }).notNull(),
+  paymentMethod: mysqlEnum("paymentMethod", ["PIX", "CARD", "BOLETO"]).notNull(),
+  state: mysqlEnum("state", ["active", "allocated", "released", "expired", "exception"]).default("active").notNull(),
+  commercialExpiresAt: timestamp("commercialExpiresAt", { fsp: 3 }),
+  providerPaymentReference: varchar("providerPaymentReference", { length: 191 }),
+  reconciliationCode: varchar("reconciliationCode", { length: 64 }),
+  stateChangedAt: timestamp("stateChangedAt", { fsp: 3 }).defaultNow().notNull(),
+  createdAt: timestamp("createdAt", { fsp: 3 }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { fsp: 3 }).defaultNow().onUpdateNow().notNull(),
+}, table => [
+  uniqueIndex("preorder_capacity_reservations_order_item_uq").on(table.orderItemId),
+  index("preorder_capacity_reservations_batch_state_expiry_idx").on(table.batchId, table.state, table.commercialExpiresAt),
+  index("preorder_capacity_reservations_order_state_idx").on(table.orderId, table.state),
+  index("preorder_capacity_reservations_variant_idx").on(table.productId, table.variantId),
+  index("preorder_capacity_reservations_variant_fk").on(table.variantId),
+  index("preorder_capacity_reservations_provider_ref_idx").on(table.providerPaymentReference),
+  foreignKey({ name: "preorder_capacity_reservations_batch_fk", columns: [table.batchId], foreignColumns: [productionBatches.id] }).onDelete("restrict").onUpdate("restrict"),
+  foreignKey({ name: "preorder_capacity_reservations_order_fk", columns: [table.orderId], foreignColumns: [orders.id] }).onDelete("restrict").onUpdate("restrict"),
+  foreignKey({ name: "preorder_capacity_reservations_item_fk", columns: [table.orderItemId], foreignColumns: [orderItems.id] }).onDelete("restrict").onUpdate("restrict"),
+  foreignKey({ name: "preorder_capacity_reservations_product_fk", columns: [table.productId], foreignColumns: [products.id] }).onDelete("restrict").onUpdate("restrict"),
+  foreignKey({ name: "preorder_capacity_reservations_variant_fk", columns: [table.variantId], foreignColumns: [productVariants.id] }).onDelete("restrict").onUpdate("restrict"),
+  check("preorder_capacity_reservations_payment_method_chk", sql`${table.paymentMethod} IN ('PIX', 'CARD', 'BOLETO')`),
+  check("preorder_capacity_reservations_state_chk", sql`${table.state} IN ('active', 'allocated', 'released', 'expired', 'exception')`),
+  check("preorder_capacity_reservations_method_expiry_chk", sql`(${table.paymentMethod} = 'CARD' AND ${table.commercialExpiresAt} IS NULL) OR (${table.paymentMethod} IN ('PIX', 'BOLETO') AND ${table.commercialExpiresAt} IS NOT NULL)`),
+  check("preorder_capacity_reservations_quantity_chk", sql`${table.quantity} > 0`),
+  check("preorder_capacity_reservations_exception_reason_chk", sql`(${table.state} = 'exception' AND ${table.reconciliationCode} IS NOT NULL) OR (${table.state} <> 'exception' AND ${table.reconciliationCode} IS NULL)`),
+]);
 
 // Outbox persistente para notificações que pertencem a um pedido. A chave
 // única impede que uma transição repetida volte a criar o mesmo evento.
@@ -291,6 +352,20 @@ export const promoBanners = mysqlTable("promoBanners", {
 
 export type PromoBanner = typeof promoBanners.$inferSelect;
 export type InsertPromoBanner = typeof promoBanners.$inferInsert;
+
+// Persisted public presentation mode for the Home highlights. The singleton is
+// constrained to id=1 by the release migration; writes update this row only.
+export const homeHighlightSettings = mysqlTable("homeHighlightSettings", {
+  id: tinyint("id", { unsigned: true }).primaryKey(),
+  displayMode: mysqlEnum("displayMode", ["single", "rotate"]).default("single").notNull(),
+  rotationIntervalSeconds: tinyint("rotationIntervalSeconds", { unsigned: true }).default(8).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  check("home_highlight_settings_singleton", sql`${table.id} = 1`),
+  check("home_highlight_settings_interval", sql`${table.rotationIntervalSeconds} IN (5, 8, 10)`),
+]);
+
+export type HomeHighlightSettings = typeof homeHighlightSettings.$inferSelect;
 
 // Auditoria administrativa
 export const auditLogs = mysqlTable("auditLogs", {

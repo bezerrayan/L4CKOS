@@ -1,4 +1,7 @@
 import type { Connection } from "mysql2/promise";
+import { readArtifact } from '../schema/artifacts';
+import { readStructuralSchema, structuralHash } from '../schema/fingerprint';
+import { POST23 } from './policy';
 import { rows, canonical } from "../schema/fingerprint";
 import { fail } from "./policy";
 import type { WindowPlan } from "./policy";
@@ -106,7 +109,7 @@ async function readonlyGrants(
     "\\$&"
   );
   const scoped = new RegExp(
-    "^GRANT (?:SELECT|INSERT|UPDATE|DELETE)(?:, (?:SELECT|INSERT|UPDATE|DELETE))* ON `" +
+    "^GRANT (?:ALL PRIVILEGES|(?:SELECT|INSERT|UPDATE|DELETE)(?:, (?:SELECT|INSERT|UPDATE|DELETE))*) ON `" +
       database +
       "`\\.\\* TO "
   );
@@ -129,7 +132,8 @@ export async function allowApplicationReads(
   c: Connection,
   expected: BarrierState,
   a: { user: string; host: string },
-  approved: boolean
+  approved: boolean,
+  requireV4 = false
 ) {
   const state = active.get(c);
   if (
@@ -143,9 +147,10 @@ export async function allowApplicationReads(
   await readonlyGrants(c, a);
   const history = await validateHistory(
     c,
-    await loadLineage(await readOperationalManifest())
+    await loadLineage(JSON.parse((await readArtifact('database/migrations/manifest-v4.json','database/migrations')).toString()))
   );
-  if (history.at(-1)?.name !== "0022_preorder_manufacturing_schedule")
+  if (!['0022_preorder_manufacturing_schedule','0023_asaas_webhook_inbox'].includes(history.at(-1)?.name ?? '') ||
+      (requireV4 && (history.at(-1)?.name !== '0023_asaas_webhook_inbox' || structuralHash(await readStructuralSchema(c)) !== POST23)))
     fail("0022_REQUIRED_BEFORE_READ_ADMISSION");
   await c.query("ALTER USER ?@? ACCOUNT UNLOCK", [a.user, a.host]);
   state.readAccounts = [...(state.readAccounts ?? []), a];
@@ -196,12 +201,18 @@ export async function activateBarrier(
 export async function releaseBarrier(
   c: Connection,
   expected: BarrierState,
-  approved: boolean
+  approved: boolean,
+  requireV4 = false
 ) {
   const state = active.get(c);
   if (!approved || !state || canonical(state) !== canonical(expected))
     fail("BARRIER_RELEASE_APPROVAL_REQUIRED");
   await assertBarrier(c);
+  if (requireV4) {
+    const lineage=await loadLineage(JSON.parse((await readArtifact('database/migrations/manifest-v4.json','database/migrations')).toString()));
+    const history=await validateHistory(c,lineage);
+    if(history.at(-1)?.name!=='0023_asaas_webhook_inbox'||structuralHash(await readStructuralSchema(c))!==POST23)fail('V4_REQUIRED_BEFORE_RELEASE');
+  }
   // Keep read_only while restoring admission; sessions that can bypass it remain
   // forbidden by the operational HTTP/service barrier until this whole step completes.
   for (const a of state.accounts)
@@ -216,11 +227,16 @@ export async function releaseBarrier(
 export async function adoptBarrier(c: Connection, plan: WindowPlan, capability: Capability,
   saved: BarrierState, approved: boolean) {
   await verifyCapability(c, plan, capability);
-  if (!approved || active.has(c) || saved.readOnly !== 0 || saved.readAccounts?.length ||
+  if (!approved || active.has(c) || saved.readOnly !== 0 ||
     !saved.accounts.length || saved.accounts.some(a => !a.user || !a.host || (a.user === 'root' && a.host === 'localhost')))
     fail('BARRIER_RECOVERY_APPROVAL_REQUIRED');
+  for(const a of saved.readAccounts??[]) {
+    if(!saved.accounts.some(v=>v.user===a.user&&v.host===a.host))fail('BARRIER_RECOVERY_STATE_MISMATCH');
+    await readonlyGrants(c,a);
+  }
   const { meta, accounts } = await policy(c);
-  if (Number(meta.ro) !== 1 || saved.accounts.some(a => !accounts.some(v => v.user === a.user && v.host === a.host && v.locked === 'Y')))
+  if (Number(meta.ro) !== 1 || saved.accounts.some(a => !accounts.some(v => v.user === a.user && v.host === a.host &&
+    v.locked === ((saved.readAccounts??[]).some(r=>r.user===a.user&&r.host===a.host)?'N':'Y'))))
     fail('BARRIER_RECOVERY_STATE_MISMATCH');
   const state: BarrierState = { ...structuredClone(saved), owner: Number(meta.id), ready: true };
   active.set(c, state);

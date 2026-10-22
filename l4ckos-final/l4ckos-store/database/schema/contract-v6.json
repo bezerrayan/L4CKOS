@@ -1,0 +1,32 @@
+{
+  "version": 6,
+  "baseFingerprint": "7fe98896cff3da47b18a522c668fc429355e0397d74afa26c864585f102d649e",
+  "fingerprint": "38b664bdad6d26873fcb3b539c17234ee4214cf6654aecf0bc13286622cc0d04",
+  "additions": {
+    "productVariants": [
+      {
+        "name": "isActive",
+        "position": 12,
+        "type": "tinyint",
+        "nullable": false,
+        "defaultValue": "0",
+        "extra": "",
+        "generationExpression": "",
+        "charset": null,
+        "collation": null,
+        "length": null,
+        "numericPrecision": 3,
+        "numericScale": 0,
+        "datetimePrecision": null
+      }
+    ]
+  },
+  "checks": {
+    "productVariants": [
+      {
+        "clause": "(`isActive` in (0,1))",
+        "enforced": true
+      }
+    ]
+  }
+}

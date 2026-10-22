@@ -1,3 +1,6 @@
+import { assertCheckoutMethodEnabled, CheckoutMethodDisabledError } from "../../shared/checkoutMethods";
+import { normalizeBuyerDocument } from "../../shared/buyerDocument";
+import { deliverPaymentNotifications } from "../payments/paymentNotificationOutbox";
 import { shippingEstimate, manufacturingEstimate } from "../../shared/preorder";
 import { createConnection } from "mysql2/promise";
 import { checkout, checkoutItemSchema, CheckoutError, previewCheckoutItems, orderTotal, type CheckoutItem } from "../database/checkout";
@@ -16,8 +19,9 @@ import {
 import { createAsaasChargeForOrder } from "../services/asaas";
 import { quoteShippingDetailed } from "../services/shippingService";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
-import { sendOrderCreatedEmail, sendPaymentPendingEmail } from "../services/emailService.js";
+
 import { securityLog } from "../_core/security";
+import { PublicCheckoutDisabledError, PublicStoreClosedError, assertPublicCheckoutEnabled, publicCheckoutDisabledTrpcError, publicStoreClosedTrpcError } from "../_core/publicStore";
 
 const shippingSelectionSchema = z.object({
   cep: z.string().trim().regex(/^\d{8}$/),
@@ -246,12 +250,9 @@ export const ordersRouter = router({
         dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         customer: z.object({
           name: z.string().min(3).max(255),
-          cpfCnpj: z
-            .string()
-            .min(11)
-            .max(18)
-            .transform(value => value.replace(/\D/g, ""))
-            .refine(value => value.length === 11 || value.length === 14, "Invalid CPF/CNPJ"),
+          cpfCnpj: z.string().trim().max(18)
+            .refine(value => normalizeBuyerDocument(value) !== null, "Informe um CPF/CNPJ válido no checkout.")
+            .transform(value => normalizeBuyerDocument(value)!),
           email: z.string().email().optional(),
         }).strict(),
         couponCode: z.string().trim().min(2).max(64).optional(),
@@ -261,6 +262,8 @@ export const ordersRouter = router({
       let orderId = 0;
 
       try {
+        assertCheckoutMethodEnabled(input.method);
+        assertPublicCheckoutEnabled();
         if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
         const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
         const prepared = await (async () => {
@@ -272,51 +275,52 @@ export const ordersRouter = router({
         orderId = prepared.orderId;
         const payment = prepared.payment;
         if (prepared.replayed) return { orderId, ...payment };
-        const pricing = { finalTotalCents: prepared.totalPrice, itemsPreview: prepared.items.map(item => ({
-          name: item.salesModeAtPurchase === "PREORDER" ? `${item.productName} — Pré-venda — ${item.productionBatchNameAtPurchase}. ${manufacturingEstimate(item.estimatedManufacturingStartAtPurchase,item.estimatedManufacturingEndAtPurchase,true)} ${shippingEstimate(item.estimatedShippingStartAtPurchase,item.estimatedShippingEndAtPurchase,{ historical: true })}` : item.productName, quantity: item.quantity, price: formatCurrency(item.totalPrice / 100),
-        })) };
-
-        const formattedTotal = formatCurrency(pricing.finalTotalCents / 100);
-        try {
-          await sendOrderCreatedEmail({
-            customerEmail: input.customer.email || ctx.user.email || "",
-            customerName: input.customer.name,
-            orderNumber: String(orderId),
-            total: formattedTotal,
-            items: pricing.itemsPreview,
-            orderUrl: `${String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "")}/meus-pedidos/${orderId}`,
-          });
-        } catch {}
-
-        try {
-          await sendPaymentPendingEmail({
-            customerEmail: input.customer.email || ctx.user.email || "",
-            customerName: input.customer.name,
-            orderNumber: String(orderId),
-            total: formattedTotal,
-            paymentUrl: payment.invoiceUrl || payment.bankSlipUrl || undefined,
-            dueLabel: input.dueDate || "Aguardando compensação",
-          });
-        } catch {}
+        // Notification intent was committed with charge evidence; delivery failure stays retryable.
+        try { await deliverPaymentNotifications(3, orderId); }
+        catch { securityLog("warn", "orders.notification_delivery_pending", { orderId }); }
 
         return {
           orderId,
           ...payment,
         };
       } catch (error) {
+        if (error instanceof PublicStoreClosedError) {
+          throw publicStoreClosedTrpcError();
+        }
+        if (error instanceof PublicCheckoutDisabledError) {
+          throw publicCheckoutDisabledTrpcError();
+        }
+
         securityLog("warn", "orders.asaas_charge_failed", {
           userId: ctx.user.id,
           orderId: orderId || undefined,
-          reason: error instanceof CheckoutError ? error.code : "CHECKOUT_FAILED",
+          reason: error instanceof CheckoutError || error instanceof CheckoutMethodDisabledError ? error.code : "CHECKOUT_FAILED",
         });
-        const checkoutCode = error instanceof CheckoutError ? error.code : "";
+        const checkoutCode = error instanceof CheckoutError || error instanceof CheckoutMethodDisabledError ? error.code : "";
+        const variantFailureCodes = new Set([
+          "CHECKOUT_VARIANT_REQUIRED", "CHECKOUT_VARIANT_NOT_FOUND", "CHECKOUT_VARIANT_OWNERSHIP",
+          "CHECKOUT_VARIANT_INACTIVE", "CHECKOUT_VARIANT_IDENTITY_INVALID", "CHECKOUT_VARIANT_SKU_DUPLICATE",
+          "CHECKOUT_VARIANT_DIMENSIONS_MISMATCH",
+        ]);
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            checkoutCode === "CHECKOUT_BATCH_CAPACITY_EXCEEDED"
+            variantFailureCodes.has(checkoutCode)
+            ? "A combinação de cor e tamanho não está mais disponível. Volte ao produto e selecione uma variante ativa."
+            : checkoutCode === "CHECKOUT_STOCK_INSUFFICIENT"
+              ? "O estoque dessa combinação acabou ou não cobre a quantidade. Revise a sacola."
+            : checkoutCode === "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION"
+              ? "Este produto está temporariamente indisponível para compra pública."
+            : checkoutCode === "CHECKOUT_PRODUCT_NOT_FOUND"
+              ? "Um produto da sacola não está mais disponível. Revise a sacola."
+            : checkoutCode === "CHECKOUT_PAYMENT_METHOD_DISABLED"
+            ? "Forma de pagamento indisponível. Escolha PIX ou cartão de crédito."
+            : checkoutCode === "CHECKOUT_BATCH_CAPACITY_EXCEEDED"
             ? "A capacidade da pré-venda foi esgotada. Ajuste a sacola e tente novamente."
             : checkoutCode === "CHECKOUT_BATCH_UNAVAILABLE"
                 ? "Esta pré-venda não está mais disponível. Ajuste a sacola e tente novamente."
+            : checkoutCode === "CHECKOUT_PREORDER_DISABLED"
+              ? "A pré-venda está temporariamente indisponível enquanto a capacidade do lote não estiver homologada."
                 : checkoutCode === "CHECKOUT_RECOVERY_REQUIRED"
                   ? "Tentativa registrada; o resultado da cobrança precisa ser verificado antes de tentar novamente."
                   : "Não foi possível gerar a cobrança agora.",

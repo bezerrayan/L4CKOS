@@ -1,7 +1,6 @@
-import type { CSSProperties } from "react";
+import { useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { contactChannels, siteMode } from "../../../config/site";
-import { AdminStatusBadge, AdminSummaryPill, AdminSurface } from "../AdminUI";
-import { AdminCriticalAlert } from "../system/AdminSystemUI";
 
 type SettingsShortcutTarget =
   | "customers"
@@ -42,527 +41,254 @@ type AdminSettingsRuntimeStatus = {
   };
 };
 
+type SettingsTab = "overview" | "integrations" | "environment" | "outside";
+
 type AdminSettingsUIProps = {
   onSelectSection: (section: SettingsShortcutTarget) => void;
+  initialTab?: SettingsTab;
   runtimeStatus?: AdminSettingsRuntimeStatus;
   runtimeStatusLoading?: boolean;
+  runtimeStatusError?: boolean;
+  onRetryRuntimeStatus?: () => void;
 };
 
+const tabs: Array<{ id: SettingsTab; label: string }> = [
+  { id: "overview", label: "Visão geral" },
+  { id: "integrations", label: "Integrações" },
+  { id: "environment", label: "Ambiente e segurança" },
+  { id: "outside", label: "Fora do painel" },
+];
+
 const publicRows = [
-  { label: "Nome da loja", value: "L4CKOS", meta: "Definido no código" },
-  { label: "E-mail público", value: contactChannels.email || "Não configurado no painel", meta: "Fonte: site.ts" },
-  { label: "Instagram", value: contactChannels.instagramUrl || "Não configurado no painel", meta: "Fonte: site.ts" },
+  { label: "Nome da loja", value: "L4CKOS", source: "Identificação pública do frontend" },
+  { label: "E-mail público", value: contactChannels.email || "Não configurado", source: "Configuração pública do site" },
+  { label: "Instagram", value: contactChannels.instagramUrl || "Não configurado", source: "Configuração pública do site" },
+  { label: "WhatsApp", value: contactChannels.whatsappNumber || "Não configurado", source: "Configuração pública do site" },
+  { label: "Tempo de resposta", value: contactChannels.responseTime || "Não informado", source: "Conteúdo público do site" },
   {
-    label: "WhatsApp",
-    value: contactChannels.whatsappNumber || "Não configurado no painel",
-    meta: contactChannels.whatsappNumber ? "Fonte: site.ts" : "Oculto enquanto vazio",
-  },
-  { label: "Tempo de resposta", value: contactChannels.responseTime || "Definido no código", meta: "Fonte: site.ts" },
-  {
-    label: "Modo do site",
+    label: "Modo visual do frontend",
     value: siteMode === "coming-soon" ? "Coming soon" : "Loja aberta",
-    meta: "Definido por ambiente/build do frontend",
+    source: "Definido no ambiente/build do frontend; não confirma a proteção comercial do servidor",
   },
 ];
 
-const operationalShortcuts: Array<{
+const integrationRows: Array<{
+  key: keyof AdminSettingsRuntimeStatus["integrations"];
   title: string;
-  description: string;
-  section: SettingsShortcutTarget;
-  status: string;
+  purpose: string;
 }> = [
-  {
-    title: "Produtos",
-    description: "Controla catálogo, estoque, imagens, variantes e publicação dos itens.",
-    section: "products",
-    status: "Editavel hoje",
-  },
-  {
-    title: "Promoções/Banners",
-    description: "Controla campanhas visuais exibidas na loja e ordem dos banners.",
-    section: "promos",
-    status: "Editavel hoje",
-  },
-  {
-    title: "Cupons",
-    description: "Controla descontos, limites de uso e validade das campanhas comerciais.",
-    section: "coupons",
-    status: "Editavel hoje",
-  },
-  {
-    title: "Pedidos",
-    description: "Centraliza status, rastreio e acompanhamento operacional dos pedidos.",
-    section: "orders",
-    status: "Operacional",
-  },
-  {
-    title: "Clientes",
-    description: "Controla roles, VIP, bloqueios e sinais administrativos dos usuários.",
-    section: "customers",
-    status: "Operacional",
-  },
-  {
-    title: "Relatórios",
-    description: "Exporta dados de vendas já disponíveis para análise interna.",
-    section: "reports",
-    status: "Operacional",
-  },
-  {
-    title: "Auditoria",
-    description: "Exibe registros administrativos para rastreabilidade e conferência.",
-    section: "audit",
-    status: "Leitura",
-  },
-  {
-    title: "Backup",
-    description: "Permite backup manual e restauração usando o fluxo existente.",
-    section: "backup",
-    status: "Critico",
-  },
+  { key: "asaas", title: "Asaas", purpose: "Pagamentos e notificações do provedor" },
+  { key: "melhorEnvio", title: "Melhor Envio", purpose: "Cotação e serviços de frete" },
+  { key: "resend", title: "Resend", purpose: "Envio de e-mails" },
+  { key: "googleOAuth", title: "Google OAuth", purpose: "Autenticação social" },
+  { key: "database", title: "Banco de dados", purpose: "Persistência da aplicação" },
+  { key: "frontend", title: "URL do frontend", purpose: "Endereço público configurado para a aplicação" },
 ];
 
-const integrations = [
-  {
-    key: "asaas" as const,
-    title: "Asaas",
-    description: "Pagamentos e webhooks são gerenciados por variáveis de ambiente no backend.",
-    status: "Status não verificável no frontend",
-  },
-  {
-    key: "melhorEnvio" as const,
-    title: "Melhor Envio",
-    description: "Frete depende de token, URL de API e CEP de origem configurados no ambiente.",
-    status: "Gerenciado por ambiente",
-  },
-  {
-    key: "resend" as const,
-    title: "Resend",
-    description: "Envio de e-mails usa provider e remetentes definidos no ambiente do servidor.",
-    status: "Gerenciado por ambiente",
-  },
-  {
-    key: "googleOAuth" as const,
-    title: "Google OAuth",
-    description: "Login social depende de client ID, secret e redirect URI no ambiente.",
-    status: "Gerenciado por ambiente",
-  },
-  {
-    key: "database" as const,
-    title: "Banco de dados",
-    description: "Conexão e credenciais ficam no ambiente do servidor.",
-    status: "Não editável pelo admin",
-  },
-  {
-    key: "frontend" as const,
-    title: "Domínio e URLs",
-    description: "Frontend/backend usam configurações de ambiente e deploy.",
-    status: "Não editável pelo admin",
-  },
+const outsidePanel = [
+  "Contatos públicos, links sociais e textos institucionais são mantidos na configuração do frontend.",
+  "Textos editoriais da página inicial, rodapé e políticas não são editáveis por esta área.",
+  "Coming soon é definido pelo ambiente/build do frontend. Esta tela não o ativa nem o desativa.",
+  "Integrações, banco e credenciais são mantidos no ambiente do servidor; esta tela não altera infraestrutura.",
 ];
 
-const hardcodedAreas = [
-  "Contatos públicos centralizados em site.ts",
-  "Footer e links institucionais",
-  "Textos institucionais e políticas",
-  "Textos da home e chamadas comerciais",
-  "Favicon e theme-color",
-  "Logo e assets principais da marca",
-];
-
-const roadmap = [
-  "Criar tabela store_settings",
-  "Criar endpoints admin.settings.get/update",
-  "Criar endpoint público public.settings.get",
-  "Adicionar fallback local para a loja pública",
-  "Registrar alterações no audit log",
-  "Validar URLs, e-mails, telefones e textos",
-  "Migrar primeiro contatos, redes e textos curtos",
-];
-
-function getRuntimeStatusLabel(status: RuntimeIntegrationStatus["status"]) {
+function runtimeLabel(status: RuntimeIntegrationStatus["status"]) {
   switch (status) {
-    case "configured":
-      return "Configurado via ambiente";
-    case "partial":
-      return "Configuração parcial";
-    case "missing":
-      return "Pendente no ambiente";
-    default:
-      return "Gerenciado por ambiente";
+    case "configured": return "Configurado no ambiente";
+    case "partial": return "Configuração parcial";
+    case "missing": return "Configuração ausente";
+    case "environment": return "Definido por ambiente/build";
   }
 }
 
-function getRuntimeStatusTone(status: RuntimeIntegrationStatus["status"]) {
-  if (status === "configured") return badgeTones.success;
-  if (status === "partial" || status === "environment") return badgeTones.warning;
-  return badgeTones.danger;
+function statusTone(status: RuntimeIntegrationStatus["status"]) {
+  return `admin-settings-state--${status}`;
 }
 
-function formatRuntimeMeta(item: RuntimeIntegrationStatus, description: string) {
-  return `${description} Sinais seguros configurados: ${item.configuredCount}/${item.expectedCount}. Nenhum valor sensível é exibido.`;
+function formatGeneratedAt(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Horário indisponível" : date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
-export function AdminSettingsUI({ onSelectSection, runtimeStatus, runtimeStatusLoading = false }: AdminSettingsUIProps) {
+export function AdminSettingsUI({
+  onSelectSection,
+  initialTab = "overview",
+  runtimeStatus,
+  runtimeStatusLoading = false,
+  runtimeStatusError = false,
+  onRetryRuntimeStatus,
+}: AdminSettingsUIProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = tabs.findIndex(tab => tab.id === activeTab);
+
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let nextIndex = selectedIndex;
+    if (event.key === "ArrowRight") nextIndex = (selectedIndex + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") nextIndex = (selectedIndex - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveTab(tabs[nextIndex].id);
+    tabRefs.current[nextIndex]?.focus();
+  };
+
+  const runtimeStateText = runtimeStatusLoading
+    ? "Consultando status seguro"
+    : runtimeStatusError
+      ? "Status indisponível"
+      : runtimeStatus
+        ? "Dados seguros do backend"
+        : "Status não verificado";
+  const visibleRuntimeStatus = runtimeStatusError ? undefined : runtimeStatus;
+
   return (
-    <AdminSurface
-      title="Configurações"
-      description="Central informativa da loja. Esta fase organiza o que já existe, mostra limites seguros e prepara uma futura área editável sem salvar nenhuma configuração agora."
-      aside={
-        <>
-          <AdminSummaryPill>Modo read-only</AdminSummaryPill>
-          <AdminSummaryPill>{runtimeStatusLoading ? "Lendo backend..." : runtimeStatus ? "Status backend ativo" : "Status frontend"}</AdminSummaryPill>
-        </>
-      }
-    >
-      <div style={styles.alertGrid}>
-        <AdminCriticalAlert
-          tone="info"
-          title="Esta aba não salva configurações"
-          description="Os cards abaixo usam apenas informações públicas seguras, sinais mascarados do backend e atalhos para áreas já existentes do admin."
-        />
-        <AdminCriticalAlert
-          tone="warning"
-          title="Secrets continuam fora do painel"
-          description="Tokens, chaves de API, credenciais e webhooks críticos devem permanecer no ambiente/infraestrutura."
-        />
+    <section className="admin-settings" aria-labelledby="admin-settings-title">
+      <header className="admin-settings__header">
+        <div>
+          <span className="admin-settings__eyebrow">SISTEMA · LEITURA</span>
+          <h1 id="admin-settings-title">Configurações</h1>
+          <p>Consulte informações públicas e sinais seguros do ambiente. Esta área não altera configurações.</p>
+        </div>
+        <div className="admin-settings__header-state">
+          <span className="admin-settings__readonly">Somente leitura</span>
+          <span className="admin-settings__query-state" role="status">{runtimeStateText}</span>
+        </div>
+      </header>
+
+      <div className="admin-settings__notice" role="note">
+        <strong>Nenhum controle de edição está disponível nesta área.</strong>
+        <span>Configurações de infraestrutura permanecem no ambiente do servidor.</span>
       </div>
 
-      <section style={styles.sectionBlock}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <h3 style={styles.sectionTitle}>Visão geral da loja</h3>
-            <p style={styles.sectionDescription}>Dados públicos seguros identificados no frontend atual.</p>
-          </div>
-          <AdminStatusBadge style={badgeTones.neutral}>Fonte pública</AdminStatusBadge>
-        </div>
-        <div style={styles.infoGrid}>
-          {publicRows.map(row => (
-            <div key={row.label} style={styles.infoCard}>
-              <span style={styles.cardLabel}>{row.label}</span>
-              <strong style={styles.cardValue}>{row.value}</strong>
-              <span style={styles.cardMeta}>{row.meta}</span>
+      <div className="admin-settings__tabs" role="tablist" aria-label="Seções de configurações" onKeyDown={handleTabKeyDown}>
+        {tabs.map((tab, index) => (
+          <button
+            key={tab.id}
+            ref={node => { tabRefs.current[index] = node; }}
+            id={`admin-settings-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls="admin-settings-panel"
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="admin-settings__panel"
+        id="admin-settings-panel"
+        role="tabpanel"
+        aria-labelledby={`admin-settings-tab-${activeTab}`}
+        tabIndex={0}
+      >
+        {activeTab === "overview" ? (
+          <section aria-labelledby="admin-settings-overview-title">
+            <div className="admin-settings__section-heading">
+              <div><h2 id="admin-settings-overview-title">Informações públicas da loja</h2><p>Valores definidos no frontend e apresentados publicamente.</p></div>
+              <span className="admin-settings__source">Configuração do site</span>
             </div>
-          ))}
-        </div>
-      </section>
-
-      <section style={styles.sectionBlock}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <h3 style={styles.sectionTitle}>Configurações operacionais existentes</h3>
-            <p style={styles.sectionDescription}>Atalhos para áreas que já controlam partes reais da operação.</p>
-          </div>
-          <AdminStatusBadge style={badgeTones.success}>Fluxos existentes</AdminStatusBadge>
-        </div>
-        <div style={styles.shortcutGrid}>
-          {operationalShortcuts.map(item => (
-            <button key={item.section} type="button" style={styles.shortcutCard} onClick={() => onSelectSection(item.section)}>
-              <span style={styles.shortcutTop}>
-                <strong style={styles.shortcutTitle}>{item.title}</strong>
-                <AdminStatusBadge style={{ ...(item.status === "Critico" ? badgeTones.warning : badgeTones.success), ...styles.inlineBadge }}>
-                  {item.status}
-                </AdminStatusBadge>
-              </span>
-              <span style={styles.shortcutDescription}>{item.description}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section style={styles.sectionBlock}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <h3 style={styles.sectionTitle}>Integracoes</h3>
-            <p style={styles.sectionDescription}>Status seguro sem expor variáveis, tokens ou URLs sensíveis.</p>
-          </div>
-          <AdminStatusBadge style={badgeTones.warning}>Não editável</AdminStatusBadge>
-        </div>
-        <div style={styles.infoGrid}>
-          {integrations.map(item => (
-            (() => {
-              const runtime = runtimeStatus?.integrations[item.key];
-              return (
-                <div key={item.title} style={styles.integrationCard}>
-                  <span style={styles.cardLabel}>{item.title}</span>
-                  <strong style={styles.integrationStatus}>
-                    {runtimeStatusLoading ? "Verificando status seguro..." : runtime ? getRuntimeStatusLabel(runtime.status) : item.status}
-                  </strong>
-                  <span style={styles.cardMeta}>{runtime ? formatRuntimeMeta(runtime, item.description) : item.description}</span>
-                  {runtime ? <AdminStatusBadge style={getRuntimeStatusTone(runtime.status)}>{runtime.status}</AdminStatusBadge> : null}
+            <dl className="admin-settings__public-list">
+              {publicRows.map(row => (
+                <div className="admin-settings__public-row" key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd><strong>{row.value}</strong><span>{row.source}</span></dd>
                 </div>
-              );
-            })()
-          ))}
-        </div>
-      </section>
+              ))}
+            </dl>
+            <p className="admin-settings__backend-gate-note" role="note">
+              <strong>Proteção comercial do backend</strong>
+              <span>Não verificada por esta consulta. O modo visual do frontend não confirma se o servidor está bloqueando novas operações comerciais.</span>
+            </p>
+          </section>
+        ) : null}
 
-      {runtimeStatus ? (
-        <section style={styles.sectionBlock}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <h3 style={styles.sectionTitle}>Leitura segura do backend</h3>
-              <p style={styles.sectionDescription}>Resumo operacional calculado no servidor sem retornar valores de variáveis de ambiente.</p>
+        {activeTab === "integrations" ? (
+          <section aria-labelledby="admin-settings-integrations-title">
+            <div className="admin-settings__section-heading">
+              <div><h2 id="admin-settings-integrations-title">Integrações e serviços</h2><p>O backend retorna somente situação e contagem de presença, nunca os valores configurados.</p></div>
+              <span className="admin-settings__source">Consulta administrativa segura</span>
             </div>
-            <AdminStatusBadge style={runtimeStatus.security.secretsExposed ? badgeTones.danger : badgeTones.success}>
-              Secrets expostos: {runtimeStatus.security.secretsExposed ? "sim" : "não"}
-            </AdminStatusBadge>
-          </div>
-          <div style={styles.infoGrid}>
-            <div style={styles.infoCard}>
-              <span style={styles.cardLabel}>Ambiente</span>
-              <strong style={styles.cardValue}>{runtimeStatus.environment.nodeEnv}</strong>
-              <span style={styles.cardMeta}>Valor classificado, sem detalhes de infraestrutura.</span>
+            {runtimeStatusLoading ? <p className="admin-settings__state-message" role="status">Consultando o status do backend...</p> : null}
+            {runtimeStatusError ? (
+              <div className="admin-settings__state-message" role="status">
+                <span>Não foi possível consultar o status. Nenhuma situação de integração foi presumida.</span>
+                {onRetryRuntimeStatus ? <button type="button" onClick={onRetryRuntimeStatus}>Tentar novamente</button> : null}
+              </div>
+            ) : null}
+            {!runtimeStatusLoading && !runtimeStatusError && !visibleRuntimeStatus ? (
+              <p className="admin-settings__state-message" role="status">Status não verificado.</p>
+            ) : null}
+            <div className="admin-settings__integration-list">
+              {integrationRows.map((row, index) => {
+                const status = visibleRuntimeStatus?.integrations[row.key];
+                const countLabel = status ? `${status.configuredCount} de ${status.expectedCount} sinais configurados` : null;
+                return (
+                  <article className="admin-settings__integration-row" key={row.key}>
+                    <span className="admin-settings__index">{String(index + 1).padStart(2, "0")}</span>
+                    <div><h3>{row.title}</h3><p>{row.purpose}</p></div>
+                    <div className="admin-settings__integration-result">
+                      <strong>{runtimeStatusLoading ? "Consultando…" : status ? runtimeLabel(status.status) : "Não verificado"}</strong>
+                      {countLabel ? <span>{countLabel}</span> : null}
+                      {status ? <span className={`admin-settings__state ${statusTone(status.status)}`}>{status.status}</span> : null}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
-            <div style={styles.infoCard}>
-              <span style={styles.cardLabel}>Banco</span>
-              <strong style={styles.cardValue}>{runtimeStatus.environment.databaseConfigured ? "Configurado" : "Pendente"}</strong>
-              <span style={styles.cardMeta}>Apenas presença de configuração, sem connection string.</span>
-            </div>
-            <div style={styles.infoCard}>
-              <span style={styles.cardLabel}>Frontend URL</span>
-              <strong style={styles.cardValue}>{runtimeStatus.environment.frontendUrlConfigured ? "Configurado" : "Fallback do sistema"}</strong>
-              <span style={styles.cardMeta}>Nenhuma URL sensível é exibida.</span>
-            </div>
-          </div>
-        </section>
-      ) : null}
+          </section>
+        ) : null}
 
-      <div style={styles.twoColumnGrid}>
-        <section style={styles.sectionBlock}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <h3 style={styles.sectionTitle}>Conteúdos ainda no código</h3>
-              <p style={styles.sectionDescription}>Áreas que ainda não são editáveis pelo admin.</p>
+        {activeTab === "environment" ? (
+          <section aria-labelledby="admin-settings-environment-title">
+            <div className="admin-settings__section-heading">
+              <div><h2 id="admin-settings-environment-title">Ambiente e segurança</h2><p>Resumo do que o endpoint administrativo disponibiliza sem expor configuração sensível.</p></div>
+              <span className="admin-settings__source">Somente metadados</span>
             </div>
-          </div>
-          <ul style={styles.list}>
-            {hardcodedAreas.map(item => (
-              <li key={item} style={styles.listItem}>{item}</li>
-            ))}
-          </ul>
-        </section>
+            {runtimeStatusLoading ? <p className="admin-settings__state-message" role="status">Consultando metadados do ambiente...</p> : null}
+            {runtimeStatusError ? <p className="admin-settings__state-message" role="status">Metadados indisponíveis; o estado do ambiente não foi verificado.</p> : null}
+            {visibleRuntimeStatus ? (
+              <dl className="admin-settings__environment-list">
+                <div><dt>Ambiente do servidor</dt><dd>{visibleRuntimeStatus.environment.nodeEnv === "production" ? "Produção" : "Não produção"}</dd></div>
+                <div><dt>Banco configurado</dt><dd>{visibleRuntimeStatus.environment.databaseConfigured ? "Sim" : "Não"}</dd></div>
+                <div><dt>URL do frontend</dt><dd>{visibleRuntimeStatus.environment.frontendUrlConfigured ? "Configurada" : "Fallback do sistema"}</dd></div>
+                <div><dt>Segredos na resposta</dt><dd>{visibleRuntimeStatus.security.secretsExposed ? "Marcados como expostos" : "Não incluídos"}</dd></div>
+                <div><dt>Configurações editáveis aqui</dt><dd>{visibleRuntimeStatus.security.editable ? "Indicadas pelo backend" : "Não"}</dd></div>
+                <div><dt>Consulta realizada</dt><dd>{formatGeneratedAt(visibleRuntimeStatus.generatedAt)}</dd></div>
+              </dl>
+            ) : null}
+            {visibleRuntimeStatus?.security.secretsExposed ? <p className="admin-settings__security-warning">A resposta do backend informa exposição de segredos. Não exiba nem copie valores por esta interface.</p> : null}
+          </section>
+        ) : null}
 
-        <section style={styles.sectionBlock}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <h3 style={styles.sectionTitle}>Futura versão editável</h3>
-              <p style={styles.sectionDescription}>Próximos passos técnicos recomendados.</p>
+        {activeTab === "outside" ? (
+          <section aria-labelledby="admin-settings-outside-title">
+            <div className="admin-settings__section-heading">
+              <div><h2 id="admin-settings-outside-title">Fora do painel</h2><p>Itens que não são editáveis nem controlados por esta área.</p></div>
+              <span className="admin-settings__source">Sem mutações de configuração</span>
             </div>
-          </div>
-          <ol style={styles.list}>
-            {roadmap.map(item => (
-              <li key={item} style={styles.listItem}>{item}</li>
-            ))}
-          </ol>
-        </section>
+            <ul className="admin-settings__outside-list">
+              {outsidePanel.map(item => <li key={item}>{item}</li>)}
+            </ul>
+            <div className="admin-settings__outside-note">
+              <strong>Áreas operacionais existentes</strong>
+              <div>
+                <button type="button" onClick={() => onSelectSection("products")}>Produtos</button>
+                <button type="button" onClick={() => onSelectSection("promos")}>Destaques da Home</button>
+                <button type="button" onClick={() => onSelectSection("orders")}>Pedidos</button>
+                <button type="button" onClick={() => onSelectSection("coupons")}>Cupons</button>
+              </div>
+              <span>Esses atalhos abrem suas áreas próprias; não alteram configurações globais.</span>
+            </div>
+            <p className="admin-settings__launch-note">A data de lançamento não está definida nesta área. Não existe aqui uma ação para abrir a loja pública.</p>
+          </section>
+        ) : null}
       </div>
-
-      <section style={styles.sectionBlock}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <h3 style={styles.sectionTitle}>Alertas de segurança</h3>
-            <p style={styles.sectionDescription}>Cuidados obrigatórios antes de transformar esta tela em configuração persistente.</p>
-          </div>
-        </div>
-        <div style={styles.alertGrid}>
-          <AdminCriticalAlert
-            tone="danger"
-            title="Credenciais não devem ser editáveis"
-            description="Chaves de pagamento, e-mail, OAuth, banco e webhook precisam continuar em ambiente seguro."
-          />
-          <AdminCriticalAlert
-            tone="warning"
-            title="Configurações públicas precisam de fallback"
-            description="A loja pública não pode quebrar se a API de settings falhar ou se uma configuração estiver incompleta."
-          />
-          <AdminCriticalAlert
-            tone="warning"
-            title="Modo manutenção exige cuidado"
-            description="Coming soon/manutenção deve preservar acesso administrativo e passar por validação antes de produção."
-          />
-        </div>
-      </section>
-    </AdminSurface>
+    </section>
   );
 }
-
-const badgeTones: Record<string, CSSProperties> = {
-  neutral: {
-    background: "rgba(148,163,184,0.09)",
-    border: "1px solid rgba(148,163,184,0.18)",
-    color: "#cbd5e1",
-  },
-  success: {
-    background: "rgba(34,197,94,0.12)",
-    border: "1px solid rgba(34,197,94,0.28)",
-    color: "#86efac",
-  },
-  warning: {
-    background: "rgba(245,158,11,0.13)",
-    border: "1px solid rgba(245,158,11,0.30)",
-    color: "#fbbf24",
-  },
-  danger: {
-    background: "rgba(239,68,68,0.14)",
-    border: "1px solid rgba(239,68,68,0.32)",
-    color: "#fca5a5",
-  },
-};
-
-const styles: Record<string, CSSProperties> = {
-  alertGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
-    gap: 12,
-    minWidth: 0,
-  },
-  sectionBlock: {
-    display: "grid",
-    gap: 14,
-    padding: 18,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.075)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.006)), #090909",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.035)",
-    minWidth: 0,
-  },
-  sectionHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-    flexWrap: "wrap",
-    minWidth: 0,
-  },
-  sectionTitle: {
-    margin: 0,
-    color: "#f8f4ec",
-    fontSize: 18,
-    lineHeight: 1.25,
-  },
-  sectionDescription: {
-    margin: "6px 0 0",
-    color: "#9ca3af",
-    fontSize: 13,
-    lineHeight: 1.6,
-    maxWidth: 720,
-  },
-  infoGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
-    gap: 12,
-    minWidth: 0,
-  },
-  infoCard: {
-    display: "grid",
-    gap: 8,
-    minHeight: 132,
-    padding: "16px 15px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.075)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.026), rgba(255,255,255,0.008)), #0d0d0d",
-    minWidth: 0,
-  },
-  integrationCard: {
-    display: "grid",
-    gap: 8,
-    minHeight: 144,
-    padding: "16px 15px",
-    borderRadius: 14,
-    border: "1px solid rgba(245,158,11,0.18)",
-    background: "linear-gradient(180deg, rgba(245,158,11,0.055), rgba(255,255,255,0.008)), #0d0d0d",
-    minWidth: 0,
-  },
-  cardLabel: {
-    color: "#9ca3af",
-    fontSize: 11,
-    fontWeight: 900,
-    letterSpacing: "0.10em",
-    textTransform: "uppercase",
-  },
-  cardValue: {
-    color: "#f8f4ec",
-    fontSize: "clamp(15px, 2.1vw, 18px)",
-    lineHeight: 1.25,
-    overflowWrap: "anywhere",
-    wordBreak: "break-word",
-  },
-  integrationStatus: {
-    color: "#f8f4ec",
-    fontSize: 15,
-    lineHeight: 1.35,
-    overflowWrap: "anywhere",
-  },
-  cardMeta: {
-    color: "#9ca3af",
-    fontSize: 12,
-    lineHeight: 1.55,
-    overflowWrap: "anywhere",
-  },
-  shortcutGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
-    gap: 12,
-    minWidth: 0,
-  },
-  shortcutCard: {
-    display: "grid",
-    gap: 12,
-    textAlign: "left",
-    minHeight: 132,
-    padding: "16px 15px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.085)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.008)), #101010",
-    color: "#f8f4ec",
-    cursor: "pointer",
-    minWidth: 0,
-  },
-  shortcutTop: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-    flexWrap: "wrap",
-    minWidth: 0,
-  },
-  shortcutTitle: {
-    fontSize: 16,
-    lineHeight: 1.25,
-    minWidth: 0,
-    overflowWrap: "anywhere",
-  },
-  shortcutDescription: {
-    color: "#9ca3af",
-    fontSize: 13,
-    lineHeight: 1.55,
-    overflowWrap: "anywhere",
-  },
-  twoColumnGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
-    gap: 14,
-    minWidth: 0,
-  },
-  list: {
-    margin: 0,
-    paddingLeft: 20,
-    display: "grid",
-    gap: 10,
-    color: "#d1d5db",
-  },
-  listItem: {
-    color: "#d1d5db",
-    fontSize: 13,
-    lineHeight: 1.55,
-    overflowWrap: "anywhere",
-  },
-  inlineBadge: {
-    maxWidth: "100%",
-    whiteSpace: "normal",
-    textAlign: "center",
-    lineHeight: 1.25,
-    paddingTop: 7,
-    paddingBottom: 7,
-  },
-};

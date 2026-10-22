@@ -7,19 +7,17 @@ const sections: LegalSection[] = [
     title: "1. Objeto",
     content: (
       <p>
-        Estes Termos apresentam as regras de uso do site e as condições aplicáveis às compras realizadas pela L4CKOS. A concordância com condições de compra deve ocorrer de forma clara nos fluxos de cadastro, pedido ou checkout, quando aplicável.
+        Estes Termos descrevem o uso do site e informações gerais sobre compras. As características, disponibilidade, preço, custos e condições específicos de cada oferta devem ser consultados na página do produto e no resumo apresentado antes da conclusão do pedido.
       </p>
     ),
   },
   {
     id: "fornecedor",
-    title: "2. Identificação do fornecedor",
+    title: "2. Identificação e contato",
     content: (
-      <div className="l4-legal-box">
-        <p><strong>Marca:</strong> L4CKOS.</p>
-        <p><strong>Responsável atual:</strong> Yan Bezerra.</p>
-        <p><strong>E-mail oficial:</strong> {contactChannels.email}.</p>
-        <p>Dados empresariais como CNPJ, razão social e endereço de atendimento ainda precisam ser definidos antes do lançamento comercial definitivo.</p>
+      <div className="l4-legal-contact">
+        <p>Esta loja é apresentada sob a marca L4CKOS.</p>
+        <p><strong>Contato:</strong> {contactChannels.email}.</p>
       </div>
     ),
   },
@@ -42,7 +40,7 @@ const sections: LegalSection[] = [
     title: "4. Produtos, preços e disponibilidade",
     content: (
       <>
-        <p>Os produtos, preços, variações, estoque e condições aplicáveis são exibidos nas páginas da loja e podem mudar conforme atualização do catálogo.</p>
+        <p>As páginas dos produtos informam suas características, preço, variações e disponibilidade. A oferta aplicável ao pedido é aquela apresentada ao consumidor no momento da compra, incluindo condições específicas de pré-venda quando houver.</p>
         <ul>
           <li>Os preços são apresentados em reais.</li>
           <li>O valor final da compra é exibido antes da finalização.</li>
@@ -65,7 +63,7 @@ const sections: LegalSection[] = [
     title: "6. Entrega",
     content: (
       <p>
-        Prazos, modalidades e custos de entrega devem ser apresentados antes da conclusão da compra. O acompanhamento pode ser feito pela área de pedidos e pelos canais oficiais de atendimento disponíveis.
+        Modalidades, custos e estimativas de entrega devem ser informados antes da conclusão da compra. Após o pedido, informações de acompanhamento são disponibilizadas pelos recursos existentes na loja e pelos canais oficiais de atendimento.
       </p>
     ),
   },
@@ -74,9 +72,8 @@ const sections: LegalSection[] = [
     title: "7. Arrependimento, trocas, devoluções e garantia legal",
     content: (
       <>
-        <p>Nas compras realizadas pela internet, o consumidor pode solicitar cancelamento em até 7 dias corridos contados do recebimento do produto, nos termos da legislação aplicável.</p>
-        <p>Defeitos, avarias ou envio de produto incorreto devem ser comunicados para análise e orientação do procedimento adequado.</p>
-        <p>A política de troca voluntária por tamanho ou preferência ainda depende de definição operacional da L4CKOS.</p>
+        <p>Nas compras realizadas fora do estabelecimento comercial, o consumidor pode exercer o direito de arrependimento no prazo legal de 7 dias, contado da assinatura ou do recebimento do produto, conforme o caso. Os valores pagos durante o prazo de reflexão são restituídos conforme a legislação aplicável.</p>
+        <p>Vícios, defeitos, avarias e divergência em relação ao produto comprado são tratados conforme as garantias e alternativas previstas no Código de Defesa do Consumidor. Para troca comercial por tamanho, cor ou preferência, consulte a equipe antes de enviar o produto; essa possibilidade não substitui nem limita direitos legais.</p>
       </>
     ),
   },
@@ -112,7 +109,7 @@ const sections: LegalSection[] = [
     title: "11. Alterações dos termos",
     content: (
       <p>
-        Estes Termos podem ser atualizados para refletir mudanças legais, operacionais ou de funcionamento da loja. A data desta página deve ser alterada apenas quando o conteúdo for revisado.
+        Estes Termos podem ser atualizados para refletir mudanças legais ou no funcionamento da loja. A versão vigente e sua data de revisão são apresentadas nesta página; a atualização não elimina direitos já assegurados ao consumidor.
       </p>
     ),
   },
@@ -129,7 +126,7 @@ const sections: LegalSection[] = [
     id: "contato",
     title: "13. Contato",
     content: (
-      <div className="l4-legal-box">
+      <div className="l4-legal-contact">
         <p><strong>E-mail:</strong> {contactChannels.email}</p>
         <p><strong>Atendimento:</strong> {contactChannels.responseTime}</p>
       </div>
@@ -142,7 +139,7 @@ export default function Termos() {
     <LegalDocument
       title="TERMOS DE USO E CONDIÇÕES DE COMPRA"
       description="Regras de uso do site e condições aplicáveis às compras realizadas pela L4CKOS."
-      updatedAt="24/06/2026"
+      updatedAt="20/10/2026"
       sections={sections}
     />
   );

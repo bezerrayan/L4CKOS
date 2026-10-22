@@ -18,7 +18,8 @@ export default function Carrinho() {
     isCatalogReady,
   } = useCart();
 
-  const getItemKey = (productId: number, selectedOptions?: Record<string, string>) => {
+  const getItemKey = (productId: number, selectedOptions?: Record<string, string>, variantId?: number) => {
+    if (variantId !== undefined) return `${productId}-variant-${variantId}`;
     if (!selectedOptions) return `${productId}`;
     const optionString = Object.entries(selectedOptions)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -42,8 +43,9 @@ export default function Carrinho() {
   };
 
   return (
-    <div style={{ paddingBottom: isMobile ? 104 : 0 }}>
+    <div className="l4-bag-page" style={{ paddingBottom: isMobile ? 104 : 0 }}>
       <div style={styles.header}>
+        <p className="l4-eyebrow">L4CKOS / SUA SELEÇÃO</p>
         <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Sua Sacola</h1>
         <p style={styles.subtitle}>
           {cart.items.length === 0
@@ -65,13 +67,13 @@ export default function Carrinho() {
             <MixedShippingNotice items={cart.items} />
             {hasUnavailableItems ? (
               <p role="alert" style={{ color: "#fca5a5", margin: 0 }}>
-                A disponibilidade da pré-venda mudou. Ajuste ou remova os itens
-                antes de finalizar.
+                Não foi possível confirmar a combinação ou disponibilidade de um item. Remova-o e selecione novamente na página do produto.
               </p>
             ) : null}
           {cart.items.map((item) => (
               <div
-                key={getItemKey(item.product.id, item.selectedOptions)}
+                className="l4-bag-item"
+                key={getItemKey(item.product.id, item.selectedOptions, item.variant?.variantId)}
                 style={{
                   ...styles.itemCard,
                   gridTemplateColumns: isMobile ? "64px minmax(0, 1fr)" : "80px minmax(0, 1fr) auto",
@@ -79,7 +81,7 @@ export default function Carrinho() {
                 }}
               >
                 <img
-                  className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image"
+                  className="l4-product-media-image"
                   src={item.product.image}
                   alt={item.product.name}
                   style={{
@@ -118,21 +120,21 @@ export default function Carrinho() {
                     <div style={styles.qtyWrap}>
                       <button
                         style={styles.qtyButton}
-                        onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)}
+                        onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions, item.variant?.variantId)}
                       >
                         -
                       </button>
                       <span style={styles.qtyValue}>{item.quantity}</span>
                       <button
                         style={styles.qtyButton}
-                        onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)}
+                        onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)}
                       >
                         +
                       </button>
                     </div>
                     <button
                       style={styles.removeIconButton}
-                      onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
+                      onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)}
                       title="Remover item"
                       aria-label="Remover item"
                     >
@@ -150,7 +152,7 @@ export default function Carrinho() {
           </div>
 
           {!isMobile ? (
-            <aside style={styles.summaryDesktop}>
+            <aside className="l4-bag-summary" style={styles.summaryDesktop}>
               <h2 style={styles.summaryTitle}>Resumo da compra</h2>
               <div style={styles.summaryRow}><span>Itens</span><strong>{cart.itemCount}</strong></div>
               <div style={styles.summaryRow}><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
@@ -247,10 +249,10 @@ const styles: Record<string, CSSProperties> = {
   itemImage: {
     width: 80,
     height: 80,
-    borderRadius: 8,
+    borderRadius: 0,
     objectFit: "contain",
     objectPosition: "center",
-    background: "#080808",
+    background: "transparent",
   },
   itemInfo: {
     minWidth: 0,

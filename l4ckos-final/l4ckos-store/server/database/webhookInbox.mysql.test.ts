@@ -7,7 +7,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { createPool, type Pool, type Connection } from 'mysql2/promise';
 import type * as mysqlOrm from 'drizzle-orm/mysql2';
 import { openBackupConnection, backupDatabase, restoreDatabase } from './backupRestore';
-import { inWebhookTransaction } from './webhookTransaction';
+import { inWebhookTransaction, afterWebhookCommit } from './webhookTransaction';
 import { bootstrapReleaseDatabase } from '../../database/bootstrap/bootstrap';
 import { readReleaseContract, ROOT } from '../../database/schema/artifacts';
 import { readReleaseManifest, migrateDatabase } from '../../database/migrations/runner';
@@ -116,6 +116,25 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     expect(await stock()).toBe(5);expect(await paid()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});
     expect(Number((await rows(c,'SELECT COUNT(*) n FROM asaasWebhookEvents'))[0].n)).toBe(0);
     expect((await processStoredWebhook(e.id,processWebhookEnvelope)).status).toBe(200);expect(await stock()).toBe(4);
+  });
+  it('after-commit notification failure cannot replay finances or blindly resend on redelivery/restart',async()=>{
+    const e=event();let notifications=0;
+    const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+    try {
+      expect((await receiveWebhook(e,async p=>{
+        const outcome=await processWebhookEnvelope(p);
+        await afterWebhookCommit(async()=>{
+          expect((await state(e.id)).state).toBe('processed');
+          notifications++;throw Error('synthetic uncertain notification result');
+        });
+        return outcome;
+      })).status).toBe(200);
+      expect(notifications).toBe(1);expect(await stock()).toBe(4);
+      expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(200);
+      expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);
+      expect(notifications).toBe(1);expect(await stock()).toBe(4);
+      expect(warn).toHaveBeenCalledWith('[Webhook] notification_failed_after_commit');
+    }finally{warn.mockRestore();}
   });
   it('survives real process exit after a financial mutation and recovers pending payload',async()=>{
     const e=event();await persistWebhook(e);const dir=await mkdtemp('/tmp/l4ckos-inbox-crash-');const file=dir+'/crash.ts';

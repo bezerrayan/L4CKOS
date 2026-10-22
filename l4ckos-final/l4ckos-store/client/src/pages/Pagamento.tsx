@@ -1,3 +1,5 @@
+import { ENABLED_CHECKOUT_METHODS, DEFAULT_CHECKOUT_METHOD, isCheckoutMethodEnabled, CHECKOUT_METHOD_DISABLED_MESSAGE } from "../../../shared/checkoutMethods";
+import { normalizeBuyerDocument } from "../../../shared/buyerDocument";
 import { PreorderInfo, CheckoutPreorderNotice } from "../components/PreorderInfo"; /**
  * Pagina do checkout - envio e pagamento
  *
@@ -107,7 +109,7 @@ export default function Pagamento() {
   const lastCepLookupRef = useRef<string | null>(null);
   const loadedSavedAddressRef = useRef(false);
   const checkoutTrackedRef = useRef(false);
-  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>("PIX");
+  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>(DEFAULT_CHECKOUT_METHOD);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [cpfCnpj, setCpfCnpj] = useState("");
@@ -177,7 +179,7 @@ export default function Pagamento() {
     isAuthenticated &&
     customerName.trim() &&
     customerEmail.trim() &&
-    cpfCnpj.trim() &&
+    normalizeBuyerDocument(cpfCnpj) &&
     sanitizeCep(cep).length === 8 &&
     addressStreet.trim() &&
     addressNumber.trim() &&
@@ -256,7 +258,8 @@ export default function Pagamento() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart.total, cart.itemCount]);
 
-  const getItemKey = (productId: number, selectedOptions?: Record<string, string>) => {
+  const getItemKey = (productId: number, selectedOptions?: Record<string, string>, variantId?: number) => {
+    if (variantId !== undefined) return `${productId}-variant-${variantId}`;
     if (!selectedOptions) return `${productId}`;
     const optionString = Object.entries(selectedOptions)
       .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
@@ -439,9 +442,10 @@ export default function Pagamento() {
         code: normalized,
         items: cart.items.map(item => ({
           productId: item.product.id,
+          variantId: item.variant?.variantId,
           quantity: item.quantity,
-          size: item.selectedOptions?.tamanho || item.selectedOptions?.size,
-          color: item.selectedOptions?.cor || item.selectedOptions?.color,
+          size: item.variant?.size || item.selectedOptions?.tamanho || item.selectedOptions?.size,
+          color: item.variant?.color || item.selectedOptions?.cor || item.selectedOptions?.color,
         })),
         shipping: {
           cep: sanitizeCep(cep),
@@ -462,10 +466,15 @@ export default function Pagamento() {
 
   const handleCheckout = async () => {
     setPaymentError("");
+    if (!isCheckoutMethodEnabled(checkoutMethod)) {
+      setCheckoutMethod(DEFAULT_CHECKOUT_METHOD);
+      setPaymentError(CHECKOUT_METHOD_DISABLED_MESSAGE);
+      return;
+    }
     if (!isCatalogReady) { setPaymentError("Aguarde a atualização dos itens do carrinho."); return; }
     if (hasUnavailableItems) {
       setPaymentError(
-        "A capacidade da pré-venda foi alterada. Ajuste a sacola antes de finalizar."
+        "Não foi possível confirmar a combinação ou disponibilidade de um item. Remova-o e selecione novamente na página do produto."
       );
       return;
     }
@@ -483,8 +492,8 @@ export default function Pagamento() {
       return;
     }
 
-    if (!customerName.trim() || !customerEmail.trim() || !cpfCnpj.trim()) {
-      setPaymentError("Preencha nome, e-mail e CPF/CNPJ para gerar a cobrança.");
+    if (!customerName.trim() || !customerEmail.trim() || !normalizeBuyerDocument(cpfCnpj)) {
+      setPaymentError("Preencha nome, e-mail e um CPF/CNPJ válido no checkout. Não compartilhe o documento no chat ou suporte.");
       return;
     }
 
@@ -503,9 +512,10 @@ export default function Pagamento() {
         method: checkoutMethod,
         items: cart.items.map(item => ({
           productId: item.product.id,
+          variantId: item.variant?.variantId,
           quantity: item.quantity,
-          size: item.selectedOptions?.tamanho || item.selectedOptions?.size,
-          color: item.selectedOptions?.cor || item.selectedOptions?.color,
+          size: item.variant?.size || item.selectedOptions?.tamanho || item.selectedOptions?.size,
+          color: item.variant?.color || item.selectedOptions?.cor || item.selectedOptions?.color,
         })),
         shipping: {
           cep: sanitizeCep(cep),
@@ -580,17 +590,17 @@ export default function Pagamento() {
 
                 <div className="l4-checkout-summary-items">
                   {cart.items.map(item => (
-                    <article key={getItemKey(item.product.id, item.selectedOptions)} className="l4-checkout-summary-item">
+                    <article key={getItemKey(item.product.id, item.selectedOptions, item.variant?.variantId)} className="l4-checkout-summary-item">
                       <img className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image" src={item.product.imageThumbnail || item.product.image} alt={item.product.name} onError={event => { event.currentTarget.src = camisaFallback; }} />
                       <div>
                         <div className="l4-checkout-item-title"><h3>{item.product.name}</h3><strong>{formatPrice(item.product.price * item.quantity)}</strong></div>
                         <PreorderInfo product={item.product} compact />
                         {item.selectedOptions ? <p>{formatSelectedOptions(item.selectedOptions)}</p> : null}
                         <div className="l4-checkout-item-controls">
-                          <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions, item.variant?.variantId)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
                           <span>{item.quantity}</span>
-                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
-                          <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
+                          <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
                         </div>
                       </div>
                     </article>
@@ -692,7 +702,7 @@ export default function Pagamento() {
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
               <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
               <div className="l4-checkout-payment-methods">
-                {(["PIX", "CARD", "BOLETO"] as CheckoutMethod[]).map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => { setCheckoutMethod(method); trackStoreEvent("payment_method_selected", { method }); }} aria-pressed={checkoutMethod === method}>
+                {ENABLED_CHECKOUT_METHODS.map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => { setCheckoutMethod(method); trackStoreEvent("payment_method_selected", { method }); }} aria-pressed={checkoutMethod === method}>
                   <span className="l4-checkout-payment-icon" aria-hidden="true">{method === "PIX" ? <QrCode size={18} /> : method === "CARD" ? <CreditCard size={18} /> : <Barcode size={18} />}</span><span><strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small></span>
                 </button>)}
               </div>
@@ -706,7 +716,7 @@ export default function Pagamento() {
 
             <section className="l4-checkout-finish">
               <CheckoutPreorderNotice items={cart.items} />
-              {isMobile && cart.items.filter(item=>item.product.salesMode==='PREORDER').map(item=><PreorderInfo key={getItemKey(item.product.id,item.selectedOptions)} product={item.product} compact />)}
+              {isMobile && cart.items.filter(item=>item.product.salesMode==='PREORDER').map(item=><PreorderInfo key={getItemKey(item.product.id,item.selectedOptions,item.variant?.variantId)} product={item.product} compact />)}
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
               <button type="button" onClick={() => void handleCheckout()} disabled={
                   !isCatalogReady ||
@@ -778,7 +788,7 @@ export default function Pagamento() {
             <div style={styles.itemsList}>
               {cart.items.map((item) =>
                 isMobile ? (
-                  <div key={getItemKey(item.product.id, item.selectedOptions)} style={styles.mobileCard}>
+                  <div key={getItemKey(item.product.id, item.selectedOptions, item.variant?.variantId)} style={styles.mobileCard}>
                     <div style={styles.mobileTopRow}>
                       <div className="l4-product-media-surface l4-product-media-surface--thumb" style={styles.mobileImageWrap}>
                         <img
@@ -815,7 +825,8 @@ export default function Pagamento() {
                             updateQuantity(
                               item.product.id,
                               Math.max(1, item.quantity - 1),
-                              item.selectedOptions
+                              item.selectedOptions,
+                              item.variant?.variantId
                             )
                           }
                         >
@@ -825,7 +836,7 @@ export default function Pagamento() {
                         <button
                           style={styles.mobileQtyBtn}
                           onClick={() =>
-                            updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)
+                            updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)
                           }
                         >
                           +
@@ -834,7 +845,7 @@ export default function Pagamento() {
 
                       <button
                         style={styles.mobileRemoveBtn}
-                        onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
+                        onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)}
                         title="Remover item"
                       >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{color: "#9b9b9b"}}>
@@ -847,7 +858,7 @@ export default function Pagamento() {
                     </div>
                   </div>
                 ) : (
-                  <div key={getItemKey(item.product.id, item.selectedOptions)} style={styles.cartItemScroller}>
+                  <div key={getItemKey(item.product.id, item.selectedOptions, item.variant?.variantId)} style={styles.cartItemScroller}>
                     <div
                       style={{
                         ...styles.cartItem,
@@ -888,7 +899,8 @@ export default function Pagamento() {
                               updateQuantity(
                                 item.product.id,
                                 Math.max(1, item.quantity - 1),
-                                item.selectedOptions
+                                item.selectedOptions,
+                                item.variant?.variantId
                               )
                             }
                           >
@@ -902,7 +914,8 @@ export default function Pagamento() {
                               updateQuantity(
                                 item.product.id,
                                 parseInt(e.target.value) || 1,
-                                item.selectedOptions
+                                item.selectedOptions,
+                                item.variant?.variantId
                               )
                             }
                             style={styles.quantityInput}
@@ -910,7 +923,7 @@ export default function Pagamento() {
                           <button
                             style={styles.quantityBtn}
                             onClick={() =>
-                              updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)
+                              updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)
                             }
                           >
                             +
@@ -927,7 +940,7 @@ export default function Pagamento() {
 
                       <button
                         style={styles.removeBtn}
-                        onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
+                        onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)}
                         title="Remover item"
                       >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{color: "#9b9b9b"}}>
@@ -1086,7 +1099,7 @@ export default function Pagamento() {
                 >
                   PIX
                 </button>
-                <button
+                {isCheckoutMethodEnabled("BOLETO") && (<button
                   style={{
                     ...styles.methodButton,
                     ...(checkoutMethod === "BOLETO" ? styles.methodButtonActive : {}),
@@ -1094,7 +1107,7 @@ export default function Pagamento() {
                   onClick={() => setCheckoutMethod("BOLETO")}
                 >
                   Boleto
-                </button>
+                </button>)}
                 <button
                   style={{
                     ...styles.methodButton,

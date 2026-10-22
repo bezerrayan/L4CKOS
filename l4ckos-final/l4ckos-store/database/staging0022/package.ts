@@ -6,6 +6,9 @@ import { ROOT } from "../schema/artifacts";
 import {
   RC,
   SQL_SHA,
+  SQL_SHA23,
+  APPLICATION_RC,
+  migrationPhase,
   assertPlan,
   digest,
   fail,
@@ -14,6 +17,7 @@ import {
   type WindowPlan,
 } from "./policy";
 import type { RemoteIdentity } from "./capability";
+import type { SocketRuntime, SavedSequence } from "./window";
 import { sha256 } from "../schema/fingerprint";
 import { verifyPrivateGzip, repositoryRoot } from "./evidence";
 
@@ -36,12 +40,17 @@ export async function privateJson<T>(file: string): Promise<T> {
  * No provider/Git mutation and no remote operation is performed here.
  */
 export async function packageWindow(
-  operation: "inspect" | "apply",
-  input: RemoteIdentity | WindowPlan,
+  operation: "inspect" | "apply" | "sequence" | "resume",
+  input: RemoteIdentity | WindowPlan | SavedSequence,
   approval: string,
   output: string,
-  artifact?: string
+  artifact?: string,
+  schedulerApproval?: string,
+  runtime?: SocketRuntime
 ) {
+  if(operation === "apply") fail("PRE_DDL_CHECKPOINT_REQUIRED");
+  if(runtime&&(!exactKeys(runtime,['mysqlDeployment','httpApproval'])||!['sequence','resume'].includes(operation)||process.version!=='v22.23.2'))fail('SOCKET_PACKAGE_RUNTIME_REQUIRED');
+  const plan = operation === "resume" ? (input as SavedSequence).identity : input as WindowPlan;
   if (
     operation === "inspect" &&
     (!exactKeys(input, [
@@ -50,24 +59,27 @@ export async function packageWindow(
       "serverUuid",
       "endpointHash",
     ]) ||
-      digest(input.target) !== digest(TARGET) ||
-      !/^[a-f0-9-]{36}$/.test(input.deploymentId) ||
-      !/^[a-f0-9-]{36}$/.test(input.serverUuid) ||
-      !/^[a-f0-9]{64}$/.test(input.endpointHash))
+      digest(plan.target) !== digest(TARGET) ||
+      !/^[a-f0-9-]{36}$/.test(plan.deploymentId) ||
+      !/^[a-f0-9-]{36}$/.test(plan.serverUuid) ||
+      !/^[a-f0-9]{64}$/.test(plan.endpointHash))
   )
     fail("INSPECTION_IDENTITY_INVALID");
-  if (operation === "apply") {
-    assertPlan(input as WindowPlan);
+  if (operation !== "inspect") {
+    assertPlan(plan);
+    if (plan.sqlChecksum !== SQL_SHA) fail("PACKAGE_ENTRY_REQUIRES_0022_PLAN");
+    if(operation === "resume" && ((input as SavedSequence).planDigest !== digest(plan) || !(input as SavedSequence).barrier || !(input as SavedSequence).scheduler))fail("RECOVERY_PACKAGE_INVALID");
     if (approval !== digest(input)) fail("WINDOW_CONFIRMATION_REQUIRED");
     if (!artifact) fail("BACKUP_FILE_REQUIRED");
     const file = await verifyPrivateGzip(artifact, ROOT),
-      proof = (input as WindowPlan).backup;
+      proof = plan.backup;
     if (
       file.artifactSha256 !== proof.artifactSha256 ||
       file.bytes !== proof.bytes
     )
       fail("BACKUP_FILE_CHANGED_AFTER_PROOF");
   }
+  if(runtime&&(!/^[a-f0-9-]{36}$/.test(runtime.mysqlDeployment)||runtime.httpApproval!==digest({plan:digest(plan),action:'http-maintenance-confirmed',apiDeploymentId:plan.deploymentId})))fail('HTTP_MAINTENANCE_APPROVAL_REQUIRED');
   const git = (args: string[]) =>
     execFileSync("git", args, {
       cwd: ROOT,
@@ -77,8 +89,8 @@ export async function packageWindow(
   if (git(["branch", "--show-current"]) !== "feat/preorder-batch")
     fail("OPERATOR_BRANCH_REQUIRED");
   const prefix = git(["rev-parse", "--show-prefix"]);
-  if (operation === "apply") {
-    const commit = (input as WindowPlan).applicationCommit;
+  if (operation !== "inspect") {
+    const commit = plan.applicationCommit;
     // The approved application SHA is local, not assumed to exist remotely.
     git(["cat-file", "-e", `${commit}^{commit}`]);
     for (const file of [
@@ -94,12 +106,13 @@ export async function packageWindow(
         fail("APPROVED_APPLICATION_SCHEMA_CHANGED");
     }
   }
+  const sourceCommit = APPLICATION_RC;
   const artifactNames = git([
     "ls-tree",
     "-r",
     "--full-tree",
     "--name-only",
-    RC,
+    sourceCommit,
     "--",
     prefix + "database",
   ])
@@ -109,7 +122,7 @@ export async function packageWindow(
   for (const name of artifactNames)
     artifacts[name.slice(prefix.length)] = execFileSync(
       "git",
-      ["show", `${RC}:${name}`],
+      ["show", `${sourceCommit}:${name}`],
       { cwd: ROOT, encoding: "utf8" }
     );
   if (
@@ -125,7 +138,7 @@ export async function packageWindow(
     write: false,
     platform: "node",
     format: "cjs",
-    packages: "external",
+    packages: runtime ? "bundle" : "external",
     target: "node22",
     plugins: [
       {
@@ -134,6 +147,7 @@ export async function packageWindow(
           b.onLoad(
             { filter: /\.(ts|tsx|js|jsx|mjs|cjs|json)$/ },
             async args => {
+              if(args.path.includes(path.sep+'node_modules'+path.sep))return undefined;
               const relative = path
                 .relative(ROOT, args.path)
                 .replaceAll(path.sep, "/");
@@ -146,7 +160,7 @@ export async function packageWindow(
               } else
                 source = execFileSync(
                   "git",
-                  ["show", `${RC}:${prefix}${relative}`],
+                  ["show", `${sourceCommit}:${prefix}${relative}`],
                   { cwd: ROOT, encoding: "utf8" }
                 );
               if (relative === "database/schema/artifacts.ts") {
@@ -184,7 +198,9 @@ export async function packageWindow(
       },
     ],
   });
-  const code = `const audited=(()=>{const module={exports:{}};${result.outputFiles[0].text}\nreturn module.exports;})();\naudited.${operation === "apply" ? "runWindow" : "inspectWindow"}(${JSON.stringify(input)}${operation === "apply" ? "," + JSON.stringify(approval) : ""}).then(value=>{console.log(JSON.stringify(value));if(value.status==='STOPPED')process.exitCode=1;}).catch(()=>{console.log(JSON.stringify({status:'STOPPED',code:'WINDOW_PREFLIGHT_FAILED'}));process.exitCode=1;});\n`;
+  if (sha256(artifacts["database/migrations/0023_asaas_webhook_inbox.sql"]) !== SQL_SHA23) fail("RC_SQL_MISMATCH");
+  if(operation==='sequence' && schedulerApproval!==digest({plan:digest(input),action:'suspend-scheduler'}))fail('SCHEDULER_APPROVAL_REQUIRED');
+  const code = `const audited=(()=>{const module={exports:{}};${result.outputFiles[0].text}\nreturn module.exports;})();\naudited.${operation === "resume" ? "resumeWindowSequence" : operation === "sequence" ? (runtime ? "runSocketWindowSequence" : "runWindowSequence") : "inspectWindow"}(${JSON.stringify(input)}${operation !== "inspect" ? "," + JSON.stringify(approval) + (operation === "sequence" ? "," + JSON.stringify(schedulerApproval) : "") + (runtime ? "," + JSON.stringify(runtime) : "") : ""}).then(value=>{console.log(JSON.stringify(value));if(value.status==='STOPPED')process.exitCode=1;}).catch(()=>{console.log(JSON.stringify({status:'STOPPED',code:'WINDOW_PREFLIGHT_FAILED'}));process.exitCode=1;});\n`;
   const directory = await realpath(path.dirname(output)),
     root = await repositoryRoot(ROOT);
   if (
@@ -197,11 +213,13 @@ export async function packageWindow(
   const manifest = {
     operation,
     applicationCommit:
-      operation === "apply" ? (input as WindowPlan).applicationCommit : RC,
-    sqlSourceCommit: RC,
-    sqlChecksum: SQL_SHA,
+      operation !== "inspect" ? plan.applicationCommit : APPLICATION_RC,
+    sqlSourceCommit: operation === "inspect" ? APPLICATION_RC : migrationPhase(plan.sqlChecksum).source,
+    sqlChecksum: operation === "inspect" ? null : plan.sqlChecksum,
+    scopes: ["sequence","resume"].includes(operation) ? ["scheduler-off", "0022", "0023-separate-proof-and-approval", "quarantine", "separate-read-admission", "separate-release"] : [operation],
     payloadSha256: sha256(code),
     operatorFiles,
+    socketRuntime: runtime ? {...runtime,nodeSha256:sha256(await readFile(process.execPath)),nodeVersion:process.version} : null,
     operatorHead: git(["rev-parse", "HEAD"]),
     draft: true,
     requiresApproval: true,

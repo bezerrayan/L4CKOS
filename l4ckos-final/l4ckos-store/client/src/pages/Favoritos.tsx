@@ -34,10 +34,12 @@ export default function Favoritos() {
       ) : (
         <>
           <div
+            className="l4-minimal-products"
             style={{
               ...styles.productsGrid,
               gridTemplateColumns: isMobile ? "1fr" : styles.productsGrid.gridTemplateColumns,
               gap: isMobile ? 16 : styles.productsGrid.gap,
+              rowGap: 0,
             } as CSSProperties}
           >
             {favorites.map((produto, idx) => (

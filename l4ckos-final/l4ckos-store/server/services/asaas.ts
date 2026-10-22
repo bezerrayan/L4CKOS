@@ -1,4 +1,7 @@
-const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
+import { assertCheckoutMethodEnabled } from "../../shared/checkoutMethods";
+import { normalizeBuyerDocument } from "../../shared/buyerDocument";
+import { sandboxSilenceRequired, assertSilentCustomer, verifySandboxCustomer } from "./sandboxCustomerSafety";
+import { getAsaasConfig } from "./asaasConfig";
 
 export type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 
@@ -9,6 +12,7 @@ type AsaasRequestInit = {
 
 type AsaasCustomerResponse = {
   id: string;
+  notificationDisabled?: boolean;
 };
 
 type AsaasPaymentResponse = {
@@ -27,28 +31,18 @@ type AsaasPixQrCodeResponse = {
   payload?: string;
 };
 
-function getAsaasConfig() {
-  const apiKey = process.env.ASAAS_API_KEY?.trim();
-  const apiUrl = (process.env.ASAAS_API_URL?.trim() || DEFAULT_ASAAS_API_URL).replace(/\/+$/, "");
-
-  if (!apiKey) {
-    throw new Error("ASAAS_API_KEY not configured.");
-  }
-
-  return { apiKey, apiUrl };
-}
-
-function getAsaasBillingType(method: CheckoutMethod): "PIX" | "BOLETO" | "UNDEFINED" {
+function getAsaasBillingType(method: CheckoutMethod): "PIX" | "BOLETO" | "CREDIT_CARD" {
   if (method === "PIX") return "PIX";
   if (method === "BOLETO") return "BOLETO";
   // CARD flow: do not collect raw card data in this backend, customer pays by card in invoiceUrl
-  return "UNDEFINED";
+  return "CREDIT_CARD";
 }
 
 async function asaasRequest<T>(path: string, init: AsaasRequestInit = {}) {
   const { apiKey, apiUrl } = getAsaasConfig();
   const response = await fetch(`${apiUrl}${path}`, {
     method: init.method ?? "GET",
+    redirect: "error",
     signal: AbortSignal.timeout(15000),
     headers: {
       "Content-Type": "application/json",
@@ -64,7 +58,7 @@ async function asaasRequest<T>(path: string, init: AsaasRequestInit = {}) {
 
   if (!response.ok) {
     const asaasMessage = data.errors?.[0]?.description || data.message || "Asaas API request failed";
-    throw new Error(asaasMessage);
+    throw new Error(sandboxSilenceRequired() ? "ASAAS_SANDBOX_REQUEST_FAILED" : asaasMessage);
   }
 
   return data as T;
@@ -88,14 +82,22 @@ export async function createAsaasChargeForOrder(input: {
   description: string;
   dueDate?: string;
 }) {
+  assertCheckoutMethodEnabled(input.method);
+  const document = normalizeBuyerDocument(input.customer.cpfCnpj);
+  if (!document) throw Error("CHECKOUT_DOCUMENT_INVALID");
+  const silent = sandboxSilenceRequired();
   const customer = await asaasRequest<AsaasCustomerResponse>("/customers", {
     method: "POST",
     body: {
       name: input.customer.name,
-      cpfCnpj: input.customer.cpfCnpj,
+      cpfCnpj: document,
+      ...(silent ? { notificationDisabled: true } : {}),
       email: input.customer.email || undefined,
     },
   });
+
+  if (silent) assertSilentCustomer(customer.id, customer);
+  await verifySandboxCustomer(customer.id, () => asaasRequest<AsaasCustomerResponse>(`/customers/${encodeURIComponent(customer.id)}`));
 
   const payment = await asaasRequest<AsaasPaymentResponse>("/payments", {
     method: "POST",

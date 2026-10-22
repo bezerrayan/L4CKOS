@@ -3,11 +3,18 @@ import { openCookiePreferences } from "../components/CookiePreferences";
 import { contactChannels } from "../config/site";
 
 const cookieRows = [
-  ["app_session_id", "L4CKOS", "Necessário", "Mantém sessão/autenticação e acesso seguro.", "Sessão configurada pelo servidor."],
-  ["l4ckos_csrf", "L4CKOS", "Necessário", "Protege formulários e ações contra CSRF.", "Sessão configurada pelo servidor."],
-  ["oauth_state", "L4CKOS / Google OAuth", "Necessário", "Valida temporariamente o retorno do login com Google.", "Temporário, durante o fluxo de login."],
-  ["loja-escoteira:cart", "L4CKOS", "Necessário", "Mantém os itens da sacola no navegador.", "Até remoção pelo usuário ou limpeza do navegador."],
-  ["l4ckos:cookie-preferences", "L4CKOS", "Necessário", "Registra a escolha de preferências de cookies.", "Até mudança de versão da política ou limpeza do navegador."],
+  ["app_session_id", "Mantém a sessão da conta; cookie HttpOnly e SameSite=Lax, com duração definida pelo servidor."],
+  ["l4ckos_csrf", "Token de proteção contra CSRF; duração definida pelo servidor."],
+  ["oauth_state", "Valida temporariamente a resposta do login Google; vida curta durante a autenticação."],
+  ["sidebar_state", "Guarda a posição aberta/fechada de uma barra lateral da interface, quando esse componente é usado; até 7 dias."],
+];
+
+const browserStorageRows = [
+  ["localStorage — loja-escoteira:cart", "Mantém localmente os itens da sacola até remoção ou limpeza dos dados do navegador."],
+  ["localStorage — l4ckos:cookie-preferences", "Registra a versão e a data em que o aviso foi encerrado. No código atual, esse registro não controla scripts de medição nem escolhas por categoria; uma nova versão pode reapresentar o aviso sem remover o registro anterior."],
+  ["localStorage — app-user-info", "Cache local da resposta da consulta da conta; removido quando a consulta não retorna usuário autenticado."],
+  ["localStorage — theme / sidebar-width", "Preferências de aparência/largura de componentes administrativos, quando utilizados."],
+  ["sessionStorage — l4ckos:checkout-attempt:[digest]", "Identificador técnico temporário de tentativa de checkout; a implementação guarda UUID e hash da solicitação, não os dados pessoais da solicitação nesse valor."],
 ];
 
 const sections: LegalSection[] = [
@@ -22,14 +29,9 @@ const sections: LegalSection[] = [
   },
   {
     id: "controlador",
-    title: "2. Quem controla os dados",
+    title: "2. Contato sobre dados pessoais",
     content: (
-      <div className="l4-legal-box">
-        <p><strong>Marca:</strong> L4CKOS.</p>
-        <p><strong>Responsável atual:</strong> Yan Bezerra.</p>
-        <p><strong>Contato:</strong> {contactChannels.email}.</p>
-        <p>Dados empresariais como CNPJ, razão social, endereço e eventual encarregado formal de dados ainda precisam ser definidos e revisados antes do lançamento definitivo.</p>
-      </div>
+      <p>Para dúvidas ou solicitações relacionadas a dados pessoais, entre em contato pelo e-mail <a href={`mailto:${contactChannels.email}`}>{contactChannels.email}</a>.</p>
     ),
   },
   {
@@ -48,8 +50,9 @@ const sections: LegalSection[] = [
         <h3>Dados tratados automaticamente</h3>
         <ul>
           <li>Endereço IP, registros técnicos e logs de segurança.</li>
-          <li>Cookies necessários e armazenamento local da sacola.</li>
-          <li>Informações técnicas de navegação necessárias para funcionamento do site.</li>
+          <li>Cookies de sessão, segurança, autenticação e estado da interface.</li>
+          <li>Dados guardados em localStorage e sessionStorage, descritos abaixo.</li>
+          <li>Eventos internos de navegação/uso gerados pela interface. Nesta versão local do frontend, eles não são encaminhados a um serviço de Analytics.</li>
         </ul>
       </>
     ),
@@ -81,13 +84,14 @@ const sections: LegalSection[] = [
     title: "6. Compartilhamento e operadores",
     content: (
       <>
-        <p>Não vendemos dados pessoais. O compartilhamento ocorre quando necessário para operação da loja ou cumprimento legal.</p>
+        <p>O código da loja integra serviços externos para medição, autenticação, pagamentos, e-mail e infraestrutura. O compartilhamento deve se limitar às finalidades aplicáveis e às informações necessárias para cada serviço. Não afirmamos que esses fornecedores tenham uma única função jurídica em todos os fluxos.</p>
         <ul>
           <li>Pagamento: Asaas e instituições envolvidas no processamento.</li>
           <li>E-mail: Resend, quando configurado para comunicações transacionais ou de lista.</li>
-          <li>Login social: Google OAuth, quando utilizado pelo usuário.</li>
-          <li>Tecnologia: hospedagem, banco MySQL/Drizzle e infraestrutura usada pelo projeto.</li>
-          <li>Armazenamento de arquivos/imagens: AWS S3 SDK quando o recurso de upload estiver configurado.</li>
+          <li>Google: Google Fonts e Google OAuth quando utilizado. O Google Analytics identificado anteriormente foi desativado neste código local; integrações injetadas fora do frontend versionado não foram verificadas.</li>
+          <li>Entrega e consulta de CEP: Melhor Envio, ViaCEP ou BrasilAPI conforme configuração e disponibilidade do serviço.</li>
+          <li>Arquivos enviados em recursos da loja: serviço de armazenamento acessado por proxy configurado no servidor.</li>
+          <li>Tecnologia: hospedagem, banco de dados e infraestrutura usados pelo projeto; os fornecedores e regiões dependem da configuração efetiva do ambiente.</li>
         </ul>
       </>
     ),
@@ -97,7 +101,7 @@ const sections: LegalSection[] = [
     title: "7. Transferências internacionais",
     content: (
       <p>
-        Alguns fornecedores de tecnologia, autenticação, e-mail, hospedagem ou pagamento podem operar infraestrutura fora do Brasil. Essa avaliação deve ser revisada conforme os provedores efetivamente contratados para produção.
+        Serviços externos usados pela loja podem tratar dados em infraestrutura localizada no Brasil ou em outros países, conforme a configuração de cada fornecedor. Quando houver transferência internacional, ela deve observar as hipóteses e garantias previstas na LGPD e na regulamentação da ANPD.
       </p>
     ),
   },
@@ -106,28 +110,19 @@ const sections: LegalSection[] = [
     title: "8. Cookies e tecnologias semelhantes",
     content: (
       <>
-        <p>Cookies são pequenos arquivos ou identificadores usados para manter recursos do site funcionando. Também há dados guardados no armazenamento local do navegador, como a sacola.</p>
-        <p>No momento, não foram identificados analytics, Google Tag Manager, pixels de publicidade, remarketing ou gravação de sessão carregando no site público.</p>
-        <table className="l4-legal-cookie-table">
-          <thead>
-            <tr>
-              <th>Nome</th>
-              <th>Provedor</th>
-              <th>Categoria</th>
-              <th>Finalidade</th>
-              <th>Duração</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cookieRows.map(row => (
-              <tr key={row[0]}>
-                {row.map(cell => <td key={cell}>{cell}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p>Bloquear cookies necessários no navegador pode impedir login, segurança, sacola e envio de formulários.</p>
-        <button type="button" className="l4-legal-action secondary" onClick={openCookiePreferences}>ABRIR PREFERÊNCIAS DE COOKIES</button>
+        <p>Cookies são gravados no navegador pelo site ou por serviços carregados por ele. Eles são diferentes dos dados guardados em localStorage e sessionStorage. O inventário abaixo descreve mecanismos encontrados no código; a duração de cookies de sessão varia conforme a configuração do servidor e os serviços externos.</p>
+        <h3>Cookies</h3>
+        <ul className="l4-legal-inventory">
+          {cookieRows.map(([name, purpose]) => <li key={name}><code>{name}</code><span>{purpose}</span></li>)}
+        </ul>
+        <h3>Armazenamento no navegador (não são cookies)</h3>
+        <ul className="l4-legal-inventory">
+          {browserStorageRows.map(([name, purpose]) => <li key={name}><code>{name}</code><span>{purpose}</span></li>)}
+        </ul>
+        <h3>Medição do uso do site</h3>
+        <p>O Google Analytics identificado anteriormente foi desativado neste código local: o HTML não carrega gtag.js, a interface não inicializa gtag/dataLayer e os eventos internos não são encaminhados a um coletor. Esta descrição se limita ao frontend versionado; não confirma a configuração de ambientes remotos nem a presença de scripts injetados fora dele. A interface de cookies apenas registra o encerramento do aviso e não oferece controle de categorias de medição.</p>
+        <p>O bloqueio de cookies no navegador pode afetar sessão, autenticação e proteções de segurança; os demais recursos de armazenamento têm finalidades próprias descritas acima.</p>
+        <button type="button" className="l4-legal-action secondary" onClick={openCookiePreferences}>VER INFORMAÇÕES SOBRE COOKIES</button>
       </>
     ),
   },
@@ -136,13 +131,10 @@ const sections: LegalSection[] = [
     title: "9. Armazenamento e retenção",
     content: (
       <>
-        <p>Os prazos específicos ainda precisam ser definidos operacionalmente e revisados juridicamente. Como orientação, a retenção deve observar finalidade, obrigações legais e necessidade de defesa de direitos.</p>
+        <p>Os dados são mantidos pelo período compatível com a finalidade do tratamento e as bases legais aplicáveis, inclusive obrigações legais e exercício regular de direitos. O encerramento de uma finalidade não elimina retenções que ainda sejam exigidas ou permitidas por lei.</p>
         <ul>
-          <li>Dados da conta: enquanto a conta existir ou houver obrigação aplicável.</li>
-          <li>Pedidos e dados fiscais: conforme exigências legais e de defesa do consumidor.</li>
-          <li>Atendimento: pelo período necessário para resolver a solicitação e manter histórico mínimo.</li>
-          <li>Logs de segurança: pelo tempo necessário para proteção, auditoria e investigação de incidentes.</li>
-          <li>Marketing/lista: até descadastro, revogação ou limpeza da base conforme política definida.</li>
+          <li>Os prazos podem variar conforme a categoria de dado, a finalidade e a obrigação legal aplicável.</li>
+          <li>Solicitações sobre retenção ou eliminação podem ser feitas pelo canal de privacidade, observadas as hipóteses legais de conservação.</li>
         </ul>
       </>
     ),
@@ -152,7 +144,7 @@ const sections: LegalSection[] = [
     title: "10. Segurança",
     content: (
       <p>
-        A L4CKOS adota medidas técnicas e administrativas para proteger dados contra acessos não autorizados, perda, alteração ou uso indevido. Nenhum ambiente digital é totalmente isento de riscos.
+        São aplicadas medidas técnicas e administrativas de segurança compatíveis com o funcionamento do serviço. Nenhum ambiente digital é totalmente isento de riscos; isso não afasta os deveres legais de segurança e resposta a incidentes.
       </p>
     ),
   },
@@ -161,7 +153,7 @@ const sections: LegalSection[] = [
     title: "11. Direitos do titular",
     content: (
       <>
-        <p>Nos termos da LGPD, você pode solicitar confirmação de tratamento, acesso, correção, eliminação quando aplicável, informação sobre compartilhamento, revogação de consentimento, oposição e portabilidade observadas as condições legais.</p>
+        <p>Nos termos da LGPD, o titular pode solicitar confirmação da existência de tratamento, acesso, correção, anonimização, bloqueio ou eliminação nos casos legais, informação sobre compartilhamento, revogação de consentimento e demais direitos previstos em lei. A portabilidade e outros direitos estão sujeitos às condições e à regulamentação aplicáveis.</p>
         <a className="l4-legal-action" href="/contato?assunto=privacidade">SOLICITAR ATENDIMENTO DE PRIVACIDADE</a>
       </>
     ),
@@ -180,7 +172,7 @@ const sections: LegalSection[] = [
     title: "13. Crianças e adolescentes",
     content: (
       <p>
-        A L4CKOS pode ser acessada por adolescentes. O tratamento de dados e as experiências oferecidas devem observar a legislação aplicável e considerar a proteção desse público. Esta seção precisa de revisão jurídica considerando o público real da marca.
+        Quando houver tratamento de dados pessoais de crianças ou adolescentes, serão observadas as regras legais aplicáveis e a consideração do melhor interesse, conforme o caso.
       </p>
     ),
   },
@@ -198,7 +190,7 @@ const sections: LegalSection[] = [
     title: "15. Alterações",
     content: (
       <p>
-        Esta Política pode ser atualizada para refletir mudanças legais, técnicas ou operacionais. A data deve ser alterada somente quando houver revisão do conteúdo.
+        Esta Política pode ser atualizada para refletir mudanças legais, técnicas ou operacionais. A versão vigente e sua data de revisão são apresentadas nesta página.
       </p>
     ),
   },
@@ -206,7 +198,7 @@ const sections: LegalSection[] = [
     id: "contato",
     title: "16. Contato de privacidade",
     content: (
-      <div className="l4-legal-box">
+      <div className="l4-legal-contact">
         <p><strong>E-mail:</strong> {contactChannels.email}</p>
         <p><strong>Atendimento:</strong> {contactChannels.responseTime}</p>
       </div>
@@ -219,7 +211,7 @@ export default function Privacidade() {
     <LegalDocument
       title="POLÍTICA DE PRIVACIDADE E COOKIES"
       description="Como a L4CKOS trata dados pessoais, cookies, segurança e preferências de privacidade no site."
-      updatedAt="24/06/2026"
+      updatedAt="20/10/2026"
       sections={sections}
     />
   );

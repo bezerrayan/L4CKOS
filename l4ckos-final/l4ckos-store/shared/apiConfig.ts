@@ -16,6 +16,11 @@ export class ApiConfigError extends Error {
 }
 
 const STAGING_API_ORIGIN = "https://api-staging.l4ckos.com.br";
+const LOCAL_API_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function isLocalApiUrl(url: URL): boolean {
+  return LOCAL_API_HOSTS.has(url.hostname.toLowerCase());
+}
 
 function parseTarget(value?: string): ApiDeploymentTarget | undefined {
   const target = value?.trim().toLowerCase();
@@ -77,6 +82,12 @@ export function validateBuildApiConfig(input: Pick<ApiConfigInput, "apiUrl" | "t
 
 export function resolveApiUrl(input: ApiConfigInput): URL {
   const target = parseTarget(input.target);
+  if (input.isDevelopment && target) {
+    throw new ApiConfigError("DEV_API_TARGET_DISABLED", "Local development cannot use a release API target.");
+  }
+  if (input.isDevelopment && input.currentOrigin && !isLocalApiUrl(new URL(input.currentOrigin))) {
+    throw new ApiConfigError("DEV_API_REMOTE_DISABLED", "Local development cannot run from a remote site origin.");
+  }
   // A production artifact accidentally served on the staging host must stop too.
   if (input.currentOrigin && new URL(input.currentOrigin).hostname === "staging.l4ckos.com.br") {
     if (target !== "staging") throw new ApiConfigError("STAGING_API_ORIGIN_MISMATCH", "The staging frontend requires a staging build.");
@@ -105,6 +116,9 @@ export function resolveApiUrl(input: ApiConfigInput): URL {
   }
   if (target === "production" && resolved.hostname.toLowerCase() === "api-staging.l4ckos.com.br") {
     throw new ApiConfigError("PRODUCTION_API_TARGET_MISMATCH", "Production runtime cannot target the staging API.");
+  }
+  if (input.isDevelopment && !isLocalApiUrl(resolved)) {
+    throw new ApiConfigError("DEV_API_REMOTE_DISABLED", "Local development may only use a loopback API destination.");
   }
   if (resolved.protocol !== "https:" && !(resolved.protocol === "http:" && input.isDevelopment && ["localhost", "127.0.0.1", "[::1]"].includes(resolved.hostname))) {
     throw new ApiConfigError("API_URL_INVALID", "Non-local API destinations must use HTTPS.");

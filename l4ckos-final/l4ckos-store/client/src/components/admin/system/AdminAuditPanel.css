@@ -1,0 +1,48 @@
+.l4-audit-live .audit-list-section { margin: 0; }
+.l4-audit-live .audit-section-heading { align-items: center; }
+.l4-audit-live .audit-section-heading > button { flex: 0 0 auto; }
+.l4-audit-live .audit-section-title { display: block; visibility: visible; color: #e8002a !important; font: 400 22px/1.1 'Bebas Neue', sans-serif; letter-spacing: .035em; }
+.l4-audit-live .audit-date-value { display: inline-block; visibility: visible; color: #eee !important; font-size: 14px; font-weight: 550; font-variant-numeric: tabular-nums; }
+.l4-audit-live .audit-action-value { display: inline-block; visibility: visible; overflow-wrap: anywhere; color: #eee !important; font-size: 14px; font-weight: 550; line-height: 1.4; }
+.l4-audit-live .audit-entity-value { display: inline-block; visibility: visible; color: #eee !important; font-size: 14px; font-weight: 550; }
+.l4-audit-live .audit-section-heading .audit-section-title { display: flex; min-width: max-content; align-items: center; color: #e8002a !important; }
+.l4-audit-live .audit-table thead { display: table-header-group !important; visibility: visible !important; }
+.l4-audit-live .audit-table th { display: table-cell !important; visibility: visible !important; color: #aaa !important; font-size: 11px !important; -webkit-text-fill-color: #aaa; }
+.l4-audit-live .audit-table .audit-date-value, .l4-audit-live .audit-table .audit-action-value, .l4-audit-live .audit-table .audit-entity-value { display: block !important; color: #eee !important; font-size: 14px !important; opacity: 1 !important; visibility: visible !important; -webkit-text-fill-color: #eee; }
+.l4-audit-live .audit-refresh-button { display: inline-flex; min-width: 104px; min-height: 40px; flex: 0 0 auto; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid #3a3a3a; border-radius: 3px; background: #121212; color: #e7e7e7; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; }
+.l4-audit-live .audit-refresh-button:hover:not(:disabled) { border-color: #666; background: #191919; color: #fff; }
+.l4-audit-live .audit-refresh-button:focus-visible { outline: 2px solid #e8002a; outline-offset: 2px; }
+.l4-audit-live .audit-refresh-button:disabled { opacity: .55; cursor: wait; }
+.audit-detail-dialog .audit-dialog-title { margin-top: 5px; color: #e8002a; font: 400 24px/1.1 'Bebas Neue', sans-serif; letter-spacing: .04em; }
+.audit-detail-dialog .audit-detail-title { margin: 0 0 10px; color: #e8002a; font: 400 19px/1.1 'Bebas Neue', sans-serif; }
+.audit-detail-dialog {
+  width: min(680px, calc(100vw - 24px)); max-width: 680px; max-height: min(86dvh, 820px); overflow: hidden;
+  padding: 20px; border: 1px solid #333; border-radius: 4px; background: #101010; color: #eee; box-shadow: none;
+}
+.audit-detail-dialog-header { position: relative; padding: 0 38px 14px 0; border-bottom: 1px solid #303030; text-align: left; }
+.audit-detail-dialog-header > div:first-child > small { color: #aaa; font-size: 11px; letter-spacing: .08em; }
+.audit-detail-dialog-header [data-slot="dialog-title"] { margin-top: 5px; color: #e8002a; font: 400 24px/1.1 'Bebas Neue', sans-serif; letter-spacing: .04em; }
+.audit-detail-dialog-header [data-slot="dialog-description"] { margin-top: 5px; color: #999; font-size: 13px; }
+.audit-detail-dialog .audit-dialog-close { position: absolute; top: 0; right: 0; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #333; border-radius: 3px; background: #111; color: #ddd; }
+.audit-detail-dialog .audit-dialog-close:focus-visible { outline: 2px solid #e8002a; outline-offset: 2px; }
+.audit-detail-dialog .audit-dialog-scroll { max-height: calc(min(86dvh, 820px) - 100px); overflow: auto; padding-right: 3px; }
+.audit-detail-dialog .audit-detail-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; margin: 16px 0; }
+.audit-detail-dialog .audit-detail-facts > div { display: grid; min-width: 0; gap: 5px; }
+.audit-detail-dialog .audit-detail-facts dt, .audit-detail-dialog .audit-metadata-list dt { color: #999; font-size: 13px; }
+.audit-detail-dialog .audit-detail-facts dd, .audit-detail-dialog .audit-metadata-list dd { margin: 0; overflow-wrap: anywhere; color: #eee; font-size: 14px; line-height: 1.45; }
+.audit-detail-dialog .audit-detail-facts dd small { display: block; margin-top: 3px; color: #999; font-size: 12px; }
+.audit-detail-dialog .audit-detail-facts code { overflow-wrap: anywhere; color: #ddd; font: 13px/1.45 'DM Sans', sans-serif; }
+.audit-detail-dialog .audit-detail-section { padding-top: 13px; border-top: 1px solid #2c2c2c; }
+.audit-detail-dialog .audit-detail-section h3 { margin: 0 0 10px; color: #e8002a; font: 400 19px/1.1 'Bebas Neue', sans-serif; }
+.audit-detail-dialog .audit-detail-section > p { color: #aaa; font-size: 14px; }
+.audit-detail-dialog .audit-metadata-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin: 0; }
+.audit-detail-dialog .audit-metadata-list > div { display: grid; min-width: 0; gap: 4px; }
+.l4-audit-live .audit-empty { padding: 22px 8px; color: #aaa; font-size: 14px; }
+.l4-audit-live .audit-details-button { white-space: nowrap; }
+@media (max-width: 700px) {
+  .l4-audit-live .audit-list-section { padding: 14px 12px; }
+  .l4-audit-live .audit-section-heading { align-items: flex-start; }
+  .l4-audit-live .audit-filters { grid-template-columns: minmax(0, 1fr); }
+  .audit-detail-dialog { padding: 17px 14px; }
+  .audit-detail-dialog .audit-detail-facts, .audit-detail-dialog .audit-metadata-list { grid-template-columns: minmax(0, 1fr); }
+}

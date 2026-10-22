@@ -42,8 +42,8 @@
 
 .l4-header-menu-btn,
 .l4-header-icon-btn {
-  border: 1px solid #303030;
-  background: #131313;
+  border: 1px solid transparent;
+  background: transparent;
   color: #f0ede8;
   width: 40px;
   height: 40px;
@@ -93,11 +93,16 @@
   font-family: "Space Mono", monospace;
 }
 
-.l4-header-link:hover,
+.l4-header-link:hover {
+  color: #f0ede8;
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .l4-header-link.active {
   color: #f0ede8;
-  border-color: #3a3a3a;
-  background: rgba(255, 255, 255, 0.04);
+  background: transparent;
+  border-bottom-color: #e8002a;
+  border-bottom-width: 2px;
 }
 
 .l4-header-actions {
@@ -174,7 +179,7 @@
 @media (max-width: 980px) {
   .l4-header-inner {
     padding: 10px 12px;
-    grid-template-columns: 42px 1fr auto;
+    grid-template-columns: 44px minmax(80px, 1fr) auto;
     gap: 8px;
     min-height: 62px;
     position: relative;
@@ -187,10 +192,9 @@
   }
 
   .l4-header-brand {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
+    position: static;
+    justify-self: center;
+    transform: none;
     min-width: 0;
     align-items: center;
   }

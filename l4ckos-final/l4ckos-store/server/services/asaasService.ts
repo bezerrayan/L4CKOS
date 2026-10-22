@@ -1,8 +1,11 @@
+import { assertEnabledBillingTypes } from "../../shared/checkoutMethods";
+import { stagingFinancialScope } from "../payments/stagingFinancialBuyer";
+import { sandboxSilenceRequired, assertSilentCustomer, verifySandboxCustomer } from "./sandboxCustomerSafety";
+import { normalizeBuyerDocument } from "../../shared/buyerDocument";
 import axios, { AxiosError } from "axios";
 import { timingSafeEqual } from "node:crypto";
 
-const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
-const DEFAULT_ASAAS_CHECKOUT_BASE_URL = "https://www.asaas.com";
+import { getAsaasConfig } from "./asaasConfig";
 
 type AsaasErrorResponse = {
   errors?: Array<{ description?: string }>;
@@ -10,6 +13,7 @@ type AsaasErrorResponse = {
 };
 
 type AsaasCustomerResponse = {
+  notificationDisabled?: boolean;
   id: string;
 };
 
@@ -21,6 +25,12 @@ type AsaasPaymentResponse = {
   id: string;
   externalReference?: string | null;
   status?: string | null;
+  deleted?: boolean;
+  value?: number;
+  billingType?: string;
+  refunds?: unknown[] | null;
+  chargeback?: unknown;
+  chargebackStatus?: unknown;
   confirmedDate?: string | null;
   checkout?: {
     id?: string | null;
@@ -31,23 +41,12 @@ type AsaasPaymentsListResponse = {
   data?: AsaasPaymentResponse[];
 };
 
-function getAsaasConfig() {
-  const apiKey = process.env.ASAAS_API_KEY?.trim();
-  const apiUrl = (process.env.ASAAS_API_URL?.trim() || DEFAULT_ASAAS_API_URL).replace(/\/+$/, "");
-  const checkoutBaseUrl = (process.env.ASAAS_CHECKOUT_BASE_URL?.trim() || DEFAULT_ASAAS_CHECKOUT_BASE_URL).replace(/\/+$/, "");
-
-  if (!apiKey) {
-    throw new Error("ASAAS_API_KEY not configured");
-  }
-
-  return { apiKey, apiUrl, checkoutBaseUrl };
-}
-
 function mapAsaasError(error: unknown): Error {
   if (!axios.isAxiosError(error)) {
     return error instanceof Error ? error : new Error("Asaas request failed");
   }
 
+  if (sandboxSilenceRequired()) return new Error("ASAAS_SANDBOX_REQUEST_FAILED");
   const axiosError = error as AxiosError<AsaasErrorResponse>;
   const data = axiosError.response?.data;
   const message = data?.errors?.[0]?.description || data?.message || axiosError.message || "Asaas request failed";
@@ -59,6 +58,7 @@ function buildClient() {
   return axios.create({
     baseURL: apiUrl,
     timeout: 15000,
+    maxRedirects: 0,
     headers: {
       "Content-Type": "application/json",
       access_token: apiKey,
@@ -73,13 +73,19 @@ export async function createAsaasCustomer(input: {
   mobilePhone?: string;
 }) {
   try {
+    const document = normalizeBuyerDocument(input.cpfCnpj);
+    if (!document) throw Error("CHECKOUT_DOCUMENT_INVALID");
+    const silent = sandboxSilenceRequired();
     const client = buildClient();
     const { data } = await client.post<AsaasCustomerResponse>("/customers", {
       name: input.name,
-      cpfCnpj: input.cpfCnpj,
+      cpfCnpj: document,
+      ...(silent ? { notificationDisabled: true } : {}),
       email: input.email,
       mobilePhone: input.mobilePhone || undefined,
     });
+    if (silent) assertSilentCustomer(data.id, data);
+    await verifySandboxCustomer(data.id, async () => (await client.get<AsaasCustomerResponse>(`/customers/${encodeURIComponent(data.id)}`)).data);
     return data;
   } catch (error) {
     throw mapAsaasError(error);
@@ -94,8 +100,11 @@ export async function createAsaasCheckout(input: {
   redirectUrl: string;
   externalReference?: string;
 }) {
+  assertEnabledBillingTypes(input.billingTypes);
   try {
     const client = buildClient();
+    await verifySandboxCustomer(input.customer, async () => (await client.get<AsaasCustomerResponse>(`/customers/${encodeURIComponent(input.customer)}`)).data);
+    if (stagingFinancialScope()) throw Error("STAGING_OFFICIAL_CHECKOUT_REQUIRED");
     const { data } = await client.post<AsaasCheckoutResponse>("/checkouts", {
       name: input.name,
       value: Number(input.value.toFixed(2)),
@@ -153,13 +162,19 @@ export async function listAsaasPaymentsByExternalReference(externalReference: st
 export function validateAsaasWebhookSignature(headers: Record<string, unknown>) {
   const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN?.trim();
   if (!configuredToken) {
-    return process.env.NODE_ENV !== "production";
+    return false;
   }
 
-  const received = String(headers["asaas-access-token"] || "").trim();
+  const raw = headers["asaas-access-token"];
+  if (typeof raw !== "string") return false;
+  const received = raw.trim();
   if (!received) return false;
 
   const receivedBuffer = Buffer.from(received, "utf8");
   const configuredBuffer = Buffer.from(configuredToken, "utf8");
   return receivedBuffer.length === configuredBuffer.length && timingSafeEqual(receivedBuffer, configuredBuffer);
+}
+
+export async function verifyAsaasCustomerNotifications(customerId: string) {
+  await verifySandboxCustomer(customerId, async () => (await buildClient().get<AsaasCustomerResponse>(`/customers/${encodeURIComponent(customerId)}`)).data);
 }

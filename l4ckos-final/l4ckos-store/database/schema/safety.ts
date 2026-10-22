@@ -2,7 +2,22 @@ import type { Connection } from "mysql2/promise";
 import { rows } from "./fingerprint";
 
 export class SchemaError extends Error {
-  constructor(public readonly code: string, public readonly evidence?: { operation: string; completedStatements: number; preFingerprint: string; observedFingerprint: string | null }) { super(code); }
+  constructor(
+    public readonly code: string,
+    public readonly evidence?: { operation: string; completedStatements: number; preFingerprint: string; observedFingerprint: string | null },
+    options?: ErrorOptions,
+  ) { super(code, options); }
+}
+/** Preserve actionable failure codes through RECOVERY_REQUIRED without leaking SQL or connection data. */
+export function safeDiagnosticCause(error: unknown, depth = 0): Error | undefined {
+  if (!(error instanceof Error) || depth > 5) return undefined;
+  const cause = (error as Error & { cause?: unknown }).cause;
+  const code = (error as Error & { code?: unknown }).code;
+  const label = typeof code === "string" && /^[A-Z0-9_]+$/.test(code)
+    ? code
+    : /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : error.name || "UNKNOWN_FAILURE";
+  const nested = safeDiagnosticCause(cause, depth + 1);
+  return new Error(label, nested ? { cause: nested } : undefined);
 }
 export type LocalTarget = { url: string; socketPath?: string };
 export function assertLocalSchemaTarget(target: LocalTarget, env: NodeJS.ProcessEnv = process.env) {

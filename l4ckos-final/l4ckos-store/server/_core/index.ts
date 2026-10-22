@@ -1,11 +1,12 @@
+import { startPaymentNotificationRecovery } from "../payments/paymentNotificationOutbox";
 import { startWebhookRecovery } from "../payments/webhookInbox";
+import {initializeWebhookRecoveryMode} from '../payments/webhookRecovery';
 import { processWebhookEnvelope } from "../controllers/paymentController";
 ﻿import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
 import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
 import helmet from "helmet";
 import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -30,6 +31,7 @@ import waitlistRoutes from "../routes/waitlist.routes";
 import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
 import { getBackupPayload } from "../db";
+import { createBackupFile } from "../database/backupFiles";
 import { asaasWebhookHandler } from "../controllers/paymentController";
 import { createStagingMaintenanceMiddleware } from "./stagingMaintenance";
 
@@ -39,11 +41,7 @@ function scheduleDailyBackup() {
 
   const execute = async () => {
     try {
-      const backup = await getBackupPayload();
-      await mkdir(dir, { recursive: true, mode: 0o700 });
-      const fileName = `auto-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-      const filePath = path.join(dir, fileName);
-      await writeFile(filePath, JSON.stringify(backup, null, 2), { encoding: "utf-8", mode: 0o600, flag: "wx" });
+      const { fileName } = await createBackupFile(dir, "automatic", getBackupPayload);
       console.log(`[Backup] Created ${fileName}`);
     } catch (error) {
       console.error("[Backup] Failed automatic backup", error instanceof Error && /^[A-Z_]+$/.test(error.message) ? error.message : "BACKUP_FAILED");
@@ -176,6 +174,7 @@ async function listenWithRetry(
 }
 
 async function startServer() {
+  initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
 
@@ -511,6 +510,7 @@ async function startServer() {
 
   scheduleDailyBackup();
   startWebhookRecovery(processWebhookEnvelope);
+  startPaymentNotificationRecovery();
 }
 
 startServer().catch(console.error);

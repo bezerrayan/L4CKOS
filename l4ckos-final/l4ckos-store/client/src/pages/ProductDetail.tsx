@@ -11,7 +11,7 @@ import { useCart } from "../contexts/CartContext";
 import { useFavorites } from "../contexts/FavoritesContext";
 import { useToast } from "../contexts/ToastContext";
 import type { CSSProperties } from "react";
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { trpc } from "../lib/trpc";
 import camisaFallback from "../images/camisa.png";
@@ -21,6 +21,10 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import { trackStoreEvent } from "../lib/analytics";
 import { ProductReviews } from "../components/reviews/ProductReviews";
+import ProductCard from "../components/ProductCard";
+import type { Product } from "../types/product";
+import { Heart } from "lucide-react";
+import "./ProductDetail.css";
 
 import { DEFAULT_COLORS, DEFAULT_SIZES } from "@shared/catalogOptions";
 const COLOR_HEX_BY_NAME: Record<string, string> = {
@@ -121,6 +125,16 @@ export default function ProductDetail() {
     refetchOnMount: "always",
     refetchInterval: 15000,
   });
+  const sellableVariantsQuery = trpc.products.sellableVariants.useQuery(productId ?? 0, {
+    enabled: Boolean(productId),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: 15000,
+  });
+  const sellableVariantCatalog = sellableVariantsQuery.data?.productId === productId
+    ? sellableVariantsQuery.data
+    : undefined;
   const product = productQuery.data
     ? {
         id: productQuery.data.id,
@@ -128,6 +142,7 @@ export default function ProductDetail() {
         salesMode: productQuery.data.salesMode,
         productionBatch: productQuery.data.productionBatch,
         description: productQuery.data.description || "",
+        fullDescription: productQuery.data.fullDescription || "",
         price: normalizePrice(Number(productQuery.data.price)),
         image: resolveProductImageUrl((productQuery.data as any).imageDetailUrl || productQuery.data.imageUrl),
         imageThumbnail: resolveProductImageUrl((productQuery.data as any).imageThumbnailUrl || productQuery.data.imageUrl),
@@ -220,11 +235,12 @@ export default function ProductDetail() {
 
   if (!product) {
     if (productQuery.isLoading) {
-      return <p style={styles.loadingText}>Carregando produto...</p>;
+      return <div className="l4-product-loading" role="status"><div className="l4-skeleton-card" aria-hidden="true" /><p>Carregando os detalhes da peça...</p></div>;
     }
     return (
       <div style={styles.errorContainer as CSSProperties}>
-        <h1>Produto não encontrado</h1>
+        <h1>{productQuery.isError ? "Não conseguimos carregar esta peça" : "Produto não encontrado"}</h1>
+        <p>{productQuery.isError ? "Verifique sua conexão e tente novamente em instantes." : "Explore a coleção para encontrar outras peças."}</p>
         <button
           onClick={handleGoBack}
           style={styles.backButton as CSSProperties}
@@ -240,26 +256,45 @@ export default function ProductDetail() {
       Array.from(activeGalleryImages.map(item => [item.imageUrl, item])),
     ).values(),
   );
-  const colorOptions = (product.optionColors?.length ? product.optionColors : DEFAULT_COLORS).map(name => ({
+  const hasVariants = sellableVariantCatalog?.hasVariants === true;
+  const publicVariants = hasVariants ? sellableVariantCatalog.variants : [];
+  const colorNames = hasVariants
+    ? Array.from(new Set(publicVariants.map(variant => variant.color)))
+    : (product.optionColors?.length ? product.optionColors : DEFAULT_COLORS);
+  const colorOptions = colorNames.map(name => ({
     name,
     hex: COLOR_HEX_BY_NAME[name.toLowerCase()] ?? "#d1d5db",
   }));
-  const sizeOptions = product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES;
+  const sizeOptions = hasVariants
+    ? Array.from(new Set(publicVariants
+        .filter(variant => !selectedColor || variant.color === selectedColor)
+        .map(variant => variant.size)))
+    : (product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES);
+  const selectedVariant = hasVariants && selectedColor && selectedSize
+    ? publicVariants.find(variant => variant.color === selectedColor && variant.size === selectedSize)
+    : undefined;
+  const variantCatalogReady = sellableVariantCatalog !== undefined;
+  const publicPurchaseAllowed = sellableVariantCatalog?.publicPurchaseAllowed === true;
   const preorderLimit = preorderAdditionalLimit(product);
-  const available =
-    product.salesMode === "PREORDER"
-      ? batchAcceptsSales(product.productionBatch) && preorderLimit !== 0
-      : product.stock > 0;
-  const quantityLimit =
-    product.salesMode === "PREORDER"
-      ? Math.max(1, Math.min(preorderLimit ?? 99, 99))
-      : Math.max(1, product.stock);
+  const available = publicPurchaseAllowed && (hasVariants
+    ? variantCatalogReady && Boolean(selectedVariant?.available) &&
+      (selectedVariant?.availableUnits === null || Number(selectedVariant?.availableUnits) >= quantity) &&
+      (product.salesMode !== "PREORDER" || (batchAcceptsSales(product.productionBatch) && (preorderLimit === null || preorderLimit >= quantity)))
+    : variantCatalogReady && (product.salesMode === "PREORDER"
+      ? batchAcceptsSales(product.productionBatch) && (preorderLimit === null || preorderLimit >= quantity)
+      : product.stock >= quantity));
+  const stockQuantityLimit = hasVariants
+    ? selectedVariant?.availableUnits ?? 99
+    : product.stock;
+  const quantityLimit = product.salesMode === "PREORDER"
+    ? Math.max(1, Math.min(preorderLimit ?? 99, 99))
+    : Math.max(1, Math.min(stockQuantityLimit, 99));
   const canAddToCart = Boolean(selectedColor && selectedSize && available);
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-  }).format(product.price);
+  }).format((selectedVariant?.price ?? product.price * 100) / 100);
   if (!selectedColor) missingSelections.push("cor");
   if (!selectedSize) missingSelections.push("tamanho");
 
@@ -280,12 +315,25 @@ export default function ProductDetail() {
       });
       return;
     }
+    if (!variantCatalogReady || (hasVariants && !selectedVariant)) {
+      showToast({
+        message: "Selecione uma combinação disponível antes de continuar.",
+        duration: 3500,
+      });
+      return;
+    }
 
     if (
       !addToCart(product, quantity, {
         cor: selectedColor,
         tamanho: selectedSize,
-      })
+      }, selectedVariant ? {
+        variantId: selectedVariant.variantId,
+        color: selectedVariant.color,
+        size: selectedVariant.size,
+        priceCents: selectedVariant.price,
+        availableUnits: selectedVariant.availableUnits,
+      } : undefined)
     ) {
       showToast({
         message: "A disponibilidade da pré-venda mudou. Ajuste a quantidade.",
@@ -308,12 +356,25 @@ export default function ProductDetail() {
       showToast({ message: "Selecione cor e tamanho antes de comprar.", duration: 3500 });
       return;
     }
+    if (!variantCatalogReady || (hasVariants && !selectedVariant)) {
+      showToast({
+        message: "Selecione uma combinação disponível antes de continuar.",
+        duration: 3500,
+      });
+      return;
+    }
 
     if (
       !addToCart(product, quantity, {
         cor: selectedColor,
         tamanho: selectedSize,
-      })
+      }, selectedVariant ? {
+        variantId: selectedVariant.variantId,
+        color: selectedVariant.color,
+        size: selectedVariant.size,
+        priceCents: selectedVariant.price,
+        availableUnits: selectedVariant.availableUnits,
+      } : undefined)
     ) {
       showToast({
         message: "A disponibilidade da pré-venda mudou. Ajuste a quantidade.",
@@ -386,7 +447,7 @@ export default function ProductDetail() {
   };
 
   return (
-    <div>
+    <div className="l4-product-page l4-detail-editorial">
       <button
         onClick={handleGoBack}
         style={{
@@ -399,25 +460,9 @@ export default function ProductDetail() {
         Voltar
       </button>
 
-      <div
-        style={{
-          ...styles.container,
-          gridTemplateColumns: isMobile ? "1fr" : styles.container.gridTemplateColumns,
-          gap: isMobile ? 24 : styles.container.gap,
-          marginBottom: isMobile ? 40 : styles.container.marginBottom,
-        } as CSSProperties}
-      >
-        <div style={styles.leftColumn as CSSProperties}>
-          <div
-            className="l4-product-media-surface"
-            style={{
-              ...styles.imageContainer,
-              padding: isMobile ? 12 : styles.imageContainer.padding,
-              borderRadius: isMobile ? 16 : styles.imageContainer.borderRadius,
-              aspectRatio: isMobile ? "1 / 1" : styles.imageContainer.aspectRatio,
-              maxHeight: isMobile ? 560 : 720,
-            } as CSSProperties}
-          >
+      <div className="l4-product-layout">
+        <div className="l4-detail-gallery">
+          <div className="l4-detail-gallery-surface">
             <img
               className="l4-product-media-image"
               src={selectedImage || product.image}
@@ -429,29 +474,17 @@ export default function ProductDetail() {
             />
           </div>
 
-          <div
-            style={{
-              ...styles.galleryRow,
-              flexWrap: isMobile ? "nowrap" : styles.galleryRow.flexWrap,
-              overflowX: isMobile ? "auto" : "visible",
-              paddingBottom: isMobile ? 6 : 0,
-            } as CSSProperties}
-          >
+          {normalizedGalleryImages.length > 1 && <div className="l4-detail-thumbnails" aria-label="Fotos do produto">
             {normalizedGalleryImages.map((image, idx) => {
               const active = (selectedImage || product.image) === image.imageUrl;
               return (
                 <button
-                  className="l4-product-media-surface l4-product-media-surface--thumb"
+                  className="l4-detail-thumbnail"
+                  aria-label={`Ver foto ${idx + 1} de ${product.name}`}
+                  aria-pressed={active}
                   key={`${image.imageUrl}-${idx}`}
                   type="button"
                   onClick={() => setSelectedImage(image.imageUrl)}
-                  style={{
-                    ...styles.thumbButton,
-                    width: isMobile ? 64 : styles.thumbButton.width,
-                    height: isMobile ? 64 : styles.thumbButton.height,
-                    flex: isMobile ? "0 0 auto" : undefined,
-                    ...(active ? styles.thumbButtonActive : {}),
-                  } as CSSProperties}
                 >
                   <img
                     className="l4-product-media-image"
@@ -465,90 +498,30 @@ export default function ProductDetail() {
                 </button>
               );
             })}
-          </div>
+          </div>}
         </div>
 
-        <div
-          style={{
-            ...styles.rightColumn,
-            paddingBottom: isMobile ? 120 : styles.rightColumn.paddingBottom,
-          } as CSSProperties}
-        >
+        <div className="l4-detail-info">
           <div style={styles.headerSection as CSSProperties}>
-            <h1 style={{ ...styles.productTitle, fontSize: isMobile ? 24 : styles.productTitle.fontSize } as CSSProperties}>{product.name}</h1>
+            <h1>{product.name}</h1>
             <PreorderInfo product={product} />
             <div style={styles.headerMetaRow as CSSProperties}>
-              <span style={styles.badge as CSSProperties}>{getCategoryLabel(product.category) || "Produto oficial"}</span>
+              <span className="l4-detail-category">{getCategoryLabel(product.category) || "Produto oficial"}</span>
                 <button
+                  type="button"
+                  className="l4-detail-favorite"
+                  aria-label={isFav ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+                  aria-pressed={isFav}
                   onClick={handleAddToFavorites}
-                  style={{
-                    ...styles.favoriteQuickBtn,
-                    width: isMobile ? "auto" : "auto",
-                    minWidth: isMobile ? 140 : undefined,
-                    justifyContent: "center",
-                    background: isFav ? "#dc2626" : "#ffffff",
-                    color: isFav ? "#ffffff" : "#dc2626",
-                    borderColor: "#dc2626",
-                    alignSelf: isMobile ? "flex-start" : "auto",
-                  } as CSSProperties}
                 >
-                  {isFav ? "Nos favoritos" : "Favoritar"}
+                  <Heart size={21} fill={isFav ? "currentColor" : "none"} aria-hidden="true" />
               </button>
             </div>
           </div>
 
           <div style={styles.priceSection as CSSProperties}>
-            <h2 style={{ ...styles.price, fontSize: isMobile ? 30 : styles.price.fontSize } as CSSProperties}>{formattedPrice}</h2>
+            <p className="l4-product-price">{formattedPrice}</p>
             {product.description ? <p style={styles.priceDescription as CSSProperties}>{product.description}</p> : null}
-          </div>
-
-          <div style={styles.shippingEstimator as CSSProperties}>
-            <div>
-              <strong style={styles.shippingEstimatorTitle as CSSProperties}>Calcule o frete</strong>
-              <p style={styles.shippingEstimatorHint as CSSProperties}>Consulte valor e prazo de transporte para seu CEP. {TRANSPORT_DEADLINE_NOTICE}</p>
-            </div>
-            <div style={styles.shippingInputRow as CSSProperties}>
-              <input
-                value={formatCep(cep)}
-                onChange={(event) => setCep(sanitizeCep(event.target.value))}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleCalculateShipping();
-                }}
-                placeholder="Seu CEP"
-                inputMode="numeric"
-                autoComplete="postal-code"
-                aria-label="CEP para calcular frete"
-                style={styles.shippingInput as CSSProperties}
-              />
-              <button type="button" onClick={handleCalculateShipping} disabled={isCalculatingShipping} style={styles.shippingCalcButton as CSSProperties}>
-                {isCalculatingShipping ? "Calculando..." : "Calcular"}
-              </button>
-            </div>
-            {shippingError ? <p style={styles.shippingMessage as CSSProperties}>{shippingError}</p> : null}
-            {shippingOptions.length > 0 ? (
-              <div style={styles.shippingResults as CSSProperties}>
-                {shippingOptions.map((option) => (
-                  <div key={option.id} style={styles.shippingResult as CSSProperties}>
-                    <div style={styles.shippingResultInfo as CSSProperties}>
-                      <strong>{option.label}</strong>
-                      <span style={styles.shippingResultDeadline as CSSProperties}>{transportEstimate(option)}</span>
-                    </div>
-                    <strong>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(option.price)}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div style={styles.trustPanel as CSSProperties}>
-            <strong style={styles.trustPanelTitle as CSSProperties}>Compra com informação clara</strong>
-            <ul style={styles.trustList as CSSProperties}>
-              {purchaseHighlights.map(item => (
-                <li key={item} style={styles.trustListItem as CSSProperties}>
-                  {item}
-                </li>
-              ))}
-            </ul>
           </div>
 
           <div style={styles.sectionBlock as CSSProperties}>
@@ -561,20 +534,17 @@ export default function ProductDetail() {
                   return (
                     <button
                       key={color.name}
+                      className="l4-detail-color"
                       type="button"
-                      onClick={() => { setSelectedColor(color.name); trackStoreEvent("product_option_selected", { product_id: product.id, option_type: "color" }); }}
+                      onClick={() => {
+                        setSelectedColor(color.name);
+                        if (hasVariants && selectedSize && !publicVariants.some(variant => variant.color === color.name && variant.size === selectedSize)) setSelectedSize(null);
+                        trackStoreEvent("product_option_selected", { product_id: product.id, option_type: "color" });
+                      }}
                       aria-pressed={isSelected}
                       aria-label={`Selecionar cor ${color.name}`}
                       style={{
-                        ...styles.colorOption,
-                        background: color.hex,
-                        border: isSelected
-                          ? "3px solid #e8002a"
-                          : "2px solid #4b5563",
-                        boxShadow: isSelected
-                          ? "0 0 0 4px rgba(232, 0, 42, 0.28), 0 0 0 7px rgba(240, 237, 232, 0.16)"
-                          : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
-                        transform: isSelected ? "translateY(-2px) scale(1.04)" : "none",
+                        "--l4-variant-color": color.hex,
                       } as CSSProperties}
                       title={color.name}
                     >
@@ -620,10 +590,6 @@ export default function ProductDetail() {
                     background: selectedSize === size ? "#e8002a" : "#111111",
                     color: selectedSize === size ? "#ffffff" : "#f0ede8",
                     border: selectedSize === size ? "2px solid #ff4966" : styles.sizeOption.border,
-                    boxShadow: selectedSize === size
-                      ? "0 0 0 4px rgba(232, 0, 42, 0.22), inset 0 -2px 0 rgba(0,0,0,0.22)"
-                      : "none",
-                    transform: selectedSize === size ? "translateY(-2px)" : "none",
                   } as CSSProperties}
                 >
                   {size}
@@ -640,6 +606,8 @@ export default function ProductDetail() {
             <h3 style={styles.sectionTitle as CSSProperties}>Quantidade</h3>
             <div style={styles.quantityControl as CSSProperties}>
               <button
+                type="button"
+                aria-label="Diminuir quantidade"
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
                 style={styles.quantityBtn as CSSProperties}
                 disabled={!available}
@@ -647,6 +615,7 @@ export default function ProductDetail() {
                 -
               </button>
               <input
+                aria-label="Quantidade"
                 type="number"
                 min="1"
                  max={quantityLimit}
@@ -659,6 +628,8 @@ export default function ProductDetail() {
                 style={styles.quantityInput as CSSProperties}
               />
               <button
+                type="button"
+                aria-label="Aumentar quantidade"
                 onClick={() => setQuantity(Math.min(quantityLimit, quantity + 1))}
                 style={styles.quantityBtn as CSSProperties}
                 disabled={!available}
@@ -675,45 +646,17 @@ export default function ProductDetail() {
             ) : null}
           </div>
 
-          <div
-            style={{
-              ...styles.actionButtons,
-              flexDirection: "row",
-              position: "static",
-              left: "auto",
-              right: "auto",
-              bottom: "auto",
-              zIndex: 0,
-              marginBottom: isMobile ? 20 : styles.actionButtons.marginBottom,
-              padding: isMobile ? "0" : 0,
-              background: isMobile ? "#080808" : "transparent",
-              borderTop: "none",
-              boxShadow: "none",
-              borderRadius: isMobile ? 0 : undefined,
-            } as CSSProperties}
-          >
+          <div className="l4-detail-actions">
             <button
               onClick={handleBuyNow}
-              style={styles.buyNowBtn as CSSProperties}
+              className="l4-detail-buy"
               disabled={!available}
-              onMouseEnter={(e) => {
-                if (!available) return;
-                const btn = e.currentTarget as HTMLElement;
-                btn.style.transform = "scale(1.02)";
-                btn.style.boxShadow = "0 12px 24px rgba(26,26,26,0.3)";
-              }}
-              onMouseLeave={(e) => {
-                if (!available) return;
-                const btn = e.currentTarget as HTMLElement;
-                btn.style.transform = "scale(1)";
-                btn.style.boxShadow = "0 4px 12px rgba(26,26,26,0.2)";
-              }}
             >
               {available ? "Comprar agora" : "Indisponível"}
             </button>
             <button
               onClick={handleAddToCart}
-              style={styles.addToCartBtn as CSSProperties}
+              className="l4-detail-add"
               disabled={!available}
             >
               Adicionar à sacola
@@ -726,33 +669,148 @@ export default function ProductDetail() {
             </p>
           )}
 
-          <div style={styles.supportBox as CSSProperties}>
-            <strong style={styles.supportTitle as CSSProperties}>Ainda em dúvida?</strong>
-            <p style={styles.supportText as CSSProperties}>
-              Se quiser confirmar tamanho, disponibilidade ou detalhes do item antes de comprar, fale com a loja.
-            </p>
-            <Link to="/contato" style={styles.supportLink as CSSProperties}>
-              Tirar dúvida antes de comprar
-            </Link>
-          </div>
-
-          {product.salesMode !== "PREORDER" && product.stock >= 0 && (
-            <div style={styles.stockInfo as CSSProperties}>
-              <span style={{
-                color: product.stock > 5 ? "#86efac" : product.stock > 0 ? "#facc15" : "#f87171"
-              }}>
-                {product.stock > 5
+          {product.salesMode !== "PREORDER" && (hasVariants || product.stock >= 0) && (
+            <div style={styles.stockInfo as CSSProperties} role="status">
+              <span style={{ color: (hasVariants ? Number(selectedVariant?.availableUnits ?? 0) : product.stock) > 5 ? "#d1d5db" : "#ff869a" }}>
+                {hasVariants && !selectedVariant
+                  ? "Selecione uma combinação disponível"
+                  : (hasVariants ? Number(selectedVariant?.availableUnits ?? 0) : product.stock) > 5
                   ? "Disponível para compra"
-                  : product.stock > 0
+                  : (hasVariants ? Number(selectedVariant?.availableUnits ?? 0) : product.stock) > 0
                     ? "Estoque reduzido"
                     : "Indisponível no momento"}
               </span>
             </div>
           )}
+
+          <div className="l4-detail-secondary">
+            <div>
+              <strong style={styles.shippingEstimatorTitle as CSSProperties}>Calcule o frete</strong>
+            </div>
+            <div style={styles.shippingInputRow as CSSProperties}>
+              <input
+                value={formatCep(cep)}
+                onChange={(event) => setCep(sanitizeCep(event.target.value))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleCalculateShipping();
+                }}
+                placeholder="Seu CEP"
+                inputMode="numeric"
+                autoComplete="postal-code"
+                aria-label="CEP para calcular frete"
+                style={styles.shippingInput as CSSProperties}
+              />
+              <button type="button" onClick={handleCalculateShipping} disabled={isCalculatingShipping} style={styles.shippingCalcButton as CSSProperties}>
+                {isCalculatingShipping ? "Calculando..." : "Calcular"}
+              </button>
+            </div>
+            <details className="l4-detail-disclosure l4-detail-shipping-notice">
+              <summary>Como funcionam os prazos</summary>
+              <p>Consulte valor e prazo de transporte para seu CEP. {TRANSPORT_DEADLINE_NOTICE}</p>
+            </details>
+            {shippingError ? <p style={styles.shippingMessage as CSSProperties}>{shippingError}</p> : null}
+            {shippingOptions.length > 0 ? (
+              <div style={styles.shippingResults as CSSProperties}>
+                {shippingOptions.map((option) => (
+                  <div key={option.id} style={styles.shippingResult as CSSProperties}>
+                    <div style={styles.shippingResultInfo as CSSProperties}>
+                      <strong>{option.label}</strong>
+                      <span style={styles.shippingResultDeadline as CSSProperties}>{transportEstimate(option)}</span>
+                    </div>
+                    <strong>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(option.price)}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="l4-detail-disclosures">
+            <details className="l4-detail-disclosure">
+              <summary>DETALHES DO PRODUTO</summary>
+              {(product.fullDescription || product.description) && <p>{product.fullDescription || product.description}</p>}
+              <p>{purchaseHighlights[0]}</p>
+            </details>
+            <details className="l4-detail-disclosure">
+              <summary>ENTREGA E PRAZOS</summary>
+              <p>{purchaseHighlights[1]}</p>
+              <p>Consulte “Como funcionam os prazos” no cálculo de frete para as condições de transporte.</p>
+            </details>
+            <details className="l4-detail-disclosure">
+              <summary>TROCAS E DEVOLUÇÕES</summary>
+              <p>{purchaseHighlights[2]}</p>
+              <Link to="/trocas-e-devolucoes">Consultar política de trocas e devoluções →</Link>
+            </details>
+          </div>
+
+          <div className="l4-detail-help">
+            <strong>PRECISA DE AJUDA?</strong>
+            <p>Dúvidas sobre tamanho ou disponibilidade?</p>
+            <Link to="/contato">Falar com a L4CKOS →</Link>
+          </div>
+
         </div>
       </div>
       <ProductReviews productId={product.id} />
+      <RelatedProducts currentId={product.id} category={product.category} />
     </div>
+  );
+}
+
+function RelatedProducts({ currentId, category }: { currentId: number; category: string | null }) {
+  const query = trpc.products.list.useQuery({ limit: 200 }, { staleTime: 30_000 });
+  const track = useRef<HTMLDivElement>(null);
+  const [bounds, setBounds] = useState({ start: true, end: true, overflow: false });
+  const products = useMemo<Product[]>(() => {
+    const unique = [...new Map((query.data ?? []).filter(item => item.id !== currentId).map(item => [item.id, item])).values()];
+    return unique.sort((a, b) => Number(b.category === category) - Number(a.category === category) || a.id - b.id)
+      .slice(0, 8).map(item => ({
+        id: item.id, name: item.name, category: item.category ?? undefined,
+        price: normalizePrice(Number(item.price)), stock: Number(item.stock ?? 0),
+        salesMode: item.salesMode, productionBatch: item.productionBatch,
+        image: resolveProductImageUrl(item.imageUrl),
+        imageThumbnail: resolveProductImageUrl(item.imageThumbnailUrl || item.imageUrl),
+      }));
+  }, [query.data, currentId, category]);
+  const updateBounds = useCallback(() => {
+    const element = track.current;
+    if (!element) return;
+    const next = { start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2, overflow: element.scrollWidth > element.clientWidth + 2 };
+    setBounds(previous => previous.start === next.start && previous.end === next.end && previous.overflow === next.overflow ? previous : next);
+  }, []);
+  useEffect(() => {
+    const element = track.current;
+    if (!element) return;
+    element.scrollLeft = 0;
+    updateBounds();
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [currentId, products.length, query.isError, updateBounds]);
+  const move = (direction: number) => {
+    const element = track.current;
+    if (!element) return;
+    element.scrollBy({ left: direction * element.clientWidth * .8, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  };
+  if (!products.length || query.isError) return null;
+  return (
+    <section className="l4-detail-related" aria-labelledby="l4-related-title">
+      <div className="l4-related-heading">
+        <h2 id="l4-related-title">EXPLORE OUTRAS PEÇAS</h2>
+        <Link to="/produtos">VER COLEÇÃO COMPLETA</Link>
+        {bounds.overflow && <div className="l4-related-controls">
+          <button type="button" aria-label="Peças anteriores" aria-controls="l4-related-track" disabled={bounds.start} onClick={() => move(-1)}>←</button>
+          <button type="button" aria-label="Próximas peças" aria-controls="l4-related-track" disabled={bounds.end} onClick={() => move(1)}>→</button>
+        </div>}
+      </div>
+      <div id="l4-related-track" className="l4-related-track l4-minimal-products" ref={track} onScroll={updateBounds}
+        tabIndex={0} role="group" aria-label="Outras peças; deslize ou use as setas do teclado"
+        onKeyDown={event => {
+          if (event.target !== event.currentTarget || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+          event.preventDefault(); move(event.key === "ArrowLeft" ? -1 : 1);
+        }}>
+        {products.map(item => <div key={item.id}><ProductCard product={item} /></div>)}
+      </div>
+    </section>
   );
 }
 
@@ -999,7 +1057,7 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: 4,
   },
   sectionBlock: {
-    marginBottom: 28,
+    marginBottom: 22,
   },
   sectionTitle: {
     fontSize: 14,
@@ -1016,9 +1074,9 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
   },
   colorOption: {
-    width: 52,
-    height: 52,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 3,
     cursor: "pointer",
     transition: "border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease",
     display: "flex",
@@ -1043,7 +1101,7 @@ const styles: Record<string, CSSProperties> = {
     padding: 12,
     minHeight: 48,
     border: "2px solid #333333",
-    borderRadius: 8,
+    borderRadius: 3,
     cursor: "pointer",
     fontWeight: 900,
     fontSize: 14,
@@ -1056,22 +1114,19 @@ const styles: Record<string, CSSProperties> = {
   },
   selectedValue: {
     color: "#ffffff",
-    background: "rgba(232, 0, 42, 0.18)",
-    border: "1px solid rgba(232, 0, 42, 0.42)",
-    borderRadius: 6,
-    padding: "3px 7px",
     marginLeft: 4,
   },
   quantityControl: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    maxWidth: 140,
+    maxWidth: 176,
   },
   quantityBtn: {
-    width: 40,
-    height: 40,
-    border: "2px solid #e0e0e0",
+    width: 44,
+    height: 44,
+    flexShrink: 0,
+    border: "1px solid #444444",
     background: "#111111",
     color: "#f0ede8",
     borderRadius: 6,
@@ -1082,8 +1137,10 @@ const styles: Record<string, CSSProperties> = {
   },
   quantityInput: {
     flex: 1,
+    minWidth: 0,
+    height: 44,
     padding: 8,
-    border: "2px solid #e0e0e0",
+    border: "1px solid #444444",
     borderRadius: 6,
     textAlign: "center",
     fontSize: 14,
@@ -1170,10 +1227,11 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     color: "#ffffff",
-    background: "#dc2626",
+    background: "transparent",
     textDecoration: "none",
-    padding: "10px 14px",
-    borderRadius: 8,
+    padding: "12px 0",
+    textDecorationLine: "underline",
+    textUnderlineOffset: 4,
     fontSize: 12,
     fontWeight: 700,
     letterSpacing: "0.4px",
@@ -1189,11 +1247,7 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
   },
   stockInfo: {
-    marginTop: 16,
-    padding: 12,
-    background: "#111111",
-    border: "1px solid #2a2a2a",
-    borderRadius: 10,
+    margin: "0 0 28px",
     fontSize: 14,
     fontWeight: 700,
     color: "#f0ede8",

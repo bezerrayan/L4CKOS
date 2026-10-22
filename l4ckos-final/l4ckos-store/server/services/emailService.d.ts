@@ -41,6 +41,7 @@ export function sendPasswordResetEmail(payload: {
 }): Promise<unknown>;
 
 export function sendOrderCreatedEmail(payload: {
+  idempotencyKey?: string;
   customerEmail: string;
   customerName?: string;
   orderNumber: string;
@@ -50,6 +51,7 @@ export function sendOrderCreatedEmail(payload: {
 }): Promise<unknown>;
 
 export function sendPaymentPendingEmail(payload: {
+  idempotencyKey?: string;
   customerEmail: string;
   customerName?: string;
   orderNumber: string;
@@ -68,6 +70,7 @@ export function sendPaymentNotFinishedEmail(payload: {
 }): Promise<unknown>;
 
 export function sendPaymentApprovedEmail(payload: {
+  idempotencyKey?: string;
   scheduleMessages?: string[];
   salesMode?: "STOCK" | "PREORDER" | "MIXED";
   customerEmail: string;

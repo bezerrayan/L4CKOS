@@ -1,24 +1,14 @@
 import type { Product } from "../types/product";
-import { batchAcceptsSales, batchHasCapacity } from "../../../shared/preorder";
-﻿import { Link, useNavigate } from "react-router-dom";
+﻿import { Link } from "react-router-dom";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { trpc } from "../lib/trpc";
-import { getCategoryLabel } from "../lib/productCategories";
-import { resolveCatalogImageUrl, retryImageWithVersion } from "../lib/images";
+import { resolveCatalogImageUrl } from "../lib/images";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import PromoCarousel from "../components/PromoCarousel";
+import ProductCard from "../components/ProductCard";
 import "./Home.css";
 import camisaFallback from "../images/camisa.png";
-
-type ProductItem = Pick<Product,"salesMode"|"productionBatch"> & {
-  id: number;
-  name: string;
-  priceCents: number;
-  imageUrl: string;
-  imageThumbnailUrl?: string;
-  category?: string | null;
-};
 
 type TrustHighlight = {
   number: string;
@@ -48,10 +38,6 @@ const trustHighlights: TrustHighlight[] = [
   },
 ];
 
-function formatCurrency(cents: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format((cents || 0) / 100);
-}
-
 function resolveProductImageUrl(raw: string | null | undefined) {
   const value = (raw || "").trim();
   if (!value) return "";
@@ -59,23 +45,23 @@ function resolveProductImageUrl(raw: string | null | undefined) {
 }
 
 export default function Home() {
-  const navigate = useNavigate();
   const productsQuery = trpc.products.list.useQuery({ limit: 12 }, { staleTime: 0, refetchOnMount: "always", refetchInterval: 15000 });
   const [email, setEmail] = useState("");
   const [newsletterStatus, setNewsletterStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [newsletterMessage, setNewsletterMessage] = useState("");
 
-  const products = useMemo<ProductItem[]>(
+  const products = useMemo<Product[]>(
     () =>
       (productsQuery.data ?? []).slice(0, 3).map(item => ({
         id: item.id,
         name: item.name,
         salesMode: item.salesMode,
         productionBatch: item.productionBatch,
-        priceCents: Number(item.price ?? 0),
-        imageUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
-        imageThumbnailUrl: resolveProductImageUrl((item as any).imageThumbnailUrl || item.imageUrl),
-        category: item.category,
+        price: Number(item.price ?? 0) / 100,
+        stock: Number(item.stock ?? 0),
+        image: resolveProductImageUrl(item.imageUrl) || camisaFallback,
+        imageThumbnail: resolveProductImageUrl(item.imageThumbnailUrl || item.imageUrl) || camisaFallback,
+        category: item.category ?? undefined,
       })),
     [productsQuery.data],
   );
@@ -125,35 +111,16 @@ export default function Home() {
 
   return (
     <div className="l4-home">
-      <div className="l4-home-announce">
+      <div className="l4-home-announce" tabIndex={0} role="region" aria-label="Frases da marca — role horizontalmente para ler">
         <span className="l4-home-announce-track">
-          <strong>L4CKOS</strong><span>Loja oficial</span><span>Built for Adventure</span><span>Identidade em movimento</span><span>Drops autorais</span>
+            <strong>L4CKOS</strong><span>LOJA OFICIAL</span><span>BUILT FOR ADVENTURE</span><span>IDENTIDADE EM MOVIMENTO</span><span>DROPS AUTORAIS</span>
         </span>
       </div>
 
-      <section className="l4-home-hero">
+      <section className="l4-home-hero" aria-label="Destaques da Home L4CKOS">
         <div className="l4-home-hero-grid" />
         <div className="l4-home-hero-bg" />
         <div className="l4-home-hero-inner">
-          <div className="l4-home-hero-content">
-            <div className="l4-home-tag">L4CKOS — LOJA OFICIAL</div>
-            <h1 className="l4-home-title">
-              <span>BUILT FOR</span>
-              <br />
-              <span className="accent">ADVENTURE</span>
-            </h1>
-            <p className="l4-home-subtitle">
-              Peças criadas para quem carrega identidade no cotidiano e espírito de aventura por onde passa.
-            </p>
-            <div className="l4-home-hero-cta">
-              <Link to="/produtos" className="l4-btn-primary">
-                EXPLORAR PRODUTOS
-              </Link>
-              <Link to="/sobre" className="l4-btn-outline">
-                CONHECER A L4CKOS
-              </Link>
-            </div>
-          </div>
           <PromoCarousel />
         </div>
       </section>
@@ -190,62 +157,24 @@ export default function Home() {
             VER COLEÇÃO COMPLETA
           </Link>
         </div>
-        <div className="l4-home-products-grid">
+        {productsQuery.isLoading ? <div role="status" className="l4-catalog-skeleton"><span className="l4-sr-only">Carregando coleção...</span>{[0, 1, 2].map(index => <div key={index} className="l4-skeleton-card" aria-hidden="true" />)}</div> : null}
+        {productsQuery.isError ? <p className="l4-feedback" role="alert">A coleção está temporariamente indisponível. Tente novamente em instantes.</p> : null}
+        <div className="l4-home-products-grid l4-minimal-products">
           {products.map((product, idx) => (
-            <article
-              key={product.id}
-              className="l4-home-product-card"
-              role="button"
-              tabIndex={0}
-              onClick={() => navigate(`/produto/${product.id}`)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  navigate(`/produto/${product.id}`);
-                }
-              }}
-            >
-              <div className="l4-home-product-img l4-product-media-surface">
-                {product.imageUrl ? (
-                  <img
-                    className="l4-product-media-image"
-                    src={product.imageThumbnailUrl || product.imageUrl}
-                    alt={product.name}
-                    loading={idx < 4 ? "eager" : "lazy"}
-                    decoding="async"
-                    onError={(event) => {
-                      retryImageWithVersion(event, product.imageUrl, camisaFallback, product.id);
-                    }}
-                  />
-                ) : (
-                  <img className="l4-product-media-image" src={camisaFallback} alt={product.name} loading="lazy" />
-                )}
-                {product.salesMode === "PREORDER" && (
-                  <span className="l4-home-preorder-badge">
-                    {!batchAcceptsSales(product.productionBatch) ? "PRÉ-VENDA INDISPONÍVEL" : !batchHasCapacity(product.productionBatch) ? "PRÉ-VENDA ESGOTADA" : "PRÉ-VENDA"}
-                  </span>
-                )}
-              </div>
-              <div className="l4-home-product-info">
-                <h3 className="l4-home-product-name">{product.name}</h3>
-                <p className="l4-home-product-category">{getCategoryLabel(product.category)}</p>
-                <div className="l4-home-product-meta">
-                  <span>{formatCurrency(product.priceCents)}</span>
-                  <span className="l4-home-product-link">ver detalhes</span>
-                </div>
-              </div>
-            </article>
+            <div key={product.id}>
+              <ProductCard product={product} showFavorite={false} imageLoading={idx < 4 ? "eager" : "lazy"} />
+            </div>
           ))}
         </div>
-        {products.length === 0 && !productsQuery.isLoading ? (
+        {products.length === 0 && !productsQuery.isLoading && !productsQuery.isError ? (
           <p className="l4-home-empty">Nenhum produto disponível no momento.</p>
         ) : null}
       </section>
 
-      <section className="l4-home-section">
+      <div className="l4-home-lower">
+      <section className="l4-home-section l4-home-confidence">
         <div className="l4-home-section-header">
           <div>
-            <div className="l4-home-section-tag">// Confiança</div>
             <h2 className="l4-home-section-title">POR QUE COMPRAR</h2>
           </div>
         </div>
@@ -290,6 +219,7 @@ export default function Home() {
           </p>
         </form>
       </section>
+      </div>
     </div>
   );
 }

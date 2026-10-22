@@ -20,6 +20,9 @@ const EsqueciSenha = lazy(() => import("./pages/EsqueciSenha"));
 const RedefinirSenha = lazy(() => import("./pages/RedefinirSenha"));
 const Perfil = lazy(() => import("./pages/Perfil"));
 const Admin = lazy(() => import("./pages/Admin"));
+const AdminVisualPreview = import.meta.env.DEV ? lazy(() => import("./pages/AdminVisualPreview")) : null;
+const AdminReportsIntegrationPreview = import.meta.env.DEV ? lazy(() => import("./pages/AdminReportsIntegrationPreview")) : null;
+const AdminBackupVisualPreview = import.meta.env.DEV ? lazy(() => import("./pages/AdminBackupVisualPreview")) : null;
 const Sobre = lazy(() => import("./pages/Sobre"));
 const Contato = lazy(() => import("./pages/Contato"));
 const FAQs = lazy(() => import("./pages/FAQs"));
@@ -96,7 +99,8 @@ function AppRoutes() {
   const isCheckoutRoute = location.pathname === "/checkout";
   const isAdmin = isAuthenticated && user?.role === "admin";
   const comingSoonAllowedRoutes = new Set(["/em-breve", "/login", "/entrar", "/cadastro", "/esqueci-senha", "/redefinir-senha", "/gestao", "/admin"]);
-  const isAllowedDuringComingSoon = comingSoonAllowedRoutes.has(location.pathname);
+  const isAllowedDuringComingSoon = comingSoonAllowedRoutes.has(location.pathname)
+    || (import.meta.env.DEV && location.pathname === "/__admin-backup-visual-preview");
 
   if (comingSoonEnabled && !isAllowedDuringComingSoon) {
     if (isLoading) return <ComingSoon />;
@@ -116,6 +120,7 @@ function AppRoutes() {
           overflowX: "clip",
         }}
         className="l4-page-shell"
+        id="l4-main-content" tabIndex={-1} role={isCheckoutRoute ? undefined : "main"}
       >
         <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -137,6 +142,9 @@ function AppRoutes() {
             <Route path="/meus-pedidos/:id" element={<PedidoDetalhe />} />
             <Route path="/acompanhar-pedido" element={<AcompanharPedido />} />
             <Route path="/gestao" element={<AdminRoute />} />
+            {import.meta.env.DEV && AdminVisualPreview ? <Route path="/__admin-visual-preview" element={<AdminVisualPreview />} /> : null}
+            {import.meta.env.DEV && AdminReportsIntegrationPreview ? <Route path="/__admin-reports-integration-preview" element={<AdminReportsIntegrationPreview />} /> : null}
+            {import.meta.env.DEV && AdminBackupVisualPreview ? <Route path="/__admin-backup-visual-preview" element={<AdminBackupVisualPreview />} /> : null}
             <Route path="/admin" element={<AdminLegacyRoute />} />
             <Route path="/sobre" element={<Sobre />} />
             <Route path="/contato" element={<Contato />} />
@@ -151,7 +159,7 @@ function AppRoutes() {
 
       {!isCheckoutRoute ? <Footer /> : null}
       <CartDrawer />
-      <CookiePreferences />
+      <CookiePreferences adminLayout={location.pathname === "/gestao" && isAdmin} />
     </>
   );
 }

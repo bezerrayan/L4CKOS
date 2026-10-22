@@ -1,4 +1,5 @@
 import type { Connection } from "mysql2/promise";
+import { readArtifact } from '../schema/artifacts';
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { gunzipSync } from "node:zlib";
@@ -31,7 +32,8 @@ import {
 
 export async function capture(
   c: Connection,
-  projection?: Snapshot
+  projection?: Snapshot,
+  allowNewInbox = false
 ): Promise<Snapshot> {
   const schema = await readStructuralSchema(c),
     governance = await readStructuralSchema(c, true);
@@ -74,7 +76,7 @@ export async function capture(
   }
   if (
     projection &&
-    canonical(Object.keys(tables).sort()) !==
+    canonical(Object.keys(tables).filter(n => !(allowNewInbox && n === 'asaasWebhookInbox')).sort()) !==
       canonical(Object.keys(projection.tables).sort())
   )
     fail("DATA_INVENTORY_CHANGED");
@@ -116,12 +118,15 @@ export async function foreignKeys(c: Connection) {
     }
   return checks;
 }
-export async function validatePrior(c: Connection) {
+export async function validatePrior(c: Connection, phase23 = false) {
+  const manifest = phase23
+    ? JSON.parse((await readArtifact('database/migrations/manifest-v4.json','database/migrations')).toString())
+    : await readOperationalManifest();
   const history = await validateHistory(
     c,
-    await loadLineage(await readOperationalManifest())
+    await loadLineage(manifest)
   );
-  if (history.some(r => r.name === "0022_preorder_manufacturing_schedule"))
+  if (!phase23 && history.some(r => r.name === "0022_preorder_manufacturing_schedule"))
     fail("0022_ALREADY_APPLIED");
   if (
     canonical(history.map(r => r.name)) !==
@@ -129,6 +134,7 @@ export async function validatePrior(c: Connection) {
       "0020_reconcile_asaas_webhook_events",
       "baseline-v1",
       "0021_preorder_production_batches",
+      ...(phase23 ? ['0022_preorder_manufacturing_schedule'] : []),
     ])
   )
     fail("0022_PRIOR_HISTORY_REQUIRED");
@@ -181,7 +187,7 @@ export async function proveRestore(
       .scheduler !== "OFF"
   )
     fail("LOCAL_EVENT_SCHEDULER_REQUIRED_OFF");
-  await validatePrior(c);
+  await validatePrior(c, input.sourceAfter.fingerprint === 'a7c2774e783e83f34c0304e970a91278f4df9e8c2b0a1fd5576c2694c1b9011e');
   const proof: BackupProof = {
     ...input,
     version: 1,

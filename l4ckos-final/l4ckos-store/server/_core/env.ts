@@ -38,7 +38,7 @@ export const ENV = {
   googleClientSecret: readString("GOOGLE_CLIENT_SECRET"),
   googleRedirectUri: readString("GOOGLE_REDIRECT_URI"),
   ownerOpenId: readString("OWNER_OPEN_ID"),
-  adminEmails: readCsv("ADMIN_EMAILS", "admin@local.dev"),
+  adminEmails: readCsv("ADMIN_EMAILS", process.env.NODE_ENV === "production" ? "" : "admin@local.dev"),
   localAuthAllowedEmails: readCsv("LOCAL_AUTH_ALLOWED_EMAILS"),
   isProduction: process.env.NODE_ENV === "production",
   allowLocalAuthInProduction: readBoolean("ALLOW_LOCAL_AUTH_IN_PRODUCTION", false),
@@ -71,6 +71,10 @@ export function validateEnvOnStartup() {
     issues.push("JWT_SECRET ausente.");
   } else if (ENV.cookieSecret.length < 32) {
     issues.push("JWT_SECRET precisa ter ao menos 32 caracteres.");
+  }
+
+  if (ENV.isProduction && ENV.adminEmails.length === 0) {
+    issues.push("ADMIN_EMAILS ausente; nenhuma conta por e-mail poderá acessar a gestão.");
   }
 
   if (

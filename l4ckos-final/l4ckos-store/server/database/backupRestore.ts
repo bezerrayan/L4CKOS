@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
-import { REQUIRED_TABLES, OPTIONAL_TABLES, TABLE_ORDER, TABLE_MANIFEST_VERSION, classifyTable } from "./tableManifest";
+import { REQUIRED_TABLES, OPTIONAL_TABLES, OPTIONAL_TABLES_V3, OPTIONAL_TABLES_V4, TABLE_ORDER, TABLE_MANIFEST_VERSION, classifyTable } from "./tableManifest";
 
 type Cell = string | number | null | { binaryHex: string };
 type Row = Record<string, Cell>;
@@ -35,6 +35,15 @@ export const checksum = (value: unknown) => createHash("sha256").update(canonica
 export const rowsChecksum = (rows: Row[]) => checksum(rows.map(canonical).sort());
 const identifier = (name: string) => `\`${name.replace(/`/g, "``")}\``;
 const normalizeSchema = (ddl: string) => ddl.replace(/ AUTO_INCREMENT=\d+/g, "");
+const RESTORE_LOCK_PREFIX = "l4ckos_restore_";
+/** Keep existing lock identities where they fit; hash longer valid schema names
+ * so every MySQL advisory lock stays within the 64-character server limit. */
+export function restoreLockName(schemaName: string) {
+  const legacyName = `${RESTORE_LOCK_PREFIX}${schemaName}`;
+  if (legacyName.length <= 64) return legacyName;
+  const hashLength = 64 - RESTORE_LOCK_PREFIX.length;
+  return `${RESTORE_LOCK_PREFIX}${createHash("sha256").update(schemaName, "utf8").digest("hex").slice(0, hashLength)}`;
+}
 /** MySQL remembers explicit column charset clauses even when COLLATE implies
  * exactly the same charset. Preserve literals/identifiers and every other token.
  * Artifact checksums remain over the original, unmodified DDL bytes. */
@@ -148,14 +157,20 @@ export async function backupDatabase(connection: Connection): Promise<BackupArti
 export function validateArtifact(input: unknown): asserts input is BackupArtifact {
   if (!input || typeof input !== "object") fail("INVALID_BACKUP_FORMAT");
   const artifact = input as BackupArtifact;
-  if (artifact.formatVersion !== 1 || ![1,2,TABLE_MANIFEST_VERSION].includes(artifact.tableManifestVersion) || artifact.databaseEngine !== "MySQL" ||
+  if (artifact.formatVersion !== 1 || ![1,2,3,4,TABLE_MANIFEST_VERSION].includes(artifact.tableManifestVersion) || artifact.databaseEngine !== "MySQL" ||
       !/^8\.4\./.test(artifact.databaseVersion) || typeof artifact.createdAt !== "string" || !Number.isFinite(Date.parse(artifact.createdAt)) ||
       (artifact.applicationCommit !== null && !/^[a-f0-9]{40}$/.test(artifact.applicationCommit)) ||
       !artifact.tables || !Array.isArray(artifact.absentOptionalTables)) fail("INVALID_BACKUP_FORMAT");
   const names = Object.keys(artifact.tables);
   if (names.some(name => classifyTable(name) === "UNKNOWN")) fail("UNKNOWN_TABLE");
   if (REQUIRED_TABLES.some(name => !names.includes(name))) fail("MISSING_REQUIRED_TABLE");
-  if (canonical(artifact.absentOptionalTables) !== canonical((artifact.tableManifestVersion===1 ? ["asaasWebhookEvents"] : artifact.tableManifestVersion===2 ? ["productionBatches","productionBatchProducts","asaasWebhookEvents"] : OPTIONAL_TABLES).filter(name => !names.includes(name)))) fail("OPTIONAL_MANIFEST_MISMATCH");
+  const manifestOptionalTables = artifact.tableManifestVersion === 1
+    ? ["asaasWebhookEvents"]
+    : artifact.tableManifestVersion === 2
+      ? ["productionBatches", "productionBatchProducts", "asaasWebhookEvents"]
+      : artifact.tableManifestVersion === 3 ? OPTIONAL_TABLES_V3
+        : artifact.tableManifestVersion === 4 ? OPTIONAL_TABLES_V4 : OPTIONAL_TABLES;
+  if (canonical(artifact.absentOptionalTables) !== canonical(manifestOptionalTables.filter(name => !names.includes(name)))) fail("OPTIONAL_MANIFEST_MISMATCH");
   if(artifact.tableManifestVersion<3 && names.includes('asaasWebhookInbox')) fail('INVALID_BACKUP_FORMAT');
   if(artifact.tableManifestVersion===1 && names.some(name=>['productionBatches','productionBatchProducts'].includes(name))) fail('INVALID_BACKUP_FORMAT');
   if(artifact.tables.products.schema.includes('`salesMode`') && !['productionBatches','productionBatchProducts'].every(name=>names.includes(name))) fail('MISSING_REQUIRED_TABLE');
@@ -207,6 +222,7 @@ export async function restoreDatabase(connection: Connection, input: unknown, ta
   validateArtifact(input);
   let transaction = false;
   let locked = false;
+  let lockName: string | undefined;
   let phase = "SCHEMA", table: string | undefined, ordinal: number | undefined;
   try {
     // Prevent forged target descriptors when calling the library directly.
@@ -217,7 +233,8 @@ export async function restoreDatabase(connection: Connection, input: unknown, ta
     await connection.query("SET time_zone = '+00:00'");
     const version = String((await queryRows(connection, "SELECT VERSION() AS version"))[0].version);
     if (!/^8\.4\./.test(version)) fail("MYSQL_84_REQUIRED");
-    const lock = await queryRows(connection, "SELECT GET_LOCK(CONCAT('l4ckos_restore_', DATABASE()), 0) AS acquired");
+    lockName = restoreLockName(String(options.database));
+    const lock = await queryRows(connection, "SELECT GET_LOCK(?, 0) AS acquired", [lockName]);
     if (Number(lock[0].acquired) !== 1) fail("RESTORE_ALREADY_RUNNING");
     locked = true;
     const schema = await inventory(connection);
@@ -268,6 +285,6 @@ export async function restoreDatabase(connection: Connection, input: unknown, ta
     if (error instanceof BackupError) throw new BackupError(error.code, { ...diagnostic, ...error.diagnostic });
     throw new BackupError("RESTORE_FAILED_ROLLED_BACK", diagnostic);
   } finally {
-    if (locked) await connection.query("SELECT RELEASE_LOCK(CONCAT('l4ckos_restore_', DATABASE()))");
+    if (locked && lockName) await connection.query("SELECT RELEASE_LOCK(?)", [lockName]);
   }
 }
