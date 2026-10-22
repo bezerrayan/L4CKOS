@@ -3,6 +3,7 @@ import { startWebhookRecovery } from "../payments/webhookInbox";
 import {initializeWebhookRecoveryMode} from '../payments/webhookRecovery';
 import { processWebhookEnvelope } from "../controllers/paymentController";
 import { prepareRecoveryWorkerStartup } from "./recoveryWorkerStartup";
+import { createAsaasWebhookInboundGate, resolveAsaasWebhookInboundEnabled } from "./asaasWebhookIngress";
 ﻿import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -180,6 +181,7 @@ async function startServer() {
     startAsaasWebhookRecovery: () => startWebhookRecovery(processWebhookEnvelope),
     startPaymentNotifications: () => startPaymentNotificationRecovery(),
   });
+  const asaasWebhookInboundEnabled = resolveAsaasWebhookInboundEnabled(process.env);
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
 
@@ -214,8 +216,10 @@ async function startServer() {
     });
   });
 
-  // /health is registered immediately before this middleware.
-  // Staging maintenance denies all subsequent HTTP routes.
+  // Reject disabled provider deliveries before body parsing, route handlers, or persistence.
+  app.use(createAsaasWebhookInboundGate(asaasWebhookInboundEnabled));
+
+  // /health remains available during staging maintenance.
   app.use(createStagingMaintenanceMiddleware());
 
   app.use(
