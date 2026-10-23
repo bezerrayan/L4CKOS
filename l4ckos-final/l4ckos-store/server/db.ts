@@ -48,6 +48,7 @@ import {confirmSelectedCheckoutStock} from './payments/selectedCheckoutStock';
 import {assertSelectedLedgerBinding,selectiveOrderAllowed} from './payments/stagingCheckoutAdmission';
 import { aggregateSalesReport } from "./reports/salesReport";
 import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
+import { getSellableVariantIds } from "./database/productVariantAvailability";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -467,6 +468,7 @@ function normalizeProductVariantRow(row: any) {
     productId: Number(row.productId),
     price: row.price === null || row.price === undefined ? null : Number(row.price),
     stock: Number(row.stock ?? 0),
+    isActive: Number(row.isActive ?? 0),
   };
 }
 
@@ -609,23 +611,7 @@ export async function getProducts() {
   for (const variant of variantRows) variantsByProduct.set(variant.productId, [...(variantsByProduct.get(variant.productId) ?? []), variant]);
   return productsWithBatch.map(product => {
     const variants = variantsByProduct.get(product.id) ?? [];
-    const skuCounts = new Map<string, number>();
-    for (const variant of variants) {
-      const sku = String(variant.sku ?? "").normalize("NFKC").trim().toLowerCase();
-      if (sku) skuCounts.set(sku, (skuCounts.get(sku) ?? 0) + 1);
-    }
-    const hasSellableVariants = !isRestrictedPublicPurchase(product.name) && variants.some(variant => {
-      const color = typeof variant.color === "string" ? normalizeVariantLabel(variant.color) : "";
-      const size = typeof variant.size === "string" ? normalizeVariantLabel(variant.size) : "";
-      const sku = String(variant.sku ?? "").normalize("NFKC").trim().toLowerCase();
-      if (Number(variant.isActive) !== 1 || !color || !size || !sku || skuCounts.get(sku) !== 1 || !variant.optionKey) return false;
-      try { if (createVariantOptionKey(color, size) !== variant.optionKey) return false; } catch { return false; }
-      const effectivePrice = variant.price === null ? Number(product.price) : Number(variant.price);
-      if (!Number.isSafeInteger(effectivePrice) || effectivePrice <= 0) return false;
-      return product.salesMode === "PREORDER"
-        ? batchAcceptsSales(product.productionBatch) && batchHasCapacity(product.productionBatch)
-        : Number(variant.stock) - (reserved.get(variant.id) ?? 0) > 0;
-    });
+    const hasSellableVariants = getSellableVariantIds(product, variants, reserved).length > 0;
     return { ...product, hasVariants: variants.length > 0, hasSellableVariants };
   }).filter(product => !isStagingQaCatalogProduct(product.name, variantsByProduct.get(product.id)));
 }
@@ -2692,14 +2678,22 @@ export async function getProductsAdmin() {
   const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
   const variantRows = await selectProductVariantRows(db, productRows.map(product => product.id));
   const variantIds = variantRows.map(variant => variant.id);
-  const [orderReferences, reservationReferences] = variantIds.length ? await Promise.all([
+  const now = new Date();
+  const [orderReferences, reservationReferences, activeReservationRows] = variantIds.length ? await Promise.all([
     db.select({ variantId: orderItems.variantId, count: sql<number>`count(*)` })
       .from(orderItems).where(inArray(orderItems.variantId, variantIds)).groupBy(orderItems.variantId),
     db.select({ variantId: stockReservations.variantId, count: sql<number>`count(*)` })
       .from(stockReservations).where(inArray(stockReservations.variantId, variantIds)).groupBy(stockReservations.variantId),
-  ]) : [[], []];
+    db.select({ variantId: stockReservations.variantId, quantity: sql<number>`coalesce(sum(${stockReservations.quantity}), 0)` })
+      .from(stockReservations).where(and(
+        eq(stockReservations.status, "active"),
+        gte(stockReservations.expiresAt, now),
+        inArray(stockReservations.variantId, variantIds),
+      )).groupBy(stockReservations.variantId),
+  ]) : [[], [], []];
   const orderReferenceCounts = new Map(orderReferences.map(row => [Number(row.variantId), Number(row.count)]));
   const reservationReferenceCounts = new Map(reservationReferences.map(row => [Number(row.variantId), Number(row.count)]));
+  const reservedQuantities = new Map(activeReservationRows.flatMap(row => row.variantId == null ? [] : [[Number(row.variantId), Number(row.quantity ?? 0)] as const]));
 
   const imagesMap = new Map<number, typeof imageRows>();
   for (const item of imageRows) {
@@ -2719,12 +2713,27 @@ export async function getProductsAdmin() {
     variantsMap.set(item.productId, current);
   }
 
-  return productRows.map(product => ({
-    ...product,
-    imageUrl: product.imageUrl || imagesMap.get(product.id)?.[0]?.imageUrl || null,
-    images: imagesMap.get(product.id) ?? [],
-    variants: variantsMap.get(product.id) ?? [],
-  }));
+  const productsWithBatch = await enrichProductsWithBatch(db, mergeProductRowsWithImages(productRows, imageRows));
+  const availabilityProductById = new Map(productsWithBatch.map(product => [product.id, product]));
+
+  return productRows.map(product => {
+    const variants = variantsMap.get(product.id) ?? [];
+    const availabilityProduct = availabilityProductById.get(product.id) ?? product;
+    const activeVariantCount = variants.filter(variant => Number(variant.isActive) === 1).length;
+    const sellableVariantCount = getSellableVariantIds(availabilityProduct, variants, reservedQuantities).length;
+    return {
+      ...product,
+      imageUrl: product.imageUrl || imagesMap.get(product.id)?.[0]?.imageUrl || null,
+      images: imagesMap.get(product.id) ?? [],
+      variants,
+      variantAvailability: {
+        physicalStock: variants.length ? variants.reduce((total, variant) => total + Number(variant.stock ?? 0), 0) : Number(product.stock ?? 0),
+        activeCount: activeVariantCount,
+        inactiveCount: variants.length - activeVariantCount,
+        sellableCount: sellableVariantCount,
+      },
+    };
+  });
 }
 
 /** Read-only, sellable variant projection for the public catalog; it does not participate in checkout. */

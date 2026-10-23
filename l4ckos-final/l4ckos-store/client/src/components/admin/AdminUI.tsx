@@ -56,7 +56,7 @@ export function AdminPageHeader({
   return (
     <div className={className} style={styles.headerShell}>
       <div style={styles.headerContent}>
-        <span style={styles.headerEyebrow}>Admin</span>
+        <span style={styles.headerEyebrow}>L4CKOS · GESTÃO</span>
         <h1 style={styles.headerTitle}>{title}</h1>
         <p style={styles.headerSubtitle}>{subtitle}</p>
       </div>

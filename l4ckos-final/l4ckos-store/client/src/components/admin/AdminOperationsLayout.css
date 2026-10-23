@@ -116,3 +116,93 @@
   .l4-admin .admin-order-detail.is-wide { padding: 15px; }
 }
 @media (prefers-reduced-motion: reduce) { .l4-admin .l4-admin-sidebar { transition: none; } }
+
+/* Shared shell spacing: keep the header, section content and actions on one inset grid. */
+.l4-admin .l4-admin-main {
+  box-sizing: border-box;
+  padding: 30px clamp(24px, 2.4vw, 38px) 48px clamp(28px, 2.5vw, 40px);
+}
+.l4-admin .l4-admin-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px 32px;
+  margin-bottom: 28px;
+  padding: 2px 0 22px !important;
+}
+.l4-admin .l4-admin-page-header > div:first-child { min-width: 0; }
+.l4-admin .l4-admin-page-header h1 { font-size: clamp(28px, 2.3vw, 34px) !important; line-height: 1.08; letter-spacing: -.025em; }
+.l4-admin .l4-admin-page-header p { margin-top: 7px !important; color: #a4a4a4 !important; font-size: 14px !important; line-height: 1.45 !important; }
+.l4-admin .l4-admin-page-header > div:last-child { flex: 0 0 auto; gap: 9px !important; }
+.l4-admin .l4-admin-page-header > div:last-child button {
+  min-height: 40px !important;
+  padding-inline: 13px !important;
+  border-radius: 3px !important;
+  border-color: #3a3a3a !important;
+  background: #111 !important;
+  font-size: 13px !important;
+}
+.l4-admin .l4-admin-page-header > div:last-child button:focus-visible { outline: 2px solid var(--admin-red); outline-offset: 3px; }
+
+/* Variant approval is distinct from physical and currently sellable stock. */
+.l4-admin .apl-variant-state-metrics { display: grid; gap: 4px; color: #a8a8a8; font-size: 11px; line-height: 1.35; }
+.l4-admin .apl-variant-state-metrics span { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.l4-admin .apl-variant-state-metrics strong { color: #e7e7e7; font-size: 13px; font-variant-numeric: tabular-nums; }
+.l4-admin .apl-variant-state-metrics .is-sellable strong { color: #f1f1f1; }
+.l4-admin .apl-variant-state-metrics .is-unavailable strong { color: #d4a0a8; }
+
+/* Orders indicators are grouped by workflow so nine measures do not compete in one row. */
+.l4-admin .admin-orders-summary-groups { display: grid; gap: 14px; }
+.l4-admin .admin-orders-summary-group { display: grid; gap: 6px; min-width: 0; padding: 11px 0 0; border-top: 1px solid #282828; }
+.l4-admin .admin-orders-summary-group > span { color: #999; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.l4-admin .admin-orders-summary-group .admin-secondary-metrics { display: grid !important; grid-template-columns: repeat(3, minmax(135px, 1fr)); gap: 8px 18px !important; padding: 0 !important; border: 0 !important; }
+.l4-admin .admin-orders-summary-group .admin-secondary-metrics > div { min-width: 0; padding: 7px 12px 7px 0 !important; border: 0 !important; border-right: 1px solid #292929 !important; }
+.l4-admin .admin-orders-summary-group .admin-secondary-metrics > div:nth-child(3n) { border-right: 0 !important; }
+.l4-admin .admin-orders-summary-group .admin-secondary-metrics span { color: #aaa !important; font-size: 12px !important; line-height: 1.35; }
+.l4-admin .admin-orders-summary-group .admin-secondary-metrics strong { color: #f1f1f1 !important; font-size: 20px !important; font-variant-numeric: tabular-nums; }
+.l4-admin .admin-orders-operational-alerts { gap: 7px !important; }
+.l4-admin .admin-orders-operational-alert { grid-template-columns: minmax(160px, .35fr) minmax(0, 1fr); align-items: center; gap: 12px !important; padding: 9px 12px !important; border-radius: 3px !important; background: #0d0d0d !important; }
+.l4-admin .admin-orders-operational-alert.is-danger { border-left: 2px solid var(--admin-red) !important; }
+.l4-admin .admin-orders-operational-alert.is-warning { border-left: 2px solid #a68d56 !important; }
+.l4-admin .admin-orders-operational-alert strong { font-size: 13px !important; }
+.l4-admin .admin-orders-operational-alert span { color: #b1b1b1 !important; font-size: 13px !important; line-height: 1.4 !important; }
+
+/* Portal the logistics submenu so horizontally scrolling tables cannot clip it. */
+.admin-order-actions-menu,
+.admin-order-logistics-submenu {
+  z-index: 1600 !important;
+  max-height: min(70vh, var(--radix-dropdown-menu-content-available-height)) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  border: 1px solid #383838 !important;
+  border-radius: 4px !important;
+  background: #101010 !important;
+  color: #eee !important;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .65) !important;
+}
+.admin-order-actions-menu { min-width: 210px; }
+.admin-order-logistics-submenu { min-width: 220px; }
+.admin-order-actions-menu [role="menuitem"],
+.admin-order-logistics-submenu [role="menuitem"] { min-height: 40px; padding: 8px 11px; font-size: 13px; }
+.admin-order-actions-menu [role="menuitem"]:focus,
+.admin-order-logistics-submenu [role="menuitem"]:focus,
+.admin-order-actions-menu [role="menuitem"][data-highlighted],
+.admin-order-logistics-submenu [role="menuitem"][data-highlighted] { outline: 2px solid #e8002a; outline-offset: -2px; background: #1a1113 !important; color: #fff !important; }
+
+@media (max-width: 1280px) and (min-width: 1101px) {
+  .l4-admin .l4-admin-main { padding-inline: 28px 30px; }
+}
+@media (max-width: 1100px) {
+  .l4-admin .l4-admin-main { padding: 24px 28px 40px !important; }
+  .l4-admin .l4-admin-page-header { align-items: flex-start; }
+  .l4-admin .admin-orders-summary-group .admin-secondary-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .l4-admin .l4-admin-main { padding: 20px 16px 32px !important; }
+  .l4-admin .l4-admin-page-header { align-items: flex-start; flex-direction: column; gap: 14px; margin-bottom: 22px; }
+  .l4-admin .l4-admin-page-header > div:last-child { width: 100%; flex-wrap: wrap; }
+  .l4-admin .admin-orders-summary-group .admin-secondary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px !important; }
+  .l4-admin .admin-orders-summary-group .admin-secondary-metrics > div:nth-child(3n) { border-right: 1px solid #292929 !important; }
+  .l4-admin .admin-orders-summary-group .admin-secondary-metrics > div:nth-child(2n) { border-right: 0 !important; }
+  .l4-admin .admin-orders-operational-alert { grid-template-columns: minmax(0, 1fr); gap: 3px !important; }
+}

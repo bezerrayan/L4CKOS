@@ -402,6 +402,20 @@ export default function Admin() {
     { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "reviews", label: "Avaliações" }] },
     { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
   ] as const;
+  const sectionHeader = {
+    overview: { title: "Painel", subtitle: "Visão geral da operação L4CKOS." },
+    orders: { title: "Pedidos", subtitle: "Acompanhe pagamento, logística e atendimento." },
+    products: { title: "Produtos", subtitle: "Gerencie catálogo, variantes e disponibilidade." },
+    customers: { title: "Clientes", subtitle: "Consulte os cadastros e o relacionamento com a loja." },
+    batches: { title: "Lotes e pré-venda", subtitle: "Acompanhe a capacidade e os prazos de produção." },
+    promos: { title: "Promoções", subtitle: "Organize os destaques comerciais da loja." },
+    coupons: { title: "Cupons", subtitle: "Gerencie regras promocionais e validade." },
+    reviews: { title: "Avaliações", subtitle: "Modere avaliações enviadas pelos clientes." },
+    reports: { title: "Relatórios", subtitle: "Consulte indicadores e resultados da operação." },
+    audit: { title: "Auditoria", subtitle: "Consulte o histórico de ações administrativas." },
+    backup: { title: "Backup", subtitle: "Consulte e gerencie os procedimentos de proteção de dados." },
+    settings: { title: "Configurações", subtitle: "Revise as configurações da loja e dos serviços." },
+  } satisfies Record<Section, { title: string; subtitle: string }>;
 
   useEffect(() => {
     if (!isMobile && mobileNavOpen) setMobileNavOpen(false);
@@ -967,8 +981,8 @@ export default function Admin() {
         <main className="l4-admin-main">
           <AdminPageHeader
             className="l4-admin-page-header"
-            title="Painel Administrativo"
-            subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
+            title={sectionHeader[section].title}
+            subtitle={sectionHeader[section].subtitle}
             actions={[
               { label: "Ver pedidos", onClick: () => navigateSection("orders") },
               { label: "Abrir produtos", onClick: () => navigateSection("products") },
@@ -1191,11 +1205,11 @@ export default function Admin() {
                                   <MoreHorizontal aria-hidden="true" size={17} />
                                 </button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" side="bottom" collisionPadding={12} className="admin-order-actions-menu">
+                              <DropdownMenuContent align="end" side="bottom" sideOffset={8} collisionPadding={16} className="admin-order-actions-menu">
                                 <DropdownMenuLabel>Operações do pedido</DropdownMenuLabel>
                                 <DropdownMenuSub>
                                   <DropdownMenuSubTrigger>Atualizar logística</DropdownMenuSubTrigger>
-                                  <DropdownMenuSubContent collisionPadding={12}>
+                                  <DropdownMenuSubContent collisionPadding={16} className="admin-order-logistics-submenu">
                                     {orderLogisticsStatuses.map(status => <DropdownMenuItem key={status} onSelect={() => {
                                       const nextStatus = status as typeof orderStatuses[number];
                                       if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;

@@ -79,19 +79,27 @@ type OperationalAlert = {
 };
 
 export function OrdersSummaryCards({ summary }: { summary: OrdersSummary }) {
-  const cards: Array<{ label: string; value: string | number; tone?: "danger" | "warning" | "success" }> = [
-    { label: "Total", value: summary.total },
-    { label: "Pendentes", value: summary.pending, tone: "warning" },
-    { label: "Aguardando preparação", value: summary.paid },
-    { label: "Em separação", value: summary.processing },
-    { label: "Enviados", value: summary.shipped },
-    { label: "Entregues", value: summary.delivered, tone: "success" },
-    { label: "Cancelados", value: summary.cancelled, tone: "danger" },
-    { label: "Sem rastreio", value: summary.withoutTracking, tone: "warning" },
-    { label: "Valor dos pedidos carregados", value: formatPrice(summary.revenueCents / 100) },
-  ];
-
-  return <AdminMetricCards cards={cards} />;
+  return <div className="admin-orders-summary-groups">
+    <section className="admin-orders-summary-group" aria-label="Resumo de pedidos">
+      <span>Visão geral</span>
+      <AdminMetricCards cards={[
+        { label: "Pedidos carregados", value: summary.total },
+        { label: "Pendentes de pagamento", value: summary.pending, tone: "warning" },
+        { label: "Pagos · aguardando preparação", value: summary.paid },
+      ]} />
+    </section>
+    <section className="admin-orders-summary-group" aria-label="Fluxo logístico e financeiro">
+      <span>Fluxo e acompanhamento</span>
+      <AdminMetricCards cards={[
+        { label: "Em separação", value: summary.processing },
+        { label: "Enviados", value: summary.shipped },
+        { label: "Entregues", value: summary.delivered, tone: "success" },
+        { label: "Cancelados", value: summary.cancelled, tone: "danger" },
+        { label: "Sem rastreio", value: summary.withoutTracking, tone: "warning" },
+        { label: "Valor dos pedidos carregados", value: formatPrice(summary.revenueCents / 100) },
+      ]} />
+    </section>
+  </div>;
 }
 
 export function OrdersFilters({
@@ -122,10 +130,11 @@ export function OrderOperationalAlerts({ alerts }: { alerts: OperationalAlert[] 
   if (alerts.length === 0) return null;
 
   return (
-    <div style={styles.alertList}>
+    <div className="admin-orders-operational-alerts" style={styles.alertList}>
       {alerts.map(alert => (
         <div
           key={alert.title}
+          className={`admin-orders-operational-alert is-${alert.tone}`}
           style={{
             ...styles.alertItem,
             ...(alert.tone === "danger" ? styles.alertDanger : alert.tone === "warning" ? styles.alertWarning : {}),
