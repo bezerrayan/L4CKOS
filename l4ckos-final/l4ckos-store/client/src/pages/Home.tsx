@@ -7,6 +7,7 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import PromoCarousel from "../components/PromoCarousel";
 import ProductCard from "../components/ProductCard";
+import { productPriceFromCents } from "../utils/money";
 import "./Home.css";
 import camisaFallback from "../images/camisa.png";
 
@@ -57,7 +58,7 @@ export default function Home() {
         name: item.name,
         salesMode: item.salesMode,
         productionBatch: item.productionBatch,
-        price: Number(item.price ?? 0) / 100,
+        price: productPriceFromCents(Number(item.price ?? 0)),
         stock: Number(item.stock ?? 0),
         image: resolveProductImageUrl(item.imageUrl) || camisaFallback,
         imageThumbnail: resolveProductImageUrl(item.imageThumbnailUrl || item.imageUrl) || camisaFallback,

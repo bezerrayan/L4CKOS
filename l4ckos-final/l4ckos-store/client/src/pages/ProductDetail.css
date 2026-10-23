@@ -59,6 +59,7 @@
   .l4-related-heading > a { margin-right: auto; }
 }
 .l4-detail-editorial :is(button, a, input):focus-visible, .l4-detail-editorial button[aria-pressed]:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+.l4-product-option-note { margin:0 0 10px; color:#c8b79e; font-size:13px; line-height:1.5; }
 @media (max-width: 980px) {
   .l4-detail-editorial .l4-product-layout { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .l4-detail-gallery-surface { height: auto; aspect-ratio: 1.2; }

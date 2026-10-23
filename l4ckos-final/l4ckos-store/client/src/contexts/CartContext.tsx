@@ -12,6 +12,7 @@ import type { Product } from "../types/product";
 import { calculateCartTotal, calculateItemCount } from "../types/cart";
 import { trackStoreEvent } from "../lib/analytics";
 import { resolveCartVariant } from "../utils/cartVariantIdentity";
+import { productPriceFromCents } from "../utils/money";
 import {
   batchAcceptsSales,
   batchRemainingCapacity,
@@ -126,7 +127,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
         variant: resolvedVariant,
         product: {
           ...item.product,
-          price: resolvedVariant ? resolvedVariant.priceCents / 100 : Number(live.price ?? item.product.price),
+          price: resolvedVariant
+            ? productPriceFromCents(resolvedVariant.priceCents)
+            : productPriceFromCents(Number(live.price ?? Math.round(item.product.price * 100))),
           salesMode: live.salesMode,
           productionBatch: live.productionBatch,
           stock: Number(live.stock ?? 0),
@@ -298,7 +301,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         return [
           ...prev,
           {
-            product: variant ? { ...product, price: variant.priceCents / 100 } : product,
+            product: variant ? { ...product, price: productPriceFromCents(variant.priceCents) } : product,
             quantity,
             selectedOptions: variant ? { ...selectedOptions, cor: variant.color, tamanho: variant.size } : selectedOptions,
             ...(variant ? { variant } : {}),

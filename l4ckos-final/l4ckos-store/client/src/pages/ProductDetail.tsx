@@ -21,6 +21,7 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import { trackStoreEvent } from "../lib/analytics";
 import { ProductReviews } from "../components/reviews/ProductReviews";
+import { productPriceFromCents } from "../utils/money";
 import ProductCard from "../components/ProductCard";
 import type { Product } from "../types/product";
 import { Heart } from "lucide-react";
@@ -68,7 +69,7 @@ function formatCep(value: string) {
 }
 
 function normalizePrice(value: number) {
-  return value / 100;
+  return productPriceFromCents(value);
 }
 
 function resolveProductImageUrl(imageUrl?: string | null) {
@@ -294,7 +295,7 @@ export default function ProductDetail() {
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-  }).format((selectedVariant?.price ?? product.price * 100) / 100);
+  }).format(selectedVariant ? productPriceFromCents(selectedVariant.price) : product.price);
   if (!selectedColor) missingSelections.push("cor");
   if (!selectedSize) missingSelections.push("tamanho");
 
@@ -526,6 +527,7 @@ export default function ProductDetail() {
 
           <div style={styles.sectionBlock as CSSProperties}>
             <h3 style={styles.sectionTitle as CSSProperties}>Cores disponíveis</h3>
+            {hasVariants && publicVariants.length === 0 ? <p className="l4-product-option-note" role="status">Nenhuma combinação está disponível para seleção no momento.</p> : null}
             <div style={styles.colorGrid as CSSProperties}>
               {colorOptions.map((color) => (
                 (() => {

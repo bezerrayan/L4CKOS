@@ -319,7 +319,7 @@ export default function Pagamento() {
         body: JSON.stringify({
           cep: normalizedCep,
           itemCount: cart.itemCount,
-          subtotal: Number((cart.total / 100).toFixed(2)),
+          subtotal: Number(cart.total.toFixed(2)),
         }),
       });
 

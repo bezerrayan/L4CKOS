@@ -13,10 +13,11 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { trpc } from "../lib/trpc";
 import { getCategoryLabel, normalizeCategoryValue } from "../lib/productCategories";
 import { resolveCatalogImageUrl } from "../lib/images";
+import { productPriceFromCents } from "../utils/money";
 import camisaFallback from "../images/camisa.png";
 
 function normalizePrice(value: number) {
-  return value / 100;
+  return productPriceFromCents(value);
 }
 
 function resolveProductImageUrl(imageUrl?: string | null) {
