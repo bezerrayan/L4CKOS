@@ -64,4 +64,16 @@ describe("public sellable variant projection", () => {
     catalog.getPublicProductVariants.mockResolvedValue({ product: null, hasVariants: false, variants: [] });
     await expect(caller().sellableVariants(24)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+
+  it("does not expose QA fixtures through the public variant endpoint", async () => {
+    catalog.getPublicProductVariants.mockResolvedValue({
+      product: {
+        id: 9, name: "[QA-STAGING] Teste de Variantes", salesMode: "STOCK",
+        variants: ["QA-PRE-M-01", "QA-PRE-G-01", "QA-BRA-M-01", "QA-BRA-G-01"].map((sku, index) => ({ id: 17 + index, sku, isActive: 0 })),
+      },
+      hasVariants: true,
+      variants: [],
+    });
+    await expect(caller().sellableVariants(9)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
 });

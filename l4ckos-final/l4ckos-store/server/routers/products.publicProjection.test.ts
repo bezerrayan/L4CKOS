@@ -23,4 +23,15 @@ describe("public product detail projection", () => {
 
     await expect(caller.getById(7)).resolves.toEqual({ id: 7, name: "Produto sintético", price: 8999 });
   });
+
+  it("does not expose a QA fixture through direct public product lookup", async () => {
+    const publicCaller = productsRouter.createCaller({ user: null, req: {} as any, res: {} as any } as any);
+    catalog.getProductByIdWithDetails.mockResolvedValue({
+      id: 9,
+      name: "[QA-STAGING] Teste de Variantes",
+      price: 7990,
+      variants: ["QA-PRE-M-01", "QA-PRE-G-01", "QA-BRA-M-01", "QA-BRA-G-01"].map((sku, index) => ({ id: 17 + index, sku, isActive: 0 })),
+    });
+    await expect(publicCaller.getById(9)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
 });

@@ -16,7 +16,7 @@ import {
 } from "../db";
 import { TRPCError } from "@trpc/server";
 import { createReviewInputSchema } from "../reviews/policy";
-import { isRestrictedPublicPurchase } from "../database/publicPurchasePolicy";
+import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "../database/publicPurchasePolicy";
 
 export const productsRouter = router({
   promotions: publicProcedure.query(async () => {
@@ -90,8 +90,8 @@ export const productsRouter = router({
   // Obter um produto especifico por ID com detalhes
   getById: publicProcedure.input(z.number()).query(async ({ input }) => {
     const product = await getProductByIdWithDetails(input);
-    if (!product) {
-      throw new Error("Produto nao encontrado");
+    if (!product || isStagingQaCatalogProduct(product.name, product.variants)) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
     }
     const { variants: _internalVariants, ...publicProduct } = product;
     return publicProduct;
@@ -101,6 +101,9 @@ export const productsRouter = router({
   sellableVariants: publicProcedure.input(z.number().int().positive()).query(async ({ input }) => {
     const result = await getPublicProductVariants(input);
     if (!result.product) throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
+    if (isStagingQaCatalogProduct(result.product.name, result.product.variants)) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
+    }
     if (isRestrictedPublicPurchase(result.product.name)) {
       return { productId: input, hasVariants: result.hasVariants, publicPurchaseAllowed: false as const, variants: [] as const };
     }

@@ -47,7 +47,7 @@ import {assertNoRecoveryHold, assertOrderNotRecoveryHeld, assertWebhookBusinessE
 import {confirmSelectedCheckoutStock} from './payments/selectedCheckoutStock';
 import {assertSelectedLedgerBinding,selectiveOrderAllowed} from './payments/stagingCheckoutAdmission';
 import { aggregateSalesReport } from "./reports/salesReport";
-import { isRestrictedPublicPurchase } from "./database/publicPurchasePolicy";
+import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -627,7 +627,7 @@ export async function getProducts() {
         : Number(variant.stock) - (reserved.get(variant.id) ?? 0) > 0;
     });
     return { ...product, hasVariants: variants.length > 0, hasSellableVariants };
-  });
+  }).filter(product => !isStagingQaCatalogProduct(product.name, variantsByProduct.get(product.id)));
 }
 
 export async function getProductById(id: number) {
