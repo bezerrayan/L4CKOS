@@ -2669,7 +2669,16 @@ export async function updateProductWithCatalog(input: {
     }
     if (input.images !== undefined) await syncProductImages(txDb, input.id, input.images);
     if (input.variants !== undefined) await syncProductVariants(txDb, input.id, input.variants, Number(input.product.price ?? product.price ?? 0));
-    return { success: true } as const;
+    const persistedVariants = input.variants !== undefined
+      ? extractExecutedRows(await txDb.execute(sql`select id, color, size, sku, price, stock, isActive from productVariants where productId = ${input.id} order by id`))
+      : undefined;
+    return {
+      success: true,
+      ...(persistedVariants ? { variants: persistedVariants.map(row => ({
+        id: Number(row.id), color: row.color ?? null, size: row.size ?? null, sku: row.sku ?? null,
+        price: row.price == null ? null : Number(row.price), stock: Number(row.stock ?? 0), isActive: Number(row.isActive ?? 0),
+      })) } : {}),
+    } as const;
   });
 }
 

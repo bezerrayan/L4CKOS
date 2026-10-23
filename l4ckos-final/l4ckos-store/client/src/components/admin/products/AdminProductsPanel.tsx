@@ -25,9 +25,10 @@ type Filter = "all" | "withStock" | "outOfStock" | "lowStock" | "withoutImage" |
 type Props = {
   products?: Product[];
   isLoading: boolean;
+  isFetching: boolean;
   isError: boolean;
   onRetry: () => void;
-  onRefreshProducts: () => Promise<boolean>;
+  onRefreshProducts: () => Promise<Product[] | null>;
   isSaving: boolean;
   onCreate: (input: CreateInput) => Promise<unknown>;
   onUpdate: (input: UpdateInput) => Promise<unknown>;
@@ -53,6 +54,25 @@ function readOptions(value?: string | null) {
   if (!value) return [];
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []; } catch { return []; }
 }
+function variantMatches(expected: NonNullable<UpdateInput["variants"]>[number], actual: NonNullable<Product["variants"]>[number]) {
+  const identity = (value: string | null | undefined) => optionIdentity(value ?? "");
+  return identity(expected.color) === identity(actual.color)
+    && identity(expected.size) === identity(actual.size)
+    && identity(expected.sku) === identity(actual.sku)
+    && (expected.price ?? null) === (actual.price == null ? null : Number(actual.price))
+    && Number(expected.stock) === Number(actual.stock)
+    && Number(Boolean(expected.isActive)) === Number(actual.isActive);
+}
+function variantsMatch(expected: NonNullable<UpdateInput["variants"]>, actual: Product["variants"] | undefined) {
+  if (!actual || expected.length !== actual.length) return false;
+  const remaining = [...actual];
+  return expected.every(variant => {
+    const index = remaining.findIndex(candidate => variantMatches(variant, candidate));
+    if (index < 0) return false;
+    remaining.splice(index, 1);
+    return true;
+  });
+}
 function blankDraft(): Draft {
   return { name: "", category: "", description: "", price: "", stock: "0", colors: "", sizes: "", sizeType: "alpha", imageUrl: "", imageThumbnailUrl: "", imageDetailUrl: "", imageBannerUrl: "", images: [], variants: [] };
 }
@@ -69,7 +89,7 @@ function draftFrom(product: Product): Draft {
   };
 }
 
-export function AdminProductsPanel({ products = [], isLoading, isError, onRetry, onRefreshProducts, isSaving, onCreate, onUpdate, onDelete, onUpload, isUploading, imageSource, initialSearch = "" }: Props) {
+export function AdminProductsPanel({ products = [], isLoading, isFetching, isError, onRetry, onRefreshProducts, isSaving, onCreate, onUpdate, onDelete, onUpload, isUploading, imageSource, initialSearch = "" }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const productRoute = location.pathname.match(/^\/gestao\/catalogo\/produtos(?:\/(novo|\d+))?\/?$/);
@@ -107,6 +127,7 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
       return;
     }
     if (routeProductId !== null) {
+      if (isLoading || isFetching || isError) return;
       if (hydratedPath.current === routeKey) return;
       const product = products.find(row => row.id === routeProductId);
       if (product) {
@@ -118,7 +139,7 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
         setMode("edit");
         setNotice("");
         hydratedPath.current = routeKey;
-      } else if (!isLoading) {
+      } else if (!isLoading && !isFetching && !isError) {
         setMode("list");
         setNotice("Produto não encontrado ou indisponível para esta conta.");
         hydratedPath.current = routeKey;
@@ -131,7 +152,7 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
       setDirty(new Set());
       hydratedPath.current = routeKey;
     }
-  }, [isLoading, location.pathname, isProductManagementRoute, isNewProductRoute, products, routeProductId]);
+  }, [isError, isFetching, isLoading, location.pathname, isProductManagementRoute, isNewProductRoute, products, routeProductId]);
   const filteredProducts = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("pt-BR");
     return products.filter(product => {
@@ -290,8 +311,17 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
           }));
         }
         if (Object.keys(update).length === 1) { setNotice("Nenhuma alteração foi feita."); return; }
-        await onUpdate(update);
+        const result = await onUpdate(update) as { success?: boolean; variants?: Product["variants"] };
+        if (update.variants && !variantsMatch(update.variants, result?.variants)) {
+          setNotice("A API não confirmou todas as variantes gravadas. O editor permanece aberto; recarregue o produto antes de tentar novamente.");
+          return;
+        }
         const refreshed = await onRefreshProducts();
+        const freshProduct = refreshed?.find(product => product.id === selectedId);
+        if (update.variants && !variantsMatch(update.variants, freshProduct?.variants)) {
+          setNotice("A leitura nova do catálogo diverge das variantes enviadas. Nenhum sucesso foi exibido; confira os dados antes de continuar.");
+          return;
+        }
         setMode("list"); setSelectedId(null); setDirty(new Set());
         setNotice(refreshed ? "Produto atualizado e conferido na lista atualizada." : "Produto salvo, mas a lista não confirmou a leitura. Atualize o catálogo antes de continuar.");
         navigate("/gestao/catalogo/produtos");
@@ -362,7 +392,7 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
         {filterItems.map(item => <button type="button" key={item.key} className={filter === item.key ? "is-active" : ""} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}><strong>{counts[item.key]}</strong><span>{item.label}</span></button>)}
       </div>
       <div className="apl-toolbar"><label className="apl-search"><span aria-hidden="true">⌕</span><input aria-label="Buscar produtos por nome, categoria, código ou variante" placeholder="Buscar produto, categoria, ID ou SKU" value={search} onChange={event => setSearch(event.target.value)} />{search ? <button type="button" aria-label="Limpar busca" onClick={() => setSearch("")}>×</button> : null}</label><span className="apl-count" aria-live="polite">{filteredProducts.length} de {products.length} produtos</span></div>
-      {isLoading ? <p className="apl-state" role="status">Carregando catálogo…</p> : isError ? <div className="apl-state apl-error" role="alert"><p>Não foi possível carregar os produtos.</p><button className="apl-secondary" type="button" onClick={onRetry}>Tentar novamente</button></div> : products.length === 0 ? <p className="apl-state">Nenhum produto cadastrado.</p> : filteredProducts.length === 0 ? <p className="apl-state">Nenhum produto corresponde à busca e aos filtros.</p> : <div className="apl-table-wrap"><table className="apl-table"><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Estoque</th><th>Estado</th><th>Variantes</th><th>Ações</th></tr></thead><tbody>{filteredProducts.map(product => {
+      {isLoading || isFetching ? <p className="apl-state" role="status">{isLoading ? "Carregando catálogo…" : "Atualizando catálogo…"}</p> : isError ? <div className="apl-state apl-error" role="alert"><p>Não foi possível carregar os produtos.</p><button className="apl-secondary" type="button" onClick={onRetry}>Tentar novamente</button></div> : products.length === 0 ? <p className="apl-state">Nenhum produto cadastrado.</p> : filteredProducts.length === 0 ? <p className="apl-state">Nenhum produto corresponde à busca e aos filtros.</p> : <div className="apl-table-wrap"><table className="apl-table"><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Estoque</th><th>Estado</th><th>Variantes</th><th>Ações</th></tr></thead><tbody>{filteredProducts.map(product => {
         const variants = product.variants ?? [];
         const approvedVariants = variants.filter(variant => Number(variant.isActive) === 1).length;
         return <Fragment key={product.id}><tr>

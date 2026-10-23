@@ -54,13 +54,19 @@ describe("admin product catalog integration", () => {
   });
 
   it("updates only submitted fields while retaining variant identity and reports persistence conflicts", async () => {
-    dbMocks.updateProductWithCatalog.mockResolvedValue({ success: true });
+    dbMocks.updateProductWithCatalog.mockResolvedValue({
+      success: true,
+      variants: [{ id: 18, color: "Azul", size: "G", sku: "SKU-18", price: 9500, stock: 3, isActive: 1 }],
+    });
     dbMocks.createAuditLog.mockResolvedValue(undefined);
     const admin = await caller(adminUser);
     await expect(admin.productUpdate({
       id: 7,
       variants: [{ id: 18, name: "Nome legado revisado", color: "Azul", size: "G", sku: "SKU-18", price: 9500, stock: 3, isActive: true }],
-    })).resolves.toEqual({ success: true });
+    })).resolves.toEqual({
+      success: true,
+      variants: [{ id: 18, color: "Azul", size: "G", sku: "SKU-18", price: 9500, stock: 3, isActive: 1 }],
+    });
     expect(dbMocks.updateProductWithCatalog).toHaveBeenCalledWith({
       id: 7,
       product: {},

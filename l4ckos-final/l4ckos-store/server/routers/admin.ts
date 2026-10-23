@@ -467,8 +467,9 @@ export const adminRouter = router({
           : {}),
         ...(sizeType !== undefined ? { sizeType } : {}),
       };
+      let result: Awaited<ReturnType<typeof updateProductWithCatalog>>;
       try {
-        await updateProductWithCatalog({
+        result = await updateProductWithCatalog({
           id,
           product: data,
           ...(images !== undefined ? { images: buildProductImageList(data, images) } : {}),
@@ -495,7 +496,7 @@ export const adminRouter = router({
         entityId: String(id),
         metadata: data,
       });
-      return { success: true } as const;
+      return result;
     }),
 
   productDelete: adminProcedure

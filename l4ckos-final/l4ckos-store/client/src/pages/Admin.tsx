@@ -1,8 +1,10 @@
 import "../components/admin/AdminStage1.css";
+import "../components/admin/AdminWorkspaceV3.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
+import { ExternalLink } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
@@ -630,19 +632,6 @@ export default function Admin() {
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
-  const confirmOrderPaymentMutation = trpc.admin.orderConfirmPayment.useMutation({
-    onSuccess: data => {
-      showToast({
-        message: data.updated ? "Pagamento confirmado e auditado" : "O pagamento já estava confirmado",
-        duration: 2400,
-      });
-      void ordersQuery.refetch();
-      void dashboardQuery.refetch();
-      void auditQuery.refetch();
-    },
-    onError: error => showToast({ message: error.message, duration: 3000 }),
-  });
-
   const waitlistLaunchSendMutation = trpc.admin.waitlistLaunchSend.useMutation({
     onSuccess: data => {
       setLaunchEmailResult({
@@ -962,6 +951,10 @@ export default function Admin() {
               ))}
             </div>
           </nav>
+          <a className="l4-admin-view-store" href={window.location.origin} target="_blank" rel="noopener noreferrer">
+            <ExternalLink aria-hidden="true" size={16} />
+            <span>Ver loja</span>
+          </a>
           <AdminSidebarProfile
             name={user?.name && user.name !== "Usuário" ? user.name : undefined}
             email={user?.email}
@@ -1057,11 +1050,12 @@ export default function Admin() {
         <AdminProductsPanel
           products={productsQuery.data}
           isLoading={productsQuery.isLoading}
+          isFetching={productsQuery.isFetching}
           isError={productsQuery.isError}
           onRetry={() => { void productsQuery.refetch(); }}
           onRefreshProducts={async () => {
             const result = await productsQuery.refetch();
-            return !result.isError;
+            return result.isError ? null : result.data ?? null;
           }}
           isSaving={createProductMutation.isPending || updateProductMutation.isPending || quickUpdateProductMutation.isPending || deleteProductMutation.isPending}
           onCreate={input => createProductMutation.mutateAsync(input)}
@@ -1151,11 +1145,6 @@ export default function Admin() {
                 statusLabel={getOrderStatusLabel}
                 statusTone={getOrderStatusTone}
                 addressLines={formatAdminAddressLine}
-                confirmingPayment={confirmOrderPaymentMutation.isPending}
-                onConfirmPayment={order => {
-                  if (!confirmAdminAction(`Confirmar manualmente o pagamento do pedido #${order.id}? Esta ação registra seu usuário e horário na auditoria.`)) return;
-                  confirmOrderPaymentMutation.mutate({ orderId: order.id });
-                }}
               />
             </section>
           ) : (

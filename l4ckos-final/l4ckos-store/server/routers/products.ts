@@ -93,7 +93,8 @@ export const productsRouter = router({
     if (!product) {
       throw new Error("Produto nao encontrado");
     }
-    return product;
+    const { variants: _internalVariants, ...publicProduct } = product;
+    return publicProduct;
   }),
 
   /** Preparatory catalog projection only; checkout/cart do not consume this endpoint yet. */
