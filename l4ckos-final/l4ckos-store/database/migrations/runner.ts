@@ -3,7 +3,8 @@ import { performance } from "node:perf_hooks";
 import { readArtifact, readContract, readRecognizedExistingContract } from "../schema/artifacts";
 import { readStructuralSchema, structuralHash, sha256, canonical } from "../schema/fingerprint";
 import { SchemaError } from "../schema/safety";
-import { appendCanonicalBaseline, assertNoRecoveryPending, ensureGovernance, completeExecution, execution, insertLedger, ledgerRows, validateGovernance, withSchemaLock, type OperationContext, type LedgerContext, withAuthorizedStagingLock } from "../schema/governance";
+import { appendCanonicalBaseline, assertNoRecoveryPending, ensureGovernance, completeExecution, execution, insertLedger, ledgerRows, validateGovernance, withSchemaLock, type OperationContext, type LedgerContext, withAuthorizedStagingLock, withVerifiedStagingSchemaLock } from "../schema/governance";
+import { consumeAuthorizedV6Capability, type AuthorizedV6Capability } from "../stagingV6/policy";
 
 export type MigrationEntry = {
   name: string; kind: "MIGRATION" | "RECONCILIATION"; checksum: string; path: string;
@@ -104,7 +105,17 @@ export async function reconcileAuthorizedStaging(connection: Connection, capabil
     });
   });
 }
-async function runMigrationBody(connection: Connection, context: LedgerContext, manifest?: LineageManifest, validatePost?: () => Promise<void>) {
+/** Runs the unmodified release lineage under an independently verified fixed staging capability. */
+export async function migrateAuthorizedStagingV6(
+  connection: Connection,
+  capability: AuthorizedV6Capability,
+  manifest: LineageManifest,
+  validatePost?: (entry: MigrationEntry) => Promise<void>,
+) {
+  const { context, verify } = await consumeAuthorizedV6Capability(connection, capability);
+  return withVerifiedStagingSchemaLock(connection, context, verify, () => runMigrationBody(connection, context, manifest, validatePost));
+}
+async function runMigrationBody(connection: Connection, context: LedgerContext, manifest?: LineageManifest, validatePost?: (entry: MigrationEntry) => Promise<void>) {
     const lineage = await loadLineage(manifest);
     const targetFingerprint=lineage.entries.at(-1)?.expectedPostFingerprint ?? lineage.contract.fingerprint;
     if (![targetFingerprint,lineage.contract.fingerprint].includes(context.approvedFingerprint)) throw new SchemaError("APPROVED_FINGERPRINT_REQUIRED");
@@ -131,7 +142,7 @@ async function runMigrationBody(connection: Connection, context: LedgerContext, 
         for (const statement of entry.statements) { await connection.query(statement); await checkpoint(); }
         const after = structuralHash(await readStructuralSchema(connection));
         if (after !== entry.expectedPostFingerprint) throw new SchemaError("MIGRATION_POSTFINGERPRINT_MISMATCH");
-        await validatePost?.();
+        await (validatePost as ((entry: MigrationEntry) => Promise<void>) | undefined)?.(entry);
         await connection.beginTransaction();
         try {
           await insertLedger(connection, context, { name: entry.name, kind: entry.kind, checksum: entry.checksum, description: entry.description, preFingerprint: before, postFingerprint: after, manifestVersion: 2, startedAt });

@@ -24,6 +24,19 @@ export async function withAuthorizedPreorderStagingLock<T>(connection: Connectio
   const plan = await verifyStagingCapability(connection, capability);
   return locked(connection, { applicationCommit: plan.applicationCommit, approvedFingerprint: plan.expectedPostFingerprint, lockTimeoutSeconds: 1 }, action);
 }
+/** Fixed staging migration capabilities must bind identity before using the shared schema lock. */
+export async function withVerifiedStagingSchemaLock<T>(
+  connection: Connection,
+  context: LedgerContext,
+  verify: () => Promise<void>,
+  action: () => Promise<T>,
+) {
+  await verify();
+  return locked(connection, { ...context, lockTimeoutSeconds: 1 }, async () => {
+    await verify();
+    return action();
+  });
+}
 async function locked<T>(connection: Connection, context: LedgerContext & { lockTimeoutSeconds?: number }, action: () => Promise<T>) {
   if (!/^[a-f0-9]{40}$/.test(context.applicationCommit)) throw new SchemaError("APPLICATION_COMMIT_REQUIRED");
   const timeout = context.lockTimeoutSeconds ?? 1;

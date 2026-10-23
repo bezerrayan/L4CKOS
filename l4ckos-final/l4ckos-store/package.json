@@ -23,6 +23,7 @@
     "db:staging:reconcile:apply": "tsx scripts/staging-reconciliation.ts apply",
     "db:staging:preorder:prepare": "tsx scripts/staging-preorder.ts prepare",
     "db:staging:preorder:apply": "tsx scripts/staging-preorder.ts apply",
+    "db:staging:v6": "tsx scripts/staging-v6.ts",
     "build:staging-admission": "esbuild server/admin/stagingCheckoutAdmissionCli.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/staging-checkout-admission.js",
     "build:asaas-hold-noop": "esbuild server/admin/asaasHoldNoopCli.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/asaas-hold-noop.js"
   },
