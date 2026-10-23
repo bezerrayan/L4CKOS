@@ -1,10 +1,10 @@
 import "../components/admin/AdminStage1.css";
-import "../components/admin/AdminWorkspaceV3.css";
+import "../components/admin/AdminOperationsLayout.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, MoreHorizontal } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
@@ -54,6 +54,10 @@ import { AdminProductsPanel } from "../components/admin/products/AdminProductsPa
 import { AdminHomeHighlightsPanel } from "../components/admin/promotions/AdminHomeHighlightsPanel";
 import { AdminReportsPanel } from "../components/admin/reports/AdminReportsPanel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 
 type Section =
   | "batches"
@@ -565,11 +569,8 @@ export default function Admin() {
 
   const createProductMutation = trpc.admin.productCreate.useMutation({
     onSuccess: async () => {
-      showToast({ message: "Produto criado", duration: 2000 });
-      setNewProduct({ ...emptyProductForm });
-      await dashboardQuery.refetch();
+      await Promise.allSettled([productsQuery.refetch(), dashboardQuery.refetch()]);
     },
-    onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
   const updateProductMutation = trpc.admin.productUpdate.useMutation({
@@ -1175,34 +1176,37 @@ export default function Admin() {
                         <td data-label="Rastreio">
                           <div style={styles.orderPrimaryText}>{row.trackingCode || "Pendente"}</div>
                         </td>
-                        <td data-label="Ações" style={styles.actionsCell}>
-                          <button type="button" style={styles.smallBtn} onClick={() => openOrder(row.id)} aria-label={`Ver detalhes do pedido ${row.id}`}>
-                            Ver detalhes
-                          </button>
-                          <Select
-                            value={String(row.status)}
-                            onValueChange={value => {
-                              const nextStatus = value as typeof orderStatuses[number];
-                              if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === 'cancelled' ? ' Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas.' : ''}`)) return;
-                              updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
-                            }}
-                          >
-                            <SelectTrigger className="admin-order-select-trigger" aria-label={`Atualizar situação do pedido ${row.id}`} disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
-                            <SelectContent className="admin-order-select-content" position="popper" side="bottom" align="end" sideOffset={6} collisionPadding={12}>
-                              {orderStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          <button
-                            style={styles.smallBtn}
-                            disabled={updateOrderMutation.isPending}
-                            onClick={() => {
-                              const tracking = window.prompt("Código de rastreio:", row.trackingCode || "");
-                              if (tracking === null) return;
-                              updateOrderMutation.mutate({ orderId: row.id, trackingCode: tracking || null });
-                            }}
-                          >
-                            Rastreio
-                          </button>
+                        <td data-label="Ações">
+                          <div className="admin-order-row-actions">
+                            <button type="button" className="admin-order-view-action" onClick={() => openOrder(row.id)} aria-label={`Ver detalhes do pedido ${row.id}`}>
+                              Ver detalhes
+                            </button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button type="button" className="admin-order-row-menu" aria-label={`Mais ações para o pedido ${row.id}`} disabled={updateOrderMutation.isPending}>
+                                  <MoreHorizontal aria-hidden="true" size={17} />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" side="bottom" collisionPadding={12} className="admin-order-actions-menu">
+                                <DropdownMenuLabel>Operações do pedido</DropdownMenuLabel>
+                                <DropdownMenuSub>
+                                  <DropdownMenuSubTrigger>Atualizar logística</DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent collisionPadding={12}>
+                                    {orderStatuses.map(status => <DropdownMenuItem key={status} onSelect={() => {
+                                      const nextStatus = status as typeof orderStatuses[number];
+                                      if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
+                                      updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
+                                    }}>{getOrderStatusLabel(status)}{String(row.status) === status ? " · atual" : ""}</DropdownMenuItem>)}
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onSelect={() => {
+                                  const tracking = window.prompt("Código de rastreio:", row.trackingCode || "");
+                                  if (tracking !== null) updateOrderMutation.mutate({ orderId: row.id, trackingCode: tracking || null });
+                                }}>Atualizar rastreio</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </td>
                       </tr>
                     ))}

@@ -2624,7 +2624,10 @@ export async function createProductWithCatalog(input: {
     if (!Number.isSafeInteger(productId) || productId <= 0) throw new Error("Não foi possível confirmar o cadastro do produto.");
     await syncProductImages(txDb, productId, input.images);
     await syncProductVariants(txDb, productId, input.variants, Number(input.product.price ?? 0));
-    return productId;
+    const [variantCountRow] = extractExecutedRows(await txDb.execute(
+      sql`select count(*) as variantCount from productVariants where productId = ${productId}`,
+    ));
+    return { productId, variantCount: Number(variantCountRow?.variantCount ?? 0) };
   });
 }
 

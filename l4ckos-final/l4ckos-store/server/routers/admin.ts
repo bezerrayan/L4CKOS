@@ -395,9 +395,9 @@ export const adminRouter = router({
         optionSizes: optionSizes.length > 0 ? JSON.stringify(optionSizes) : null,
         sizeType,
       };
-      let insertedId: number;
+      let created: Awaited<ReturnType<typeof createProductWithCatalog>>;
       try {
-        insertedId = await createProductWithCatalog({
+        created = await createProductWithCatalog({
           product: productData,
           images: buildProductImageList(productData, images),
           variants,
@@ -419,10 +419,10 @@ export const adminRouter = router({
         actorUserId: ctx.user.id,
         action: "product.create",
         entity: "product",
-        entityId: String(insertedId || "new"),
+        entityId: String(created.productId),
         metadata: { name: productData.name, category: productData.category },
       });
-      return { success: true } as const;
+      return { success: true, ...created } as const;
     }),
 
   productUpdate: adminProcedure

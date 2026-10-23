@@ -36,7 +36,7 @@ describe("admin product catalog integration", () => {
   });
 
   it("creates product, images and variants through the atomic catalog helper", async () => {
-    dbMocks.createProductWithCatalog.mockResolvedValue(71);
+    dbMocks.createProductWithCatalog.mockResolvedValue({ productId: 71, variantCount: 1 });
     dbMocks.createAuditLog.mockResolvedValue(undefined);
     const admin = await caller(adminUser);
     await expect(admin.productCreate({
@@ -44,7 +44,7 @@ describe("admin product catalog integration", () => {
       optionColors: ["preto"], optionSizes: ["M"],
       images: [{ imageUrl: "https://cdn.example.test/front.webp", color: "preto", alt: "Frente" }],
       variants: [{ color: "Preto", size: "M", name: "Camiseta local preto M", sku: "LOC-PT-M", price: 8990, stock: 4, isActive: false }],
-    })).resolves.toEqual({ success: true });
+    })).resolves.toEqual({ success: true, productId: 71, variantCount: 1 });
     expect(dbMocks.createProductWithCatalog).toHaveBeenCalledWith(expect.objectContaining({
       product: expect.objectContaining({ name: "Camiseta local", price: 8990, stock: 4, optionColors: '["preto"]' }),
       images: expect.arrayContaining([expect.objectContaining({ imageUrl: "https://cdn.example.test/front.webp", alt: "Frente" })]),
