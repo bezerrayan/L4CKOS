@@ -348,7 +348,7 @@ function confirmAdminAction(message: string) {
 
 export default function Admin() {
   const navigate = useNavigate();
-  const isMobile = useIsMobile(900);
+  const isMobile = useIsMobile(1024);
   const isCompactAdmin = useIsMobile(1180);
   const { user, isAuthenticated, logout } = useUser();
   const { showToast } = useToast();

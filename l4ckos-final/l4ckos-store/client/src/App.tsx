@@ -95,6 +95,7 @@ function AppRoutes() {
   const isMobile = useIsMobile(980);
   const location = useLocation();
   const { user, isAuthenticated, isLoading } = useUser();
+  const isAdminRoute = location.pathname === "/gestao";
   const comingSoonEnabled = siteMode === "coming-soon";
   const isCheckoutRoute = location.pathname === "/checkout";
   const isAdmin = isAuthenticated && user?.role === "admin";
@@ -109,18 +110,18 @@ function AppRoutes() {
 
   return (
     <>
-      {!isCheckoutRoute ? <Header /> : null}
+      {!isCheckoutRoute && !isAdminRoute ? <Header /> : null}
 
       <div
         style={{
-          minHeight: isCheckoutRoute ? "100vh" : isMobile ? "calc(100vh - 150px)" : "calc(100vh - 170px)",
+          minHeight: isCheckoutRoute || isAdminRoute ? "100vh" : isMobile ? "calc(100vh - 150px)" : "calc(100vh - 170px)",
           margin: "0 auto",
           padding: "0",
           width: "100%",
           overflowX: "clip",
         }}
-        className="l4-page-shell"
-        id="l4-main-content" tabIndex={-1} role={isCheckoutRoute ? undefined : "main"}
+        className={`l4-page-shell${isAdminRoute ? " l4-page-shell--admin" : ""}`}
+        id="l4-main-content" tabIndex={-1} role={isCheckoutRoute || isAdminRoute ? undefined : "main"}
       >
         <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -157,8 +158,8 @@ function AppRoutes() {
         </Suspense>
       </div>
 
-      {!isCheckoutRoute ? <Footer /> : null}
-      <CartDrawer />
+      {!isCheckoutRoute && !isAdminRoute ? <Footer /> : null}
+      {!isAdminRoute ? <CartDrawer /> : null}
       <CookiePreferences adminLayout={location.pathname === "/gestao" && isAdmin} />
     </>
   );
