@@ -115,7 +115,7 @@ export function OrderStatusBadge({
   label: string;
   tone: CSSProperties;
 }) {
-  return <AdminStatusBadge style={tone}>{label || status}</AdminStatusBadge>;
+  return <AdminStatusBadge className="admin-order-status-badge" dataStatus={status} style={tone}>{label || status}</AdminStatusBadge>;
 }
 
 export function OrderOperationalAlerts({ alerts }: { alerts: OperationalAlert[] }) {
@@ -146,6 +146,7 @@ export function OrderDetailPanel({
   addressLines,
   onConfirmPayment,
   confirmingPayment = false,
+  className,
 }: {
   order: AdminOrderView | null;
   statusLabel: (status: string) => string;
@@ -153,6 +154,7 @@ export function OrderDetailPanel({
   addressLines: (address: NonNullable<AdminOrderView["shippingAddress"]>) => string[];
   onConfirmPayment?: (order: AdminOrderView) => void;
   confirmingPayment?: boolean;
+  className?: string;
 }) {
   if (!order) return null;
 
@@ -160,7 +162,7 @@ export function OrderDetailPanel({
   const itemCount = items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
 
   return (
-    <aside className="admin-order-detail" style={styles.detailPanel}>
+    <aside className={`admin-order-detail${className ? ` ${className}` : ""}`} style={styles.detailPanel}>
       <div style={styles.detailHeader}>
         <div>
           <span style={styles.detailEyebrow}>Pedido</span>
@@ -172,7 +174,7 @@ export function OrderDetailPanel({
         </div>
       </div>
 
-      <div style={styles.detailGrid}>
+      <div className="admin-order-detail-grid" style={styles.detailGrid}>
         <DetailInfo label="Cliente" value={order.customerName || order.customerEmail || `Cliente #${order.userId}`} />
         <DetailInfo label="E-mail" value={order.customerEmail || "Não informado"} />
         <DetailInfo label="Total" value={formatPrice(Number(order.totalPrice ?? 0) / 100)} />

@@ -95,7 +95,7 @@ function AppRoutes() {
   const isMobile = useIsMobile(980);
   const location = useLocation();
   const { user, isAuthenticated, isLoading } = useUser();
-  const isAdminRoute = location.pathname === "/gestao";
+  const isAdminRoute = location.pathname === "/gestao" || location.pathname.startsWith("/gestao/");
   const comingSoonEnabled = siteMode === "coming-soon";
   const isCheckoutRoute = location.pathname === "/checkout";
   const isAdmin = isAuthenticated && user?.role === "admin";
@@ -142,7 +142,7 @@ function AppRoutes() {
             <Route path="/meus-pedidos" element={<MeusPedidos />} />
             <Route path="/meus-pedidos/:id" element={<PedidoDetalhe />} />
             <Route path="/acompanhar-pedido" element={<AcompanharPedido />} />
-            <Route path="/gestao" element={<AdminRoute />} />
+            <Route path="/gestao/*" element={<AdminRoute />} />
             {import.meta.env.DEV && AdminVisualPreview ? <Route path="/__admin-visual-preview" element={<AdminVisualPreview />} /> : null}
             {import.meta.env.DEV && AdminReportsIntegrationPreview ? <Route path="/__admin-reports-integration-preview" element={<AdminReportsIntegrationPreview />} /> : null}
             {import.meta.env.DEV && AdminBackupVisualPreview ? <Route path="/__admin-backup-visual-preview" element={<AdminBackupVisualPreview />} /> : null}

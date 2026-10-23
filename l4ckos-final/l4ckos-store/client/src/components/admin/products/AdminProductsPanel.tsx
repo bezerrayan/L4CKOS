@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../../server/routers";
 import { PRODUCT_CATEGORIES, getCategoryLabel, normalizeCategoryValue } from "../../../lib/productCategories";
@@ -26,6 +27,7 @@ type Props = {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
+  onRefreshProducts: () => Promise<boolean>;
   isSaving: boolean;
   onCreate: (input: CreateInput) => Promise<unknown>;
   onUpdate: (input: UpdateInput) => Promise<unknown>;
@@ -67,7 +69,13 @@ function draftFrom(product: Product): Draft {
   };
 }
 
-export function AdminProductsPanel({ products = [], isLoading, isError, onRetry, isSaving, onCreate, onUpdate, onDelete, onUpload, isUploading, imageSource, initialSearch = "" }: Props) {
+export function AdminProductsPanel({ products = [], isLoading, isError, onRetry, onRefreshProducts, isSaving, onCreate, onUpdate, onDelete, onUpload, isUploading, imageSource, initialSearch = "" }: Props) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const productRoute = location.pathname.match(/^\/gestao\/catalogo\/produtos(?:\/(novo|\d+))?\/?$/);
+  const isProductManagementRoute = Boolean(productRoute);
+  const routeProductId = productRoute?.[1] && productRoute[1] !== "novo" ? Number(productRoute[1]) : null;
+  const isNewProductRoute = productRoute?.[1] === "novo";
   const [search, setSearch] = useState(initialSearch);
   const [filter, setFilter] = useState<Filter>("all");
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
@@ -79,8 +87,51 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
   const [fileNonce, setFileNonce] = useState(0);
   const [previewColor, setPreviewColor] = useState("");
   const [previewSize, setPreviewSize] = useState("");
+  const hydratedPath = useRef("");
 
   const selectedProduct = products.find(product => product.id === selectedId) ?? null;
+  useEffect(() => {
+    const routeKey = location.pathname;
+    if (!productRoute) return;
+    if (isNewProductRoute) {
+      if (hydratedPath.current !== routeKey) {
+        setDraft(blankDraft());
+        setDirty(new Set());
+        setSelectedId(null);
+        setPreviewColor("");
+        setPreviewSize("");
+        setMode("create");
+        setNotice("");
+        hydratedPath.current = routeKey;
+      }
+      return;
+    }
+    if (routeProductId !== null) {
+      if (hydratedPath.current === routeKey) return;
+      const product = products.find(row => row.id === routeProductId);
+      if (product) {
+        setDraft(draftFrom(product));
+        setDirty(new Set());
+        setSelectedId(product.id);
+        setPreviewColor("");
+        setPreviewSize("");
+        setMode("edit");
+        setNotice("");
+        hydratedPath.current = routeKey;
+      } else if (!isLoading) {
+        setMode("list");
+        setNotice("Produto não encontrado ou indisponível para esta conta.");
+        hydratedPath.current = routeKey;
+      }
+      return;
+    }
+    if (hydratedPath.current !== routeKey) {
+      setMode("list");
+      setSelectedId(null);
+      setDirty(new Set());
+      hydratedPath.current = routeKey;
+    }
+  }, [isLoading, location.pathname, isProductManagementRoute, isNewProductRoute, products, routeProductId]);
   const filteredProducts = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("pt-BR");
     return products.filter(product => {
@@ -105,9 +156,12 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
     withVariants: products.filter(product => (product.variants?.length ?? 0) > 0).length,
   }), [products]);
 
-  const startCreate = () => { setDraft(blankDraft()); setDirty(new Set()); setSelectedId(null); setPreviewColor(""); setPreviewSize(""); setMode("create"); setNotice(""); };
-  const startEdit = (product: Product) => { setDraft(draftFrom(product)); setDirty(new Set()); setSelectedId(product.id); setPreviewColor(""); setPreviewSize(""); setMode("edit"); setNotice(""); };
-  const cancelEdit = () => { setMode("list"); setSelectedId(null); setDirty(new Set()); setNotice(""); };
+  const startCreate = () => { setDraft(blankDraft()); setDirty(new Set()); setSelectedId(null); setPreviewColor(""); setPreviewSize(""); setMode("create"); setNotice(""); navigate("/gestao/catalogo/produtos/novo"); };
+  const startEdit = (product: Product) => { setDraft(draftFrom(product)); setDirty(new Set()); setSelectedId(product.id); setPreviewColor(""); setPreviewSize(""); setMode("edit"); setNotice(""); navigate(`/gestao/catalogo/produtos/${product.id}`); };
+  const cancelEdit = () => {
+    if (dirty.size > 0 && !window.confirm("Há alterações não salvas. Sair sem salvar?")) return;
+    setMode("list"); setSelectedId(null); setDirty(new Set()); setNotice(""); navigate("/gestao/catalogo/produtos");
+  };
   const change = <K extends keyof Draft>(field: K, value: Draft[K]) => {
     setDraft(previous => ({ ...previous, [field]: value }));
     setDirty(previous => new Set(previous).add(field));
@@ -201,6 +255,11 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
             stock: Number(variant.stock), isActive: variant.isActive,
           })),
         });
+        const refreshed = await onRefreshProducts();
+        setMode("list"); setSelectedId(null); setDirty(new Set());
+        setNotice(refreshed ? "Produto criado e conferido na lista atualizada." : "Produto criado, mas a lista não confirmou a leitura. Atualize o catálogo antes de continuar.");
+        navigate("/gestao/catalogo/produtos");
+        return;
       } else if (selectedId) {
         const update: UpdateInput = { id: selectedId };
         if (dirty.has("name")) update.name = common.name;
@@ -232,8 +291,15 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
         }
         if (Object.keys(update).length === 1) { setNotice("Nenhuma alteração foi feita."); return; }
         await onUpdate(update);
+        const refreshed = await onRefreshProducts();
+        setMode("list"); setSelectedId(null); setDirty(new Set());
+        setNotice(refreshed ? "Produto atualizado e conferido na lista atualizada." : "Produto salvo, mas a lista não confirmou a leitura. Atualize o catálogo antes de continuar.");
+        navigate("/gestao/catalogo/produtos");
+        return;
       }
-      setMode("list"); setSelectedId(null); setDirty(new Set()); setNotice("");
+      setMode("list"); setSelectedId(null); setDirty(new Set());
+      setNotice("Não foi possível identificar o produto a atualizar.");
+      navigate("/gestao/catalogo/produtos");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Não foi possível salvar as alterações.");
     }
@@ -252,7 +318,12 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
       if (!Number.isInteger(value) || value < 0) { setNotice("Informe um estoque inteiro não negativo."); return; }
       update.stock = value;
     }
-    try { await onUpdate(update); setQuickEdit(null); setNotice(""); }
+    try {
+      await onUpdate(update);
+      const refreshed = await onRefreshProducts();
+      setQuickEdit(null);
+      setNotice(refreshed ? "Alteração salva e catálogo atualizado." : "Alteração salva, mas a lista não confirmou a leitura. Atualize o catálogo.");
+    }
     catch { setNotice("A alteração não foi salva. O estoque pode estar protegido por reservas ativas."); }
   };
 
@@ -285,19 +356,23 @@ export function AdminProductsPanel({ products = [], isLoading, isError, onRetry,
   const previewImage = selectedColorImage?.imageDetailUrl || selectedColorImage?.imageUrl || draft.imageDetailUrl || draft.imageUrl || draft.images[0]?.imageDetailUrl || draft.images[0]?.imageUrl;
 
   return <AdminSurface><div className="admin-products-live">
-    <header className="apl-heading"><div><span className="apl-kicker">Operação · Catálogo</span><h2>Produtos e estoque</h2><p>Gerencie o catálogo e os níveis de estoque registrados.</p></div><button className="apl-primary" type="button" onClick={startCreate}>Novo produto</button></header>
+    {mode === "list" ? <header className="apl-heading"><div><span className="apl-kicker">Operação · Catálogo</span><h2>Produtos e estoque</h2><p>Gerencie o catálogo e os níveis de estoque registrados.</p></div><button className="apl-primary" type="button" onClick={startCreate}>Novo produto</button></header> : null}
     {mode === "list" ? <>
       <div className="apl-metrics" role="group" aria-label="Filtros rápidos do catálogo">
         {filterItems.map(item => <button type="button" key={item.key} className={filter === item.key ? "is-active" : ""} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}><strong>{counts[item.key]}</strong><span>{item.label}</span></button>)}
       </div>
       <div className="apl-toolbar"><label className="apl-search"><span aria-hidden="true">⌕</span><input aria-label="Buscar produtos por nome, categoria, código ou variante" placeholder="Buscar produto, categoria, ID ou SKU" value={search} onChange={event => setSearch(event.target.value)} />{search ? <button type="button" aria-label="Limpar busca" onClick={() => setSearch("")}>×</button> : null}</label><span className="apl-count" aria-live="polite">{filteredProducts.length} de {products.length} produtos</span></div>
-      {isLoading ? <p className="apl-state" role="status">Carregando catálogo…</p> : isError ? <div className="apl-state apl-error" role="alert"><p>Não foi possível carregar os produtos.</p><button className="apl-secondary" type="button" onClick={onRetry}>Tentar novamente</button></div> : products.length === 0 ? <p className="apl-state">Nenhum produto cadastrado.</p> : filteredProducts.length === 0 ? <p className="apl-state">Nenhum produto corresponde à busca e aos filtros.</p> : <div className="apl-table-wrap"><table className="apl-table"><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Estoque</th><th>Variantes</th><th>Ações</th></tr></thead><tbody>{filteredProducts.map(product => <tr key={product.id}>
-        <td><button type="button" className="apl-product" onClick={() => startEdit(product)}><span className="apl-thumb">{product.imageUrl ? <img src={imageSource(product.imageUrl)} alt="" /> : <span>Sem imagem</span>}</span><span><strong>{product.name}</strong><small>#{product.id}{product.salesMode === "PREORDER" ? " · Pré-venda" : ""}</small></span></button></td>
-        <td>{getCategoryLabel(product.category)}</td><td><button className="apl-value" type="button" onClick={() => setQuickEdit({ id: product.id, field: "price", value: moneyInput(product.price) })}>{money(product.price)}<small>Editar</small></button></td>
-        <td>{product.variants?.length ? <button className="apl-value" type="button" onClick={() => startEdit(product)}>{Number(product.stock ?? 0)}<small>Estoque do produto · editar</small></button> : <button className="apl-value" type="button" onClick={() => setQuickEdit({ id: product.id, field: "stock", value: String(product.stock ?? 0) })}>{Number(product.stock ?? 0)}<small>Editar</small></button>}</td>
-        <td>{product.variants?.length ?? 0}<small className="apl-muted"> combinações</small></td><td><div className="apl-row-actions"><button type="button" onClick={() => startEdit(product)}>Editar</button><button type="button" className="apl-danger" onClick={async () => { if (!window.confirm(`Excluir “${product.name}”? A operação será recusada se houver referências em pedidos, reservas ou pré-venda.`)) return; try { await onDelete(product.id); } catch { setNotice("O produto não foi excluído. Ele pode estar vinculado a pedidos, reservas ou lotes."); } }}>Excluir</button></div></td>
-        {quickEdit?.id === product.id ? <td colSpan={5}><form className="apl-quick" onSubmit={event => { event.preventDefault(); void saveQuick(); }}><label>{quickEdit.field === "price" ? "Novo preço (R$)" : "Novo estoque"}<input autoFocus type="text" inputMode={quickEdit.field === "price" ? "decimal" : "numeric"} value={quickEdit.value} onChange={event => setQuickEdit({ ...quickEdit, value: event.target.value })} /></label><button className="apl-primary" disabled={isSaving} type="submit">{isSaving ? "Salvando…" : "Confirmar"}</button><button className="apl-secondary" type="button" onClick={() => setQuickEdit(null)}>Cancelar</button></form></td> : null}
-      </tr>)}</tbody></table></div>}
+      {isLoading ? <p className="apl-state" role="status">Carregando catálogo…</p> : isError ? <div className="apl-state apl-error" role="alert"><p>Não foi possível carregar os produtos.</p><button className="apl-secondary" type="button" onClick={onRetry}>Tentar novamente</button></div> : products.length === 0 ? <p className="apl-state">Nenhum produto cadastrado.</p> : filteredProducts.length === 0 ? <p className="apl-state">Nenhum produto corresponde à busca e aos filtros.</p> : <div className="apl-table-wrap"><table className="apl-table"><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Estoque</th><th>Estado</th><th>Variantes</th><th>Ações</th></tr></thead><tbody>{filteredProducts.map(product => {
+        const variants = product.variants ?? [];
+        const approvedVariants = variants.filter(variant => Number(variant.isActive) === 1).length;
+        return <Fragment key={product.id}><tr>
+        <td data-label="Produto"><button type="button" className="apl-product" onClick={() => startEdit(product)}><span className="apl-thumb">{product.imageUrl ? <img src={imageSource(product.imageUrl)} alt="" /> : <span>Sem imagem</span>}</span><span><strong>{product.name}</strong><small className="apl-product-id">#{product.id}</small></span></button></td>
+        <td data-label="Categoria">{getCategoryLabel(product.category)}</td><td data-label="Preço"><button className="apl-value" type="button" onClick={() => setQuickEdit({ id: product.id, field: "price", value: moneyInput(product.price) })}>{money(product.price)}<small>Editar</small></button></td>
+        <td data-label="Estoque">{variants.length ? <button className="apl-value" type="button" onClick={() => startEdit(product)}>{Number(product.stock ?? 0)}<small>Estoque agregado · editar variantes</small></button> : <button className="apl-value" type="button" onClick={() => setQuickEdit({ id: product.id, field: "stock", value: String(product.stock ?? 0) })}>{Number(product.stock ?? 0)}<small>Editar</small></button>}</td>
+        <td data-label="Estado"><div className="apl-status-stack"><span className="apl-state-chip">{product.salesMode === "PREORDER" ? "Pré-venda" : "Estoque"}</span><small>{variants.length ? `${approvedVariants} aprovadas · ${variants.length - approvedVariants} inativas` : Number(product.stock ?? 0) > 0 ? "Com estoque" : "Sem estoque"}</small></div></td>
+        <td data-label="Variantes">{variants.length ? <button type="button" className="apl-variant-count" onClick={() => setFilter("withVariants")} aria-label={`Filtrar produtos com variantes; ${variants.length} combinações em ${product.name}`}><strong>{variants.length}</strong><span>combinações</span></button> : <span className="apl-muted">Sem variantes</span>}</td>
+        <td data-label="Ações"><div className="apl-row-actions"><button type="button" onClick={() => startEdit(product)}>Editar</button><button type="button" className="apl-danger" onClick={async () => { if (!window.confirm(`Excluir “${product.name}”? A operação será recusada se houver referências em pedidos, reservas ou pré-venda.`)) return; try { await onDelete(product.id); } catch { setNotice("O produto não foi excluído. Ele pode estar vinculado a pedidos, reservas ou lotes."); } }}>Excluir</button></div></td>
+      </tr>{quickEdit?.id === product.id ? <tr className="apl-quick-row"><td colSpan={7}><form className="apl-quick" onSubmit={event => { event.preventDefault(); void saveQuick(); }}><label>{quickEdit.field === "price" ? "Novo preço (R$)" : "Novo estoque"}<input autoFocus type="text" inputMode={quickEdit.field === "price" ? "decimal" : "numeric"} value={quickEdit.value} onChange={event => setQuickEdit({ ...quickEdit, value: event.target.value })} /></label><button className="apl-primary" disabled={isSaving} type="submit">{isSaving ? "Salvando…" : "Confirmar"}</button><button className="apl-secondary" type="button" onClick={() => setQuickEdit(null)}>Cancelar</button></form></td></tr> : null}</Fragment>; })}</tbody></table></div>}
       {notice ? <p className="apl-notice" role="status">{notice}</p> : null}
     </> : <section className="apl-editor" aria-labelledby="apl-editor-title">
       <div className="apl-editor-heading"><div><span className="apl-kicker">{mode === "create" ? "Novo registro" : `Produto #${selectedProduct?.id ?? selectedId}`}</span><h3 id="apl-editor-title">{mode === "create" ? "Cadastrar produto" : "Editar produto"}</h3></div><button className="apl-secondary" type="button" onClick={cancelEdit}>Voltar à lista</button></div>

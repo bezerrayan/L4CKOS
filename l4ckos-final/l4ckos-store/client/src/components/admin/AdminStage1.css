@@ -727,6 +727,90 @@
   .l4-admin .l4-admin-sidebar, .l4-admin .l4-admin-nav-group button { transition: none; }
 }
 
+/* Wide work area, contained data tables and full-page operational details. */
+.l4-page-shell--admin > .l4-admin { --admin-sidebar-width: 252px; }
+.l4-admin .l4-admin-main {
+  padding-inline: clamp(20px, 2.2vw, 36px);
+  gap: 22px;
+}
+.l4-admin .l4-admin-main > .admin-surface { width: 100%; min-width: 0; }
+.l4-admin .admin-orders-real { width: 100%; min-width: 0; }
+.l4-admin .admin-orders-list,
+.l4-admin .admin-orders-table-wrap,
+.l4-admin .admin-order-detail-page { width: 100%; min-width: 0; max-width: 100%; }
+.l4-admin .admin-orders-table-wrap { overflow-x: auto; overscroll-behavior-x: contain; }
+.l4-admin .admin-orders-table-wrap table { width: 100%; min-width: 1120px !important; table-layout: auto; }
+.l4-admin .admin-orders-table-wrap th,
+.l4-admin .admin-orders-table-wrap td { padding: 15px 13px; }
+.l4-admin .admin-orders-table-wrap td { vertical-align: middle; }
+.l4-admin .admin-orders-table-wrap td[data-label="Ações"] { min-width: 180px; }
+.l4-admin .admin-order-state-pair { justify-items: start; }
+.l4-admin .admin-order-status-badge {
+  border: 1px solid #484848 !important;
+  background: #171717 !important;
+  color: #e7e7e7 !important;
+}
+.l4-admin .admin-order-status-badge[data-status="cancelled"],
+.l4-admin .admin-order-status-badge[data-status="pending"] {
+  border-color: #6a2631 !important;
+  background: #201114 !important;
+  color: #f1dfe1 !important;
+}
+.l4-admin .admin-order-status-badge[data-status="paid"] { border-color: #554047 !important; background: #191315 !important; color: #eadfe1 !important; }
+.l4-admin .admin-payment-state.is-confirmed,
+.l4-admin .admin-payment-state.is-unconfirmed { border-color: #414141; color: #d5d5d5; }
+.l4-admin .admin-order-detail-page { display: grid; gap: 20px; }
+.l4-admin .admin-order-detail-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #303030;
+}
+.l4-admin .admin-order-detail-title { display: grid; gap: 12px; min-width: 0; }
+.l4-admin .admin-order-detail-title h2 { margin: 0; color: #f2f2f2; font-size: clamp(24px, 2vw, 32px); }
+.l4-admin .admin-order-back {
+  width: fit-content;
+  min-height: 38px;
+  padding: 7px 11px;
+  border: 1px solid #383838;
+  border-radius: 4px;
+  background: #111;
+  color: #e5e5e5;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.l4-admin .admin-order-back:disabled { opacity: .55; cursor: not-allowed; }
+.l4-admin .admin-order-detail-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.l4-admin .admin-order-detail-actions > label { display: grid; gap: 6px; color: #a8a8a8; font-size: 12px; }
+.l4-admin .admin-order-detail.is-wide { position: static; width: 100%; min-width: 0; overflow: visible !important; padding: clamp(20px, 2vw, 30px) !important; }
+.l4-admin .admin-order-detail.is-wide .admin-order-detail-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
+.l4-admin .admin-order-not-found { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border: 1px solid #303030; background: #101010; }
+.l4-admin .admin-orders-result-counts { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 1024px) {
+  .l4-page-shell--admin > .l4-admin { --admin-sidebar-width: 252px; }
+  .l4-admin .l4-admin-main { padding-inline: clamp(18px, 3vw, 28px); }
+  .l4-admin .admin-order-detail-toolbar { align-items: stretch; flex-direction: column; }
+  .l4-admin .admin-order-detail-actions { align-items: stretch; }
+}
+@media (max-width: 760px) {
+  .l4-admin .admin-orders-table-wrap table { min-width: 0 !important; }
+  .l4-admin .admin-orders-table-wrap thead { display: none; }
+  .l4-admin .admin-orders-table-wrap tbody { display: grid; }
+  .l4-admin .admin-orders-table-wrap tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 14px; padding: 16px 12px; border-top: 1px solid #2b2b2b; }
+  .l4-admin .admin-orders-table-wrap tbody tr:first-child { border-top: 0; }
+  .l4-admin .admin-orders-table-wrap td { display: grid; min-width: 0; gap: 5px; padding: 0; border: 0; white-space: normal; }
+  .l4-admin .admin-orders-table-wrap td::before { content: attr(data-label); color: #878787; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .l4-admin .admin-orders-table-wrap td[data-label="Cliente"],
+  .l4-admin .admin-orders-table-wrap td[data-label="Ações"] { grid-column: 1 / -1; }
+  .l4-admin .admin-orders-table-wrap td[data-label="Ações"] { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .l4-admin .admin-order-detail-actions > label { flex: 1 1 220px; }
+  .l4-admin .admin-order-detail-actions .admin-order-back { flex: 1 1 180px; }
+}
+
 /* Read-only settings view: scoped so no storefront or other admin area is affected. */
 .admin-settings { --settings-red: var(--admin-red, #e8002a); display: grid; gap: 18px; color: #eee; min-width: 0; }
 .admin-settings :is(button, [role="tab"], [role="tabpanel"]):focus-visible { outline: 2px solid var(--settings-red); outline-offset: 3px; }

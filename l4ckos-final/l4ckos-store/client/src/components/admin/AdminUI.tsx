@@ -224,12 +224,12 @@ export function AdminFilterPills<T extends string>({
   );
 }
 
-export function AdminTableWrapper({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return <div style={{ ...styles.tableWrapper, ...style }}>{children}</div>;
+export function AdminTableWrapper({ children, style, className }: { children: ReactNode; style?: CSSProperties; className?: string }) {
+  return <div className={className} style={{ ...styles.tableWrapper, ...style }}>{children}</div>;
 }
 
-export function AdminStatusBadge({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return <span style={{ ...styles.statusBadge, ...style }}>{children}</span>;
+export function AdminStatusBadge({ children, style, className, dataStatus }: { children: ReactNode; style?: CSSProperties; className?: string; dataStatus?: string }) {
+  return <span className={className} data-status={dataStatus} style={{ ...styles.statusBadge, ...style }}>{children}</span>;
 }
 
 export function AdminImagePreview({

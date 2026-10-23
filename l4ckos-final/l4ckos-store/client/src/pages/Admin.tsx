@@ -1,7 +1,7 @@
 import "../components/admin/AdminStage1.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
@@ -66,6 +66,36 @@ type Section =
   | "audit"
   | "backup"
   | "settings";
+
+const adminSectionPaths: Record<Section, string> = {
+  overview: "/gestao",
+  orders: "/gestao/pedidos",
+  products: "/gestao/catalogo/produtos",
+  customers: "/gestao/clientes",
+  batches: "/gestao/lotes",
+  promos: "/gestao/promocoes",
+  coupons: "/gestao/cupons",
+  reviews: "/gestao/avaliacoes",
+  reports: "/gestao/relatorios",
+  audit: "/gestao/auditoria",
+  backup: "/gestao/backup",
+  settings: "/gestao/configuracoes",
+};
+
+function adminSectionFromPath(pathname: string): Section {
+  if (pathname.startsWith("/gestao/catalogo/produtos")) return "products";
+  if (pathname.startsWith("/gestao/pedidos")) return "orders";
+  if (pathname.startsWith("/gestao/clientes")) return "customers";
+  if (pathname.startsWith("/gestao/lotes")) return "batches";
+  if (pathname.startsWith("/gestao/promocoes")) return "promos";
+  if (pathname.startsWith("/gestao/cupons")) return "coupons";
+  if (pathname.startsWith("/gestao/avaliacoes")) return "reviews";
+  if (pathname.startsWith("/gestao/relatorios")) return "reports";
+  if (pathname.startsWith("/gestao/auditoria")) return "audit";
+  if (pathname.startsWith("/gestao/backup")) return "backup";
+  if (pathname.startsWith("/gestao/configuracoes")) return "settings";
+  return "overview";
+}
 
 const orderStatuses = ["pending", "paid", "processing", "shipped", "delivered", "cancelled"] as const;
 const productColorSuggestions = ["preto", "branco", "verde", "azul-marinho", "cinza", "caqui"] as const;
@@ -348,13 +378,14 @@ function confirmAdminAction(message: string) {
 
 export default function Admin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile(1024);
   const isCompactAdmin = useIsMobile(1180);
   const { user, isAuthenticated, logout } = useUser();
   const { showToast } = useToast();
   const utils = trpc.useUtils();
 
-  const [section, setSection] = useState<Section>("overview");
+  const [section, setSection] = useState<Section>(() => adminSectionFromPath(location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const menuPanelRef = useRef<HTMLElement | null>(null);
@@ -408,7 +439,10 @@ export default function Admin() {
     message: string;
     failures: Array<{ email: string; message: string }>;
   }>(null);
-  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(() => {
+    const match = location.pathname.match(/^\/gestao\/pedidos\/(\d+)$/);
+    return match ? Number(match[1]) : null;
+  });
   const [newProduct, setNewProduct] = useState({ ...emptyProductForm });
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [editProduct, setEditProduct] = useState({ ...emptyProductForm });
@@ -419,6 +453,27 @@ export default function Admin() {
   const editMainImageInputRef = useRef<HTMLInputElement | null>(null);
   const editGalleryImageInputRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = user?.role === "admin";
+
+  useEffect(() => {
+    setSection(adminSectionFromPath(location.pathname));
+    const match = location.pathname.match(/^\/gestao\/pedidos\/(\d+)$/);
+    setSelectedOrderId(match ? Number(match[1]) : null);
+  }, [location.pathname]);
+
+  const navigateSection = (nextSection: Section) => {
+    setSection(nextSection);
+    setSelectedOrderId(null);
+    navigate(adminSectionPaths[nextSection]);
+  };
+
+  const openOrder = (orderId: number) => {
+    setOrderFilterStatus("");
+    setOrderSearch("");
+    setOrderQuickFilter("all");
+    setSelectedOrderId(orderId);
+    setSection("orders");
+    navigate(`/gestao/pedidos/${orderId}`);
+  };
 
   async function uploadAdminImages(files: FileList | null, mode: "single" | "multiple", target: string) {
     if (!files || files.length === 0) return [];
@@ -507,31 +562,28 @@ export default function Admin() {
   });
 
   const createProductMutation = trpc.admin.productCreate.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       showToast({ message: "Produto criado", duration: 2000 });
       setNewProduct({ ...emptyProductForm });
-      void productsQuery.refetch();
-      void dashboardQuery.refetch();
+      await dashboardQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
   const updateProductMutation = trpc.admin.productUpdate.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       showToast({ message: "Produto atualizado", duration: 2000 });
       setEditingProductId(null);
       setEditProduct({ ...emptyProductForm });
-      void productsQuery.refetch();
-      void dashboardQuery.refetch();
+      await dashboardQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
   const quickUpdateProductMutation = trpc.admin.productUpdate.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       showToast({ message: "Produto atualizado", duration: 2000 });
-      void productsQuery.refetch();
-      void dashboardQuery.refetch();
+      await dashboardQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
@@ -792,7 +844,7 @@ export default function Admin() {
     ];
   }, [ordersQuery.data]);
   const selectedOrder = useMemo(
-    () => orders.find(order => order.id === selectedOrderId) ?? orders[0] ?? null,
+    () => selectedOrderId === null ? null : orders.find(order => order.id === selectedOrderId) ?? null,
     [orders, selectedOrderId],
   );
   const recentAudit = useMemo(() => (auditQuery.data ?? []).slice(0, 5), [auditQuery.data]);
@@ -845,10 +897,10 @@ export default function Admin() {
   }, [dashboardOrders, dashboardProducts]);
   const quickActions = useMemo(
     () => [
-      { label: "Novo produto", caption: "Cadastre ou atualize o catálogo", onClick: () => setSection("products") },
-      { label: "Pedidos", caption: "Acompanhe status e rastreio", onClick: () => setSection("orders") },
-      { label: "Clientes", caption: "Revise VIP, bloqueios e perfis", onClick: () => setSection("customers") },
-      { label: "Cupons", caption: "Gerencie promoções e descontos", onClick: () => setSection("coupons") },
+      { label: "Novo produto", caption: "Cadastre ou atualize o catálogo", onClick: () => navigateSection("products") },
+      { label: "Pedidos", caption: "Acompanhe status e rastreio", onClick: () => navigateSection("orders") },
+      { label: "Clientes", caption: "Revise VIP, bloqueios e perfis", onClick: () => navigateSection("customers") },
+      { label: "Cupons", caption: "Gerencie promoções e descontos", onClick: () => navigateSection("coupons") },
     ],
     [],
   );
@@ -902,7 +954,7 @@ export default function Admin() {
                   <h2>{group.heading}</h2>
                   {group.items.map(item => (
                     <button key={item.key} type="button" aria-current={section === item.key ? "page" : undefined}
-                      onClick={() => { setSection(item.key as Section); setMobileNavOpen(false); if (isMobile) menuButtonRef.current?.focus(); }}>
+                      onClick={() => { navigateSection(item.key as Section); setMobileNavOpen(false); if (isMobile) menuButtonRef.current?.focus(); }}>
                       {item.label}
                     </button>
                   ))}
@@ -923,8 +975,8 @@ export default function Admin() {
             title="Painel Administrativo"
             subtitle="Monitore o sistema, acompanhe pedidos, organize o catálogo e mantenha as operações críticas sob controle em um único lugar."
             actions={[
-              { label: "Ver pedidos", onClick: () => setSection("orders") },
-              { label: "Abrir produtos", onClick: () => setSection("products") },
+              { label: "Ver pedidos", onClick: () => navigateSection("orders") },
+              { label: "Abrir produtos", onClick: () => navigateSection("products") },
             ]}
           />
 
@@ -957,12 +1009,11 @@ export default function Admin() {
           getOrderStatusLabel={getOrderStatusLabel}
           getOrderStatusTone={getOrderStatusTone}
           onViewOrder={orderId => {
-            setSelectedOrderId(orderId);
-            setSection("orders");
+            openOrder(orderId);
           }}
           onViewProduct={product => {
             setProductSearch(product.name ?? String(product.id));
-            setSection("products");
+            navigateSection("products");
           }}
         />
       )}
@@ -979,13 +1030,12 @@ export default function Admin() {
           onOpenOrder={orderId => {
             setOrderSearch(String(orderId));
             setOrderQuickFilter("all");
-            setSelectedOrderId(orderId);
-            setSection("orders");
+            openOrder(orderId);
           }}
           onOpenProduct={(productId, productName) => {
             setProductSearch(productName || String(productId));
             setProductFilter("all");
-            setSection("products");
+            navigateSection("products");
           }}
         />
       )}
@@ -1009,6 +1059,10 @@ export default function Admin() {
           isLoading={productsQuery.isLoading}
           isError={productsQuery.isError}
           onRetry={() => { void productsQuery.refetch(); }}
+          onRefreshProducts={async () => {
+            const result = await productsQuery.refetch();
+            return !result.isError;
+          }}
           isSaving={createProductMutation.isPending || updateProductMutation.isPending || quickUpdateProductMutation.isPending || deleteProductMutation.isPending}
           onCreate={input => createProductMutation.mutateAsync(input)}
           onUpdate={input => updateProductMutation.mutateAsync(input)}
@@ -1024,9 +1078,9 @@ export default function Admin() {
 
       {section === "orders" && (
         <AdminSurface
-          title="Pedidos"
-          description="Gerencie o fluxo de pedidos com uma visão compacta e um painel lateral para detalhes operacionais."
-          aside={
+          title={selectedOrderId === null ? "Pedidos" : "Detalhe do pedido"}
+          description={selectedOrderId === null ? "Acompanhe pagamento, logística, entrega e rastreio em uma visão operacional ampla." : "Consulte o registro completo sem misturar a situação financeira com o andamento logístico."}
+          aside={selectedOrderId !== null ? undefined :
             <div style={styles.inlineRow}>
               <input
                 style={{ ...styles.input, minWidth: 260 }}
@@ -1047,14 +1101,15 @@ export default function Admin() {
           }
         >
           <div className="admin-orders-real">
+          {selectedOrderId === null ? <>
           <OrdersSummaryCards summary={ordersSummary} />
           <p className="admin-orders-accounting-note">O valor soma os pedidos atualmente carregados; o filtro por situação altera esse conjunto. Não representa valor recebido ou receita confirmada.</p>
-          <div style={styles.inlineRow}>
+          </> : null}
+          {selectedOrderId === null ? <div className="admin-orders-result-counts">
             <AdminSummaryPill>Exibindo: {orders.length}</AdminSummaryPill>
             <AdminSummaryPill>Busca: {searchedOrders.length}</AdminSummaryPill>
-          </div>
-          <OrdersFilters value={orderQuickFilter} onChange={setOrderQuickFilter} options={orderFilterOptions} />
-          <OrderOperationalAlerts alerts={orderOperationalAlerts} />
+          </div> : null}
+          {selectedOrderId === null ? <><OrdersFilters value={orderQuickFilter} onChange={setOrderQuickFilter} options={orderFilterOptions} /><OrderOperationalAlerts alerts={orderOperationalAlerts} /></> : null}
           {ordersQuery.isLoading ? (
             <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
           ) : ordersQuery.isError ? (
@@ -1062,73 +1117,77 @@ export default function Admin() {
               <p>Não foi possível carregar os pedidos.</p>
               <button type="button" style={styles.smallBtn} onClick={() => void ordersQuery.refetch()} disabled={ordersQuery.isFetching}>Tentar novamente</button>
             </div>
+          ) : selectedOrderId !== null && !selectedOrder ? (
+            <div className="admin-order-not-found" role="status"><p>O pedido não foi encontrado no resultado carregado.</p><button type="button" style={styles.smallBtn} onClick={() => navigateSection("orders")}>Voltar à lista</button></div>
           ) : orders.length === 0 ? (
             <AdminEmptyState
               title="Nenhum pedido encontrado"
               description="Ajuste o filtro ou aguarde novos pedidos aparecerem aqui."
             />
+          ) : selectedOrderId !== null ? (
+            <section className="admin-order-detail-page" aria-labelledby="admin-order-detail-heading">
+              <div className="admin-order-detail-toolbar">
+                <div className="admin-order-detail-title"><button type="button" className="admin-order-back" onClick={() => navigateSection("orders")}>← Todos os pedidos</button><h2 id="admin-order-detail-heading">Pedido #{selectedOrder!.id}</h2></div>
+                <div className="admin-order-detail-actions">
+                  <label>Atualizar logística
+                    <Select value={String(selectedOrder?.status ?? "pending")} onValueChange={value => {
+                      const nextStatus = value as typeof orderStatuses[number];
+                      if (!confirmAdminAction(`Alterar o pedido #${selectedOrder!.id} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
+                      updateOrderMutation.mutate({ orderId: selectedOrder!.id, status: nextStatus });
+                    }}>
+                    <SelectTrigger className="admin-order-select-trigger" aria-label={`Atualizar situação logística do pedido ${selectedOrder!.id}`} disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
+                      <SelectContent className="admin-order-select-content" position="popper" sideOffset={6} collisionPadding={12}>{orderStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </label>
+                  <button type="button" className="admin-order-back" disabled={updateOrderMutation.isPending} onClick={() => {
+                    const tracking = window.prompt("Código de rastreio:", selectedOrder!.trackingCode || "");
+                    if (tracking !== null) updateOrderMutation.mutate({ orderId: selectedOrder!.id, trackingCode: tracking || null });
+                  }}>Atualizar rastreio</button>
+                </div>
+              </div>
+              <OrderDetailPanel
+                className="is-wide"
+                order={selectedOrder}
+                statusLabel={getOrderStatusLabel}
+                statusTone={getOrderStatusTone}
+                addressLines={formatAdminAddressLine}
+                confirmingPayment={confirmOrderPaymentMutation.isPending}
+                onConfirmPayment={order => {
+                  if (!confirmAdminAction(`Confirmar manualmente o pagamento do pedido #${order.id}? Esta ação registra seu usuário e horário na auditoria.`)) return;
+                  confirmOrderPaymentMutation.mutate({ orderId: order.id });
+                }}
+              />
+            </section>
           ) : (
-            <div
-              style={{
-                ...styles.orderAdminLayout,
-                gridTemplateColumns: isCompactAdmin ? "1fr" : styles.orderAdminLayout.gridTemplateColumns,
-              }}
-            >
-              <AdminTableWrapper>
+            <div className="admin-orders-list">
+              <AdminTableWrapper className="admin-orders-table-wrap">
                 <table style={styles.table}>
-                  <thead><tr><th>Pedido</th><th>Cliente</th><th>Total</th><th>Situação do pedido / pagamento</th><th>Rastreio</th><th>Itens</th><th>Ações</th></tr></thead>
+                  <thead><tr><th>Pedido</th><th>Cliente</th><th>Pagamento</th><th>Logística</th><th>Total</th><th>Data</th><th>Rastreio</th><th>Ações</th></tr></thead>
                   <tbody>
                     {orders.map(row => (
-                      <tr
-                        key={row.id}
-                        onClick={() => setSelectedOrderId(row.id)}
-                        style={selectedOrder?.id === row.id ? styles.activeTableRow : undefined}
-                      >
-                        <td>
+                      <tr key={row.id}>
+                        <td data-label="Pedido">
                           <div style={styles.orderPrimaryText}>#{row.id}</div>
-                          <div style={styles.orderSecondaryText}>
-                            {new Date(row.createdAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" })}
-                          </div>
                         </td>
-                        <td>
+                        <td data-label="Cliente">
                           <div style={styles.orderPrimaryText}>{row.customerName || row.customerEmail || `Cliente #${row.userId}`}</div>
                           {row.customerEmail && row.customerName ? (
                             <div style={styles.orderSecondaryText}>{row.customerEmail}</div>
                           ) : null}
                         </td>
-                        <td>
-                          <div style={styles.orderPrimaryText}>{formatPrice(Number(row.totalPrice) / 100)}</div>
-                        </td>
-                        <td>
-                          <div className="admin-order-state-pair">
-                          <OrderStatusBadge
+                        <td data-label="Pagamento"><span className={`admin-payment-state ${row.paymentStatus === "confirmed" ? "is-confirmed" : "is-unconfirmed"}`}>{row.paymentStatus === "confirmed" ? "Confirmado" : "Não confirmado"}</span></td>
+                        <td data-label="Logística"><OrderStatusBadge
                             status={String(row.status)}
                             label={getOrderStatusLabel(String(row.status))}
                             tone={getOrderStatusTone(String(row.status))}
-                          />
-                            <span className={`admin-payment-state ${row.paymentStatus === "confirmed" ? "is-confirmed" : "is-unconfirmed"}`}>
-                              Pagamento: {row.paymentStatus === "confirmed" ? "Confirmado" : "Não confirmado"}
-                            </span>
-                          </div>
-                        </td>
-                        <td>
+                          /></td>
+                        <td data-label="Total"><div style={styles.orderPrimaryText}>{formatPrice(Number(row.totalPrice) / 100)}</div></td>
+                        <td data-label="Data"><div style={styles.orderSecondaryText}>{new Date(row.createdAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" })}</div></td>
+                        <td data-label="Rastreio">
                           <div style={styles.orderPrimaryText}>{row.trackingCode || "Pendente"}</div>
                         </td>
-                        <td>
-                          <div style={styles.orderPrimaryText}>
-                            {(row.items ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)} item(ns)
-                          </div>
-                          {(row.items ?? []).length > 0 ? (
-                            <div style={styles.orderSecondaryText}>
-                              {(row.items ?? [])
-                                .slice(0, 1)
-                                .map(item => item.productName || `Produto #${item.productId}`)
-                                .join(", ")}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td style={styles.actionsCell} onClick={event => event.stopPropagation()}>
-                          <button type="button" style={styles.smallBtn} onClick={() => setSelectedOrderId(row.id)} aria-label={`Ver detalhes do pedido ${row.id}`}>
+                        <td data-label="Ações" style={styles.actionsCell}>
+                          <button type="button" style={styles.smallBtn} onClick={() => openOrder(row.id)} aria-label={`Ver detalhes do pedido ${row.id}`}>
                             Ver detalhes
                           </button>
                           <Select
@@ -1161,20 +1220,6 @@ export default function Admin() {
                   </tbody>
                 </table>
               </AdminTableWrapper>
-
-              <OrderDetailPanel
-                order={selectedOrder}
-                statusLabel={getOrderStatusLabel}
-                statusTone={getOrderStatusTone}
-                addressLines={formatAdminAddressLine}
-                confirmingPayment={confirmOrderPaymentMutation.isPending}
-                onConfirmPayment={order => {
-                  if (!confirmAdminAction(
-                    `Confirmar manualmente o pagamento do pedido #${order.id}? Esta ação registra seu usuário e horário na auditoria.`,
-                  )) return;
-                  confirmOrderPaymentMutation.mutate({ orderId: order.id });
-                }}
-              />
             </div>
           )}
           </div>
@@ -1360,7 +1405,7 @@ export default function Admin() {
 
       {section === "settings" && (
         <AdminSettingsUI
-          onSelectSection={nextSection => setSection(nextSection)}
+          onSelectSection={nextSection => navigateSection(nextSection)}
           runtimeStatus={settingsStatusQuery.data}
           runtimeStatusLoading={settingsStatusQuery.isLoading}
           runtimeStatusError={settingsStatusQuery.isError}

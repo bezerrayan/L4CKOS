@@ -144,14 +144,7 @@
   .apl-table tbody { display:grid; }
   .apl-table tr { display:grid; grid-template-columns:minmax(0,1fr) minmax(90px,.6fr); gap:7px 12px; padding:13px 0; border-top:1px solid #292929; }
   .apl-table td { display:block; min-width:0; padding:0; border:0; }
-  .apl-table td:nth-child(1) { grid-column:1/-1; }
-  .apl-table td:nth-child(2) { color:#aaa; font-size:13px; }
-  .apl-table td:nth-child(2)::before { content:"Categoria · "; color:#777; }
-  .apl-table td:nth-child(3)::before { content:"Preço "; color:#777; font-size:12px; }
-  .apl-table td:nth-child(4)::before { content:"Estoque "; color:#777; font-size:12px; }
-  .apl-table td:nth-child(5) { color:#bbb; font-size:13px; }
-  .apl-table td:nth-child(5)::before { content:"Variantes · "; color:#777; }
-  .apl-table td:nth-child(6) { grid-column:1/-1; }
+  .apl-table td[data-label="Categoria"] { color:#aaa; font-size:13px; }
   .apl-row-actions button { min-height:38px; padding-inline:12px; }
   .apl-editor-grid { grid-template-columns:minmax(0,1fr); gap:15px; }
   .apl-preview { position:static; grid-row:1; }
@@ -173,3 +166,70 @@
   .apl-form-footer .apl-primary { grid-column:1/-1; grid-row:1; }
 }
 @media (max-width:420px) { .apl-heading { gap:8px; } .apl-heading .apl-primary { min-height:38px; padding-inline:9px; font-size:13px; } .apl-fields { grid-template-columns:minmax(0,1fr); } .apl-wide { grid-column:auto; } .apl-image-main { align-items:flex-start; } }
+
+/* Catalog workspace: full-width listing and a separate, readable editor route. */
+.admin-products-live { width: 100%; max-width: none; gap: 24px; }
+.apl-heading { align-items: end; gap: 24px; padding: 4px 0 20px; border-bottom: 1px solid #2a2a2a; }
+.apl-heading > div { min-width: 0; }
+.apl-heading h2 { font-size: clamp(26px, 2.2vw, 34px); letter-spacing: -.025em; }
+.apl-heading p { max-width: 70ch; }
+.apl-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid #292929; }
+.apl-metrics button { min-width: 0; padding-inline: 14px; }
+.apl-metrics button span { line-height: 1.35; }
+.apl-toolbar { min-width: 0; }
+.apl-table-wrap { width: 100%; min-width: 0; border: 1px solid #292929; border-radius: 5px; background: #090909; overscroll-behavior-x: contain; }
+.apl-table { width: 100%; min-width: 1080px; table-layout: auto; }
+.apl-table th { padding: 14px 12px; border-bottom: 1px solid #303030; background: #101010; color: #aaa; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.apl-table td { padding: 14px 12px; border-top: 1px solid #222; vertical-align: middle; }
+.apl-table tbody tr:first-child td { border-top: 0; }
+.apl-product { min-width: 240px; gap: 14px; }
+.apl-thumb { width: 56px; height: 64px; flex-basis: 56px; }
+.apl-product strong { white-space: normal; line-height: 1.35; }
+.apl-product-id { color: #f4f4f4 !important; font-weight: 700; letter-spacing: .035em; }
+.apl-status-stack { display: grid; justify-items: start; gap: 5px; min-width: 116px; }
+.apl-status-stack small { color: #999; font-size: 11px; line-height: 1.4; }
+.apl-state-chip { display: inline-flex; min-height: 25px; align-items: center; padding: 3px 8px; border: 1px solid #393939; border-radius: 3px; background: #141414; color: #ddd; font-size: 11px; font-weight: 650; }
+.apl-variant-count { display: inline-flex; align-items: baseline; gap: 7px; padding: 4px 0; border: 0; background: transparent; color: #c9c9c9; cursor: pointer; text-align: left; }
+.apl-variant-count strong { color: #fff; font-size: 17px; font-variant-numeric: tabular-nums; }
+.apl-variant-count span { font-size: 12px; }
+.apl-variant-count:hover span { color: #fff; text-decoration: underline; text-decoration-color: #e8002a; text-underline-offset: 3px; }
+.apl-row-actions { flex-wrap: wrap; min-width: 152px; }
+.apl-quick-row > td { background: #0f0f0f; }
+.apl-row-actions button { min-height: 38px; }
+.apl-editor { width: 100%; }
+.apl-editor-heading { align-items: end; gap: 18px; padding: 0 0 20px; }
+.apl-editor-heading h3 { font-size: clamp(24px, 2vw, 31px); }
+.apl-form { min-width: 0; }
+.apl-section { overflow: visible; }
+.apl-section h4 { font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.apl-form-footer { margin-top: 8px; border-top: 1px solid #303030; }
+.apl-form-footer > span { max-width: 60ch; line-height: 1.5; }
+.apl-preview { min-width: 0; padding: 20px; border-radius: 5px; }
+.apl-preview-image { min-height: clamp(240px, 28vw, 400px); background: #090909; }
+.apl-preview-image img { max-height: clamp(240px, 28vw, 400px); }
+.apl-preview-variants li { align-items: start; }
+.apl-preview-selected b.is-active,.apl-preview-variants li small.is-active { color: #e7e7e7; }
+.apl-preview-selected b.is-inactive,.apl-preview-variants li small.is-inactive { color: #aaa; }
+.apl-table :is(button, a):focus-visible,
+.apl-variant-count:focus-visible { outline: 2px solid #e8002a; outline-offset: 3px; }
+@media (max-width: 1280px) {
+  .apl-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .apl-editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .apl-preview { grid-row: 1; }
+}
+@media (max-width: 760px) {
+  .apl-heading { align-items: flex-start; flex-direction: column; }
+  .apl-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .apl-table { min-width: 0; }
+  .apl-table thead { display: none; }
+  .apl-table tbody { display: grid; }
+  .apl-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, .7fr); gap: 10px 14px; padding: 16px 12px; border-top: 1px solid #292929; }
+  .apl-table tbody tr:first-child { border-top: 0; }
+  .apl-table td { display: grid; min-width: 0; gap: 4px; padding: 0; border: 0; }
+  .apl-table td::before { content: attr(data-label); color: #858585; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .apl-table td[data-label="Produto"], .apl-table td[data-label="Ações"], .apl-table td[colspan] { grid-column: 1 / -1; }
+  .apl-table td[data-label="Produto"]::before, .apl-table td[colspan]::before { content: none; }
+  .apl-table .apl-product { min-width: 0; }
+  .apl-row-actions { min-width: 0; }
+  .apl-form-footer { position: static; }
+}
