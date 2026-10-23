@@ -104,6 +104,7 @@ function adminSectionFromPath(pathname: string): Section {
 }
 
 const orderStatuses = ["pending", "paid", "processing", "shipped", "delivered", "cancelled"] as const;
+const orderLogisticsStatuses = orderStatuses.filter(status => status !== "paid");
 const productColorSuggestions = ["preto", "branco", "verde", "azul-marinho", "cinza", "caqui"] as const;
 const alphaSizeSuggestions = ["PP", "P", "M", "G", "GG", "XG"] as const;
 const numericSizeSuggestions = ["36", "38", "40", "42", "44", "46"] as const;
@@ -1131,7 +1132,10 @@ export default function Admin() {
                       updateOrderMutation.mutate({ orderId: selectedOrder!.id, status: nextStatus });
                     }}>
                     <SelectTrigger className="admin-order-select-trigger" aria-label={`Atualizar situação logística do pedido ${selectedOrder!.id}`} disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
-                      <SelectContent className="admin-order-select-content" position="popper" sideOffset={6} collisionPadding={12}>{orderStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}</SelectContent>
+                      <SelectContent className="admin-order-select-content" position="popper" sideOffset={6} collisionPadding={12}>
+                        {orderLogisticsStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}
+                        {selectedOrder?.status === "paid" ? <SelectItem value="paid" disabled>Pagamento confirmado · estado atual</SelectItem> : null}
+                      </SelectContent>
                     </Select>
                   </label>
                   <button type="button" className="admin-order-back" disabled={updateOrderMutation.isPending} onClick={() => {
@@ -1192,7 +1196,7 @@ export default function Admin() {
                                 <DropdownMenuSub>
                                   <DropdownMenuSubTrigger>Atualizar logística</DropdownMenuSubTrigger>
                                   <DropdownMenuSubContent collisionPadding={12}>
-                                    {orderStatuses.map(status => <DropdownMenuItem key={status} onSelect={() => {
+                                    {orderLogisticsStatuses.map(status => <DropdownMenuItem key={status} onSelect={() => {
                                       const nextStatus = status as typeof orderStatuses[number];
                                       if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
                                       updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
