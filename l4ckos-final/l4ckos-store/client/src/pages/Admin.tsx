@@ -1162,23 +1162,8 @@ export default function Admin() {
               <div className="admin-order-detail-toolbar">
                 <div className="admin-order-detail-title"><button type="button" className="admin-order-back" onClick={() => navigateSection("orders")}>← Todos os pedidos</button><h2 id="admin-order-detail-heading">Pedido #{selectedOrder!.id}</h2></div>
                 <div className="admin-order-detail-actions">
-                  <label>Atualizar logística
-                    <Select value={String(selectedOrder?.status ?? "pending")} onValueChange={value => {
-                      const nextStatus = value as typeof orderStatuses[number];
-                      if (!confirmAdminAction(`Alterar o pedido #${selectedOrder!.id} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
-                      updateOrderMutation.mutate({ orderId: selectedOrder!.id, status: nextStatus });
-                    }}>
-                    <SelectTrigger className="admin-order-select-trigger" aria-label={`Atualizar situação logística do pedido ${selectedOrder!.id}`} disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
-                      <SelectContent className="admin-order-select-content" position="popper" sideOffset={6} collisionPadding={12}>
-                        {orderLogisticsStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}</SelectItem>)}
-                        {selectedOrder?.status === "paid" ? <SelectItem value="paid" disabled>Pagamento confirmado · estado atual</SelectItem> : null}
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <button type="button" className="admin-order-back" disabled={updateOrderMutation.isPending} onClick={() => {
-                    const tracking = window.prompt("Código de rastreio:", selectedOrder!.trackingCode || "");
-                    if (tracking !== null) updateOrderMutation.mutate({ orderId: selectedOrder!.id, trackingCode: tracking || null });
-                  }}>Atualizar rastreio</button>
+                  <button type="button" className="admin-order-action-launch" disabled={updateOrderMutation.isPending} onClick={() => openOrderAction(selectedOrder!, "logistics")}>Atualizar logística</button>
+                  <button type="button" className="admin-order-action-launch" disabled={updateOrderMutation.isPending} onClick={() => openOrderAction(selectedOrder!, "tracking")}>{selectedOrder?.trackingCode ? "Editar rastreio" : "Adicionar rastreio"}</button>
                 </div>
               </div>
               <OrderDetailPanel

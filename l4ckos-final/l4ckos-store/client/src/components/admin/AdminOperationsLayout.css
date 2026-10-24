@@ -72,6 +72,10 @@
 .l4-admin .admin-order-detail-title h2 { margin: 0; color: #fff; font-size: clamp(25px,2vw,34px); }
 .l4-admin .admin-order-detail-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 10px; }
 .l4-admin .admin-order-detail-actions label { display: grid; gap: 6px; color: #aaa; font-size: 12px; }
+.l4-admin .admin-order-action-launch { min-height: 40px; padding: 0 13px; border: 1px solid #414141; border-radius: 3px; background: #141414; color: #f1f1f1; font-size: 13px; font-weight: 600; cursor: pointer; }
+.l4-admin .admin-order-action-launch:hover:not(:disabled) { border-color: var(--admin-red); background: #1a1113; }
+.l4-admin .admin-order-action-launch:focus-visible { outline: 2px solid var(--admin-red); outline-offset: 2px; }
+.l4-admin .admin-order-action-launch:disabled { opacity: .55; cursor: not-allowed; }
 .l4-admin .admin-order-detail.is-wide { width: 100%; max-width: none; padding: 22px; border: 1px solid #2b2b2b; border-radius: 4px; background: #101010; }
 .l4-admin .admin-order-detail-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
 .l4-admin .admin-order-detail section { min-width: 0; }
