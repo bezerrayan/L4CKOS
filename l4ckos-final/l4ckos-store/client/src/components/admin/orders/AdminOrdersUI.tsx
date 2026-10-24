@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { AdminEmptyState, AdminFilterPills, AdminMetricCards, AdminStatusBadge, AdminSurface } from "../AdminUI";
+import { AdminEmptyState, AdminFilterPills, AdminStatusBadge, AdminSurface } from "../AdminUI";
 import { formatPrice } from "../../../lib/utils";
 
 import { CANCELLATION_NOTICE } from "../../../../../shared/paymentExceptions";
@@ -79,25 +79,34 @@ type OperationalAlert = {
 };
 
 export function OrdersSummaryCards({ summary }: { summary: OrdersSummary }) {
+  const primaryMetrics = [
+    { label: "Pedidos carregados", value: summary.total },
+    { label: "Pendentes de pagamento", value: summary.pending, tone: "warning" },
+    { label: "Pagos · aguardando preparação", value: summary.paid },
+  ] as const;
+  const operationalMetrics = [
+    { label: "Em separação", value: summary.processing },
+    { label: "Enviados", value: summary.shipped },
+    { label: "Entregues", value: summary.delivered, tone: "success" },
+    { label: "Cancelados", value: summary.cancelled, tone: "danger" },
+    { label: "Sem rastreio", value: summary.withoutTracking, tone: "warning" },
+    { label: "Valor dos pedidos carregados", value: formatPrice(summary.revenueCents / 100), tone: "value" },
+  ] as const;
+  const metricCards = (metrics: typeof primaryMetrics | typeof operationalMetrics) => metrics.map(metric => (
+    <article key={metric.label} className={`admin-order-summary-card${"tone" in metric ? ` is-${metric.tone}` : ""}`}>
+      <strong>{metric.value}</strong>
+      <span>{metric.label}</span>
+    </article>
+  ));
+
   return <div className="admin-orders-summary-groups">
-    <section className="admin-orders-summary-group" aria-label="Resumo de pedidos">
-      <span>Visão geral</span>
-      <AdminMetricCards cards={[
-        { label: "Pedidos carregados", value: summary.total },
-        { label: "Pendentes de pagamento", value: summary.pending, tone: "warning" },
-        { label: "Pagos · aguardando preparação", value: summary.paid },
-      ]} />
+    <section className="admin-orders-summary-group admin-orders-summary-group--primary" aria-label="Resumo de pedidos">
+      <h3>Visão geral</h3>
+      <div className="admin-order-summary-grid admin-order-summary-grid--primary">{metricCards(primaryMetrics)}</div>
     </section>
-    <section className="admin-orders-summary-group" aria-label="Fluxo logístico e financeiro">
-      <span>Fluxo e acompanhamento</span>
-      <AdminMetricCards cards={[
-        { label: "Em separação", value: summary.processing },
-        { label: "Enviados", value: summary.shipped },
-        { label: "Entregues", value: summary.delivered, tone: "success" },
-        { label: "Cancelados", value: summary.cancelled, tone: "danger" },
-        { label: "Sem rastreio", value: summary.withoutTracking, tone: "warning" },
-        { label: "Valor dos pedidos carregados", value: formatPrice(summary.revenueCents / 100) },
-      ]} />
+    <section className="admin-orders-summary-group admin-orders-summary-group--operations" aria-label="Fluxo logístico e financeiro">
+      <h3>Fluxo e acompanhamento</h3>
+      <div className="admin-order-summary-grid admin-order-summary-grid--operations">{metricCards(operationalMetrics)}</div>
     </section>
   </div>;
 }
