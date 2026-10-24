@@ -35,7 +35,6 @@ export default function AdminVisualPreview() {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const mobile = useIsMobile(900);
-  const compact = useIsMobile(1180);
   useEffect(() => {
     if (!menuOpen || !mobile) return;
     const oldOverflow = document.body.style.overflow;
@@ -75,7 +74,6 @@ export default function AdminVisualPreview() {
         {section === "overview" ? <AdminDashboard
           dashboardData={isEmpty ? { salesToday: 0, pendingOrders: 0, ordersToday: 0, usersCount: 0, productsCount: 0, lowStockCount: 0 } : { salesToday: 243800, pendingOrders: 4, ordersToday: 12, usersCount: 128, productsCount: 47, lowStockCount: 3 }}
           dashboardLoading={isLoading} dashboardError={isError}
-          isMobile={mobile} isCompact={compact}
           orders={previewOrders} products={previewProducts} promoBanners={isEmpty ? [] : [{ isActive: true }, { isActive: false }]} coupons={isEmpty ? [] : [{ isActive: true }]}
           recentAudit={[{ id: 1, action: "Produto atualizado (demonstração)", entity: "Produto", entityId: "71", createdAt: "2026-10-20T10:12:00-03:00" }, { id: 2, action: "Cupom criado (demonstração)", entity: "Cupom", entityId: "DEMO", createdAt: "2026-10-20T09:30:00-03:00" }]}
           quickActions={[{ label: "Novo produto", caption: "Ação desativada na prévia", onClick: () => setSection("products") }, { label: "Pedidos", caption: "Ação desativada na prévia", onClick: () => setSection("orders") }, { label: "Clientes", caption: "Ação desativada na prévia", onClick: () => setSection("customers") }, { label: "Cupons", caption: "Ação desativada na prévia", onClick: () => setSection("coupons") }]}
@@ -86,6 +84,7 @@ export default function AdminVisualPreview() {
           getOrderStatusLabel={status => statusSummary.find(item => item.status === status)?.label ?? status}
           getOrderStatusTone={status => ({ color: status === "paid" ? "#86efac" : "#fcd34d" })}
           onViewOrder={() => undefined} onViewProduct={() => undefined}
+          onNavigateSection={target => setSection(target)}
         /> : <section style={{ marginTop: 20, padding: 20, borderTop: "1px solid #292929", color: "#a1a1aa" }}>Área selecionada para conferir a navegação. Conteúdo operacional não é carregado nesta prévia.</section>}
       </main>
     </div>

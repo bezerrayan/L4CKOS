@@ -902,7 +902,7 @@ export default function Admin() {
     [dashboardOrders],
   );
   const operationalAlerts = useMemo(() => {
-    const alerts: Array<{ title: string; description: string; tone: "danger" | "warning" | "neutral" }> = [];
+    const alerts: Array<{ title: string; description: string; tone: "danger" | "warning" | "neutral"; route: "orders" | "products" | "promos" }> = [];
     const pendingOrders = dashboardOrders.filter(order => order.status === "pending").length;
     const paidOrders = dashboardOrders.filter(order => order.status === "paid").length;
     const emptyStockProducts = dashboardProducts.filter(product => product.salesMode !== "PREORDER" && Number(product.stock ?? 0) <= 0).length;
@@ -913,6 +913,7 @@ export default function Admin() {
         title: `${pendingOrders} pedido(s) aguardando pagamento`,
         description: "Acompanhe para evitar pedidos esquecidos no fluxo.",
         tone: "warning",
+        route: "orders",
       });
     }
     if (paidOrders > 0) {
@@ -920,6 +921,7 @@ export default function Admin() {
         title: `${paidOrders} pedido(s) pago(s) para separar`,
         description: "Priorize a operação de separação e envio.",
         tone: "neutral",
+        route: "orders",
       });
     }
     if (emptyStockProducts > 0) {
@@ -927,6 +929,7 @@ export default function Admin() {
         title: `${emptyStockProducts} produto(s) sem estoque`,
         description: "Revise disponibilidade antes de novas campanhas.",
         tone: "danger",
+        route: "products",
       });
     }
     if (lowStockTotal > 0) {
@@ -934,6 +937,7 @@ export default function Admin() {
         title: `${lowStockTotal} produto(s) com estoque baixo`,
         description: "Itens com 1 a 5 unidades disponíveis.",
         tone: "warning",
+        route: "products",
       });
     }
 
@@ -1034,8 +1038,6 @@ export default function Admin() {
           dashboardLoading={dashboardQuery.isLoading}
           dashboardError={dashboardQuery.isError}
           onRetryDashboard={() => { void dashboardQuery.refetch(); }}
-          isMobile={isMobile}
-          isCompact={isCompactAdmin}
           orders={dashboardOrders}
           products={dashboardProducts}
           promoBanners={promoBannersQuery.data ?? []}
@@ -1063,6 +1065,7 @@ export default function Admin() {
             setProductSearch(product.name ?? String(product.id));
             navigateSection("products");
           }}
+          onNavigateSection={section => navigateSection(section)}
         />
       )}
 

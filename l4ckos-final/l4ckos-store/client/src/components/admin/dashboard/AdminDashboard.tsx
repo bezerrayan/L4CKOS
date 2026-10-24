@@ -4,17 +4,16 @@ import { formatPrice } from "../../../lib/utils";
 import {
   AdminEmptyState,
   AdminLoadingState,
-  AdminMetricCards,
   AdminQuickActions,
-  AdminStatCard,
-  AdminStatsGrid,
   AdminStatusBadge,
-  AdminSurface,
 } from "../AdminUI";
+import { OrderStatusBadge, PaymentStatusBadge } from "../orders/AdminOrdersUI";
+import "./AdminDashboard.css";
 
 type DashboardOrder = {
   id: number;
   status?: string | null;
+  paymentStatus?: string | null;
   totalPrice?: number | string | null;
   userId?: number | null;
   customerName?: string | null;
@@ -30,16 +29,17 @@ type DashboardProduct = {
   category?: string | null;
   stock?: number | string | null;
   imageUrl?: string | null;
+  variants?: Array<{ id?: number; isActive?: number | boolean | null; stock?: number | string | null }>;
+  variantAvailability?: {
+    physicalStock?: number | null;
+    activeCount?: number | null;
+    inactiveCount?: number | null;
+    sellableCount?: number | null;
+  } | null;
 };
 
-type DashboardPromo = {
-  isActive?: boolean | number | null;
-};
-
-type DashboardCoupon = {
-  isActive?: boolean | number | null;
-};
-
+type DashboardPromo = { isActive?: boolean | number | null };
+type DashboardCoupon = { isActive?: boolean | number | null };
 type DashboardAudit = {
   id: number;
   action: string;
@@ -47,19 +47,13 @@ type DashboardAudit = {
   entityId?: string | null;
   createdAt: Date | string;
 };
-
 type DashboardAlert = {
   title: string;
   description: string;
   tone: "danger" | "warning" | "neutral";
+  route?: "orders" | "products" | "promos";
 };
-
-type OrderStatusSummary = {
-  status: string;
-  label: string;
-  count: number;
-};
-
+type OrderStatusSummary = { status: string; label: string; count: number };
 type DashboardKpis = {
   salesToday?: number | null;
   pendingOrders?: number | null;
@@ -68,14 +62,11 @@ type DashboardKpis = {
   productsCount?: number | null;
   lowStockCount?: number | null;
 };
-
 type AdminDashboardProps = {
   dashboardData?: DashboardKpis | null;
   dashboardLoading?: boolean;
   dashboardError?: boolean;
   onRetryDashboard?: () => void;
-  isMobile: boolean;
-  isCompact: boolean;
   orders: DashboardOrder[];
   products: DashboardProduct[];
   promoBanners: DashboardPromo[];
@@ -98,15 +89,42 @@ type AdminDashboardProps = {
   getOrderStatusTone: (status: string) => CSSProperties;
   onViewOrder: (orderId: number) => void;
   onViewProduct: (product: DashboardProduct) => void;
+  onNavigateSection?: (section: "orders" | "products" | "promos") => void;
 };
 
-function OverviewIcon({ children }: { children: ReactNode }) {
-  return (
-    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      {children}
-    </svg>
-  );
-}
+const auditActionLabels: Record<string, string> = {
+  "order.payment_confirmed_manual": "Pagamento confirmado manualmente",
+  "review.moderate": "Avaliação moderada",
+  "product.update": "Produto atualizado",
+  "payment.reconciliation_required": "Conciliação de pagamento necessária",
+  "coupon.update": "Cupom atualizado",
+  "batch.transition": "Status do lote alterado",
+  "user.setRole": "Papel de acesso atualizado",
+  "user.setFlags": "Permissões da conta atualizadas",
+  "backup.manual": "Backup manual realizado",
+  "order.update": "Pedido atualizado",
+  "order.cancelled": "Pedido cancelado",
+  "product.create": "Produto criado",
+  "product.delete": "Produto removido",
+  "coupon.create": "Cupom criado",
+  "coupon.delete": "Cupom removido",
+  "promoBanner.create": "Destaque da Home criado",
+  "promoBanner.update": "Destaque da Home atualizado",
+  "promoBanner.delete": "Destaque da Home removido",
+  "batch.created": "Lote criado",
+  "batch.edited": "Lote atualizado",
+  "batch.products_assigned": "Produtos associados ao lote",
+  "marketing.campaign.send": "Campanha de e-mail enviada",
+};
+const auditEntityLabels: Record<string, string> = {
+  order: "Pedido", product: "Produto", productReview: "Avaliação", coupon: "Cupom",
+  productionBatch: "Lote", user: "Usuário", backup: "Backup", promoBanner: "Destaque da Home", emailCampaign: "Campanha de e-mail",
+};
+const alertActions = {
+  orders: "Ver pedidos",
+  products: "Revisar catálogo",
+  promos: "Abrir destaques",
+} as const;
 
 function isActiveFlag(value: boolean | number | null | undefined) {
   return value === true || value === 1;
@@ -116,11 +134,43 @@ function asMoney(cents: number | string | null | undefined) {
   return Number(cents ?? 0) / 100;
 }
 
-function formatOrderDate(value: Date | string | null | undefined) {
-  if (!value) return "Data não informada";
+function safeDate(value: Date | string | null | undefined) {
+  if (!value) return null;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Data não informada";
-  return date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value: Date | string | null | undefined) {
+  const date = safeDate(value);
+  return date ? date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }) : "Data não informada";
+}
+
+function formatAuditAction(action: string) {
+  if (auditActionLabels[action]) return auditActionLabels[action];
+  const lastPart = action.split(".").filter(Boolean).at(-1) ?? action;
+  return lastPart.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ").replace(/^\w/, value => value.toLocaleUpperCase("pt-BR"));
+}
+
+function DashboardPanel({
+  title,
+  description,
+  aside,
+  children,
+  className = "",
+}: {
+  title: string;
+  description?: string;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return <section className={`dashboard-v2__panel ${className}`.trim()}>
+    <header className="dashboard-v2__panel-heading">
+      <div><h2>{title}</h2>{description ? <p>{description}</p> : null}</div>
+      {aside ? <div className="dashboard-v2__panel-aside">{aside}</div> : null}
+    </header>
+    {children}
+  </section>;
 }
 
 export function AdminDashboard({
@@ -128,8 +178,6 @@ export function AdminDashboard({
   dashboardLoading = false,
   dashboardError = false,
   onRetryDashboard,
-  isMobile,
-  isCompact,
   orders,
   products,
   promoBanners,
@@ -152,11 +200,12 @@ export function AdminDashboard({
   getOrderStatusTone,
   onViewOrder,
   onViewProduct,
+  onNavigateSection,
 }: AdminDashboardProps) {
   const recentOrders = orders.slice(0, 6);
   const lowStockProducts = products.filter(row => row.salesMode !== "PREORDER" && Number(row.stock ?? 0) <= 5).slice(0, 6);
-  const totalRevenue = orders.reduce((sum, order) => sum + asMoney(order.totalPrice), 0);
-  const averageTicket = orders.length > 0 ? totalRevenue / orders.length : null;
+  const totalOrderValue = orders.reduce((sum, order) => sum + asMoney(order.totalPrice), 0);
+  const averageOrderValue = orders.length > 0 ? totalOrderValue / orders.length : null;
   const paidOrders = orders.filter(order => order.status === "paid").length;
   const shippedOrders = orders.filter(order => order.status === "shipped").length;
   const cancelledOrders = orders.filter(order => order.status === "cancelled").length;
@@ -164,715 +213,191 @@ export function AdminDashboard({
   const activeCoupons = coupons.filter(coupon => isActiveFlag(coupon.isActive)).length;
   const ordersWithoutTracking = orders.filter(order => ["paid", "processing", "shipped"].includes(String(order.status ?? "")) && !order.trackingCode).length;
   const productsWithoutImage = products.filter(product => !product.imageUrl).length;
-
   const derivedAlerts: DashboardAlert[] = [
     ...operationalAlerts,
     ...(!promoBannersLoading && !promoBannersError && activeBanners === 0 && promoBanners.length > 0
-      ? [{ title: "Nenhum banner ativo", description: "Há banners cadastrados, mas nenhum está ativo para campanha.", tone: "warning" as const }]
+      ? [{ title: "Nenhum destaque ativo", description: "Há destaques cadastrados, mas nenhum está ativo na campanha.", tone: "warning" as const, route: "promos" as const }]
       : []),
     ...(!promoBannersLoading && !promoBannersError && promoBanners.length === 0
-      ? [{ title: "Nenhum banner cadastrado", description: "A home ainda não tem banners promocionais gerenciados pelo painel.", tone: "neutral" as const }]
+      ? [{ title: "Nenhum destaque cadastrado", description: "A Home ainda não tem destaques promocionais gerenciados pelo painel.", tone: "neutral" as const, route: "promos" as const }]
       : []),
     ...(!ordersLoading && !ordersError && ordersWithoutTracking > 0
-      ? [{ title: `${ordersWithoutTracking} pedido(s) sem rastreio`, description: "Pedidos pagos/em separação/enviados ainda sem código informado.", tone: "warning" as const }]
+      ? [{ title: `${ordersWithoutTracking} pedido(s) sem rastreio`, description: "Pedidos em preparação, separação ou enviados sem código informado.", tone: "warning" as const, route: "orders" as const }]
       : []),
     ...(!productsLoading && !productsError && productsWithoutImage > 0
-      ? [{ title: `${productsWithoutImage} produto(s) sem imagem`, description: "Revise o cadastro visual para manter a vitrine consistente.", tone: "warning" as const }]
+      ? [{ title: `${productsWithoutImage} produto(s) sem imagem`, description: "Revise as imagens para manter a vitrine consistente.", tone: "warning" as const, route: "products" as const }]
       : []),
   ];
-
   const ordersAction = quickActions.find(action => action.label === "Pedidos");
 
-  return (
-    <div
-      className="admin-dashboard dashboard-focused"
-      style={styles.dashboardStack}
+  return <div className="admin-dashboard dashboard-v2">
+    <section className="dashboard-v2__summary" aria-labelledby="dashboard-day-title">
+      <header className="dashboard-v2__page-heading"><span>PAINEL OPERACIONAL</span><h2 id="dashboard-day-title">Resumo do dia</h2></header>
+      {dashboardLoading ? <AdminLoadingState>Carregando indicadores...</AdminLoadingState> : dashboardError || !dashboardData ? <DashboardQueryState onRetry={onRetryDashboard} /> : <div className="dashboard-v2__kpis">
+        <article className="dashboard-v2__kpi is-money">
+          <span>Valor dos pedidos de hoje já entregues</span>
+          <strong>{formatPrice((dashboardData.salesToday ?? 0) / 100)}</strong>
+          <p>Soma dos pedidos criados desde o início do dia local do servidor que estão com status logístico Entregue. Não confirma pagamento nem valor recebido.</p>
+        </article>
+        <article className="dashboard-v2__kpi is-pending">
+          <span>Pedidos pendentes</span>
+          <strong>{dashboardData.pendingOrders ?? 0}</strong>
+          <p>Contagem pelo estado logístico Pendente; não representa confirmação financeira.</p>
+        </article>
+        <article className="dashboard-v2__kpi is-today">
+          <span>Pedidos criados hoje</span>
+          <strong>{dashboardData.ordersToday ?? 0}</strong>
+          <p>Contagem desde o início do dia calculado pelo servidor.</p>
+        </article>
+      </div>}
+    </section>
+
+    <DashboardPanel title="Precisa de atenção" description="Prioridades operacionais para revisão manual.">
+      {ordersLoading || productsLoading ? <AdminLoadingState>Verificando pedidos e estoque...</AdminLoadingState> : ordersError || productsError ? <AdminEmptyState title="Alertas indisponíveis" description="Não foi possível consultar pedidos e estoque para atualizar todos os alertas." /> : <DashboardAlerts alerts={derivedAlerts} onNavigateSection={onNavigateSection} />}
+    </DashboardPanel>
+
+    <DashboardPanel
+      title="Últimos pedidos"
+      description="Acesso rápido aos pedidos recentes, com pagamento e logística separados."
+      aside={ordersAction ? <button type="button" className="dashboard-v2__text-action" onClick={ordersAction.onClick}>Ver todos os pedidos</button> : undefined}
     >
-      <section
-        className="dashboard-day-summary"
-        aria-labelledby="dashboard-day-title"
-      >
-        <h2 id="dashboard-day-title">Resumo do dia</h2>
-        {dashboardLoading ? (
-          <AdminLoadingState>Carregando indicadores...</AdminLoadingState>
-        ) : dashboardError || !dashboardData ? (
-          <DashboardQueryState onRetry={onRetryDashboard} />
-        ) : <AdminStatsGrid
-          style={{
-            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))",
-          }}
-        >
-          <AdminStatCard
-            label="Valor de pedidos criados hoje e entregues"
-            value={formatPrice((dashboardData?.salesToday ?? 0) / 100)}
-            hint="Soma dos pedidos entregues criados hoje; não representa confirmação financeira."
-            tone="neutral"
-            icon={
-              <OverviewIcon>
-                <path d="M12 20V10"></path>
-                <path d="m18 20-6-6-6 6"></path>
-                <path d="M6 4h12"></path>
-              </OverviewIcon>
-            }
-          />
-          <AdminStatCard
-            label="Pedidos pendentes"
-            value={String(dashboardData?.pendingOrders ?? 0)}
-            hint="Pedidos aguardando pagamento."
-            tone="neutral"
-            icon={
-              <OverviewIcon>
-                <circle cx="12" cy="12" r="8"></circle>
-                <path d="M12 8v5l3 2"></path>
-              </OverviewIcon>
-            }
-          />
-          <AdminStatCard
-            label="Pedidos hoje"
-            value={String(dashboardData?.ordersToday ?? 0)}
-            hint="Criados desde o início do dia calculado no servidor."
-            tone="neutral"
-            icon={
-              <OverviewIcon>
-                <path d="M3 6h18"></path>
-                <path d="M8 6V3"></path>
-                <path d="M16 6V3"></path>
-                <rect x="3" y="6" width="18" height="15" rx="2"></rect>
-              </OverviewIcon>
-            }
-          />
-        </AdminStatsGrid>}
-      </section>
+      {ordersLoading ? <AdminLoadingState>Carregando pedidos...</AdminLoadingState> : ordersError ? <AdminEmptyState title="Pedidos indisponíveis" description="Não foi possível carregar a lista de pedidos agora." /> : recentOrders.length === 0 ? <AdminEmptyState title="Sem pedidos carregados" description="Quando houver pedidos, os mais recentes aparecerão aqui." /> : <div className="dashboard-v2__orders-wrap">
+        <table className="dashboard-v2__orders-table">
+          <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Pagamento</th><th>Logística</th><th>Data</th></tr></thead>
+          <tbody>{recentOrders.map(order => {
+            const status = String(order.status ?? "pending");
+            const date = safeDate(order.createdAt);
+            return <tr key={order.id}>
+              <td data-label="Pedido"><button type="button" className="dashboard-v2__order-link" onClick={() => onViewOrder(order.id)}>#{order.id}</button></td>
+              <td data-label="Cliente"><span className="dashboard-v2__customer">{order.customerName || order.customerEmail || `Cliente #${order.userId ?? "—"}`}</span></td>
+              <td data-label="Valor"><strong className="dashboard-v2__order-amount">{formatPrice(asMoney(order.totalPrice))}</strong></td>
+              <td data-label="Pagamento"><PaymentStatusBadge confirmed={order.paymentStatus === "confirmed"} /></td>
+              <td data-label="Logística"><OrderStatusBadge status={status} label={getOrderStatusLabel(status)} tone={getOrderStatusTone(status)} /></td>
+              <td data-label="Data"><time dateTime={date?.toISOString()}>{formatDateTime(order.createdAt)}</time></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>}
+    </DashboardPanel>
 
-      {ordersLoading || productsLoading ? (
-        <AdminSurface title="Precisa de atenção">
-          <AdminLoadingState>Verificando pedidos e estoque...</AdminLoadingState>
-        </AdminSurface>
-      ) : ordersError || productsError ? (
-        <AdminSurface title="Precisa de atenção">
-          <AdminEmptyState title="Alertas indisponíveis" description="Não foi possível consultar pedidos e estoque para atualizar todos os alertas." />
-        </AdminSurface>
-      ) : <DashboardAlerts alerts={derivedAlerts} />}
+    <section className="dashboard-v2__main-grid">
+      <DashboardPanel title="Financeiro e operação" description="Totais sobre os pedidos carregados. Eles não equivalem a pagamentos recebidos.">
+        {ordersLoading || ordersError ? <DashboardLoadOrError isLoading={ordersLoading} label="pedidos" /> : <div className="dashboard-v2__metrics">
+          <MetricCard label="Valor total registrado dos pedidos carregados" value={formatPrice(totalOrderValue)} />
+          <MetricCard label="Valor médio por pedido carregado" value={averageOrderValue === null ? "—" : formatPrice(averageOrderValue)} />
+          <MetricCard label="Aguardando preparação" value={String(paidOrders)} tone="purple" />
+          <MetricCard label="Pedidos enviados" value={String(shippedOrders)} tone="status" />
+          <MetricCard label="Pedidos cancelados" value={String(cancelledOrders)} tone="danger" />
+          <MetricCard label="Destaques ativos" value={promoBannersLoading || promoBannersError ? "—" : `${activeBanners}/${promoBanners.length}`} />
+          <MetricCard label="Cupons ativos" value={couponsLoading || couponsError ? "—" : `${activeCoupons}/${coupons.length}`} />
+          <MetricCard label="Produtos cadastrados" value={productsLoading || productsError ? "—" : String(products.length)} />
+          <MetricCard label="Usuários cadastrados" value={dashboardLoading || dashboardError || !dashboardData ? "—" : String(dashboardData.usersCount ?? 0)} />
+          <MetricCard label="Registros de estoque baixo" value={dashboardLoading || dashboardError || !dashboardData ? "—" : String(dashboardData.lowStockCount ?? 0)} tone={Number(dashboardData?.lowStockCount ?? 0) > 0 ? "warning" : "neutral"} />
+        </div>}
+      </DashboardPanel>
 
-      <AdminSurface
-        title="Últimos pedidos"
-        aside={
-          ordersAction ? (
-            <button
-              type="button"
-              className="dashboard-view-orders"
-              onClick={ordersAction.onClick}
-            >
-              Ver todos os pedidos
-            </button>
-          ) : undefined
-        }
-      >
-        {ordersLoading ? (
-          <AdminLoadingState>Carregando pedidos...</AdminLoadingState>
-        ) : ordersError ? (
-          <AdminEmptyState title="Pedidos indisponíveis" description="Não foi possível carregar a lista de pedidos agora." />
-        ) : recentOrders.length === 0 ? (
-          <AdminEmptyState
-            title="Sem pedidos carregados"
-            description="Quando houver pedidos, os mais recentes aparecerão aqui."
-          />
-        ) : (
-          <div className="dashboard-orderList" style={styles.orderList}>
-            {recentOrders.map(order => (
-              <button
-                key={order.id}
-                type="button"
-                className="dashboard-orderItemButton"
-                style={styles.orderItemButton}
-                onClick={() => onViewOrder(order.id)}
-              >
-                <span
-                  className="dashboard-order-main"
-                  style={styles.orderItemMain}
-                >
-                  <strong style={styles.compactListTitle}>
-                    Pedido #{order.id}
-                  </strong>
-                  <span style={styles.compactListMeta}>
-                    {order.customerName ||
-                      order.customerEmail ||
-                      `Cliente #${order.userId}`}
-                  </span>
-                  <span
-                    className="dashboard-order-date"
-                    style={styles.compactListMeta}
-                  >
-                    {formatOrderDate(order.createdAt)}
-                  </span>
-                </span>
-                <span
-                  className="dashboard-order-side"
-                  style={styles.orderItemSide}
-                >
-                  <strong style={styles.orderAmount}>
-                    {formatPrice(asMoney(order.totalPrice))}
-                  </strong>
-                  <AdminStatusBadge
-                    dataStatus={String(order.status)}
-                    style={getOrderStatusTone(String(order.status))}
-                  >
-                    {getOrderStatusLabel(String(order.status))}
-                  </AdminStatusBadge>
-                </span>
-              </button>
-            ))}
+      <DashboardPanel title="Pedidos por status" description="Distribuição dos estados retornados pela gestão.">
+        {ordersLoading ? <AdminLoadingState>Carregando status...</AdminLoadingState> : ordersError ? <AdminEmptyState title="Status indisponíveis" description="Não foi possível consultar os pedidos." /> : <div className="dashboard-v2__status-grid">
+          {orderStatusSummary.map(item => <div key={item.status} className="dashboard-v2__status-row">
+            <AdminStatusBadge dataStatus={item.status} style={getOrderStatusTone(item.status)}>{item.label}</AdminStatusBadge>
+            <strong>{item.count}</strong>
+          </div>)}
+        </div>}
+      </DashboardPanel>
+    </section>
+
+    <DashboardPanel title="Ações rápidas" description="Atalhos para as áreas operacionais mais usadas.">
+      <AdminQuickActions actions={quickActions} />
+    </DashboardPanel>
+
+    <section className="dashboard-v2__main-grid dashboard-v2__support-grid">
+      <DashboardPanel title="Estoque crítico" description="A prioridade preserva o critério atual do estoque-base; o estoque físico e a disponibilidade das variantes são mostrados separadamente.">
+        {productsLoading ? <AdminLoadingState>Carregando produtos...</AdminLoadingState> : productsError ? <AdminEmptyState title="Estoque indisponível" description="Não foi possível consultar os produtos agora." /> : lowStockProducts.length === 0 ? <AdminEmptyState title="Estoque saudável" description="Nenhum produto carregado atende ao filtro atual de estoque baixo." /> : <div className="dashboard-v2__inventory-list">
+          {lowStockProducts.map(product => {
+            const hasVariants = (product.variants?.length ?? 0) > 0;
+            const baseStock = Number(product.stock ?? 0);
+            const physicalStock = Number(product.variantAvailability?.physicalStock ?? baseStock);
+            const category = product.category ? getCategoryLabel(product.category) : null;
+            const availability = product.variantAvailability;
+            const variantSummary = hasVariants
+              ? availability?.sellableCount == null
+                ? "Disponibilidade das variantes indisponível"
+                : `${availability.sellableCount} combinação(ões) vendável(is)`
+              : "Produto sem variantes; estoque base separado";
+            const variantApproval = hasVariants && availability
+              ? `${availability.activeCount ?? 0} ativas · ${availability.inactiveCount ?? 0} inativas`
+              : null;
+            return <button key={product.id} type="button" className="dashboard-v2__inventory-row" onClick={() => onViewProduct(product)} aria-label={`Abrir cadastro do produto ${product.name || product.id}`}>
+              <span className="dashboard-v2__inventory-priority" data-priority={baseStock <= 0 ? "empty" : "low"} aria-hidden="true" />
+              <span className="dashboard-v2__inventory-copy"><strong>{product.name || `Produto #${product.id}`}</strong><span>#{product.id}{category ? ` · ${category}` : ""}</span></span>
+              <span className="dashboard-v2__inventory-state"><strong>{hasVariants ? `${physicalStock} un. físicas nas variantes` : baseStock <= 0 ? "Sem estoque físico" : `${baseStock} un. físicas`}</strong><small>{hasVariants ? `Estoque-base do produto: ${baseStock} · ${variantApproval ? `${variantApproval} · ` : ""}${variantSummary}` : variantSummary}</small></span>
+              <span className="dashboard-v2__inventory-action">Abrir cadastro</span>
+            </button>;
+          })}
+        </div>}
+      </DashboardPanel>
+
+      <DashboardPanel title="Atividade recente" description="Eventos administrativos com identificador e horário local.">
+        {auditLoading ? <AdminLoadingState>Carregando atividade...</AdminLoadingState> : auditError ? <AdminEmptyState title="Atividade indisponível" description="Não foi possível consultar os registros recentes." /> : recentAudit.length === 0 ? <AdminEmptyState title="Sem atividade recente" description="Os próximos eventos administrativos aparecerão aqui." /> : <div className="dashboard-v2__activity-list">
+          {recentAudit.map(item => {
+            const date = safeDate(item.createdAt);
+            return <article key={item.id} className="dashboard-v2__activity-row">
+              <span className="dashboard-v2__activity-marker" aria-hidden="true" />
+              <div className="dashboard-v2__activity-copy"><strong>{formatAuditAction(item.action)}</strong><span>{auditEntityLabels[item.entity] ?? item.entity}{item.entityId ? ` #${item.entityId}` : ""} · Log #{item.id}</span></div>
+              <time dateTime={date?.toISOString()}>{formatDateTime(item.createdAt)}</time>
+            </article>;
+          })}
+        </div>}
+      </DashboardPanel>
+    </section>
+
+    <details className="dashboard-v2__details">
+      <summary>Atendimento de pedidos e status do sistema</summary>
+      <div className="dashboard-v2__details-grid">
+        <DashboardPanel title="Atendimento de pedidos" description="Contagens por estado logístico retornado pela gestão.">
+          {ordersLoading || ordersError ? <DashboardLoadOrError isLoading={ordersLoading} label="pedidos" /> : <div className="dashboard-v2__support-rows">
+            <StatusRow label="Aguardando preparação" value={String(paidOrders)} />
+            <StatusRow label="Pedidos enviados" value={String(shippedOrders)} />
+            <StatusRow label="Pedidos cancelados" value={String(cancelledOrders)} />
+          </div>}
+        </DashboardPanel>
+        <DashboardPanel title="Status do sistema">
+          <div className="dashboard-v2__support-rows">
+            <StatusRow label="Pedidos aguardando pagamento" value={dashboardLoading || dashboardError || !dashboardData ? "—" : String(dashboardData.pendingOrders ?? 0)} />
+            <StatusRow label="Produtos cadastrados" value={dashboardLoading || dashboardError || !dashboardData ? "Não disponível" : `${dashboardData.productsCount ?? 0} itens`} />
+            <StatusRow label="Usuários cadastrados" value={dashboardLoading || dashboardError || !dashboardData ? "Não disponível" : `${dashboardData.usersCount ?? 0} usuários`} />
           </div>
-        )}
-      </AdminSurface>
-
-      <details className="dashboard-complementary">
-        <summary>
-          <span className="dashboard-complementary-title">
-            Informações complementares
-          </span>
-          <span className="dashboard-complementary-caption">
-            Financeiro, status, ações rápidas, estoque e atividade
-          </span>
-          <span className="dashboard-disclosure-icon" aria-hidden="true" />
-        </summary>
-        <div className="dashboard-complementary-content">
-          <AdminSurface
-            title="Visão financeira e operacional"
-            description="Os totais de pedidos incluem todos os status e não equivalem a pagamentos recebidos."
-          >
-            <AdminMetricCards
-              compact
-              cards={[
-                { label: "Usuários", value: dashboardData ? dashboardData.usersCount ?? 0 : "—" },
-                {
-                  label: "Produtos cadastrados",
-                  value: dashboardData ? dashboardData.productsCount ?? 0 : "—",
-                },
-                {
-                  label: "Estoque baixo",
-                  value: dashboardData ? dashboardData.lowStockCount ?? 0 : "—",
-                  tone:
-                    Number(dashboardData?.lowStockCount ?? 0) > 0
-                      ? "warning"
-                      : "neutral",
-                },
-              ]}
-            />
-            <div className="dashboard-metricGrid" style={styles.metricGrid}>
-              <MetricCard
-                label="Valor total dos pedidos"
-                value={ordersLoading || ordersError ? "—" : formatPrice(totalRevenue)}
-              />
-              <MetricCard
-                label="Média por pedido"
-                value={ordersLoading || ordersError || averageTicket === null ? "—" : formatPrice(averageTicket)}
-              />
-              <MetricCard label="Pedidos com status pago" value={ordersLoading || ordersError ? "—" : String(paidOrders)} />
-              <MetricCard
-                label="Pedidos enviados"
-                value={ordersLoading || ordersError ? "—" : String(shippedOrders)}
-              />
-              <MetricCard
-                label="Cancelados"
-                value={ordersLoading || ordersError ? "—" : String(cancelledOrders)}
-                tone="danger"
-              />
-              <MetricCard
-                label="Banners ativos"
-                value={promoBannersLoading || promoBannersError ? "—" : `${activeBanners}/${promoBanners.length}`}
-              />
-              <MetricCard
-                label="Cupons ativos"
-                value={couponsLoading || couponsError ? "—" : `${activeCoupons}/${coupons.length}`}
-              />
-              <MetricCard
-                label="Produtos cadastrados"
-                value={productsLoading || productsError ? "—" : String(products.length)}
-              />
-            </div>
-          </AdminSurface>
-
-          <div
-            className="dashboard-block-pair"
-            style={{
-              ...styles.dashboardColumns,
-              gridTemplateColumns: isCompact
-                ? "1fr"
-                : styles.dashboardColumns.gridTemplateColumns,
-            }}
-          >
-            <AdminSurface
-              title="Pedidos por status"
-              description="Distribuição dos pedidos retornados pela gestão."
-            >
-              {ordersLoading ? <AdminLoadingState>Carregando status...</AdminLoadingState> : ordersError ? (
-                <AdminEmptyState title="Status indisponíveis" description="Não foi possível consultar os pedidos." />
-              ) : (
-              <div
-                className="dashboard-statusSummaryGrid"
-                style={styles.statusSummaryGrid}
-              >
-                {orderStatusSummary.map(item => (
-                  <div
-                    key={item.status}
-                    className="dashboard-statusSummaryCard"
-                    style={styles.statusSummaryCard}
-                  >
-                    <AdminStatusBadge
-                      dataStatus={item.status}
-                      style={{
-                        ...getOrderStatusTone(item.status),
-                        ...styles.statusSummaryBadge,
-                      }}
-                    >
-                      {item.label}
-                    </AdminStatusBadge>
-                    <strong style={styles.statusSummaryValue}>
-                      {item.count}
-                    </strong>
-                  </div>
-                ))}
-              </div>
-              )}
-            </AdminSurface>
-
-            <AdminSurface
-              title="Atendimento de pedidos"
-              description="Contagens por situação retornada pela gestão."
-            >
-              {ordersLoading ? <AdminLoadingState>Carregando pedidos...</AdminLoadingState> : ordersError ? (
-                <AdminEmptyState title="Atendimento indisponível" description="Não foi possível consultar os pedidos." />
-              ) : <div style={styles.systemStatusList}>
-                <StatusRow
-                  label="Pedidos pagos para separar"
-                  value={String(paidOrders)}
-                />
-                <StatusRow
-                  label="Pedidos enviados"
-                  value={String(shippedOrders)}
-                />
-                <StatusRow
-                  label="Pedidos cancelados"
-                  value={String(cancelledOrders)}
-                />
-              </div>}
-            </AdminSurface>
-          </div>
-
-          <div
-            className="dashboard-block-pair"
-            style={{
-              ...styles.dashboardColumns,
-              gridTemplateColumns: isCompact
-                ? "1fr"
-                : styles.dashboardColumns.gridTemplateColumns,
-            }}
-          >
-            <AdminSurface title="Ações rápidas">
-              <AdminQuickActions actions={quickActions} />
-            </AdminSurface>
-
-            <AdminSurface title="Status do sistema">
-              <div style={styles.systemStatusList}>
-                <StatusRow
-                  label="Pedidos aguardando pagamento"
-                  value={dashboardLoading || dashboardError || !dashboardData ? "—" : String(dashboardData.pendingOrders ?? 0)}
-                />
-                <StatusRow
-                  label="Produtos cadastrados"
-                  value={dashboardLoading || dashboardError || !dashboardData ? "Não disponível" : `${dashboardData.productsCount ?? 0} itens`}
-                />
-                <StatusRow
-                  label="Usuários cadastrados"
-                  value={dashboardLoading || dashboardError || !dashboardData ? "Não disponível" : `${dashboardData.usersCount ?? 0} usuários`}
-                />
-              </div>
-            </AdminSurface>
-          </div>
-
-          <AdminSurface
-            title="Produtos com baixo estoque"
-            description="Itens com 5 unidades ou menos para priorizar revisão."
-          >
-            {productsLoading ? (
-              <AdminLoadingState>Carregando produtos...</AdminLoadingState>
-            ) : productsError ? (
-              <AdminEmptyState title="Estoque indisponível" description="Não foi possível consultar os produtos agora." />
-            ) : lowStockProducts.length === 0 ? (
-              <AdminEmptyState
-                title="Estoque saudável"
-                description="Nenhum produto carregado está com estoque baixo."
-              />
-            ) : (
-              <div className="dashboard-compactList" style={styles.compactList}>
-                {lowStockProducts.map(product => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    className="dashboard-compactListItemButton"
-                    style={styles.compactListItemButton}
-                    onClick={() => onViewProduct(product)}
-                  >
-                    <span style={styles.compactListTitle}>
-                      {product.name || `Produto #${product.id}`}
-                    </span>
-                    <span style={styles.compactListMeta}>
-                      {getCategoryLabel(product.category || "")}
-                    </span>
-                    <strong
-                      style={
-                        Number(product.stock ?? 0) <= 0
-                          ? styles.stockTextEmpty
-                          : styles.stockTextLow
-                      }
-                    >
-                      {Number(product.stock ?? 0) <= 0
-                        ? "Sem estoque"
-                        : `${product.stock} un.`}
-                    </strong>
-                  </button>
-                ))}
-              </div>
-            )}
-          </AdminSurface>
-          <AdminSurface
-            title="Atividade recente"
-            description="Últimos eventos registrados na trilha de auditoria administrativa."
-          >
-            {auditLoading ? (
-              <AdminLoadingState>Carregando atividade...</AdminLoadingState>
-            ) : auditError ? (
-              <AdminEmptyState title="Atividade indisponível" description="Não foi possível consultar os registros recentes." />
-            ) : recentAudit.length === 0 ? (
-              <AdminEmptyState
-                title="Sem atividade recente"
-                description="Assim que o painel registrar ações administrativas, elas aparecerão aqui."
-              />
-            ) : (
-              <div style={styles.activityList}>
-                {recentAudit.map(item => (
-                  <div
-                    key={item.id}
-                    className="dashboard-activityItem"
-                    style={styles.activityItem}
-                  >
-                    <div
-                      className="dashboard-activityBullet"
-                      style={styles.activityBullet}
-                    />
-                    <div style={styles.activityContent}>
-                      <strong style={styles.activityTitle}>
-                        {item.action}
-                      </strong>
-                      <span style={styles.activityMeta}>
-                        {item.entity} {item.entityId ? `#${item.entityId}` : ""}{" "}
-                        · {new Date(item.createdAt).toLocaleString("pt-BR")}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </AdminSurface>
-        </div>
-      </details>
-    </div>
-  );
+        </DashboardPanel>
+      </div>
+    </details>
+  </div>;
 }
 
-function MetricCard({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "danger" }) {
-  return (
-    <div className="dashboard-metricCard" style={{ ...styles.metricCard, ...(tone === "danger" ? styles.metricCardDanger : {}) }}>
-      <span style={styles.metricLabel}>{label}</span>
-      <strong style={styles.metricValue}>{value}</strong>
-    </div>
-  );
+function MetricCard({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "warning" | "danger" | "purple" | "status" }) {
+  return <article className={`dashboard-v2__metric is-${tone}`}><span>{label}</span><strong>{value}</strong></article>;
 }
 
 function StatusRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="dashboard-systemStatusRow" style={styles.systemStatusRow}>
-      <span style={styles.systemStatusLabel}>{label}</span>
-      <strong style={styles.systemStatusValue}>{value}</strong>
-    </div>
-  );
+  return <div className="dashboard-v2__support-row"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function DashboardLoadOrError({ isLoading, label }: { isLoading: boolean; label: string }) {
+  return isLoading ? <AdminLoadingState>Carregando {label}...</AdminLoadingState> : <AdminEmptyState title="Dados indisponíveis" description={`Não foi possível consultar ${label} agora.`} />;
 }
 
 function DashboardQueryState({ onRetry }: { onRetry?: () => void }) {
-  return (
-    <div className="dashboard-queryError" role="status">
-      <div>
-        <strong>Indicadores indisponíveis</strong>
-        <span>Não foi possível carregar o resumo agora.</span>
-      </div>
-      {onRetry ? <button type="button" onClick={onRetry}>Tentar novamente</button> : null}
-    </div>
-  );
+  return <div className="dashboard-v2__query-error" role="status"><div><strong>Indicadores indisponíveis</strong><span>Não foi possível carregar o resumo agora.</span></div>{onRetry ? <button type="button" onClick={onRetry}>Tentar novamente</button> : null}</div>;
 }
 
-function DashboardAlerts({ alerts }: { alerts: DashboardAlert[] }) {
+function DashboardAlerts({ alerts, onNavigateSection }: { alerts: DashboardAlert[]; onNavigateSection?: AdminDashboardProps["onNavigateSection"] }) {
   const priority = { danger: 0, warning: 1, neutral: 2 };
   const prioritizedAlerts = [...alerts].sort((a, b) => priority[a.tone] - priority[b.tone]);
-  return (
-    <AdminSurface title="Precisa de atenção">
-      {alerts.length === 0 ? (
-        <AdminEmptyState title="Sem alertas agora" description="Nenhum dado carregado exige atenção imediata." />
-      ) : (
-        <div className="dashboard-alertList" style={styles.alertList}>
-          {prioritizedAlerts.map(alert => (
-            <div
-              key={alert.title}
-              className={`dashboard-alert dashboard-alert--${alert.tone}`}
-              style={{
-                ...styles.alertItem,
-                ...(alert.tone === "danger" ? styles.alertItemDanger : alert.tone === "warning" ? styles.alertItemWarning : {}),
-              }}
-            >
-              <strong style={styles.alertTitle}>{alert.title}</strong>
-              <span style={styles.alertDescription}>{alert.description}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </AdminSurface>
-  );
+  if (alerts.length === 0) return <AdminEmptyState title="Sem alertas agora" description="Nenhum dado carregado exige atenção imediata." />;
+  return <div className="dashboard-v2__alert-grid">
+    {prioritizedAlerts.map(alert => <article key={alert.title} className={`dashboard-v2__alert is-${alert.tone}`}>
+      <span className="dashboard-v2__alert-indicator" aria-hidden="true" />
+      <div><strong>{alert.title}</strong><p>{alert.description}</p></div>
+      {alert.route && onNavigateSection ? <button type="button" onClick={() => onNavigateSection(alert.route!)}>{alertActions[alert.route]}<span aria-hidden="true">↗</span></button> : null}
+    </article>)}
+  </div>;
 }
-
-const styles: Record<string, CSSProperties> = {
-  dashboardStack: {
-    display: "grid",
-    gap: 20,
-  },
-  dashboardColumns: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1.4fr) minmax(280px, 0.8fr)",
-    gap: 20,
-  },
-  metricGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-    gap: 12,
-  },
-  metricCard: {
-    display: "grid",
-    alignContent: "space-between",
-    gap: 10,
-    minHeight: 104,
-    padding: "15px 16px",
-    borderRadius: 13,
-    border: "1px solid rgba(255,255,255,0.07)",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.004)), #090909",
-  },
-  metricCardDanger: {
-    borderColor: "rgba(239,68,68,0.24)",
-    background: "linear-gradient(180deg, rgba(239,68,68,0.055), rgba(239,68,68,0.015)), #090909",
-  },
-  metricLabel: {
-    color: "#8f98a6",
-    fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.085em",
-    textTransform: "uppercase",
-  },
-  metricValue: {
-    color: "#f8f4ec",
-    fontSize: 25,
-    lineHeight: 1,
-    fontWeight: 900,
-  },
-  systemStatusList: {
-    display: "grid",
-    gap: 9,
-  },
-  systemStatusRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
-    padding: "12px 14px",
-    borderRadius: 11,
-    background: "#090909",
-    border: "1px solid rgba(255,255,255,0.065)",
-  },
-  systemStatusLabel: {
-    color: "#9ca3af",
-    fontSize: 13,
-    lineHeight: 1.5,
-  },
-  systemStatusValue: {
-    color: "#f8f4ec",
-    fontSize: 16,
-  },
-  statusSummaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(142px, 1fr))",
-    gap: 10,
-  },
-  statusSummaryCard: {
-    display: "grid",
-    gap: 10,
-    justifyItems: "start",
-    padding: "13px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.065)",
-    background: "#090909",
-    minWidth: 0,
-    overflow: "hidden",
-  },
-  statusSummaryBadge: {
-    maxWidth: "100%",
-    whiteSpace: "normal",
-    lineHeight: 1.25,
-    textAlign: "center",
-    paddingTop: 7,
-    paddingBottom: 7,
-  },
-  statusSummaryValue: {
-    color: "#f8f4ec",
-    fontSize: 25,
-    lineHeight: 1,
-    fontWeight: 900,
-  },
-  alertList: {
-    display: "grid",
-    gap: 9,
-  },
-  alertItem: {
-    display: "grid",
-    gap: 6,
-    padding: "12px 13px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.07)",
-    background: "#090909",
-  },
-  alertItemWarning: {
-    borderColor: "rgba(245,158,11,0.22)",
-    background: "linear-gradient(180deg, rgba(245,158,11,0.055), rgba(245,158,11,0.015)), #090909",
-  },
-  alertItemDanger: {
-    borderColor: "rgba(239,68,68,0.28)",
-    background: "linear-gradient(180deg, rgba(239,68,68,0.065), rgba(239,68,68,0.016)), #090909",
-  },
-  alertTitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-    lineHeight: 1.35,
-  },
-  alertDescription: {
-    color: "#9ca3af",
-    fontSize: 12,
-    lineHeight: 1.55,
-  },
-  orderList: {
-    display: "grid",
-    gap: 9,
-  },
-  orderItemButton: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    gap: 12,
-    alignItems: "center",
-    width: "100%",
-    padding: "12px 13px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.065)",
-    background: "#090909",
-    color: "#f8f4ec",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  orderItemMain: {
-    display: "grid",
-    gap: 4,
-    minWidth: 0,
-  },
-  orderItemSide: {
-    display: "grid",
-    justifyItems: "end",
-    gap: 8,
-  },
-  orderAmount: {
-    color: "#f8f4ec",
-    fontSize: 14,
-    lineHeight: 1,
-  },
-  compactList: {
-    display: "grid",
-    gap: 9,
-  },
-  compactListItemButton: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    gap: "6px 12px",
-    alignItems: "center",
-    width: "100%",
-    padding: "12px 13px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.065)",
-    background: "#090909",
-    color: "#f8f4ec",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  compactListTitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-    fontWeight: 800,
-    lineHeight: 1.35,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  compactListMeta: {
-    color: "#9ca3af",
-    fontSize: 12,
-    lineHeight: 1.45,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  stockTextLow: {
-    color: "#fbbf24",
-    fontSize: 13,
-    fontWeight: 900,
-  },
-  stockTextEmpty: {
-    color: "#f87171",
-    fontSize: 13,
-    fontWeight: 900,
-  },
-  activityList: {
-    display: "grid",
-    gap: 0,
-  },
-  activityItem: {
-    display: "grid",
-    gridTemplateColumns: "8px 1fr",
-    gap: 12,
-    alignItems: "flex-start",
-    padding: "12px 0",
-    borderBottom: "1px solid rgba(255,255,255,0.07)",
-  },
-  activityBullet: {
-    width: 8,
-    height: 8,
-    marginTop: 6,
-    borderRadius: "50%",
-    background: "#ef4444",
-    opacity: 0.75,
-  },
-  activityContent: {
-    display: "grid",
-    gap: 4,
-  },
-  activityTitle: {
-    color: "#f8f4ec",
-    fontSize: 14,
-  },
-  activityMeta: {
-    color: "#8b949e",
-    fontSize: 12,
-    lineHeight: 1.5,
-  },
-};
