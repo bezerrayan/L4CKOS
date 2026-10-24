@@ -343,80 +343,83 @@ export function AdminCustomersPanel({
           <div className="admin-customers__dialog-scroll">
             <div className="admin-customers__profile-grid">
               <div className="admin-customers__profile-column admin-customers__profile-column--identity">
-              <section className="admin-customers__detail-block"><div className="admin-customers__section-heading"><div><span>CADASTRO</span><h3>Identificação</h3></div></div><dl>
-                <div><dt>Nome</dt><dd>{selectedCustomer.name || "Não informado"}</dd></div>
-                <div><dt>E-mail</dt><dd>{selectedCustomer.email || "Não informado"}</dd></div>
-                <div><dt>ID interno</dt><dd>#{selectedCustomer.id}</dd></div>
-                <div><dt>Cadastro</dt><dd>{formatDate(selectedCustomer.createdAt, true)}</dd></div>
-                <div><dt>Último acesso</dt><dd>{formatDate(selectedCustomer.lastSignedIn, true)}</dd></div>
-                <div><dt>Conta</dt><dd><span className={`admin-customers__account${selectedCustomer.isBlocked ? " is-blocked" : ""}`}><i aria-hidden="true" />{selectedCustomer.isBlocked ? "Bloqueada" : "Ativa"}</span></dd></div>
-                <div><dt>Papel</dt><dd className={selectedCustomer.role === "admin" ? "is-admin" : ""}>{selectedCustomer.role === "admin" ? "Administrador" : selectedCustomer.role === "user" ? "Cliente" : selectedCustomer.role}</dd></div>
-                <div><dt>VIP</dt><dd>{selectedCustomer.isVip ? "Identificado como VIP" : "Sem identificação VIP"}</dd></div>
-              </dl></section>
+                <section className="admin-customers__detail-block">
+                  <div className="admin-customers__section-heading"><div><span>CADASTRO</span><h3>Identificação</h3></div></div>
+                  <dl>
+                    <div><dt>Nome</dt><dd>{selectedCustomer.name || "Não informado"}</dd></div>
+                    <div><dt>E-mail</dt><dd>{selectedCustomer.email || "Não informado"}</dd></div>
+                    <div><dt>ID interno</dt><dd>#{selectedCustomer.id}</dd></div>
+                    <div><dt>Cadastro</dt><dd>{formatDate(selectedCustomer.createdAt, true)}</dd></div>
+                    <div><dt>Último acesso</dt><dd>{formatDate(selectedCustomer.lastSignedIn, true)}</dd></div>
+                    <div><dt>Conta</dt><dd><span className={`admin-customers__account${selectedCustomer.isBlocked ? " is-blocked" : ""}`}><i aria-hidden="true" />{selectedCustomer.isBlocked ? "Bloqueada" : "Ativa"}</span></dd></div>
+                    <div><dt>Papel</dt><dd className={selectedCustomer.role === "admin" ? "is-admin" : ""}>{selectedCustomer.role === "admin" ? "Administrador" : selectedCustomer.role === "user" ? "Cliente" : selectedCustomer.role}</dd></div>
+                    <div><dt>VIP</dt><dd>{selectedCustomer.isVip ? "Identificado como VIP" : "Sem identificação VIP"}</dd></div>
+                  </dl>
+                </section>
 
-              <section className="admin-customers__detail-block admin-customers__account-action">
-                <div className="admin-customers__section-heading"><div><span>CONTROLES DE CONTA</span><h3>Ações administrativas</h3></div></div>
-                <p>As alterações são auditadas e continuam sujeitas às permissões do servidor.</p>
-                <div className="admin-customers__action-grid">
-                  <button type="button" disabled={!onToggleVip || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.isVip ? "vipOff" : "vipOn"); }}>{selectedCustomer.isVip ? "Remover identificação VIP" : "Identificar como VIP"}</button>
-                  <button type="button" disabled={!onSetRole || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.role === "admin" ? "adminOff" : "adminOn"); }}>{selectedCustomer.role === "admin" ? "Remover acesso admin" : "Promover a administrador"}</button>
-                </div>
-                <div className="admin-customers__critical-action">
-                  <div><strong>Acesso à conta</strong><span>{selectedCustomer.isBlocked ? "A conta está bloqueada." : "Bloquear impede o acesso conforme as regras do sistema."}</span></div>
-                  <button type="button" className={selectedCustomer.isBlocked ? "" : "is-danger"} disabled={!onToggleBlocked || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.isBlocked ? "unblock" : "block"); }}>{selectedCustomer.isBlocked ? "Desbloquear conta" : "Bloquear conta"}</button>
-                </div>
-                {selectedCustomer.role !== "admin" ? <p className="admin-customers__permission-note">A promoção depende da allowlist validada pelo servidor; este painel não concede permissões fora dela.</p> : null}
-              </section>
+                <section className="admin-customers__detail-block admin-customers__account-action">
+                  <div className="admin-customers__section-heading"><div><span>CONTROLES DE CONTA</span><h3>Ações administrativas</h3></div></div>
+                  <p>As alterações são auditadas e continuam sujeitas às permissões do servidor.</p>
+                  <div className="admin-customers__action-grid">
+                    <button type="button" disabled={!onToggleVip || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.isVip ? "vipOff" : "vipOn"); }}>{selectedCustomer.isVip ? "Remover identificação VIP" : "Identificar como VIP"}</button>
+                    <button type="button" disabled={!onSetRole || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.role === "admin" ? "adminOff" : "adminOn"); }}>{selectedCustomer.role === "admin" ? "Remover acesso admin" : "Promover a administrador"}</button>
+                  </div>
+                  <div className="admin-customers__critical-action">
+                    <div><strong>Acesso à conta</strong><span>{selectedCustomer.isBlocked ? "A conta está bloqueada." : "Bloquear impede o acesso conforme as regras do sistema."}</span></div>
+                    <button type="button" className={selectedCustomer.isBlocked ? "" : "is-danger"} disabled={!onToggleBlocked || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.isBlocked ? "unblock" : "block"); }}>{selectedCustomer.isBlocked ? "Desbloquear conta" : "Bloquear conta"}</button>
+                  </div>
+                  {selectedCustomer.role !== "admin" ? <p className="admin-customers__permission-note">A promoção depende da allowlist validada pelo servidor; este painel não concede permissões fora dela.</p> : null}
+                </section>
               </div>
 
               <div className="admin-customers__profile-column admin-customers__profile-column--activity">
-              <section className="admin-customers__detail-block admin-customers__movement">
-                <div className="admin-customers__movement-heading"><div><span className="admin-customers__section-kicker">ATIVIDADE DO CLIENTE</span><h3>Resumo de movimentação</h3><span>{historyRange?.from || historyRange?.to ? "No período selecionado" : "Todo o histórico carregado"}</span></div></div>
-                <div className="admin-customers__period-controls" role="group" aria-label="Período do histórico">
-                  <button type="button" aria-pressed={historyMode === "all"} onClick={() => { setHistoryMode("all"); setCustomFrom(""); setCustomTo(""); onHistoryRangeChange(null); }}>Todo histórico</button>
-                  <button type="button" aria-pressed={historyMode === "month"} onClick={showCurrentMonth}>Este mês</button>
-                  <button type="button" aria-pressed={historyMode === "custom"} onClick={() => { setHistoryMode("custom"); if (customFrom || customTo) applyCustomRange(customFrom, customTo); }}>Personalizado</button>
-                </div>
-                {historyMode === "custom" ? <div className="admin-customers__date-range">
-                  <label>De<input type="date" value={customFrom} max={customTo || undefined} onChange={event => applyCustomRange(event.target.value, customTo)} /></label>
-                  <label>Até<input type="date" value={customTo} min={customFrom || undefined} onChange={event => applyCustomRange(customFrom, event.target.value)} /></label>
-                </div> : null}
-                {periodInvalid ? <p className="admin-customers__period-error" role="alert">A data inicial precisa ser anterior à data final.</p> : null}
-                {!periodInvalid && (orderHistoryLoading || orderHistoryError) ? <div className="admin-customers__state admin-customers__history-state" role={orderHistoryError ? "alert" : "status"}>
-                  {orderHistoryLoading ? "Carregando movimentações…" : <><span>Não foi possível consultar os pedidos deste cliente.</span>{onRetryOrderHistory ? <button type="button" onClick={onRetryOrderHistory}>Tentar novamente</button> : null}</>}
-                </div> : null}
-                {!periodInvalid && !orderHistoryLoading && !orderHistoryError ? <>
-                  <div className="admin-customers__movement-grid">
-                    <Metric label="Pedidos no período" value={String(history.length)} />
-                    <Metric label="Valor registrado" value={formatPrice(orderValueCents / 100)} />
-                    <Metric label="Pagamentos confirmados" value={formatPrice(confirmedValueCents / 100)} tone="confirmed" />
-                    <Metric label="Pedidos cancelados" value={String(cancelledCount)} tone="cancelled" />
+                <section className="admin-customers__detail-block admin-customers__movement">
+                  <div className="admin-customers__movement-heading"><div><span className="admin-customers__section-kicker">ATIVIDADE DO CLIENTE</span><h3>Resumo de movimentação</h3><span>{historyRange?.from || historyRange?.to ? "No período selecionado" : "Todo o histórico carregado"}</span></div></div>
+                  <div className="admin-customers__period-controls" role="group" aria-label="Período do histórico">
+                    <button type="button" aria-pressed={historyMode === "all"} onClick={() => { setHistoryMode("all"); setCustomFrom(""); setCustomTo(""); onHistoryRangeChange(null); }}>Todo histórico</button>
+                    <button type="button" aria-pressed={historyMode === "month"} onClick={showCurrentMonth}>Este mês</button>
+                    <button type="button" aria-pressed={historyMode === "custom"} onClick={() => { setHistoryMode("custom"); if (customFrom || customTo) applyCustomRange(customFrom, customTo); }}>Personalizado</button>
                   </div>
-                  <div className="admin-customers__purchase-meta"><span>Última compra identificada<strong>{latestPurchase ? formatDate(latestPurchase, true) : "Sem pedidos"}</strong></span><span>Intervalo médio<strong>{averageIntervalDays === null ? "Dados insuficientes" : `${averageIntervalDays} dias entre pedidos`}</strong></span></div>
-                  <p className="admin-customers__financial-note">Valor confirmado soma o total histórico dos pedidos com paymentStatus canônico “confirmed”; não desconta reembolsos nem representa receita líquida.</p>
-                </> : null}
-              </section>
-            </div>
+                  {historyMode === "custom" ? <div className="admin-customers__date-range">
+                    <label>De<input type="date" value={customFrom} max={customTo || undefined} onChange={event => applyCustomRange(event.target.value, customTo)} /></label>
+                    <label>Até<input type="date" value={customTo} min={customFrom || undefined} onChange={event => applyCustomRange(customFrom, event.target.value)} /></label>
+                  </div> : null}
+                  {periodInvalid ? <p className="admin-customers__period-error" role="alert">A data inicial precisa ser anterior à data final.</p> : null}
+                  {!periodInvalid && (orderHistoryLoading || orderHistoryError) ? <div className="admin-customers__state admin-customers__history-state" role={orderHistoryError ? "alert" : "status"}>
+                    {orderHistoryLoading ? "Carregando movimentações…" : <><span>Não foi possível consultar os pedidos deste cliente.</span>{onRetryOrderHistory ? <button type="button" onClick={onRetryOrderHistory}>Tentar novamente</button> : null}</>}
+                  </div> : null}
+                  {!periodInvalid && !orderHistoryLoading && !orderHistoryError ? <>
+                    <div className="admin-customers__movement-grid">
+                      <Metric label="Pedidos no período" value={String(history.length)} />
+                      <Metric label="Valor registrado" value={formatPrice(orderValueCents / 100)} />
+                      <Metric label="Pagamentos confirmados" value={formatPrice(confirmedValueCents / 100)} tone="confirmed" />
+                      <Metric label="Pedidos cancelados" value={String(cancelledCount)} tone="cancelled" />
+                    </div>
+                    <div className="admin-customers__purchase-meta"><span>Última compra identificada<strong>{latestPurchase ? formatDate(latestPurchase, true) : "Sem pedidos"}</strong></span><span>Intervalo médio<strong>{averageIntervalDays === null ? "Dados insuficientes" : `${averageIntervalDays} dias entre pedidos`}</strong></span></div>
+                    <p className="admin-customers__financial-note">Valor confirmado soma o total histórico dos pedidos com paymentStatus canônico “confirmed”; não desconta reembolsos nem representa receita líquida.</p>
+                  </> : null}
+                </section>
 
               <section className="admin-customers__detail-block admin-customers__history-block">
-              <div className="admin-customers__history-heading"><div><span className="admin-customers__section-kicker">REGISTROS DA CONTA</span><h3>Histórico de pedidos</h3><p>Valores e estados vêm do registro histórico do pedido.</p></div><span>{!orderHistoryLoading && !orderHistoryError && !periodInvalid ? `${history.length} registro(s)` : ""}</span></div>
-              {periodInvalid ? <p className="admin-customers__history-empty">Ajuste o período para consultar o histórico.</p> : null}
-              {!periodInvalid && !orderHistoryLoading && !orderHistoryError && history.length === 0 ? <p className="admin-customers__history-empty">Nenhum pedido no período selecionado.</p> : null}
-              {!periodInvalid && !orderHistoryLoading && !orderHistoryError && history.length > 0 ? <div className="admin-customers__history-table-wrap">
-                <table className="admin-customers__history-table">
-                  <thead><tr><th scope="col">Pedido</th><th scope="col">Data</th><th scope="col">Valor histórico</th><th scope="col">Pagamento</th><th scope="col">Logística</th><th scope="col"><span className="admin-customers__visually-hidden">Ação</span></th></tr></thead>
-                  <tbody>{history.map(order => <tr key={order.id}>
-                    <td data-label="Pedido"><strong>#{order.id}</strong></td>
-                    <td data-label="Data">{formatDate(order.createdAt, true)}</td>
-                    <td data-label="Valor histórico"><strong>{formatPrice(Number(order.totalPrice) / 100)}</strong></td>
-                    <td data-label="Pagamento"><PaymentStatusBadge confirmed={order.paymentStatus === "confirmed"} /></td>
-                    <td data-label="Logística"><OrderStatusBadge status={order.status} label={getOrderStatusLabel(order.status)} tone={getOrderStatusTone(order.status)} /></td>
-                    <td><button type="button" className="admin-customers__order-link" onClick={() => onOpenOrder(order.id)}>Ver pedido</button></td>
-                  </tr>)}</tbody>
-                </table>
-              </div> : null}
+                  <div className="admin-customers__history-heading"><div><span className="admin-customers__section-kicker">REGISTROS DA CONTA</span><h3>Histórico de pedidos</h3><p>Valores e estados vêm do registro histórico do pedido.</p></div><span>{!orderHistoryLoading && !orderHistoryError && !periodInvalid ? `${history.length} registro(s)` : ""}</span></div>
+                  {periodInvalid ? <p className="admin-customers__history-empty">Ajuste o período para consultar o histórico.</p> : null}
+                  {!periodInvalid && !orderHistoryLoading && !orderHistoryError && history.length === 0 ? <p className="admin-customers__history-empty">Nenhum pedido no período selecionado.</p> : null}
+                  {!periodInvalid && !orderHistoryLoading && !orderHistoryError && history.length > 0 ? <div className="admin-customers__history-table-wrap">
+                    <table className="admin-customers__history-table">
+                      <thead><tr><th scope="col">Pedido</th><th scope="col">Data</th><th scope="col">Valor histórico</th><th scope="col">Pagamento</th><th scope="col">Logística</th><th scope="col"><span className="admin-customers__visually-hidden">Ação</span></th></tr></thead>
+                      <tbody>{history.map(order => <tr key={order.id}>
+                        <td data-label="Pedido"><strong>#{order.id}</strong></td>
+                        <td data-label="Data">{formatDate(order.createdAt, true)}</td>
+                        <td data-label="Valor histórico"><strong>{formatPrice(Number(order.totalPrice) / 100)}</strong></td>
+                        <td data-label="Pagamento"><PaymentStatusBadge confirmed={order.paymentStatus === "confirmed"} /></td>
+                        <td data-label="Logística"><OrderStatusBadge status={order.status} label={getOrderStatusLabel(order.status)} tone={getOrderStatusTone(order.status)} /></td>
+                        <td data-label="Ação"><button type="button" className="admin-customers__order-link" onClick={() => onOpenOrder(order.id)}>Ver pedido</button></td>
+                      </tr>)}</tbody>
+                    </table>
+                  </div> : null}
               </section>
               </div>
+            </div>
           </div>
         </DialogContent> : null}
       </Dialog>

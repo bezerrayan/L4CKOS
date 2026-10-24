@@ -93,15 +93,15 @@
 .admin-customers__visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
 body:has(.admin-customers__dialog) [data-slot="dialog-overlay"] { z-index: 1200; background: rgb(0 0 0 / 66%); }
-.admin-customers__dialog { position: fixed !important; top: 50% !important; left: 50% !important; z-index: 1201 !important; display: flex !important; width: min(1340px, calc(100vw - 40px)) !important; max-width: none !important; height: min(920px, calc(100dvh - 40px)) !important; max-height: calc(100dvh - 40px) !important; flex-direction: column !important; gap: 0 !important; padding: 0 !important; transform: translate(-50%, -50%) !important; translate: none !important; border: 1px solid #333 !important; border-radius: 4px !important; outline: 0; background: #101010 !important; color: #ededed !important; box-shadow: 0 24px 80px #000b !important; }
-.admin-customers__dialog-header { display: flex; min-height: 132px; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 22px; padding: 19px 28px 17px; border-bottom: 1px solid #303030; }
+.admin-customers__dialog { position: fixed !important; top: 50% !important; left: 50% !important; z-index: 1201 !important; display: flex !important; width: min(1440px, calc(100vw - 32px)) !important; max-width: none !important; height: auto !important; max-height: calc(100dvh - 32px) !important; flex-direction: column !important; gap: 0 !important; padding: 0 !important; transform: translate(-50%, -50%) !important; translate: none !important; border: 1px solid #333 !important; border-radius: 4px !important; outline: 0; background: #101010 !important; color: #ededed !important; box-shadow: 0 24px 80px #000b !important; }
+.admin-customers__dialog-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; flex: 0 0 auto; align-items: start; gap: 16px; padding: 16px 24px 14px; border-bottom: 1px solid #303030; }
 .admin-customers__dialog-identity { min-width: 0; }
 .admin-customers__dialog-kicker, .admin-customers__section-kicker, .admin-customers__section-heading > div > span { color: #e47b8b; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
 .admin-customers__dialog-header h2 { margin: 4px 0 0; color: #f4f4f4; font-size: clamp(21px, 2vw, 26px); line-height: 1.15; }
-.admin-customers__dialog-contact { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; margin-top: 5px; }
+.admin-customers__dialog-contact { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 11px; margin-top: 4px; }
 .admin-customers__dialog-contact p, .admin-customers__dialog-contact > span { margin: 0; color: #a7a7a7; font-size: 12px; }
 .admin-customers__dialog-contact > span + span { color: #858585; }
-.admin-customers__identity-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.admin-customers__identity-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .admin-customers__identity-chips > span { display: inline-flex; min-height: 25px; align-items: center; padding: 0 9px; border: 1px solid #393939; border-radius: 2px; background: #171717; color: #c9c9c9; font-size: 11px; font-weight: 600; }
 .admin-customers__identity-chips > span.is-active { border-color: #28513a; color: #a9d6b8; }
 .admin-customers__identity-chips > span.is-blocked { border-color: #682a34; background: #211114; color: #f1a3ae; }
@@ -109,8 +109,8 @@ body:has(.admin-customers__dialog) [data-slot="dialog-overlay"] { z-index: 1200;
 .admin-customers__identity-chips > span.is-vip { border-color: #603744; color: #eeb6c5; }
 .admin-customers__dialog-header > button { display: grid; width: 40px; height: 40px; flex: 0 0 40px; place-items: center; margin-top: 1px; border: 1px solid #353535; border-radius: 3px; background: #151515; color: #ddd; cursor: pointer; transition: border-color .15s ease, background .15s ease, color .15s ease; }
 .admin-customers__dialog-header > button:hover { border-color: #75404a; background: #1c1214; color: #fff; }
-.admin-customers__dialog-scroll { min-height: 0; overflow-y: auto; padding: 22px 28px 28px; overscroll-behavior: contain; }
-.admin-customers__profile-grid { display: grid; grid-template-columns: minmax(330px, .72fr) minmax(0, 1.28fr); align-items: start; gap: 16px; }
+.admin-customers__dialog-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 18px 24px 22px; overscroll-behavior: contain; }
+.admin-customers__profile-grid { display: grid; grid-template-columns: minmax(0, .38fr) minmax(0, .62fr); align-items: start; gap: 16px; }
 .admin-customers__profile-column { display: grid; min-width: 0; align-content: start; gap: 16px; }
 .admin-customers__detail-block { min-width: 0; padding: 18px; border: 1px solid #2e2e2e; border-radius: 3px; background: linear-gradient(145deg, #101010, #0b0b0b 82%); }
 .admin-customers__section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
@@ -148,16 +148,18 @@ body:has(.admin-customers__dialog) [data-slot="dialog-overlay"] { z-index: 1200;
 .admin-customers__history-heading h3 { margin: 4px 0 0; color: #eee; font: 600 16px/1.25 'DM Sans', sans-serif; }
 .admin-customers__history-heading p { margin: 4px 0 0; color: #999; font-size: 12px; }
 .admin-customers__history-heading > span { color: #999; font-size: 12px; }
-.admin-customers__history-table-wrap { min-width: 0; overflow-x: auto; }
-.admin-customers__history-table { width: 100%; min-width: 760px; border-collapse: collapse; table-layout: fixed; }
-.admin-customers__history-table th { padding: 10px 8px; border-bottom: 1px solid #303030; color: #a0a0a0; font-size: 10px; letter-spacing: .05em; text-align: left; text-transform: uppercase; }
+.admin-customers__history-table-wrap { min-width: 0; max-width: 100%; overflow-x: hidden; }
+.admin-customers__history-table { width: 100%; min-width: 0; border-collapse: collapse; table-layout: fixed; }
+.admin-customers__history-table th { padding: 10px 6px; border-bottom: 1px solid #303030; color: #a0a0a0; font-size: 10px; letter-spacing: .04em; text-align: left; text-transform: uppercase; overflow-wrap: anywhere; }
 .admin-customers__history-table th:nth-child(1) { width: 9%; }
-.admin-customers__history-table th:nth-child(2) { width: 19%; }
+.admin-customers__history-table th:nth-child(2) { width: 17%; }
 .admin-customers__history-table th:nth-child(3) { width: 15%; }
-.admin-customers__history-table th:nth-child(4) { width: 20%; }
-.admin-customers__history-table th:nth-child(5) { width: 20%; }
-.admin-customers__history-table th:nth-child(6) { width: 17%; text-align: right; }
-.admin-customers__history-table td { padding: 12px 8px; border-bottom: 1px solid #252525; color: #d0d0d0; font-size: 12px; vertical-align: middle; }
+.admin-customers__history-table th:nth-child(4) { width: 18%; }
+.admin-customers__history-table th:nth-child(5) { width: 21%; }
+.admin-customers__history-table th:nth-child(6) { width: 20%; text-align: right; }
+.admin-customers__history-table td { min-width: 0; padding: 11px 6px; border-bottom: 1px solid #252525; color: #d0d0d0; font-size: 12px; vertical-align: middle; overflow-wrap: anywhere; }
+.admin-customers__history-table .admin-payment-state,
+.admin-customers__history-table .admin-order-status-badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .admin-customers__history-table td > strong { color: #f4f4f4; font-variant-numeric: tabular-nums; }
 .admin-customers__history-table td:last-child { text-align: right; }
 .admin-customers__order-link { min-height: 36px; padding: 0 9px; border: 1px solid #3b3b3b; border-radius: 3px; background: transparent; color: #eee; font: 12px 'DM Sans', sans-serif; white-space: nowrap; cursor: pointer; }
@@ -194,6 +196,23 @@ body:has(.admin-confirm-dialog) [data-slot="alert-dialog-overlay"] { z-index: 15
   .admin-customers__search { grid-column: 1; }
   .admin-customers__clear { grid-column: 2; grid-row: 2; }
   .admin-customers__profile-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-customers__profile-column { gap: 14px; }
+}
+
+@media (max-width: 850px) {
+  .admin-customers__history-table thead { display: none; }
+  .admin-customers__history-table tbody { display: grid; gap: 0; }
+  .admin-customers__history-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 14px; padding: 14px 0; border-bottom: 1px solid #292929; }
+  .admin-customers__history-table td { display: grid; min-width: 0; align-content: start; gap: 5px; padding: 0; border: 0; }
+  .admin-customers__history-table td::before { color: #898989; content: attr(data-label); font-size: 10px; font-weight: 650; line-height: 1.25; text-transform: uppercase; }
+  .admin-customers__history-table td:first-child { grid-column: 1; }
+  .admin-customers__history-table td:nth-child(2) { grid-column: 2; }
+  .admin-customers__history-table td:nth-child(3) { grid-column: 1; }
+  .admin-customers__history-table td:nth-child(4) { grid-column: 2; }
+  .admin-customers__history-table td:nth-child(5),
+  .admin-customers__history-table td:nth-child(6) { grid-column: 1 / -1; }
+  .admin-customers__history-table td:last-child { text-align: left; }
+  .admin-customers__history-table td:last-child button { width: 100%; }
 }
 
 @media (max-width: 640px) {
@@ -231,8 +250,7 @@ body:has(.admin-confirm-dialog) [data-slot="alert-dialog-overlay"] { z-index: 15
   .admin-customers__last-access { max-width: 48vw; font-size: 12px; line-height: 1.35; text-align: right; }
   .admin-customers__view { width: 100%; min-height: 42px; }
   .admin-customers__empty { grid-column: 1 / -1 !important; justify-content: center; padding: 20px 0 !important; }
-  .admin-customers__dialog { inset: 0 !important; width: 100vw !important; border-left: 0 !important; }
-  .admin-customers__dialog { height: 100dvh !important; max-height: 100dvh !important; border: 0 !important; border-radius: 0 !important; transform: none !important; }
+  .admin-customers__dialog { inset: 0 !important; width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important; border: 0 !important; border-radius: 0 !important; transform: none !important; }
   .admin-customers__dialog-header { min-height: 0; padding: 15px 16px 13px; }
   .admin-customers__dialog-header h2 { font-size: 20px; }
   .admin-customers__dialog-contact { gap: 5px 9px; }
