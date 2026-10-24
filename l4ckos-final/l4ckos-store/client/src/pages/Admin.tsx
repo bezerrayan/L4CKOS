@@ -12,6 +12,7 @@ import { useUser } from "../contexts/UserContext";
 import { useToast } from "../contexts/ToastContext";
 import { PRODUCT_CATEGORIES, getCategoryLabel, normalizeCategoryValue } from "../lib/productCategories";
 import { formatPrice } from "../lib/utils";
+import { getOrderLogisticsAccent } from "../lib/orderStatusPresentation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import {
   AdminEmptyState,
@@ -39,6 +40,7 @@ import {
   OrdersFilters,
   OrdersSummaryCards,
   OrderStatusBadge,
+  PaymentStatusBadge,
   type OrderListFilter,
 } from "../components/admin/orders/AdminOrdersUI";
 import { AdminCustomersPanel } from "../components/admin/customers/AdminCustomersPanel";
@@ -345,20 +347,7 @@ function getOrderStatusLabel(status: string) {
 }
 
 function getOrderStatusTone(status: string): CSSProperties {
-  switch (status) {
-    case "paid":
-      return { background: "rgba(21, 128, 61, 0.14)", border: "1px solid rgba(21, 128, 61, 0.28)", color: "#86efac" };
-    case "processing":
-      return { background: "rgba(15, 118, 110, 0.14)", border: "1px solid rgba(15, 118, 110, 0.28)", color: "#5eead4" };
-    case "shipped":
-      return { background: "rgba(37, 99, 235, 0.14)", border: "1px solid rgba(37, 99, 235, 0.28)", color: "#93c5fd" };
-    case "delivered":
-      return { background: "rgba(126, 34, 206, 0.14)", border: "1px solid rgba(126, 34, 206, 0.28)", color: "#d8b4fe" };
-    case "cancelled":
-      return { background: "rgba(185, 28, 28, 0.14)", border: "1px solid rgba(185, 28, 28, 0.28)", color: "#fca5a5" };
-    default:
-      return { background: "rgba(180, 83, 9, 0.14)", border: "1px solid rgba(180, 83, 9, 0.28)", color: "#fbbf24" };
-  }
+  return { "--order-status-accent": getOrderLogisticsAccent(status) } as CSSProperties;
 }
 
 function formatAdminAddressLine(address?: {
@@ -465,9 +454,10 @@ export default function Admin() {
     const match = location.pathname.match(/^\/gestao\/pedidos\/(\d+)$/);
     return match ? Number(match[1]) : null;
   });
-  const [orderActionDialog, setOrderActionDialog] = useState<{ orderId: number; kind: "logistics" | "tracking"; currentStatus: string; trackingCode: string | null } | null>(null);
+  const [orderActionDialog, setOrderActionDialog] = useState<{ orderId: number; kind: "logistics" | "tracking"; currentStatus: string; trackingCode: string | null; paymentTrusted: boolean } | null>(null);
   const [orderActionStatus, setOrderActionStatus] = useState<string>("pending");
   const [orderActionTracking, setOrderActionTracking] = useState("");
+  const [orderActionFeedback, setOrderActionFeedback] = useState("");
   const [newProduct, setNewProduct] = useState({ ...emptyProductForm });
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [editProduct, setEditProduct] = useState({ ...emptyProductForm });
@@ -500,23 +490,32 @@ export default function Admin() {
     navigate(`/gestao/pedidos/${orderId}`);
   };
 
-  const openOrderAction = (order: { id: number; status: string; trackingCode?: string | null }, kind: "logistics" | "tracking") => {
-    setOrderActionStatus(order.status);
+  const openOrderAction = (order: { id: number; status: string; trackingCode?: string | null; paymentStatus?: string | null; paymentConfirmationSource?: string | null; paymentConfirmedAt?: Date | string | null; paymentConfirmedBy?: number | null; paymentConfirmationReference?: string | null }, kind: "logistics" | "tracking") => {
+    const paymentTrusted = order.paymentStatus === "confirmed" && Boolean(order.paymentConfirmedAt)
+      && ((order.paymentConfirmationSource === "manual" && Number.isInteger(order.paymentConfirmedBy) && Number(order.paymentConfirmedBy) > 0)
+        || (order.paymentConfirmationSource === "asaas_webhook" && Boolean(String(order.paymentConfirmationReference ?? "").trim())));
+    setOrderActionStatus(order.status === "paid" ? "" : order.status);
     setOrderActionTracking(order.trackingCode ?? "");
-    setOrderActionDialog({ orderId: order.id, kind, currentStatus: order.status, trackingCode: order.trackingCode ?? null });
+    setOrderActionFeedback("");
+    setOrderActionDialog({ orderId: order.id, kind, currentStatus: order.status, trackingCode: order.trackingCode ?? null, paymentTrusted });
+  };
+
+  const isOrderStatusChoiceEnabled = (status: string) => {
+    if (!orderActionDialog || status === orderActionDialog.currentStatus || orderActionDialog.currentStatus === "cancelled") return false;
+    if (["paid", "processing", "shipped", "delivered"].includes(status) && !orderActionDialog.paymentTrusted) return false;
+    return true;
   };
 
   const saveOrderAction = () => {
     if (!orderActionDialog) return;
     if (orderActionDialog.kind === "logistics") {
       const nextStatus = orderActionStatus as typeof orderStatuses[number];
-      if (!(orderLogisticsStatuses as readonly string[]).includes(nextStatus)) return;
+      if (!(orderLogisticsStatuses as readonly string[]).includes(nextStatus) || !isOrderStatusChoiceEnabled(nextStatus)) return;
       if (!confirmAdminAction(`Alterar o pedido #${orderActionDialog.orderId} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
       updateOrderMutation.mutate({ orderId: orderActionDialog.orderId, status: nextStatus });
     } else {
       updateOrderMutation.mutate({ orderId: orderActionDialog.orderId, trackingCode: orderActionTracking.trim() || null });
     }
-    setOrderActionDialog(null);
   };
 
   async function uploadAdminImages(files: FileList | null, mode: "single" | "multiple", target: string) {
@@ -641,10 +640,15 @@ export default function Admin() {
   const updateOrderMutation = trpc.admin.orderUpdate.useMutation({
     onSuccess: () => {
       showToast({ message: "Pedido atualizado", duration: 2000 });
+      setOrderActionDialog(null);
+      setOrderActionFeedback("");
       void ordersQuery.refetch();
       void dashboardQuery.refetch();
     },
-    onError: error => showToast({ message: error.message, duration: 2600 }),
+    onError: error => {
+      setOrderActionFeedback(error.message || "Não foi possível atualizar o pedido. Revise os dados e tente novamente.");
+      showToast({ message: error.message, duration: 2600 });
+    },
   });
 
   const couponCreateMutation = trpc.admin.couponCreate.useMutation({
@@ -1161,10 +1165,6 @@ export default function Admin() {
             <section className="admin-order-detail-page" aria-labelledby="admin-order-detail-heading">
               <div className="admin-order-detail-toolbar">
                 <div className="admin-order-detail-title"><button type="button" className="admin-order-back" onClick={() => navigateSection("orders")}>← Todos os pedidos</button><h2 id="admin-order-detail-heading">Pedido #{selectedOrder!.id}</h2></div>
-                <div className="admin-order-detail-actions">
-                  <button type="button" className="admin-order-action-launch" disabled={updateOrderMutation.isPending} onClick={() => openOrderAction(selectedOrder!, "logistics")}>Atualizar logística</button>
-                  <button type="button" className="admin-order-action-launch" disabled={updateOrderMutation.isPending} onClick={() => openOrderAction(selectedOrder!, "tracking")}>{selectedOrder?.trackingCode ? "Editar rastreio" : "Adicionar rastreio"}</button>
-                </div>
               </div>
               <OrderDetailPanel
                 className="is-wide"
@@ -1172,6 +1172,9 @@ export default function Admin() {
                 statusLabel={getOrderStatusLabel}
                 statusTone={getOrderStatusTone}
                 addressLines={formatAdminAddressLine}
+                onUpdateLogistics={() => openOrderAction(selectedOrder!, "logistics")}
+                onUpdateTracking={() => openOrderAction(selectedOrder!, "tracking")}
+                isUpdating={updateOrderMutation.isPending}
               />
             </section>
           ) : (
@@ -1191,7 +1194,7 @@ export default function Admin() {
                             <div style={styles.orderSecondaryText}>{row.customerEmail}</div>
                           ) : null}
                         </td>
-                        <td data-label="Pagamento"><span className={`admin-payment-state ${row.paymentStatus === "confirmed" ? "is-confirmed" : "is-unconfirmed"}`}>{row.paymentStatus === "confirmed" ? "Confirmado" : "Não confirmado"}</span></td>
+                        <td data-label="Pagamento"><PaymentStatusBadge confirmed={row.paymentStatus === "confirmed"} /></td>
                         <td data-label="Logística"><OrderStatusBadge
                             status={String(row.status)}
                             label={getOrderStatusLabel(String(row.status))}
@@ -1419,32 +1422,48 @@ export default function Admin() {
           onRetryRuntimeStatus={() => { void settingsStatusQuery.refetch(); }}
         />
       )}
-      <Dialog open={Boolean(orderActionDialog)} onOpenChange={open => { if (!open && !updateOrderMutation.isPending) setOrderActionDialog(null); }}>
-        <DialogContent className="admin-order-action-dialog" onEscapeKeyDown={event => { if (updateOrderMutation.isPending) event.preventDefault(); }}>
-          <DialogHeader>
-            <DialogTitle>{orderActionDialog?.kind === "tracking" ? "Atualizar rastreio" : "Atualizar logística"} · Pedido #{orderActionDialog?.orderId}</DialogTitle>
-            <DialogDescription>{orderActionDialog?.kind === "tracking" ? "Informe o código de rastreio associado à entrega deste pedido. Deixe vazio para limpar o código atual." : `Situação logística atual: ${getOrderStatusLabel(orderActionDialog?.currentStatus ?? "pending")}. A situação do pagamento continua separada.`}</DialogDescription>
+      <Dialog open={Boolean(orderActionDialog)} onOpenChange={open => { if (!open && !updateOrderMutation.isPending) { setOrderActionDialog(null); setOrderActionFeedback(""); } }}>
+        <DialogContent className={`admin-order-action-dialog${orderActionDialog?.kind === "logistics" ? " is-logistics" : " is-tracking"}`} onEscapeKeyDown={event => { if (updateOrderMutation.isPending) event.preventDefault(); }}>
+          <DialogHeader className="admin-order-action-heading">
+            <div className="admin-order-action-heading-copy">
+              <DialogTitle>{orderActionDialog?.kind === "tracking" ? "Atualizar rastreio" : "Atualizar logística"}</DialogTitle>
+              <DialogDescription>{orderActionDialog?.kind === "tracking" ? `Pedido #${orderActionDialog.orderId} · Código associado à entrega deste pedido.` : `Pedido #${orderActionDialog?.orderId} · Escolha a próxima situação logística. O pagamento não é alterado.`}</DialogDescription>
+            </div>
+            {orderActionDialog ? <div className="admin-order-action-current"><span>Situação atual</span><OrderStatusBadge status={orderActionDialog.currentStatus} label={getOrderStatusLabel(orderActionDialog.currentStatus)} tone={getOrderStatusTone(orderActionDialog.currentStatus)} /></div> : null}
           </DialogHeader>
           {orderActionDialog?.kind === "tracking" ? (
-            <label className="admin-order-action-field">Código de rastreio
-              <input autoFocus value={orderActionTracking} maxLength={160} onChange={event => setOrderActionTracking(event.target.value)} placeholder="Ex.: código fornecido pela transportadora" />
-              {orderActionDialog?.trackingCode ? <small>Atual: {orderActionDialog.trackingCode}</small> : <small>Nenhum código registrado.</small>}
-            </label>
-          ) : (
-            <label className="admin-order-action-field">Nova situação logística
-              <Select value={orderActionStatus} onValueChange={setOrderActionStatus}>
-                <SelectTrigger aria-label="Selecionar nova situação logística" disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
-                <SelectContent position="popper" sideOffset={6} collisionPadding={12}>
-                  {orderLogisticsStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}{orderActionDialog?.currentStatus === status ? " · atual" : ""}</SelectItem>)}
-                  {orderActionDialog?.currentStatus === "paid" ? <SelectItem value="paid" disabled>Pagamento confirmado · estado atual</SelectItem> : null}
-                </SelectContent>
-              </Select>
-              <small>O sistema valida a transição e as permissões antes de salvar.</small>
-            </label>
-          )}
+            <div className="admin-order-action-body admin-order-tracking-body">
+              <label className="admin-order-action-field" htmlFor="admin-order-tracking-code">Código de rastreio</label>
+              <input id="admin-order-tracking-code" autoFocus value={orderActionTracking} maxLength={120} disabled={updateOrderMutation.isPending} onChange={event => { setOrderActionTracking(event.target.value); setOrderActionFeedback(""); }} placeholder="Código informado pela transportadora" />
+              <p className="admin-order-tracking-current"><span>Registrado</span><code>{orderActionDialog.trackingCode || "Nenhum código"}</code></p>
+              <small>Apagar o campo e salvar remove o código registrado.</small>
+              {orderActionFeedback ? <p className="admin-order-action-feedback" role="alert">{orderActionFeedback}</p> : null}
+            </div>
+          ) : orderActionDialog ? (
+            <div className="admin-order-action-body">
+              <div className="admin-order-action-desired"><span>Situação desejada</span><strong>{orderActionStatus ? getOrderStatusLabel(orderActionStatus) : "Selecione uma situação"}</strong></div>
+              <fieldset className="admin-order-logistics-options" aria-label="Situações logísticas disponíveis">
+                {orderLogisticsStatuses.map(status => {
+                  const enabled = isOrderStatusChoiceEnabled(status);
+                  const unavailableReason = orderActionDialog.currentStatus === "cancelled"
+                    ? "Um pedido cancelado não pode ser reativado."
+                    : ["processing", "shipped", "delivered"].includes(status) && !orderActionDialog.paymentTrusted
+                      ? "Exige confirmação de pagamento pelo fluxo autorizado."
+                      : status === orderActionDialog.currentStatus ? "Situação atual." : "";
+                  return <label key={status} className={`admin-order-logistics-option${!enabled ? " is-disabled" : ""}`} style={{ "--order-status-accent": getOrderLogisticsAccent(status) } as CSSProperties}>
+                    <input type="radio" name="admin-order-logistics-status" value={status} checked={orderActionStatus === status} disabled={!enabled || updateOrderMutation.isPending} onChange={() => { setOrderActionStatus(status); setOrderActionFeedback(""); }} />
+                    <span className="admin-order-logistics-option-marker" aria-hidden="true" />
+                    <span className="admin-order-logistics-option-copy"><strong>{getOrderStatusLabel(status)}</strong>{unavailableReason ? <small>{unavailableReason}</small> : null}</span>
+                  </label>;
+                })}
+              </fieldset>
+              {orderActionDialog.currentStatus === "cancelled" ? <p className="admin-order-action-rule" role="note">O pedido está cancelado e não pode ser reativado.</p> : !orderActionDialog.paymentTrusted ? <p className="admin-order-action-rule" role="note">Avançar para preparação ou envio exige confirmação de pagamento registrada.</p> : null}
+              {orderActionFeedback ? <p className="admin-order-action-feedback" role="alert">{orderActionFeedback}</p> : null}
+            </div>
+          ) : null}
           <DialogFooter className="admin-order-action-footer">
-            <button type="button" className="admin-order-action-cancel" disabled={updateOrderMutation.isPending} onClick={() => setOrderActionDialog(null)}>Cancelar</button>
-            <button type="button" className="admin-order-action-save" disabled={updateOrderMutation.isPending || (orderActionDialog?.kind === "logistics" && orderActionStatus === orderActionDialog.currentStatus)} onClick={saveOrderAction}>{updateOrderMutation.isPending ? "Salvando…" : "Salvar atualização"}</button>
+            <button type="button" className="admin-order-action-cancel" disabled={updateOrderMutation.isPending} onClick={() => { setOrderActionDialog(null); setOrderActionFeedback(""); }}>Cancelar</button>
+            <button type="button" className="admin-order-action-save" disabled={updateOrderMutation.isPending || !orderActionDialog || (orderActionDialog.kind === "logistics" ? !isOrderStatusChoiceEnabled(orderActionStatus) : orderActionTracking.trim().length > 120 || orderActionTracking.trim() === (orderActionDialog.trackingCode ?? ""))} onClick={saveOrderAction}>{updateOrderMutation.isPending ? "Salvando…" : "Salvar atualização"}</button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

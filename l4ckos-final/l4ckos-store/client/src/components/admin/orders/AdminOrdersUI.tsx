@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
-import { AdminEmptyState, AdminFilterPills, AdminStatusBadge, AdminSurface } from "../AdminUI";
+import { AdminEmptyState, AdminStatusBadge, AdminSurface } from "../AdminUI";
 import { formatPrice } from "../../../lib/utils";
+import { getOrderLogisticsAccent, getPaymentStatusAccent, type LogisticsStatusKey } from "../../../lib/orderStatusPresentation";
 
 import { CANCELLATION_NOTICE } from "../../../../../shared/paymentExceptions";
 const reservationStateLabels: Record<string, string> = {
@@ -43,6 +44,7 @@ export type AdminOrderView = {
     productName?: string | null;
     quantity?: number | string | null;
     productPrice?: number | string | null;
+    sku?: string | null;
     productImage?: string | null;
     variantName?: string | null;
     size?: string | null;
@@ -81,19 +83,19 @@ type OperationalAlert = {
 export function OrdersSummaryCards({ summary }: { summary: OrdersSummary }) {
   const primaryMetrics = [
     { label: "Pedidos carregados", value: summary.total },
-    { label: "Pendentes de pagamento", value: summary.pending, tone: "warning" },
-    { label: "Pagos · aguardando preparação", value: summary.paid },
+    { label: "Pendentes de pagamento", value: summary.pending, status: "pending" },
+    { label: "Pagos · aguardando preparação", value: summary.paid, status: "paid" },
   ] as const;
   const operationalMetrics = [
-    { label: "Em separação", value: summary.processing },
-    { label: "Enviados", value: summary.shipped },
-    { label: "Entregues", value: summary.delivered, tone: "success" },
-    { label: "Cancelados", value: summary.cancelled, tone: "danger" },
-    { label: "Sem rastreio", value: summary.withoutTracking, tone: "warning" },
+    { label: "Em separação", value: summary.processing, status: "processing" },
+    { label: "Enviados", value: summary.shipped, status: "shipped" },
+    { label: "Entregues", value: summary.delivered, status: "delivered" },
+    { label: "Cancelados", value: summary.cancelled, status: "cancelled" },
+    { label: "Sem rastreio", value: summary.withoutTracking, status: "pending" },
     { label: "Valor dos pedidos carregados", value: formatPrice(summary.revenueCents / 100), tone: "value" },
   ] as const;
   const metricCards = (metrics: typeof primaryMetrics | typeof operationalMetrics) => metrics.map(metric => (
-    <article key={metric.label} className={`admin-order-summary-card${"tone" in metric ? ` is-${metric.tone}` : ""}`}>
+    <article key={metric.label} className={`admin-order-summary-card${"tone" in metric && metric.tone === "value" ? " is-value" : ""}`} data-status={"status" in metric ? metric.status : undefined} style={{ "--order-status-accent": "status" in metric && metric.status ? getOrderLogisticsAccent(metric.status) : "#E8002A" } as CSSProperties}>
       <strong>{metric.value}</strong>
       <span>{metric.label}</span>
     </article>
@@ -120,7 +122,15 @@ export function OrdersFilters({
   onChange: (value: OrderListFilter) => void;
   options: FilterOption[];
 }) {
-  return <AdminFilterPills value={value} onChange={onChange} options={options} />;
+  return <div className="admin-orders-filters" role="group" aria-label="Filtrar pedidos">
+    {options.map(option => {
+      const status = option.key === "all" ? null : option.key === "withoutTracking" ? "pending" : option.key as LogisticsStatusKey;
+      const accent = status ? getOrderLogisticsAccent(status) : "#A3A3A3";
+      return <button key={option.key} type="button" className="admin-orders-filter-pill" data-status={option.key} aria-pressed={value === option.key} style={{ "--order-status-accent": accent } as CSSProperties} onClick={() => onChange(option.key)}>
+        <span>{option.label}</span><strong>{option.count}</strong>
+      </button>;
+    })}
+  </div>;
 }
 
 export function OrderStatusBadge({
@@ -133,6 +143,11 @@ export function OrderStatusBadge({
   tone: CSSProperties;
 }) {
   return <AdminStatusBadge className="admin-order-status-badge" dataStatus={status} style={tone}>{label || status}</AdminStatusBadge>;
+}
+
+export function PaymentStatusBadge({ confirmed }: { confirmed: boolean }) {
+  const key = confirmed ? "confirmed" : "pending";
+  return <span className={`admin-payment-state ${confirmed ? "is-confirmed" : "is-unconfirmed"}`} data-payment-status={key} style={{ "--payment-status-accent": getPaymentStatusAccent(key) } as CSSProperties}>{confirmed ? "Pagamento confirmado" : "Pagamento pendente"}</span>;
 }
 
 export function OrderOperationalAlerts({ alerts }: { alerts: OperationalAlert[] }) {
@@ -162,127 +177,99 @@ export function OrderDetailPanel({
   statusLabel,
   statusTone,
   addressLines,
+  onUpdateLogistics,
+  onUpdateTracking,
+  isUpdating,
   className,
 }: {
   order: AdminOrderView | null;
   statusLabel: (status: string) => string;
   statusTone: (status: string) => CSSProperties;
   addressLines: (address: NonNullable<AdminOrderView["shippingAddress"]>) => string[];
+  onUpdateLogistics: () => void;
+  onUpdateTracking: () => void;
+  isUpdating: boolean;
   className?: string;
 }) {
   if (!order) return null;
 
   const items = order.items ?? [];
   const itemCount = items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+  const paymentConfirmed = order.paymentStatus === "confirmed";
 
   return (
-    <aside className={`admin-order-detail${className ? ` ${className}` : ""}`} style={styles.detailPanel}>
-      <div style={styles.detailHeader}>
-        <div>
-          <span style={styles.detailEyebrow}>Pedido</span>
-          <strong style={styles.detailTitle}>#{order.id}</strong>
-        </div>
-        <div style={styles.detailStateGroup}>
-          <span style={styles.stateCaption}>Situação do pedido</span>
-          <OrderStatusBadge status={String(order.status ?? "")} label={statusLabel(String(order.status ?? ""))} tone={statusTone(String(order.status ?? ""))} />
-        </div>
-      </div>
+    <article className={`admin-order-detail${className ? ` ${className}` : ""}`}>
+      <header className="admin-order-detail-card-header">
+        <div><span className="admin-order-detail-eyebrow">Pedido</span><h3>#{order.id}</h3></div>
+        <div className="admin-order-detail-count"><strong>{itemCount}</strong><span>{itemCount === 1 ? "unidade" : "unidades"} · {items.length} {items.length === 1 ? "produto" : "produtos"}</span></div>
+      </header>
+      <div className="admin-order-detail-columns">
+        <div className="admin-order-operations-column">
+          <section className="admin-order-info-card" aria-labelledby="admin-order-customer-heading">
+            <h4 id="admin-order-customer-heading">Cliente</h4>
+            <dl className="admin-order-customer-facts">
+              <div><dt>Nome</dt><dd>{order.customerName || `Cliente #${order.userId ?? "—"}`}</dd></div>
+              <div><dt>E-mail</dt><dd>{order.customerEmail || "Não informado"}</dd></div>
+              <div><dt>Pedido criado</dt><dd>{formatDateTime(order.createdAt)}</dd></div>
+            </dl>
+          </section>
 
-      <div className="admin-order-detail-grid" style={styles.detailGrid}>
-        <DetailInfo label="Cliente" value={order.customerName || order.customerEmail || `Cliente #${order.userId}`} />
-        <DetailInfo label="E-mail" value={order.customerEmail || "Não informado"} />
-        <DetailInfo label="Total" value={formatPrice(Number(order.totalPrice ?? 0) / 100)} />
-        <DetailInfo label="Criado em" value={formatDateTime(order.createdAt)} />
-        <DetailInfo label="Rastreio" value={order.trackingCode || "Ainda não informado"} />
-        <DetailInfo label="Itens" value={`${itemCount} item(ns)`} />
-      </div>
-      <p style={styles.secondaryText}>Total final retornado para o pedido; esta consulta não discrimina produtos, frete ou desconto.</p>
+          <section className="admin-order-info-card admin-order-financial-card" aria-labelledby="admin-order-payment-heading">
+            <div className="admin-order-section-heading"><h4 id="admin-order-payment-heading">Resumo financeiro</h4><PaymentStatusBadge confirmed={paymentConfirmed} /></div>
+            <div className="admin-order-total"><span>Total do pedido</span><strong>{formatPrice(Number(order.totalPrice ?? 0) / 100)}</strong></div>
+            {paymentConfirmed ? <div className="admin-order-payment-meta">
+              <span>{order.paymentConfirmationSource === "manual" ? `Confirmação manual pelo admin #${order.paymentConfirmedBy ?? "—"}` : order.paymentConfirmationSource === "asaas_webhook" ? "Confirmado pelo webhook validado do Asaas" : order.paymentConfirmationSource ? `Origem: ${order.paymentConfirmationSource}` : "Origem não informada"}</span>
+              <span>{formatDateTime(order.paymentConfirmedAt)}</span>
+            </div> : <p className="admin-order-payment-note">A confirmação ocorre pelo fluxo financeiro autorizado.</p>}
+            <p className="admin-order-financial-notice">{CANCELLATION_NOTICE} Reembolsos seguem conciliação.</p>
+          </section>
 
-      <section style={styles.detailSection}>
-        <strong style={styles.detailSubtitle}>Pagamento</strong>
-        <p style={styles.secondaryText}>{CANCELLATION_NOTICE} Reembolsos são tratados por conciliação, não por este seletor de status.</p>
-        {order.paymentStatus === "confirmed" ? (
-          <div style={styles.paymentConfirmed}>
-            <strong style={styles.itemName}>Pagamento confirmado</strong>
-            <span style={styles.secondaryText}>
-              {order.paymentConfirmationSource === "manual"
-                ? `Confirmação manual pelo admin #${order.paymentConfirmedBy ?? "—"}`
-                : order.paymentConfirmationSource === "asaas_webhook"
-                  ? "Confirmação recebida pelo webhook validado do Asaas"
-                  : order.paymentConfirmationSource
-                    ? `Origem registrada: ${order.paymentConfirmationSource}`
-                    : "Origem da confirmação não informada"}
-            </span>
-            <span style={styles.secondaryText}>{formatDateTime(order.paymentConfirmedAt)}</span>
-          </div>
-        ) : (
-          <div style={styles.paymentPending}>
-            <strong style={styles.itemName}>Pagamento não confirmado</strong>
-            <span style={styles.secondaryText}>A confirmação é recebida pelo fluxo financeiro autorizado e não pode ser alterada nesta tela.</span>
-          </div>
-        )}
-      </section>
-
-      <section style={styles.detailSection}>
-        <strong style={styles.detailSubtitle}>Reserva de estoque</strong>
-        <span style={styles.secondaryText}>A situação aparece junto ao item somente quando a consulta a disponibiliza. A ausência do estado não significa que a reserva esteja ativa.</span>
-      </section>
-
-      <section style={styles.detailSection}>
-        <strong style={styles.detailSubtitle}>Entrega</strong>
-        {order.shippingAddress ? (
-          <div style={styles.addressCard}>
-            <div style={styles.addressHeader}>
-              <span style={styles.itemName}>{order.shippingAddress.recipient || "Destinatário não informado"}</span>
-              <span style={styles.addressHint}>
-                {order.shippingAddress.source === "profile" ? "Endereço padrão atual do cliente" : "Endereço salvo no pedido"}
-              </span>
+          <section className="admin-order-info-card" aria-labelledby="admin-order-logistics-heading">
+            <div className="admin-order-section-heading"><h4 id="admin-order-logistics-heading">Andamento logístico</h4><OrderStatusBadge status={String(order.status ?? "")} label={statusLabel(String(order.status ?? ""))} tone={statusTone(String(order.status ?? ""))} /></div>
+            <div className="admin-order-detail-actions">
+              <button type="button" className="admin-order-action-launch" disabled={isUpdating} onClick={onUpdateLogistics}>Atualizar logística</button>
+              <button type="button" className="admin-order-action-launch" disabled={isUpdating} onClick={onUpdateTracking}>{order.trackingCode ? "Editar rastreio" : "Adicionar rastreio"}</button>
             </div>
-            <div style={styles.addressLines}>
-              {addressLines(order.shippingAddress).map(line => (
-                <span key={`${order.id}-${line}`} style={styles.secondaryText}>{line}</span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <span style={styles.secondaryText}>Nenhum endereço disponível para este pedido.</span>
-        )}
-      </section>
+          </section>
 
-      <section style={styles.detailSection}>
-        <strong style={styles.detailSubtitle}>Itens do pedido</strong>
-        {items.length === 0 ? (
-          <AdminEmptyState title="Sem itens detalhados" description="Este pedido ainda não possui itens detalhados na reserva." />
-        ) : (
-          <div style={styles.itemsList}>
-            {items.map((item, index) => (
-              <div key={`${order.id}-${item.id ?? item.productId}-${index}`} style={styles.itemRow}>
-                {item.productImage ? <img src={item.productImage} alt="" loading="lazy" style={styles.itemImage} /> : null}
-                <span style={styles.itemDescription}>
-                  <span style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</span>
-                  <span style={styles.secondaryText}>
-                    {[item.variantName, item.color, item.size].filter(Boolean).join(" · ") || "Variante não informada"}
-                    {item.salesModeAtPurchase === "PREORDER" && item.productionBatchNameAtPurchase ? ` · Pré-venda: ${item.productionBatchNameAtPurchase}` : ""}
-                  </span>
-                  {item.status && reservationStateLabels[item.status] ? <span className="admin-reservation-state">Reserva: {reservationStateLabels[item.status]}</span> : null}
-                  {item.productPrice !== undefined && item.productPrice !== null ? <span style={styles.secondaryText}>Valor unitário {formatPrice(Number(item.productPrice) / 100)}</span> : null}
-                </span>
-                <span style={styles.itemQuantity}>Qtd. {item.quantity}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </aside>
-  );
-}
+          <section className="admin-order-info-card" aria-labelledby="admin-order-delivery-heading">
+            <div className="admin-order-section-heading"><h4 id="admin-order-delivery-heading">Entrega</h4></div>
+            <div className="admin-order-delivery-tracking"><span>Rastreio</span><strong>{order.trackingCode || "Ainda não informado"}</strong></div>
+            {order.shippingAddress ? <div className="admin-order-address-card">
+              <div className="admin-order-address-heading"><strong>{order.shippingAddress.recipient || "Destinatário não informado"}</strong><span>{order.shippingAddress.source === "profile" ? "Endereço atual do perfil" : "Endereço salvo no pedido"}</span></div>
+              <div className="admin-order-address-lines">{addressLines(order.shippingAddress).map((line, index) => <span key={`${order.id}-address-${index}`}>{line}</span>)}</div>
+            </div> : <p className="admin-order-muted">Nenhum endereço disponível para este pedido.</p>}
+          </section>
+        </div>
 
-function DetailInfo({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={styles.detailInfo}>
-      <span style={styles.detailInfoLabel}>{label}</span>
-      <strong style={styles.detailInfoValue}>{value}</strong>
-    </div>
+        <section className="admin-order-products-panel" aria-labelledby="admin-order-products-heading">
+          <header className="admin-order-products-header"><div><span>Itens registrados na compra</span><h4 id="admin-order-products-heading">Produtos do pedido</h4></div><strong>{items.length}</strong></header>
+          {items.length === 0 ? <AdminEmptyState title="Sem itens detalhados" description="Este pedido ainda não possui itens detalhados na reserva." /> : <div className="admin-order-products-list">
+            {items.map((item, index) => {
+              const quantity = Number(item.quantity ?? 0);
+              const unitPrice = item.productPrice === undefined || item.productPrice === null ? null : Number(item.productPrice);
+              const subtotal = unitPrice !== null && Number.isFinite(unitPrice) && Number.isFinite(quantity) ? unitPrice * quantity : null;
+              const spec = [item.variantName, item.color && `Cor ${item.color}`, item.size && `Tamanho ${item.size}`].filter(Boolean);
+              return <article key={`${order.id}-${item.id ?? item.productId}-${index}`} className="admin-order-product-card">
+                <div className="admin-order-product-identity">
+                  {item.productImage ? <img src={item.productImage} alt="" loading="lazy" /> : <div className="admin-order-product-image-empty" aria-hidden="true">Sem imagem</div>}
+                  <div className="admin-order-product-title"><span>Produto #{item.productId ?? "—"}{item.sku ? ` · SKU ${item.sku}` : ""}</span><h5>{item.productName || `Produto #${item.productId ?? "—"}`}</h5>
+                    {spec.length ? <p>{spec.join(" · ")}</p> : <p>Variação não registrada</p>}
+                    {item.salesModeAtPurchase === "PREORDER" && item.productionBatchNameAtPurchase ? <p>Pré-venda · {item.productionBatchNameAtPurchase}</p> : null}
+                    {item.status && reservationStateLabels[item.status] ? <span className="admin-reservation-state">Reserva: {reservationStateLabels[item.status]}</span> : null}
+                  </div>
+                </div>
+                <dl className="admin-order-product-pricing">
+                  <div><dt>Quantidade</dt><dd>{Number.isFinite(quantity) ? quantity : "—"}</dd></div>
+                  {unitPrice !== null && Number.isFinite(unitPrice) ? <div><dt>Preço unitário</dt><dd>{formatPrice(unitPrice / 100)}</dd></div> : null}
+                  {subtotal !== null ? <div><dt>Subtotal do item</dt><dd>{formatPrice(subtotal / 100)}</dd></div> : null}
+                </dl>
+              </article>;
+            })}
+          </div>}
+        </section>
+      </div>
+    </article>
   );
 }
 

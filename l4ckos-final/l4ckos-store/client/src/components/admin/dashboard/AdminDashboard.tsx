@@ -314,6 +314,7 @@ export function AdminDashboard({
                     {formatPrice(asMoney(order.totalPrice))}
                   </strong>
                   <AdminStatusBadge
+                    dataStatus={String(order.status)}
                     style={getOrderStatusTone(String(order.status))}
                   >
                     {getOrderStatusLabel(String(order.status))}
@@ -419,6 +420,7 @@ export function AdminDashboard({
                     style={styles.statusSummaryCard}
                   >
                     <AdminStatusBadge
+                      dataStatus={item.status}
                       style={{
                         ...getOrderStatusTone(item.status),
                         ...styles.statusSummaryBadge,
