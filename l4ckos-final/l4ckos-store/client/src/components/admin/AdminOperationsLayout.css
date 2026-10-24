@@ -150,6 +150,9 @@
 .l4-admin .apl-variant-state-metrics strong { color: #e7e7e7; font-size: 13px; font-variant-numeric: tabular-nums; }
 .l4-admin .apl-variant-state-metrics .is-sellable strong { color: #f1f1f1; }
 .l4-admin .apl-variant-state-metrics .is-unavailable strong { color: #d4a0a8; }
+.l4-admin .apl-heading--catalog { align-items: center; padding: 0 0 13px; border-bottom: 1px solid var(--apl-line); }
+.l4-admin .apl-heading--catalog p { margin: 4px 0 0; font-size: 13px; }
+.l4-admin .apl-value .apl-stock-source-difference { color: #c4a5aa; }
 
 /* Orders indicators are grouped by workflow so nine measures do not compete in one row. */
 .l4-admin .admin-orders-summary-groups { display: grid; gap: 14px; }
@@ -167,9 +170,8 @@
 .l4-admin .admin-orders-operational-alert strong { font-size: 13px !important; }
 .l4-admin .admin-orders-operational-alert span { color: #b1b1b1 !important; font-size: 13px !important; line-height: 1.4 !important; }
 
-/* Portal the logistics submenu so horizontally scrolling tables cannot clip it. */
-.admin-order-actions-menu,
-.admin-order-logistics-submenu {
+/* Compact row actions; logistics editing opens a single focused dialog. */
+.admin-order-actions-menu {
   z-index: 1600 !important;
   max-height: min(70vh, var(--radix-dropdown-menu-content-available-height)) !important;
   overflow-x: hidden !important;
@@ -181,13 +183,21 @@
   box-shadow: 0 14px 36px rgba(0, 0, 0, .65) !important;
 }
 .admin-order-actions-menu { min-width: 210px; }
-.admin-order-logistics-submenu { min-width: 220px; }
-.admin-order-actions-menu [role="menuitem"],
-.admin-order-logistics-submenu [role="menuitem"] { min-height: 40px; padding: 8px 11px; font-size: 13px; }
+.admin-order-actions-menu [role="menuitem"] { min-height: 40px; padding: 8px 11px; font-size: 13px; }
 .admin-order-actions-menu [role="menuitem"]:focus,
-.admin-order-logistics-submenu [role="menuitem"]:focus,
-.admin-order-actions-menu [role="menuitem"][data-highlighted],
-.admin-order-logistics-submenu [role="menuitem"][data-highlighted] { outline: 2px solid #e8002a; outline-offset: -2px; background: #1a1113 !important; color: #fff !important; }
+.admin-order-actions-menu [role="menuitem"][data-highlighted] { outline: 2px solid #e8002a; outline-offset: -2px; background: #1a1113 !important; color: #fff !important; }
+.admin-order-action-dialog { width: min(520px, calc(100vw - 32px)) !important; gap: 20px !important; border: 1px solid #393939 !important; border-radius: 5px !important; background: #101010 !important; color: #f3f3f3 !important; }
+.admin-order-action-dialog [data-slot="dialog-title"] { color: #fff; font-size: 20px; }
+.admin-order-action-dialog [data-slot="dialog-description"] { color: #aaa; line-height: 1.5; }
+.admin-order-action-field { display: grid; gap: 8px; color: #ddd; font-size: 13px; font-weight: 600; }
+.admin-order-action-field input,
+.admin-order-action-field [data-slot="select-trigger"] { min-height: 44px; width: 100%; border: 1px solid #414141; border-radius: 3px; background: #090909; color: #f3f3f3; }
+.admin-order-action-field small { color: #999; font-size: 12px; font-weight: 400; line-height: 1.45; }
+.admin-order-action-footer { gap: 9px !important; }
+.admin-order-action-footer button { min-height: 40px; padding: 0 13px; border: 1px solid #3e3e3e; border-radius: 3px; background: #151515; color: #eee; font-size: 13px; font-weight: 600; cursor: pointer; }
+.admin-order-action-footer .admin-order-action-save { border-color: var(--admin-red); background: var(--admin-red); color: #fff; }
+.admin-order-action-footer button:focus-visible { outline: 2px solid var(--admin-red); outline-offset: 2px; }
+.admin-order-action-footer button:disabled { cursor: not-allowed; opacity: .55; }
 
 @media (max-width: 1280px) and (min-width: 1101px) {
   .l4-admin .l4-admin-main { padding-inline: 28px 30px; }
@@ -205,4 +215,5 @@
   .l4-admin .admin-orders-summary-group .admin-secondary-metrics > div:nth-child(3n) { border-right: 1px solid #292929 !important; }
   .l4-admin .admin-orders-summary-group .admin-secondary-metrics > div:nth-child(2n) { border-right: 0 !important; }
   .l4-admin .admin-orders-operational-alert { grid-template-columns: minmax(0, 1fr); gap: 3px !important; }
+  .l4-admin .apl-heading--catalog { flex-direction: row !important; align-items: center !important; }
 }

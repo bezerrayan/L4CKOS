@@ -54,9 +54,10 @@ import { AdminProductsPanel } from "../components/admin/products/AdminProductsPa
 import { AdminHomeHighlightsPanel } from "../components/admin/promotions/AdminHomeHighlightsPanel";
 import { AdminReportsPanel } from "../components/admin/reports/AdminReportsPanel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
-  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
+  DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 
 type Section =
@@ -464,6 +465,9 @@ export default function Admin() {
     const match = location.pathname.match(/^\/gestao\/pedidos\/(\d+)$/);
     return match ? Number(match[1]) : null;
   });
+  const [orderActionDialog, setOrderActionDialog] = useState<{ orderId: number; kind: "logistics" | "tracking"; currentStatus: string; trackingCode: string | null } | null>(null);
+  const [orderActionStatus, setOrderActionStatus] = useState<string>("pending");
+  const [orderActionTracking, setOrderActionTracking] = useState("");
   const [newProduct, setNewProduct] = useState({ ...emptyProductForm });
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [editProduct, setEditProduct] = useState({ ...emptyProductForm });
@@ -494,6 +498,25 @@ export default function Admin() {
     setSelectedOrderId(orderId);
     setSection("orders");
     navigate(`/gestao/pedidos/${orderId}`);
+  };
+
+  const openOrderAction = (order: { id: number; status: string; trackingCode?: string | null }, kind: "logistics" | "tracking") => {
+    setOrderActionStatus(order.status);
+    setOrderActionTracking(order.trackingCode ?? "");
+    setOrderActionDialog({ orderId: order.id, kind, currentStatus: order.status, trackingCode: order.trackingCode ?? null });
+  };
+
+  const saveOrderAction = () => {
+    if (!orderActionDialog) return;
+    if (orderActionDialog.kind === "logistics") {
+      const nextStatus = orderActionStatus as typeof orderStatuses[number];
+      if (!(orderLogisticsStatuses as readonly string[]).includes(nextStatus)) return;
+      if (!confirmAdminAction(`Alterar o pedido #${orderActionDialog.orderId} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
+      updateOrderMutation.mutate({ orderId: orderActionDialog.orderId, status: nextStatus });
+    } else {
+      updateOrderMutation.mutate({ orderId: orderActionDialog.orderId, trackingCode: orderActionTracking.trim() || null });
+    }
+    setOrderActionDialog(null);
   };
 
   async function uploadAdminImages(files: FileList | null, mode: "single" | "multiple", target: string) {
@@ -1207,21 +1230,9 @@ export default function Admin() {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" side="bottom" sideOffset={8} collisionPadding={16} className="admin-order-actions-menu">
                                 <DropdownMenuLabel>Operações do pedido</DropdownMenuLabel>
-                                <DropdownMenuSub>
-                                  <DropdownMenuSubTrigger>Atualizar logística</DropdownMenuSubTrigger>
-                                  <DropdownMenuSubContent collisionPadding={16} className="admin-order-logistics-submenu">
-                                    {orderLogisticsStatuses.map(status => <DropdownMenuItem key={status} onSelect={() => {
-                                      const nextStatus = status as typeof orderStatuses[number];
-                                      if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
-                                      updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
-                                    }}>{getOrderStatusLabel(status)}{String(row.status) === status ? " · atual" : ""}</DropdownMenuItem>)}
-                                  </DropdownMenuSubContent>
-                                </DropdownMenuSub>
+                                <DropdownMenuItem onSelect={() => openOrderAction(row, "logistics")}>Atualizar logística…</DropdownMenuItem>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem onSelect={() => {
-                                  const tracking = window.prompt("Código de rastreio:", row.trackingCode || "");
-                                  if (tracking !== null) updateOrderMutation.mutate({ orderId: row.id, trackingCode: tracking || null });
-                                }}>Atualizar rastreio</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => openOrderAction(row, "tracking")}>Atualizar rastreio…</DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
@@ -1423,6 +1434,35 @@ export default function Admin() {
           onRetryRuntimeStatus={() => { void settingsStatusQuery.refetch(); }}
         />
       )}
+      <Dialog open={Boolean(orderActionDialog)} onOpenChange={open => { if (!open && !updateOrderMutation.isPending) setOrderActionDialog(null); }}>
+        <DialogContent className="admin-order-action-dialog" onEscapeKeyDown={event => { if (updateOrderMutation.isPending) event.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>{orderActionDialog?.kind === "tracking" ? "Atualizar rastreio" : "Atualizar logística"} · Pedido #{orderActionDialog?.orderId}</DialogTitle>
+            <DialogDescription>{orderActionDialog?.kind === "tracking" ? "Informe o código de rastreio associado à entrega deste pedido. Deixe vazio para limpar o código atual." : `Situação logística atual: ${getOrderStatusLabel(orderActionDialog?.currentStatus ?? "pending")}. A situação do pagamento continua separada.`}</DialogDescription>
+          </DialogHeader>
+          {orderActionDialog?.kind === "tracking" ? (
+            <label className="admin-order-action-field">Código de rastreio
+              <input autoFocus value={orderActionTracking} maxLength={160} onChange={event => setOrderActionTracking(event.target.value)} placeholder="Ex.: código fornecido pela transportadora" />
+              {orderActionDialog?.trackingCode ? <small>Atual: {orderActionDialog.trackingCode}</small> : <small>Nenhum código registrado.</small>}
+            </label>
+          ) : (
+            <label className="admin-order-action-field">Nova situação logística
+              <Select value={orderActionStatus} onValueChange={setOrderActionStatus}>
+                <SelectTrigger aria-label="Selecionar nova situação logística" disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
+                <SelectContent position="popper" sideOffset={6} collisionPadding={12}>
+                  {orderLogisticsStatuses.map(status => <SelectItem key={status} value={status}>{getOrderStatusLabel(status)}{orderActionDialog?.currentStatus === status ? " · atual" : ""}</SelectItem>)}
+                  {orderActionDialog?.currentStatus === "paid" ? <SelectItem value="paid" disabled>Pagamento confirmado · estado atual</SelectItem> : null}
+                </SelectContent>
+              </Select>
+              <small>O sistema valida a transição e as permissões antes de salvar.</small>
+            </label>
+          )}
+          <DialogFooter className="admin-order-action-footer">
+            <button type="button" className="admin-order-action-cancel" disabled={updateOrderMutation.isPending} onClick={() => setOrderActionDialog(null)}>Cancelar</button>
+            <button type="button" className="admin-order-action-save" disabled={updateOrderMutation.isPending || (orderActionDialog?.kind === "logistics" && orderActionStatus === orderActionDialog.currentStatus)} onClick={saveOrderAction}>{updateOrderMutation.isPending ? "Salvando…" : "Salvar atualização"}</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
         </main>
       </div>
     </div>
