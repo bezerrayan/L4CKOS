@@ -40,7 +40,7 @@ export type AdminCustomerOrderRecord = {
 };
 
 type CustomerFilter = "all" | "customers" | "admins" | "vip" | "active" | "blocked" | "recent";
-type CustomerAction = "block" | "unblock" | "vipOn" | "vipOff" | "adminOn" | "adminOff";
+type CustomerAction = "block" | "unblock";
 type CustomerHistoryRange = { from?: string; to?: string } | null;
 
 type AdminCustomersPanelProps = {
@@ -61,8 +61,6 @@ type AdminCustomersPanelProps = {
   onSelectCustomer: (customerId: number | null) => void;
   onOpenOrder: (orderId: number) => void;
   onToggleBlocked?: (userId: number, isBlocked: boolean) => Promise<void>;
-  onToggleVip?: (userId: number, isVip: boolean) => Promise<void>;
-  onSetRole?: (userId: number, role: "user" | "admin") => Promise<void>;
 };
 
 const filterDefinitions: Array<{ key: CustomerFilter; label: string }> = [
@@ -115,10 +113,6 @@ function getActionCopy(action: CustomerAction) {
   switch (action) {
     case "block": return { title: "Bloquear conta?", button: "Confirmar bloqueio", description: "A conta ficará bloqueada conforme as regras atuais do sistema. Esta ação não altera pedidos ou pagamentos." };
     case "unblock": return { title: "Desbloquear conta?", button: "Confirmar desbloqueio", description: "A conta voltará a poder acessar os recursos permitidos pelo sistema." };
-    case "vipOn": return { title: "Identificar como VIP?", button: "Confirmar identificação VIP", description: "A identificação VIP será atualizada e registrada na auditoria administrativa." };
-    case "vipOff": return { title: "Remover identificação VIP?", button: "Confirmar remoção", description: "A identificação VIP será removida e registrada na auditoria administrativa." };
-    case "adminOn": return { title: "Promover a administrador?", button: "Confirmar promoção", description: "A conta receberá acesso administrativo somente se o servidor autorizar o e-mail na allowlist. A API permanece como autoridade." };
-    case "adminOff": return { title: "Remover acesso de administrador?", button: "Confirmar remoção", description: "A conta perderá o papel de administrador. Verifique se esta alteração não interrompe o acesso operacional necessário." };
   }
 }
 
@@ -140,8 +134,6 @@ export function AdminCustomersPanel({
   onSelectCustomer,
   onOpenOrder,
   onToggleBlocked,
-  onToggleVip,
-  onSetRole,
 }: AdminCustomersPanelProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<CustomerFilter>("all");
@@ -239,12 +231,8 @@ export function AdminCustomersPanel({
       if (confirmAction === "block" || confirmAction === "unblock") {
         if (!onToggleBlocked) return;
         await onToggleBlocked(selectedCustomer.id, confirmAction === "block");
-      } else if (confirmAction === "vipOn" || confirmAction === "vipOff") {
-        if (!onToggleVip) return;
-        await onToggleVip(selectedCustomer.id, confirmAction === "vipOn");
       } else {
-        if (!onSetRole) return;
-        await onSetRole(selectedCustomer.id, confirmAction === "adminOn" ? "admin" : "user");
+        return;
       }
       setConfirmAction(null);
     } catch (error) {
@@ -359,16 +347,12 @@ export function AdminCustomersPanel({
 
                 <section className="admin-customers__detail-block admin-customers__account-action">
                   <div className="admin-customers__section-heading"><div><span>CONTROLES DE CONTA</span><h3>Ações administrativas</h3></div></div>
-                  <p>As alterações são auditadas e continuam sujeitas às permissões do servidor.</p>
-                  <div className="admin-customers__action-grid">
-                    <button type="button" disabled={!onToggleVip || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.isVip ? "vipOff" : "vipOn"); }}>{selectedCustomer.isVip ? "Remover identificação VIP" : "Identificar como VIP"}</button>
-                    <button type="button" disabled={!onSetRole || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.role === "admin" ? "adminOff" : "adminOn"); }}>{selectedCustomer.role === "admin" ? "Remover acesso admin" : "Promover a administrador"}</button>
-                  </div>
+                  <p>Papel e identificação VIP são informações consultivas. Alterações de conta são auditadas e validadas pelo servidor.</p>
                   <div className="admin-customers__critical-action">
                     <div><strong>Acesso à conta</strong><span>{selectedCustomer.isBlocked ? "A conta está bloqueada." : "Bloquear impede o acesso conforme as regras do sistema."}</span></div>
                     <button type="button" className={selectedCustomer.isBlocked ? "" : "is-danger"} disabled={!onToggleBlocked || Boolean(mutationPending)} onClick={() => { setConfirmError(""); setConfirmAction(selectedCustomer.isBlocked ? "unblock" : "block"); }}>{selectedCustomer.isBlocked ? "Desbloquear conta" : "Bloquear conta"}</button>
                   </div>
-                  {selectedCustomer.role !== "admin" ? <p className="admin-customers__permission-note">A promoção depende da allowlist validada pelo servidor; este painel não concede permissões fora dela.</p> : null}
+                  <p className="admin-customers__permission-note">Privilégios administrativos e identificação VIP são gerenciados por processos externos controlados.</p>
                 </section>
               </div>
 

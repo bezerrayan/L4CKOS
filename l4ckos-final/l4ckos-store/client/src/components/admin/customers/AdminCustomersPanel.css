@@ -167,16 +167,15 @@ body:has(.admin-customers__dialog) [data-slot="dialog-overlay"] { z-index: 1200;
 .admin-customers__history-empty { margin: 0; padding: 22px 10px; border: 1px dashed #333; color: #999; font-size: 13px; text-align: center; }
 .admin-customers__history-state { min-height: 64px; justify-content: space-between; }
 .admin-customers__account-action { border-bottom: 1px solid #2e2e2e; }
-.admin-customers__action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
-.admin-customers__action-grid button, .admin-customers__critical-action > button { min-height: 42px; padding: 7px 10px; border: 1px solid #3b3334; border-radius: 3px; background: #151112; color: #e7d0d3; text-align: center; font: 13px 'DM Sans', sans-serif; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
-.admin-customers__action-grid button:hover:not(:disabled), .admin-customers__critical-action > button:hover:not(:disabled) { border-color: #8a3c48; color: #fff; }
+.admin-customers__critical-action > button { min-height: 42px; padding: 7px 10px; border: 1px solid #3b3334; border-radius: 3px; background: #151112; color: #e7d0d3; text-align: center; font: 13px 'DM Sans', sans-serif; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.admin-customers__critical-action > button:hover:not(:disabled) { border-color: #8a3c48; color: #fff; }
 .admin-customers__critical-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 12px; border: 1px solid #46272c; border-radius: 3px; background: linear-gradient(100deg, #1d1012, #120d0e 70%); }
 .admin-customers__critical-action > div { display: grid; min-width: 0; gap: 4px; }
 .admin-customers__critical-action strong { color: #f0dadd; font-size: 12px; }
 .admin-customers__critical-action span { color: #ab9699; font-size: 11px; line-height: 1.4; }
 .admin-customers__critical-action > button { flex: 0 0 auto; border-color: #71303b; background: #271116; color: #f3c2c8; }
 .admin-customers__critical-action > button.is-danger { border-color: #892d3c; background: #4a111c; color: #fff; }
-.admin-customers__action-grid button:disabled, .admin-customers__critical-action > button:disabled { opacity: .55; cursor: wait; }
+.admin-customers__critical-action > button:disabled { opacity: .55; cursor: wait; }
 
 body:has(.admin-confirm-dialog) [data-slot="alert-dialog-overlay"] { z-index: 1500; background: rgb(0 0 0 / 72%); }
 .admin-confirm-dialog { z-index: 1501 !important; width: min(440px, calc(100vw - 28px)) !important; gap: 15px !important; padding: 22px !important; border: 1px solid #353535 !important; border-radius: 3px !important; background: #101010 !important; color: #eee !important; box-shadow: none !important; }
@@ -258,7 +257,6 @@ body:has(.admin-confirm-dialog) [data-slot="alert-dialog-overlay"] { z-index: 15
   .admin-customers__identity-chips > span { min-height: 24px; padding: 0 7px; font-size: 10px; }
   .admin-customers__dialog-scroll { padding: 0 16px 20px; }
   .admin-customers__movement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .admin-customers__action-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-customers__history-table { min-width: 0; }
   .admin-customers__history-table thead { display: none; }
   .admin-customers__history-table tbody { display: grid; }

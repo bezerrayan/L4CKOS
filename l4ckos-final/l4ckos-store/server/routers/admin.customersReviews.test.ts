@@ -3,8 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const dbMocks = vi.hoisted(() => ({
   getUsersWithStats: vi.fn(),
   getUserOrderHistory: vi.fn(),
-  getUserById: vi.fn(),
-  updateUserRole: vi.fn(),
   setUserFlags: vi.fn(),
   getAdminProductReviews: vi.fn(),
   moderateProductReview: vi.fn(),
@@ -15,8 +13,6 @@ vi.mock("../db", async importOriginal => ({
   ...await importOriginal<typeof import("../db")>(),
   getUsersWithStats: dbMocks.getUsersWithStats,
   getUserOrderHistory: dbMocks.getUserOrderHistory,
-  getUserById: dbMocks.getUserById,
-  updateUserRole: dbMocks.updateUserRole,
   setUserFlags: dbMocks.setUserFlags,
   getAdminProductReviews: dbMocks.getAdminProductReviews,
   moderateProductReview: dbMocks.moderateProductReview,
@@ -106,7 +102,7 @@ describe("admin customer and review contracts", () => {
 
     await expect((await caller(adminUser)).userSetFlags({ userId: 9, isBlocked: true }))
       .resolves.toEqual({ success: true });
-    expect(dbMocks.setUserFlags).toHaveBeenCalledWith(9, { isVip: undefined, isBlocked: true });
+    expect(dbMocks.setUserFlags).toHaveBeenCalledWith(9, { isBlocked: true });
     expect(dbMocks.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       actorUserId: adminUser.id,
       action: "user.setFlags",
@@ -114,20 +110,41 @@ describe("admin customer and review contracts", () => {
     }));
   });
 
-  it("denies account flag changes to non-admin callers before mutation", async () => {
-    await expect((await caller(regularUser)).userSetFlags({ userId: 9, isBlocked: true }))
-      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  it.each([null, regularUser])("denies account block changes to unauthenticated or non-admin callers before mutation", async user => {
+    await expect((await caller(user)).userSetFlags({ userId: 9, isBlocked: true }))
+      .rejects.toMatchObject({ code: user ? "FORBIDDEN" : "UNAUTHORIZED" });
     expect(dbMocks.setUserFlags).not.toHaveBeenCalled();
     expect(dbMocks.createAuditLog).not.toHaveBeenCalled();
   });
 
-  it("keeps administrator promotion behind the server allowlist", async () => {
-    dbMocks.getUserById.mockResolvedValue({ id: 9, email: "not-approved@example.invalid" });
-
-    await expect((await caller(adminUser)).userSetRole({ userId: 9, role: "admin" }))
-      .rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(dbMocks.updateUserRole).not.toHaveBeenCalled();
+  it.each([adminUser, regularUser, null])("does not expose the legacy role mutation to any application caller", async user => {
+    const { adminRouter } = await import("./admin");
+    const procedures = adminRouter._def.procedures;
+    expect(procedures).not.toHaveProperty("userSetRole");
+    await expect((await caller(user) as any).userSetRole({ userId: 9, role: "admin" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(dbMocks.setUserFlags).not.toHaveBeenCalled();
     expect(dbMocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct VIP mutation payloads even for an authorized administrator", async () => {
+    const adminCaller = await caller(adminUser);
+    await expect(adminCaller.userSetFlags({ userId: 9, isVip: true } as any))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(adminCaller.userSetFlags({ userId: 9, isBlocked: false, isVip: false } as any))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(dbMocks.setUserFlags).not.toHaveBeenCalled();
+    expect(dbMocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("preserves read-only role and VIP fields in the authorized customer query", async () => {
+    dbMocks.getUsersWithStats.mockResolvedValue([{
+      id: 10, name: "Fixture", email: "fixture@example.invalid", role: "admin", isVip: true,
+      isBlocked: false, ordersCount: 0, createdAt: null, lastSignedIn: null,
+    }]);
+    await expect((await caller(adminUser)).usersList()).resolves.toMatchObject([
+      { id: 10, role: "admin", isVip: true },
+    ]);
   });
 
   it("returns the real review states and moderates both independent fields as the authenticated admin", async () => {

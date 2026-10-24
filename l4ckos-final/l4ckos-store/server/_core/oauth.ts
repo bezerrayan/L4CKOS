@@ -7,6 +7,7 @@ import { getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
 import { sdk } from "./sdk";
 import { sendWelcomeAccountEmail } from "../services/emailService.js";
+import type { InsertUser } from "../../drizzle/schema";
 
 function getQueryParam(req: Request, key: string): string | undefined {
   const value = req.query[key];
@@ -242,21 +243,13 @@ export function registerOAuthRoutes(app: Express) {
 
       callbackStage = "upsert_user";
       const normalizedEmail = String(userInfo.email ?? "").trim().toLowerCase();
-      const googleRole = getGoogleRoleForUserInfo({
-        openId,
-        email: normalizedEmail,
-        emailVerified: userInfo.email_verified === true,
-      });
       const existingUser = await db.getUserByOpenId(openId);
 
-      await db.upsertUser({
+      await db.upsertUser(buildGoogleUserUpsert({
         openId,
         name: userInfo.name || null,
         email: userInfo.email ?? null,
-        loginMethod: "google",
-        role: googleRole,
-        lastSignedIn: new Date(),
-      });
+      }));
 
       callbackStage = "verify_user_persisted";
       const persistedUser = await db.getUserByOpenId(openId);
@@ -310,9 +303,16 @@ export function registerOAuthRoutes(app: Express) {
   });
 }
 
-export function getGoogleRoleForUserInfo(input: { openId: string; email?: string | null; emailVerified: boolean }) {
-  const normalizedEmail = String(input.email ?? "").trim().toLowerCase();
-  if (input.openId === ENV.ownerOpenId) return "admin";
-  if (input.emailVerified && normalizedEmail && ENV.adminEmails.includes(normalizedEmail)) return "admin";
-  return "user";
+export function buildGoogleUserUpsert(input: {
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+}): Omit<InsertUser, "role"> {
+  return {
+    openId: input.openId,
+    name: input.name ?? null,
+    email: input.email ?? null,
+    loginMethod: "google",
+    lastSignedIn: new Date(),
+  };
 }

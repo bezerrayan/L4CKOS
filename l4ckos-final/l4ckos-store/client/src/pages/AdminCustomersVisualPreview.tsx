@@ -192,12 +192,6 @@ export default function AdminCustomersVisualPreview() {
           onToggleBlocked={async (userId, isBlocked) => {
             setMockCustomers(current => current.map(customer => customer.id === userId ? { ...customer, isBlocked } : customer));
           }}
-          onToggleVip={async (userId, isVip) => {
-            setMockCustomers(current => current.map(customer => customer.id === userId ? { ...customer, isVip } : customer));
-          }}
-          onSetRole={async (userId, role) => {
-            setMockCustomers(current => current.map(customer => customer.id === userId ? { ...customer, role } : customer));
-          }}
           pendingCustomerId={undefined}
         />
       </main>

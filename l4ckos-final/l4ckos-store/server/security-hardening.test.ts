@@ -161,11 +161,16 @@ describe("security hardening contracts", () => {
     }
   });
 
-  it("does not grant Google admin role to unverified email", async () => {
-    const { getGoogleRoleForUserInfo } = await import("./_core/oauth");
+  it("never writes a role from a Google OAuth profile, including an allowlisted address", async () => {
+    const { buildGoogleUserUpsert } = await import("./_core/oauth");
 
-    expect(getGoogleRoleForUserInfo({ openId: "google-user", email: "admin@example.com", emailVerified: false })).toBe("user");
-    expect(getGoogleRoleForUserInfo({ openId: "google-user", email: "admin@example.com", emailVerified: true })).toBe("admin");
+    const input = buildGoogleUserUpsert({
+      openId: "google-user",
+      email: "admin@example.com",
+      name: "Synthetic Operator",
+    });
+    expect(input).toMatchObject({ openId: "google-user", email: "admin@example.com", loginMethod: "google" });
+    expect(input).not.toHaveProperty("role");
   });
 
   it("validates JWT expiry, algorithm, issuer and audience explicitly", async () => {

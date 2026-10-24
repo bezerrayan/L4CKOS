@@ -65,6 +65,36 @@ describe("release public authentication (isolated adapters)", () => {
     expect((await sdk.authenticateRequest(request(cookie(ctx)))).id).toBe(9001);
     await expect(caller.auth.localSignup({ name: "Release Fixture", email, password })).rejects.toThrow("Já existe");
   });
+  it("rejects role fields injected into local registration", async () => {
+    const caller = appRouter.createCaller(context());
+    await expect(caller.auth.localSignup({ name: "Release Fixture", email, password, role: "admin" } as any))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(caller.auth.localLogin({ email, password, role: "admin" } as any))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(fixture.user).toBeNull();
+  });
+  it("does not allow public signup to claim an allowlisted administrator identity", async () => {
+    const caller = appRouter.createCaller(context());
+    await expect(caller.auth.localSignup({
+      name: "Unverified Admin Claim", email: "release-operator@example.invalid", password,
+    })).rejects.toThrow("provisionadas por procedimento externo controlado");
+    expect(fixture.user).toBeNull();
+    expect(fixture.credential).toBeNull();
+  });
+  it("does not change a provisioned user's role during local login", async () => {
+    const operatorEmail = "release-operator@example.invalid";
+    const passwordHash = await bcrypt.hash(password, 4);
+    fixture.user = {
+      id: 9002, openId: `local:${operatorEmail}`, name: "Operator", email: operatorEmail,
+      role: "user", sessionVersion: 1, isBlocked: 0,
+    };
+    fixture.credential = { userId: 9002, email: operatorEmail, passwordHash };
+    const caller = appRouter.createCaller(context());
+    await caller.auth.localLogin({ email: operatorEmail, password });
+    expect(fixture.user.role).toBe("user");
+    const db = await import("./db");
+    expect(vi.mocked(db.upsertUser).mock.calls.at(-1)?.[0]).not.toHaveProperty("role");
+  });
   it("login rotates the session and logout revokes the issued JWT", async () => {
     const ctx = context(), caller = appRouter.createCaller(ctx);
     await caller.auth.localSignup({ name: "Release Fixture", email, password });

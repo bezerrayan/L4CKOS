@@ -40,7 +40,6 @@ import {
   moderateProductReview,
   updateProductWithCatalog,
   updateCoupon,
-  updateUserRole,
 } from "../db";
 import { renderSalesReportPdf } from "../reports/salesReport";
 import { reviewModerationInputSchema } from "../reviews/policy";
@@ -316,48 +315,15 @@ export const adminRouter = router({
       input.to ? new Date(input.to) : undefined,
     )),
 
-  userSetRole: adminProcedure
-    .input(
-      z.object({
-        userId: z.number().int().positive(),
-        role: z.enum(["user", "admin"]),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      if (input.role === "admin") {
-        const targetUser = await getUserById(input.userId);
-        const normalizedEmail = String(targetUser?.email ?? "").trim().toLowerCase();
-        const allowedAdmin = Boolean(normalizedEmail) && ENV.adminEmails.includes(normalizedEmail);
-        if (!allowedAdmin) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Este e-mail não pode receber permissão de admin.",
-          });
-        }
-      }
-
-      await updateUserRole(input.userId, input.role);
-      await createAuditLog({
-        actorUserId: ctx.user.id,
-        action: "user.setRole",
-        entity: "user",
-        entityId: String(input.userId),
-        metadata: { role: input.role },
-      });
-      return { success: true } as const;
-    }),
-
   userSetFlags: adminProcedure
     .input(
       z.object({
         userId: z.number().int().positive(),
-        isVip: z.boolean().optional(),
-        isBlocked: z.boolean().optional(),
-      }),
+        isBlocked: z.boolean(),
+      }).strict(),
     )
     .mutation(async ({ ctx, input }) => {
       await setUserFlags(input.userId, {
-        isVip: input.isVip,
         isBlocked: input.isBlocked,
       });
       await createAuditLog({
@@ -365,7 +331,7 @@ export const adminRouter = router({
         action: "user.setFlags",
         entity: "user",
         entityId: String(input.userId),
-        metadata: { isVip: input.isVip, isBlocked: input.isBlocked },
+        metadata: { isBlocked: input.isBlocked },
       });
       return { success: true } as const;
     }),

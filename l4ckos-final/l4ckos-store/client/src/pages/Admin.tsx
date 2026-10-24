@@ -609,20 +609,11 @@ export default function Admin() {
 
   const setFlagsMutation = trpc.admin.userSetFlags.useMutation({
     onSuccess: (_data, input) => {
-      const message = input.isVip !== undefined
-        ? input.isVip ? "Identificação VIP ativada" : "Identificação VIP removida"
-        : input.isBlocked ? "Conta bloqueada" : "Conta desbloqueada";
+      const message = input.isBlocked ? "Conta bloqueada" : "Conta desbloqueada";
       showToast({ message, duration: 2200 });
       void customersQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
-  });
-  const setRoleMutation = trpc.admin.userSetRole.useMutation({
-    onSuccess: (_data, input) => {
-      showToast({ message: input.role === "admin" ? "Papel de administrador atualizado" : "Acesso de administrador removido", duration: 2200 });
-      void customersQuery.refetch();
-    },
-    onError: error => showToast({ message: error.message, duration: 2800 }),
   });
 
   const reviewModerateMutation = trpc.admin.reviewModerate.useMutation({
@@ -1118,7 +1109,7 @@ export default function Admin() {
           isLoading={customersQuery.isLoading}
           isError={customersQuery.isError}
           onRetry={() => { void customersQuery.refetch(); }}
-          pendingCustomerId={setFlagsMutation.isPending ? setFlagsMutation.variables?.userId : setRoleMutation.isPending ? setRoleMutation.variables?.userId : undefined}
+          pendingCustomerId={setFlagsMutation.isPending ? setFlagsMutation.variables?.userId : undefined}
           orderHistory={customerOrderHistoryQuery.data}
           orderHistoryLoading={customerOrderHistoryQuery.isLoading}
           orderHistoryError={customerOrderHistoryQuery.isError}
@@ -1134,12 +1125,6 @@ export default function Admin() {
           onOpenOrder={openOrder}
           onToggleBlocked={async (userId, isBlocked) => {
             await setFlagsMutation.mutateAsync({ userId, isBlocked });
-          }}
-          onToggleVip={async (userId, isVip) => {
-            await setFlagsMutation.mutateAsync({ userId, isVip });
-          }}
-          onSetRole={async (userId, role) => {
-            await setRoleMutation.mutateAsync({ userId, role });
           }}
         />
       )}
