@@ -1980,6 +1980,27 @@ export async function getUsersWithStats() {
   }));
 }
 
+export async function getUserOrderHistory(userId: number, from?: Date, to?: Date) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const filters = [eq(orders.userId, userId)] as Array<ReturnType<typeof eq>>;
+  if (from) filters.push(gte(orders.createdAt, from));
+  if (to) filters.push(lte(orders.createdAt, to));
+
+  return db
+    .select({
+      id: orders.id,
+      createdAt: orders.createdAt,
+      totalPrice: orders.totalPrice,
+      paymentStatus: orders.paymentStatus,
+      status: orders.status,
+    })
+    .from(orders)
+    .where(and(...filters))
+    .orderBy(desc(orders.createdAt), desc(orders.id));
+}
+
 export async function getOrdersByFilters(filters?: {
   status?: "pending" | "processing" | "paid" | "shipped" | "delivered" | "cancelled";
   from?: Date;

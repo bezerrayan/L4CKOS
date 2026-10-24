@@ -32,6 +32,7 @@ import {
   getAdminProductReviews,
   markOrderPaid,
   getUsersWithStats,
+  getUserOrderHistory,
   ProductCatalogConflictError,
   restoreBackupPayload,
   updateOrderAndReserveDeliveredEmailEvents,
@@ -298,6 +299,22 @@ export const adminRouter = router({
       lastSignedIn: user.lastSignedIn,
     }));
   }),
+
+  userOrderHistory: adminProcedure
+    .input(z.object({
+      userId: z.number().int().positive(),
+      from: z.string().datetime().optional(),
+      to: z.string().datetime().optional(),
+    }).superRefine((input, ctx) => {
+      if (input.from && input.to && new Date(input.from) > new Date(input.to)) {
+        ctx.addIssue({ code: "custom", path: ["to"], message: "A data final precisa ser posterior à data inicial." });
+      }
+    }))
+    .query(async ({ input }) => getUserOrderHistory(
+      input.userId,
+      input.from ? new Date(input.from) : undefined,
+      input.to ? new Date(input.to) : undefined,
+    )),
 
   userSetRole: adminProcedure
     .input(

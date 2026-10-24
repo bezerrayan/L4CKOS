@@ -397,7 +397,7 @@ export default function Admin() {
     overview: { title: "Painel", subtitle: "Visão geral da operação L4CKOS." },
     orders: { title: "Pedidos", subtitle: "Acompanhe pagamento, logística e atendimento." },
     products: { title: "Produtos", subtitle: "Gerencie catálogo, variantes e disponibilidade." },
-    customers: { title: "Clientes", subtitle: "Consulte os cadastros e o relacionamento com a loja." },
+    customers: { title: "Clientes", subtitle: "Perfis, situação das contas e relacionamento com clientes." },
     batches: { title: "Lotes e pré-venda", subtitle: "Acompanhe a capacidade e os prazos de produção." },
     promos: { title: "Promoções", subtitle: "Organize os destaques comerciais da loja." },
     coupons: { title: "Cupons", subtitle: "Gerencie regras promocionais e validade." },
@@ -455,6 +455,8 @@ export default function Admin() {
     const match = location.pathname.match(/^\/gestao\/pedidos\/(\d+)$/);
     return match ? Number(match[1]) : null;
   });
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  const [customerHistoryRange, setCustomerHistoryRange] = useState<{ from?: string; to?: string } | null>(null);
   const [orderActionDialog, setOrderActionDialog] = useState<{ orderId: number; kind: "logistics" | "tracking"; currentStatus: string; trackingCode: string | null; paymentTrusted: boolean } | null>(null);
   const [orderActionStatus, setOrderActionStatus] = useState<string>("pending");
   const [orderActionTracking, setOrderActionTracking] = useState("");
@@ -481,6 +483,10 @@ export default function Admin() {
   const navigateSection = (nextSection: Section) => {
     setSection(nextSection);
     setSelectedOrderId(null);
+    if (nextSection !== "customers") {
+      setSelectedCustomerId(null);
+      setCustomerHistoryRange(null);
+    }
     navigate(adminSectionPaths[nextSection]);
   };
 
@@ -583,6 +589,11 @@ export default function Admin() {
   const dashboardQuery = trpc.admin.dashboard.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const dashboardOrdersQuery = trpc.admin.ordersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "overview" });
   const customersQuery = trpc.admin.usersList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "customers" });
+  const customerOrderHistoryQuery = trpc.admin.userOrderHistory.useQuery({
+    userId: selectedCustomerId ?? 1,
+    from: customerHistoryRange?.from ? new Date(`${customerHistoryRange.from}T00:00:00`).toISOString() : undefined,
+    to: customerHistoryRange?.to ? new Date(`${customerHistoryRange.to}T23:59:59.999`).toISOString() : undefined,
+  }, { enabled: isAuthenticated && isAdmin && section === "customers" && selectedCustomerId !== null });
   const reviewsQuery = trpc.admin.reviewsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "reviews" });
   const productsQuery = trpc.admin.productsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const ordersQuery = trpc.admin.ordersList.useQuery(
@@ -597,11 +608,21 @@ export default function Admin() {
   const settingsStatusQuery = trpc.admin.settingsStatus.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
 
   const setFlagsMutation = trpc.admin.userSetFlags.useMutation({
-    onSuccess: () => {
-      showToast({ message: "Cliente atualizado", duration: 2000 });
+    onSuccess: (_data, input) => {
+      const message = input.isVip !== undefined
+        ? input.isVip ? "Identificação VIP ativada" : "Identificação VIP removida"
+        : input.isBlocked ? "Conta bloqueada" : "Conta desbloqueada";
+      showToast({ message, duration: 2200 });
       void customersQuery.refetch();
     },
     onError: error => showToast({ message: error.message, duration: 2600 }),
+  });
+  const setRoleMutation = trpc.admin.userSetRole.useMutation({
+    onSuccess: (_data, input) => {
+      showToast({ message: input.role === "admin" ? "Papel de administrador atualizado" : "Acesso de administrador removido", duration: 2200 });
+      void customersQuery.refetch();
+    },
+    onError: error => showToast({ message: error.message, duration: 2800 }),
   });
 
   const reviewModerateMutation = trpc.admin.reviewModerate.useMutation({
@@ -1097,9 +1118,28 @@ export default function Admin() {
           isLoading={customersQuery.isLoading}
           isError={customersQuery.isError}
           onRetry={() => { void customersQuery.refetch(); }}
-          pendingCustomerId={setFlagsMutation.isPending ? setFlagsMutation.variables?.userId : undefined}
+          pendingCustomerId={setFlagsMutation.isPending ? setFlagsMutation.variables?.userId : setRoleMutation.isPending ? setRoleMutation.variables?.userId : undefined}
+          orderHistory={customerOrderHistoryQuery.data}
+          orderHistoryLoading={customerOrderHistoryQuery.isLoading}
+          orderHistoryError={customerOrderHistoryQuery.isError}
+          onRetryOrderHistory={() => { void customerOrderHistoryQuery.refetch(); }}
+          historyRange={customerHistoryRange}
+          onHistoryRangeChange={setCustomerHistoryRange}
+          getOrderStatusLabel={getOrderStatusLabel}
+          getOrderStatusTone={getOrderStatusTone}
+          onSelectCustomer={customerId => {
+            setSelectedCustomerId(customerId);
+            setCustomerHistoryRange(null);
+          }}
+          onOpenOrder={openOrder}
           onToggleBlocked={async (userId, isBlocked) => {
             await setFlagsMutation.mutateAsync({ userId, isBlocked });
+          }}
+          onToggleVip={async (userId, isVip) => {
+            await setFlagsMutation.mutateAsync({ userId, isVip });
+          }}
+          onSetRole={async (userId, role) => {
+            await setRoleMutation.mutateAsync({ userId, role });
           }}
         />
       )}

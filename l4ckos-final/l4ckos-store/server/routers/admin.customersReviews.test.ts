@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMocks = vi.hoisted(() => ({
   getUsersWithStats: vi.fn(),
+  getUserOrderHistory: vi.fn(),
+  getUserById: vi.fn(),
+  updateUserRole: vi.fn(),
   setUserFlags: vi.fn(),
   getAdminProductReviews: vi.fn(),
   moderateProductReview: vi.fn(),
@@ -11,6 +14,9 @@ const dbMocks = vi.hoisted(() => ({
 vi.mock("../db", async importOriginal => ({
   ...await importOriginal<typeof import("../db")>(),
   getUsersWithStats: dbMocks.getUsersWithStats,
+  getUserOrderHistory: dbMocks.getUserOrderHistory,
+  getUserById: dbMocks.getUserById,
+  updateUserRole: dbMocks.updateUserRole,
   setUserFlags: dbMocks.setUserFlags,
   getAdminProductReviews: dbMocks.getAdminProductReviews,
   moderateProductReview: dbMocks.moderateProductReview,
@@ -63,6 +69,37 @@ describe("admin customer and review contracts", () => {
     expect(dbMocks.getUsersWithStats).not.toHaveBeenCalled();
   });
 
+  it("returns only a customer's historical order fields for an authorized admin", async () => {
+    const rows = [{
+      id: 301,
+      createdAt: new Date("2026-04-10T12:00:00.000Z"),
+      totalPrice: 15990,
+      paymentStatus: "confirmed",
+      status: "delivered",
+    }];
+    dbMocks.getUserOrderHistory.mockResolvedValue(rows);
+
+    await expect((await caller(adminUser)).userOrderHistory({ userId: 9 }))
+      .resolves.toEqual(rows);
+    expect(dbMocks.getUserOrderHistory).toHaveBeenCalledWith(9, undefined, undefined);
+  });
+
+  it.each([null, regularUser])("denies historical customer orders to unauthenticated or non-admin callers", async user => {
+    await expect((await caller(user)).userOrderHistory({ userId: 9 }))
+      .rejects.toMatchObject({ code: user ? "FORBIDDEN" : "UNAUTHORIZED" });
+    expect(dbMocks.getUserOrderHistory).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid customer order date range before querying", async () => {
+    const adminCaller = await caller(adminUser);
+    await expect(adminCaller.userOrderHistory({
+      userId: 9,
+      from: "2026-05-01T00:00:00.000Z",
+      to: "2026-04-01T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(dbMocks.getUserOrderHistory).not.toHaveBeenCalled();
+  });
+
   it("allows an authorized admin to block a user and records the actor", async () => {
     dbMocks.setUserFlags.mockResolvedValue(undefined);
     dbMocks.createAuditLog.mockResolvedValue(undefined);
@@ -81,6 +118,15 @@ describe("admin customer and review contracts", () => {
     await expect((await caller(regularUser)).userSetFlags({ userId: 9, isBlocked: true }))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(dbMocks.setUserFlags).not.toHaveBeenCalled();
+    expect(dbMocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("keeps administrator promotion behind the server allowlist", async () => {
+    dbMocks.getUserById.mockResolvedValue({ id: 9, email: "not-approved@example.invalid" });
+
+    await expect((await caller(adminUser)).userSetRole({ userId: 9, role: "admin" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(dbMocks.updateUserRole).not.toHaveBeenCalled();
     expect(dbMocks.createAuditLog).not.toHaveBeenCalled();
   });
 

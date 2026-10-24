@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { AdminSidebarProfile } from "../components/admin/AdminSidebarProfile";
 import { AdminCustomersPanel, type AdminCustomerRecord } from "../components/admin/customers/AdminCustomersPanel";
+import { getOrderLogisticsAccent } from "../lib/orderStatusPresentation";
 import "../components/admin/AdminOrdersVisualPreview.css";
 import "../components/admin/AdminCustomersVisualPreview.css";
 
@@ -58,6 +59,7 @@ export default function AdminCustomersVisualPreview() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<CustomerFilter>("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [previewHistoryRange, setPreviewHistoryRange] = useState<{ from?: string; to?: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const mobile = useIsMobile(900);
   const menuRef = useRef<HTMLElement>(null);
@@ -174,8 +176,27 @@ export default function AdminCustomersVisualPreview() {
           isError={mockError}
           initialSelectedCustomerId={Number(new URLSearchParams(window.location.search).get("details")) || null}
           onRetry={() => window.location.reload()}
+          orderHistory={[
+            { id: 9301, createdAt: daysAgo(10), totalPrice: 15990, paymentStatus: "confirmed", status: "delivered" },
+            { id: 9284, createdAt: daysAgo(54), totalPrice: 24990, paymentStatus: "unconfirmed", status: "cancelled" },
+          ]}
+          orderHistoryLoading={mockLoading}
+          orderHistoryError={mockError}
+          onRetryOrderHistory={() => window.location.reload()}
+          historyRange={previewHistoryRange}
+          onHistoryRangeChange={setPreviewHistoryRange}
+          getOrderStatusLabel={status => ({ pending: "Pendente", paid: "Aguardando preparação", processing: "Em separação", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado" } as Record<string, string>)[status] ?? status}
+          getOrderStatusTone={status => ({ "--order-status-accent": getOrderLogisticsAccent(status) } as CSSProperties)}
+          onSelectCustomer={() => undefined}
+          onOpenOrder={() => undefined}
           onToggleBlocked={async (userId, isBlocked) => {
             setMockCustomers(current => current.map(customer => customer.id === userId ? { ...customer, isBlocked } : customer));
+          }}
+          onToggleVip={async (userId, isVip) => {
+            setMockCustomers(current => current.map(customer => customer.id === userId ? { ...customer, isVip } : customer));
+          }}
+          onSetRole={async (userId, role) => {
+            setMockCustomers(current => current.map(customer => customer.id === userId ? { ...customer, role } : customer));
           }}
           pendingCustomerId={undefined}
         />
