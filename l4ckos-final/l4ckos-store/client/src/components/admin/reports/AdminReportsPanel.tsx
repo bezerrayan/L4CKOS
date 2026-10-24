@@ -6,10 +6,12 @@ import {
   addDateDays,
   addDateMonths,
   formatLocalDate,
+  isValidDateKey,
   localDateKey,
   localDateRange,
   monthDateRange,
-  previousEquivalentRange,
+  reportComparisonDescription,
+  reportComparisonRange,
   REPORT_TIME_ZONE,
 } from "../../../../../shared/reportPeriods";
 import "./AdminReportsPanel.css";
@@ -19,10 +21,10 @@ type Period = "today" | "7days" | "30days" | "thisMonth" | "previousMonth" | "cu
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const dateTime = new Intl.DateTimeFormat("pt-BR", { timeZone: REPORT_TIME_ZONE, dateStyle: "short", timeStyle: "short" });
 const statusNames: Record<string, string> = {
-  pending: "Pendente", processing: "Em preparação", paid: "Pago", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado",
+  pending: "Pendente", paid: "Aguardando preparação", processing: "Em separação", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado",
 };
 const logisticsTone: Record<string, string> = {
-  pending: "amber", processing: "violet", paid: "cyan", shipped: "indigo", delivered: "green", cancelled: "red",
+  pending: "amber", paid: "violet", processing: "cyan", shipped: "indigo", delivered: "green", cancelled: "red",
 };
 const paymentStatusName: Record<string, string> = { confirmed: "Confirmado", unconfirmed: "Pendente" };
 const todayKey = () => localDateKey(new Date());
@@ -35,13 +37,14 @@ function downloadBlob(name: string, type: string, value: BlobPart) {
   anchor.href = url; anchor.download = name; anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function deltaText(current: number, previous: number, isMoney = false) {
+function comparisonDelta(current: number, previous: number, isMoney = false) {
   const delta = current - previous;
   const value = isMoney ? money.format(Math.abs(delta) / 100) : Math.abs(delta).toLocaleString("pt-BR");
   const direction = delta > 0 ? "+" : delta < 0 ? "−" : "";
-  if (delta === 0 && previous > 0) return `sem variação · 0,0%`;
-  if (previous === 0) return `${direction}${value} · comparação percentual indisponível (base zero)`;
-  return `${direction}${value} · ${delta === 0 ? "0,0" : Math.abs(delta / previous * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ${delta >= 0 ? "acima" : "abaixo"}`;
+  return {
+    absolute: `${direction}${value}`,
+    percent: previous === 0 ? "Indisponível · base anterior zero" : `${delta === 0 ? "0,0" : (delta / previous * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ${delta > 0 ? "acima" : delta < 0 ? "abaixo" : "sem variação"}`,
+  };
 }
 
 export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
@@ -55,29 +58,19 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
   const pdfMutation = trpc.admin.reportsSalesPdf.useMutation();
   const today = todayKey();
   const monthRange = useMemo(() => {
-    const [year, month] = selectedMonth.split("-").map(Number);
+    const match = /^(\d{4})-(\d{2})$/.exec(selectedMonth);
+    if (!match) return { from: "", to: "" };
+    const [year, month] = [Number(match[1]), Number(match[2])];
     const selected = monthDateRange(year, month);
     return { from: selected.from, to: selected.to > today ? today : selected.to };
   }, [selectedMonth, today]);
   const yearRange = useMemo(() => ({ from: `${selectedYear}-01-01`, to: Number(selectedYear) === Number(today.slice(0, 4)) ? today : `${selectedYear}-12-31` }), [selectedYear, today]);
   const queryRange = period === "month" ? monthRange : period === "year" ? yearRange : range;
-  const validRange = Boolean(queryRange.from && queryRange.to && queryRange.from <= queryRange.to && queryRange.to <= today);
+  const validRange = Boolean(isValidDateKey(queryRange.from) && isValidDateKey(queryRange.to) && queryRange.from <= queryRange.to && queryRange.to <= today);
   const queryInput = useMemo(() => validRange ? dateInputRange(queryRange.from, queryRange.to) : undefined, [queryRange.from, queryRange.to, validRange]);
   const comparisonDates = useMemo(() => {
     if (!validRange) return undefined;
-    if (["month", "thisMonth", "previousMonth"].includes(period)) {
-      const currentMonthStart = `${queryRange.from.slice(0, 7)}-01`;
-      const previousMonthStart = addDateMonths(currentMonthStart, -1);
-      const previousMonthEnd = addDateDays(currentMonthStart, -1);
-      const currentDay = Number(queryRange.to.slice(8, 10));
-      const previousMonthMaxDay = Number(previousMonthEnd.slice(8, 10));
-      const sameElapsedEnd = addDateDays(previousMonthStart, Math.min(currentDay, previousMonthMaxDay) - 1);
-      return { from: previousMonthStart, to: period === "previousMonth" ? previousMonthEnd : sameElapsedEnd };
-    }
-    if (period === "year" && Number(selectedYear) < Number(today.slice(0, 4))) {
-      return { from: `${Number(selectedYear) - 1}-01-01`, to: `${Number(selectedYear) - 1}-12-31` };
-    }
-    return previousEquivalentRange(queryRange.from, queryRange.to);
+    return reportComparisonRange({ period, from: queryRange.from, to: queryRange.to, selectedYear: Number(selectedYear), today }) ?? undefined;
   }, [period, queryRange.from, queryRange.to, selectedYear, today, validRange]);
   const comparisonInput = useMemo(() => comparisonDates ? dateInputRange(comparisonDates.from, comparisonDates.to) : undefined, [comparisonDates?.from, comparisonDates?.to]);
   const reportQuery = trpc.admin.reportsSummary.useQuery(queryInput ?? { from: new Date(0).toISOString(), to: new Date(0).toISOString() }, {
@@ -102,14 +95,25 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
     setPeriod(next);
   };
 
+  const chooseMonthMode = () => {
+    setSelectedMonth(today.slice(0, 7));
+    setPeriod("month");
+  };
+
+  const chooseYearMode = () => {
+    setSelectedYear(today.slice(0, 4));
+    setPeriod("year");
+  };
+
   const data = validRange ? mockData ?? reportQuery.data : undefined;
   const comparison = mockData ? undefined : comparisonQuery.data;
   const queryDayCount = Math.round((Date.parse(`${queryRange.to}T00:00:00Z`) - Date.parse(`${queryRange.from}T00:00:00Z`)) / 86_400_000) + 1;
   const chartIsMonthly = period === "year" || queryDayCount > 62;
   const chartRows = data ? (chartIsMonthly ? data.monthly : data.daily) : [];
   const chartMax = Math.max(1, ...chartRows.map(row => row.totalCents));
-  const queryDateText = `${formatLocalDate(queryRange.from)} — ${formatLocalDate(queryRange.to)} · ${REPORT_TIME_ZONE}`;
+  const queryDateText = validRange ? `${formatLocalDate(queryRange.from)} — ${formatLocalDate(queryRange.to)} · ${REPORT_TIME_ZONE}` : "Informe datas válidas para consultar o relatório.";
   const comparisonDateText = comparisonDates ? `${formatLocalDate(comparisonDates.from)} — ${formatLocalDate(comparisonDates.to)}` : "";
+  const comparisonCriteria = validRange ? reportComparisonDescription({ period, from: queryRange.from, to: queryRange.to, selectedYear: Number(selectedYear), today }) : "";
   const isOpenPeriod = queryRange.to === today;
 
   async function exportReport(format: "csv" | "pdf") {
@@ -147,15 +151,14 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
         <div className="admin-reports-presets" role="group" aria-label="Períodos rápidos">
           {([ ["today", "Hoje"], ["7days", "7 dias"], ["30days", "30 dias"], ["thisMonth", "Este mês"], ["previousMonth", "Mês anterior"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={period === value} onClick={() => choosePeriod(value)}>{label}</button>)}
           <button type="button" aria-pressed={period === "custom"} onClick={() => setPeriod("custom")}>Personalizado</button>
+          <button type="button" aria-pressed={period === "month"} onClick={chooseMonthMode}>Mês específico</button>
+          <button type="button" aria-pressed={period === "year"} onClick={chooseYearMode}>Ano</button>
         </div>
       </div>
-      <div className="admin-reports-period-selectors">
-        <label>Consultar mês e ano<input type="month" max={today.slice(0, 7)} value={selectedMonth} onChange={event => { setSelectedMonth(event.target.value); setPeriod("month"); }} /></label>
-        <label>Consultar ano<select value={selectedYear} onChange={event => { setSelectedYear(event.target.value); setPeriod("year"); }}>
-          {Array.from({ length: Math.max(1, Number(today.slice(0, 4)) - 2017) }, (_, index) => Number(today.slice(0, 4)) - index).map(year => <option key={year} value={year}>{year}{year === Number(today.slice(0, 4)) ? " · em andamento" : ""}</option>)}
-        </select></label>
-        {period === "year" ? <span className="admin-reports-period-hint">Evolução agrupada por mês; o ano atual vai até hoje.</span> : null}
-      </div>
+      {period === "month" ? <div className="admin-reports-period-selectors"><label>Mês consultado<input type="month" max={today.slice(0, 7)} value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} /></label><span className="admin-reports-period-hint">Mês completo compara com o mês completo anterior; o mês em andamento compara os dias transcorridos.</span></div> : null}
+      {period === "year" ? <div className="admin-reports-period-selectors"><label>Ano consultado<select value={selectedYear} onChange={event => setSelectedYear(event.target.value)}>
+        {Array.from({ length: Math.max(1, Number(today.slice(0, 4)) - 2017) }, (_, index) => Number(today.slice(0, 4)) - index).map(year => <option key={year} value={year}>{year}{year === Number(today.slice(0, 4)) ? " · em andamento" : ""}</option>)}
+      </select></label><span className="admin-reports-period-hint">Evolução agrupada por mês; o ano atual vai até hoje.</span></div> : null}
       {period === "custom" ? <div className="admin-reports-date-range"><label>De<input type="date" max={today} value={range.from} onChange={event => setRange(current => ({ ...current, from: event.target.value }))} /></label><span>até</span><label>Até<input type="date" max={today} value={range.to} onChange={event => setRange(current => ({ ...current, to: event.target.value }))} /></label></div> : null}
       {!validRange ? <p className="admin-reports-error" role="alert">Selecione um intervalo válido até a data de hoje.</p> : null}
     </section>
@@ -168,12 +171,15 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
       <section id="report-overview" className="admin-reports-block" aria-labelledby="admin-report-overview">
         <div className="admin-reports-section-title"><div><h3 id="admin-report-overview">Visão geral</h3><p>Pedidos agrupados pela data de criação e pelo período acima.</p></div></div>
         <div className="admin-reports-kpis" aria-label="Indicadores do período">
-          <article className="is-primary"><span>Pedidos criados</span><strong>{data.ordersCount.toLocaleString("pt-BR")}</strong><small>{comparison ? deltaText(data.ordersCount, comparison.ordersCount) : "Contagem no período"}</small></article>
+          <article className="is-primary"><span>Pedidos criados</span><strong>{data.ordersCount.toLocaleString("pt-BR")}</strong><small>{comparison ? `${comparisonDelta(data.ordersCount, comparison.ordersCount).absolute} vs. período anterior` : "Contagem no período"}</small></article>
           <article><span>Valor histórico dos pedidos</span><strong>{money.format(data.ordersTotalCents / 100)}</strong><small>Todos os estados; inclui pendentes e cancelados.</small></article>
           <article><span>Pagamentos pendentes</span><strong>{data.pendingPaymentsCount}</strong><small>{money.format(data.pendingPaymentsCents / 100)} em pedidos criados no período.</small></article>
           <article><span>Ticket médio</span><strong>{money.format(data.averageOrderCents / 100)}</strong><small>Valor dos pedidos ÷ {data.ordersCount}; inclui todos os estados.</small></article>
         </div>
-        <div className="admin-reports-comparison"><strong>Comparação com período equivalente anterior · {comparisonDateText}</strong>{comparison ? <><div><span>Pedidos: {deltaText(data.ordersCount, comparison.ordersCount)}</span><span>Valor: {deltaText(data.ordersTotalCents, comparison.ordersTotalCents, true)}</span><span>Novos clientes: {deltaText(data.newCustomersCount, comparison.newCustomersCount)}</span><span>Unidades: {deltaText(data.products.reduce((sum, row) => sum + row.unitsInOrders, 0), comparison.products.reduce((sum, row) => sum + row.unitsInOrders, 0))}</span></div><ComparisonBars current={data} previous={comparison} money={money} /></> : <small>{mockData ? "Comparativo desativado na prévia." : comparisonQuery.isLoading ? "Calculando comparação…" : "Sem dados comparativos disponíveis."}</small>}</div>
+        <section className="admin-reports-comparison" aria-label="Comparação entre períodos">
+          <header><div><strong>Comparativo</strong><p>{comparisonCriteria}</p></div><span>Anterior: {comparisonDateText || "—"}</span></header>
+          {comparison ? <ComparisonCards current={data} previous={comparison} money={money} /> : <small>{mockData ? "Comparativo desativado na prévia." : comparisonQuery.isLoading ? "Calculando comparação…" : "Sem dados comparativos disponíveis."}</small>}
+        </section>
       </section>
 
       <section id="report-movement" className="admin-reports-section" aria-labelledby="admin-report-movement"><div className="admin-reports-section-title"><div><h3 id="admin-report-movement">Movimentações</h3><p>Valor histórico dos pedidos pela data de criação · fuso {REPORT_TIME_ZONE}.</p></div></div>
@@ -188,8 +194,11 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
 
       <div className="admin-reports-columns">
         <section id="report-finance" className="admin-reports-section" aria-labelledby="admin-report-finance"><div className="admin-reports-section-title"><div><h3 id="admin-report-finance">Financeiro</h3><p>Confirmação financeira separada da logística.</p></div></div>
-          <div className="admin-reports-finance-kpi"><span>Pedidos com confirmação financeira registrada no período</span><strong>{data.confirmedPaymentEventsCount} · {money.format(data.confirmedPaymentEventsCents / 100)}</strong><small>Usa paymentConfirmedAt com paymentStatus confirmado; soma o valor histórico do pedido.</small></div>
-          <p className="admin-reports-caveat">Não é extrato de liquidação nem receita líquida. O sistema não mantém valores normalizados de reembolso, estorno ou ajustes; por isso esses valores não são calculados.</p>
+          <div className="admin-reports-finance-kpis">
+            <article className="admin-reports-finance-kpi"><span>Pedidos criados no período com pagamento confirmado atualmente</span><strong>{data.confirmedPaymentsCount} · {money.format(data.confirmedPaymentsCents / 100)}</strong><small>Coorte por createdAt; paymentStatus atual confirmed. Soma o valor do pedido, mesmo que a confirmação tenha ocorrido depois do período.</small></article>
+            <article className="admin-reports-finance-kpi"><span>Confirmações financeiras ocorridas no período</span><strong>{data.confirmedPaymentEventsCount} · {money.format(data.confirmedPaymentEventsCents / 100)}</strong><small>paymentConfirmedAt no período e paymentStatus atual confirmed; soma o valor do pedido. Registros sem timestamp não entram.</small></article>
+          </div>
+          <p className="admin-reports-caveat">Nenhum dos valores é extrato de liquidação ou receita líquida. O sistema não mantém valores normalizados de reembolso, estorno ou ajustes; esses valores não são calculados.</p>
           <h4>Status financeiros atuais dos pedidos criados no período</h4><StatusList rows={data.paymentStatuses} names={paymentStatusName} tonePrefix="payment" money={money} />
           <h4>Status logísticos atuais dos pedidos criados no período</h4><StatusList rows={data.statuses} names={statusNames} tonePrefix="logistics" tones={logisticsTone} money={money} />
         </section>
@@ -227,31 +236,49 @@ function DailyLineChart({ rows, max, money: moneyFormat }: {
   max: number;
   money: Intl.NumberFormat;
 }) {
+  const plotLeft = 86;
+  const plotRight = 750;
+  const plotTop = 14;
+  const plotBottom = 111;
+  const axisMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", notation: "compact", maximumFractionDigits: 1 });
   const points = rows.map((row, index) => ({
     ...row,
-    x: rows.length <= 1 ? 350 : 10 + index * (680 / (rows.length - 1)),
-    y: 94 - row.totalCents / max * 78,
+    x: rows.length <= 1 ? (plotLeft + plotRight) / 2 : plotLeft + index * ((plotRight - plotLeft) / (rows.length - 1)),
+    y: plotBottom - row.totalCents / max * (plotBottom - plotTop),
   }));
   const labelStep = Math.max(1, Math.ceil(rows.length / 8));
-  return <div className="admin-reports-line-chart" role="img" aria-label={`Linha diária do valor de pedidos em ${rows.length} dias.`}>
-    <svg viewBox="0 0 700 112" preserveAspectRatio="none" aria-hidden="true">
-      <line x1="8" y1="95" x2="692" y2="95" />
+  return <div className="admin-reports-line-chart" role="img" aria-label={`Evolução diária do valor histórico de pedidos criados, em reais, por ${rows.length} dias.`}>
+    <svg viewBox="0 0 760 145" preserveAspectRatio="none" aria-hidden="true">
+      {[0, 0.5, 1].map((fraction, index) => {
+        const y = plotBottom - fraction * (plotBottom - plotTop);
+        const value = Math.round(max * fraction);
+        return <g key={index}><line x1={plotLeft} y1={y} x2={plotRight} y2={y} /><text x="0" y={y + 3}><title>{moneyFormat.format(value / 100)}</title>{axisMoney.format(value / 100)}</text></g>;
+      })}
       <polyline points={points.map(point => `${point.x},${point.y}`).join(" ")} />
       {points.map(point => <circle key={point.day} cx={point.x} cy={point.y} r="2.5"><title>{`${point.day}: ${moneyFormat.format(point.totalCents / 100)} · ${point.ordersCount} pedidos`}</title></circle>)}
     </svg>
-    <div className="admin-reports-line-labels">{rows.map((row, index) => <span key={row.day}>{index % labelStep === 0 || index === rows.length - 1 ? row.day.slice(5).replace("-", "/") : ""}</span>)}</div>
+    <div className="admin-reports-line-labels">{rows.map((row, index) => <span key={row.day} title={`${row.day} · ${moneyFormat.format(row.totalCents / 100)} · ${row.ordersCount} pedidos`}>{index % labelStep === 0 || index === rows.length - 1 ? row.day.slice(8) + "/" + row.day.slice(5, 7) : ""}</span>)}</div>
   </div>;
 }
 
-function ComparisonBars({ current, previous, money: moneyFormat }: { current: AdminSalesReportData; previous: AdminSalesReportData; money: Intl.NumberFormat }) {
+function ComparisonCards({ current, previous, money: moneyFormat }: { current: AdminSalesReportData; previous: AdminSalesReportData; money: Intl.NumberFormat }) {
   const metrics = [
     { label: "Pedidos", current: current.ordersCount, previous: previous.ordersCount, format: (value: number) => String(value) },
-    { label: "Valor registrado", current: current.ordersTotalCents, previous: previous.ordersTotalCents, format: (value: number) => moneyFormat.format(value / 100) },
+    { label: "Valor histórico dos pedidos", current: current.ordersTotalCents, previous: previous.ordersTotalCents, format: (value: number) => moneyFormat.format(value / 100), isMoney: true },
     { label: "Novos clientes", current: current.newCustomersCount, previous: previous.newCustomersCount, format: (value: number) => String(value) },
     { label: "Unidades em pedidos", current: current.products.reduce((sum, row) => sum + row.unitsInOrders, 0), previous: previous.products.reduce((sum, row) => sum + row.unitsInOrders, 0), format: (value: number) => String(value) },
   ];
-  return <div className="admin-reports-compare-bars" aria-label="Barras comparativas entre os períodos"><div className="admin-reports-compare-legend"><span><i className="current" />Selecionado</span><span><i className="previous" />Anterior</span></div>{metrics.map(metric => {
-    const maximum = Math.max(1, metric.current, metric.previous);
-    return <div className="admin-reports-compare-row" key={metric.label}><span>{metric.label}</span><div><i className="current" style={{ width: `${metric.current / maximum * 100}%` }} /><i className="previous" style={{ width: `${metric.previous / maximum * 100}%` }} /></div><small>{metric.format(metric.current)} / {metric.format(metric.previous)}</small></div>;
+  return <div className="admin-reports-comparison-cards">{metrics.map(metric => {
+    const maximum = Math.max(0, metric.current, metric.previous);
+    const currentDelta = comparisonDelta(metric.current, metric.previous, "isMoney" in metric && metric.isMoney);
+    return <article className="admin-reports-comparison-card" key={metric.label}>
+      <h4>{metric.label}</h4>
+      <div className="admin-reports-comparison-values"><div><span>Selecionado</span><strong>{metric.format(metric.current)}</strong></div><div><span>Período anterior</span><strong>{metric.format(metric.previous)}</strong></div></div>
+      <div className="admin-reports-comparison-bars" aria-hidden="true">
+        <div><span>Atual</span><i className="current" style={{ width: `${maximum ? metric.current / maximum * 100 : 0}%` }} /></div>
+        <div><span>Anterior</span><i className="previous" style={{ width: `${maximum ? metric.previous / maximum * 100 : 0}%` }} /></div>
+      </div>
+      <p><span>Variação</span><strong>{currentDelta.absolute}</strong><small>{currentDelta.percent}</small></p>
+    </article>;
   })}</div>;
 }

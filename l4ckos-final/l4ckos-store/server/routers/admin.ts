@@ -937,6 +937,8 @@ export const adminRouter = router({
         csvRow(["L4CKOS - Relatorio gerencial"]),
         csvRow(["periodFrom", input.from]),
         csvRow(["periodTo", input.to]),
+        csvRow(["periodFromLocalDate", localDateKey(from)]),
+        csvRow(["periodToLocalDate", localDateKey(to)]),
         csvRow(["timeZone", report.timeZone]),
         csvRow(["ordersCreated", report.ordersCount]),
         csvRow(["orderValueAllStatusesCents", report.ordersTotalCents]),
@@ -956,6 +958,7 @@ export const adminRouter = router({
         csvRow(["comparisonOrdersCreated", comparison.ordersCount]),
         csvRow(["comparisonOrderValueAllStatusesCents", comparison.ordersTotalCents]),
         csvRow(["comparisonNewCustomers", comparison.newCustomersCount]),
+        csvRow(["comparisonUnitsInOrders", comparison.products.reduce((sum, row) => sum + row.unitsInOrders, 0)]),
         "",
         csvRow(["section", "date", "ordersCount", "orderValueCents"]),
         ...report.daily.map(row => csvRow(["daily_summary", row.day, row.ordersCount, row.totalCents])),
@@ -975,7 +978,7 @@ export const adminRouter = router({
       ];
       await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.csv", entity: "report", metadata: { from: input.from, to: input.to, comparisonFrom: comparisonRange.from, comparisonTo: comparisonRange.to, rows: report.ordersCount } });
       return {
-        fileName: `l4ckos-relatorio-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.csv`,
+        fileName: `l4ckos-relatorio-${localDateKey(from)}-${localDateKey(to)}.csv`,
         csv: lines.join("\n"),
       };
     }),
@@ -1021,7 +1024,7 @@ export const adminRouter = router({
       const pdf = renderSalesReportPdf(report, new Date(), comparison);
       await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.pdf", entity: "report", metadata: { from: input.from, to: input.to, comparisonFrom: input.comparisonFrom, comparisonTo: input.comparisonTo, orders: report.ordersCount } });
       return {
-        fileName: `l4ckos-relatorio-gerencial-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.pdf`,
+        fileName: `l4ckos-relatorio-gerencial-${localDateKey(new Date(input.from))}-${localDateKey(new Date(input.to))}.pdf`,
         pdfBase64: pdf.toString("base64"),
       };
     }),

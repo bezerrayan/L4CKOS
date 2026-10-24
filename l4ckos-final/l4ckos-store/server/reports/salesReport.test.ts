@@ -58,6 +58,23 @@ describe("sales report aggregation and PDF", () => {
     expect(pdf.toString("ascii")).toContain(Buffer.from("reembolsos/ajustes").toString("hex").toUpperCase());
   });
 
+  it("flows a small report through content instead of reserving a page for every section", () => {
+    const rows = Array.from({ length: 9 }, (_, index) => ({
+      id: index + 1,
+      createdAt: new Date(Date.UTC(2026, 9, 20, 12, index)).toISOString(),
+      status: index % 2 ? "paid" : "pending",
+      paymentStatus: index % 2 ? "confirmed" : "unconfirmed",
+      totalPrice: 8990 + index,
+    }));
+    const current = aggregateSalesReport(rows, from, to);
+    const previous = aggregateSalesReport([], new Date("2026-10-17T03:00:00.000Z"), new Date("2026-10-20T02:59:59.999Z"));
+    const pdf = renderSalesReportPdf(current, new Date("2026-10-22T12:00:00.000Z"), previous).toString("ascii");
+    expect(pdf.match(/\/Type \/Page\b/g)?.length).toBeLessThanOrEqual(2);
+    expect(pdf).not.toContain(Buffer.from("Pago:").toString("hex").toUpperCase());
+    expect(pdf).toContain("416775617264616E646F2070726570617261E7E36F");
+    expect(pdf).toContain(Buffer.from("Base anterior zero").toString("hex").toUpperCase());
+  });
+
   it("splits long reports across valid A4 pages with page numbering", () => {
     const rows = Array.from({ length: 120 }, (_, index) => ({
       id: index + 1,

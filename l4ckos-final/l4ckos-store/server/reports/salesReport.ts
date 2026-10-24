@@ -1,5 +1,5 @@
 import type { AdminSalesReportData } from "../../shared/reports";
-import { addDateDays, addDateMonths, localDateKey, REPORT_TIME_ZONE } from "../../shared/reportPeriods";
+import { addDateDays, addDateMonths, localDateKey, monthDateRange, REPORT_TIME_ZONE } from "../../shared/reportPeriods";
 
 export type SalesReportOrder = {
   id: number;
@@ -146,8 +146,40 @@ function winAnsiHex(value: string) {
 const money = (cents: number) => `R$ ${(cents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateTime = (iso: string) => new Intl.DateTimeFormat("pt-BR", { timeZone: REPORT_TIME_ZONE, dateStyle: "short", timeStyle: "short" }).format(new Date(iso));
 const statusLabels: Record<string, string> = {
-  pending: "Pendente", processing: "Em preparação", paid: "Pago", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado",
+  pending: "Pendente", paid: "Aguardando preparação", processing: "Em separação", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado",
 };
+const logisticsColors: Record<string, string> = {
+  pending: "0.96 0.62 0.04", paid: "0.66 0.33 0.97", processing: "0.05 0.65 0.91",
+  shipped: "0.39 0.40 0.95", delivered: "0.09 0.64 0.29", cancelled: "0.94 0.27 0.27",
+};
+const paymentColors: Record<string, string> = { confirmed: "0.09 0.64 0.29", unconfirmed: "0.96 0.62 0.04" };
+
+function reportDelta(current: number, previous: number, cents = false) {
+  const delta = current - previous;
+  const magnitude = cents ? money(Math.abs(delta)) : Math.abs(delta).toLocaleString("pt-BR");
+  const absolute = delta === 0 ? (cents ? money(0) : "0") : `${delta > 0 ? "+" : "−"}${magnitude}`;
+  const percent = previous === 0
+    ? "Indisponível · base anterior zero"
+    : `${delta === 0 ? "0,0" : (delta / previous * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ${delta > 0 ? "acima" : delta < 0 ? "abaixo" : "sem variação"}`;
+  return { absolute, percent };
+}
+
+function pdfComparisonDescription(report: SalesReportData, comparison?: SalesReportData) {
+  if (!comparison) return "Comparação equivalente anterior não informada.";
+  const currentFrom = localDateKey(new Date(report.from));
+  const currentTo = localDateKey(new Date(report.to));
+  const priorFrom = localDateKey(new Date(comparison.from));
+  const priorTo = localDateKey(new Date(comparison.to));
+  const currentMonth = monthDateRange(Number(currentFrom.slice(0, 4)), Number(currentFrom.slice(5, 7)));
+  const priorMonth = monthDateRange(Number(priorFrom.slice(0, 4)), Number(priorFrom.slice(5, 7)));
+  if (currentFrom.endsWith("-01") && currentTo === currentMonth.to && priorFrom.endsWith("-01") && priorTo === priorMonth.to) return "Mês completo versus mês completo anterior";
+  if (currentFrom.endsWith("-01") && priorFrom.endsWith("-01") && currentFrom.slice(5) === priorFrom.slice(5)) return "Mesmo intervalo transcorrido versus mês anterior";
+  const currentYearFull = currentFrom.endsWith("-01-01") && currentTo.endsWith("-12-31");
+  const previousYearFull = priorFrom.endsWith("-01-01") && priorTo.endsWith("-12-31");
+  if (currentYearFull && previousYearFull) return "Ano completo versus ano completo anterior";
+  if (currentFrom.endsWith("-01-01") && priorFrom.endsWith("-01-01")) return "Intervalo transcorrido versus o mesmo intervalo do ano anterior";
+  return "Períodos consecutivos de igual duração";
+}
 
 function pdfText(x: number, y: number, size: number, value: string, color = "0.12 0.12 0.12", font = "F1") {
   return `BT /${font} ${size} Tf ${color} rg 1 0 0 1 ${x.toFixed(2)} ${(842 - y).toFixed(2)} Tm <${winAnsiHex(value)}> Tj ET\n`;
@@ -196,6 +228,16 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
     content += pdfLine(left, y, right, y, "0.65 0.65 0.65", 0.8);
     y += 19;
   };
+  const ensureSpace = (height: number) => {
+    if (y + height > 792) newPage(true);
+  };
+  const addParagraph = (value: string, size = 8) => {
+    const paragraph = pdfParagraph(left, y, size, value);
+    ensureSpace(paragraph.height + 4);
+    const adjusted = pdfParagraph(left, y, size, value);
+    content += adjusted.content;
+    y += adjusted.height + 4;
+  };
 
   newPage(false);
   const localDate = new Intl.DateTimeFormat("pt-BR", { timeZone: REPORT_TIME_ZONE, dateStyle: "long" });
@@ -206,10 +248,10 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
   y += 27;
   const kpis = [
     ["PEDIDOS CRIADOS", String(report.ordersCount)],
-    ["VALOR DOS PEDIDOS · TODOS OS ESTADOS", money(report.ordersTotalCents)],
-    ["CONFIRMAÇÕES FINANCEIRAS REGISTRADAS", `${report.confirmedPaymentEventsCount} · ${money(report.confirmedPaymentEventsCents)}`],
+    ["VALOR HISTÓRICO DOS PEDIDOS · TODOS OS ESTADOS", money(report.ordersTotalCents)],
+    ["CRIADOS NO PERÍODO · PAGAMENTO CONFIRMADO ATUALMENTE", `${report.confirmedPaymentsCount} · ${money(report.confirmedPaymentsCents)}`],
+    ["CONFIRMAÇÕES OCORRIDAS NO PERÍODO", `${report.confirmedPaymentEventsCount} · ${money(report.confirmedPaymentEventsCents)}`],
     ["PAGAMENTOS PENDENTES", `${report.pendingPaymentsCount} · ${money(report.pendingPaymentsCents)}`],
-    ["PEDIDOS CANCELADOS", String(report.statuses.find(row => row.status === "cancelled")?.count ?? 0)],
     ["TICKET MÉDIO · TODOS OS PEDIDOS", money(report.averageOrderCents)],
   ];
   const cardGap = 10;
@@ -218,30 +260,45 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
     const col = index % 2;
     const row = Math.floor(index / 2);
     const x = left + col * (cardWidth + cardGap);
-    const top = y + row * 53;
-    content += pdfRect(x, top, cardWidth, 46, "0.95 0.95 0.95");
-    content += pdfRect(x, top, 3, 46, index === 0 ? "0.91 0.01 0.16" : "0.28 0.28 0.28");
-    content += pdfText(x + 12, top + 15, 7, label, "0.35 0.35 0.35");
-    content += pdfText(x + 12, top + 35, 12, value, "0.06 0.06 0.06", "F2");
+    const top = y + row * 45;
+    content += pdfRect(x, top, cardWidth, 39, "0.95 0.95 0.95");
+    content += pdfRect(x, top, 3, 39, index < 2 ? "0.91 0.01 0.16" : "0.28 0.28 0.28");
+    content += pdfText(x + 10, top + 13, 7.2, label, "0.35 0.35 0.35");
+    content += pdfText(x + 10, top + 31, 10.5, value, "0.06 0.06 0.06", "F2");
   });
-  y += 174;
-  const priorPeriodLabel = comparison ? `Comparação com o período anterior · ${localDate.format(new Date(comparison.from))} a ${localDate.format(new Date(comparison.to))}` : "Comparação com o período equivalente anterior";
-  content += pdfText(left, y, 11, priorPeriodLabel, "0.08 0.08 0.08", "F2");
+  y += Math.ceil(kpis.length / 2) * 45 + 4;
+  const comparisonTitle = `Comparativo · ${pdfComparisonDescription(report, comparison)}`;
+  ensureSpace(comparison ? 132 : 36);
+  content += pdfText(left, y, 11, comparisonTitle, "0.08 0.08 0.08", "F2");
   y += 16;
   if (comparison) {
+    const selectedLabel = `${localDate.format(new Date(report.from))} a ${localDate.format(new Date(report.to))}`;
+    const previousLabel = `${localDate.format(new Date(comparison.from))} a ${localDate.format(new Date(comparison.to))}`;
+    addParagraph(`Selecionado: ${selectedLabel} · Anterior: ${previousLabel}`, 7);
     const comparisons = [
       ["Pedidos", report.ordersCount, comparison.ordersCount],
-      ["Valor registrado", report.ordersTotalCents, comparison.ordersTotalCents],
+      ["Valor histórico", report.ordersTotalCents, comparison.ordersTotalCents],
       ["Novos clientes", report.newCustomersCount, comparison.newCustomersCount],
       ["Unidades em pedidos", report.products.reduce((sum, row) => sum + row.unitsInOrders, 0), comparison.products.reduce((sum, row) => sum + row.unitsInOrders, 0)],
     ] as const;
+    content += pdfText(left, y + 8, 7, "INDICADOR", "0.42 0.42 0.42");
+    content += pdfText(180, y + 8, 7, "SELECIONADO", "0.42 0.42 0.42");
+    content += pdfText(278, y + 8, 7, "ANTERIOR", "0.42 0.42 0.42");
+    content += pdfText(370, y + 8, 7, "VARIAÇÃO", "0.42 0.42 0.42");
+    content += pdfText(479, y + 8, 7, "VAR. %", "0.42 0.42 0.42");
+    y += 12;
     for (const [label, current, previous] of comparisons) {
-      const delta = current - previous;
-      const pct = previous === 0 ? "percentual indisponível (base zero)" : `${((delta / previous) * 100).toFixed(1)}%`;
-      const displayDelta = label === "Valor registrado" ? money(Math.abs(delta)) : String(Math.abs(delta));
-      content += pdfText(left, y + 10, 8, label, "0.28 0.28 0.28");
-      content += pdfText(205, y + 10, 8, `${delta >= 0 ? "+" : "−"}${displayDelta} · ${pct}`, "0.12 0.12 0.12");
-      y += 17;
+      const cents = label === "Valor histórico";
+      const delta = reportDelta(current, previous, cents);
+      const formatter = cents ? money : (value: number) => value.toLocaleString("pt-BR");
+      const top = y;
+      content += pdfRect(left, top, right - left, 19, "0.97 0.97 0.97");
+      content += pdfText(left + 4, top + 13, 7.4, label, "0.22 0.22 0.22");
+      content += pdfText(180, top + 13, 7.4, formatter(current), "0.12 0.12 0.12");
+      content += pdfText(278, top + 13, 7.4, formatter(previous), "0.12 0.12 0.12");
+      content += pdfText(370, top + 13, 7.4, delta.absolute, "0.12 0.12 0.12");
+      content += pdfText(479, top + 13, 6.5, previous === 0 ? "Base anterior zero" : delta.percent, "0.28 0.28 0.28");
+      y += 20;
     }
   } else {
     content += pdfText(left, y + 9, 8, "Comparativo não informado.", "0.38 0.38 0.38");
@@ -255,10 +312,19 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
   content += pdfText(320, y, 7, "paymentStatus atual", "0.4 0.4 0.4");
   y += 13;
   for (let index = 0; index < Math.max(report.statuses.length, report.paymentStatuses.length); index += 1) {
+    ensureSpace(15);
     const logistics = report.statuses[index];
     const financial = report.paymentStatuses[index];
-    if (logistics) content += pdfText(left, y, 8, `${statusLabels[logistics.status] ?? logistics.status}: ${logistics.count} · ${money(logistics.totalCents)}`, "0.2 0.2 0.2");
-    if (financial) content += pdfText(320, y, 8, `${financial.status === "confirmed" ? "Confirmado" : "Não confirmado"}: ${financial.count} · ${money(financial.totalCents)}`, "0.2 0.2 0.2");
+    if (logistics) {
+      const [red, green, blue] = (logisticsColors[logistics.status] ?? "0.28 0.28 0.28").split(" ");
+      content += pdfRect(left, y - 7, 3, 9, `${red} ${green} ${blue}`);
+      content += pdfText(left + 7, y, 8, `${statusLabels[logistics.status] ?? logistics.status}: ${logistics.count} · ${money(logistics.totalCents)}`, "0.2 0.2 0.2");
+    }
+    if (financial) {
+      const color = financial.status === "confirmed" ? paymentColors.confirmed : paymentColors.unconfirmed;
+      content += pdfRect(320, y - 7, 3, 9, color);
+      content += pdfText(327, y, 8, `${financial.status === "confirmed" ? "Confirmado" : "Não confirmado"}: ${financial.count} · ${money(financial.totalCents)}`, "0.2 0.2 0.2");
+    }
     y += 14;
   }
   content += pdfLine(left, y + 1, right, y + 1, "0.78 0.78 0.78", 0.5);
@@ -268,13 +334,18 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
     "Confirmações financeiras usam paymentConfirmedAt e o estado canônico confirmed; o valor é do pedido, não um extrato de liquidação. Registros legados sem timestamp não entram nesta métrica.",
     "Não há registro financeiro normalizado de reembolsos/ajustes nem movimentos históricos de estoque; receita líquida e valores recebidos não são calculados.",
   ];
-  for (const note of notes) { const paragraph = pdfParagraph(left, y, 8, note); content += paragraph.content; y += paragraph.height + 2; }
+  for (const note of notes) addParagraph(note, 8);
 
-  newPage(true);
+  const listedProducts = Math.min(report.products.length, 18);
+  const listedOrders = Math.min(report.orders.length, 100);
+  const remainingContentEstimate = 250 + listedProducts * 17 + (listedOrders ? 40 + listedOrders * 17 : 0);
+  if (report.orders.length && y + remainingContentEstimate > 792) newPage(true);
+  ensureSpace(125);
   content += pdfText(left, y, 14, "Movimentações e clientes", "0.08 0.08 0.08", "F2");
   y += 22;
   const chartRows = report.monthly.length > 3 ? report.monthly : report.daily;
   const chartLabel = report.monthly.length > 3 ? "Evolução mensal · valor dos pedidos" : "Evolução diária · valor dos pedidos";
+  ensureSpace(110);
   content += pdfText(left, y, 11, chartLabel, "0.08 0.08 0.08", "F2");
   y += 15;
   if (!report.ordersCount && !chartRows.some(row => row.totalCents > 0)) {
@@ -325,19 +396,19 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
     y += 18;
   }
   for (const product of topProducts) {
-    if (y > 780) { newPage(true); }
+    ensureSpace(18);
     const productLabel = product.productName.length > 62 ? `${product.productName.slice(0, 59)}...` : product.productName;
     content += pdfText(left, y + 9, 8, `#${product.productId} ${productLabel}`, "0.12 0.12 0.12");
     content += pdfText(430, y + 9, 8, `${product.unitsInOrders} un. · ${product.unitsInCancelledOrders} canceladas`, "0.28 0.28 0.28");
     content += pdfLine(left, y + 13, right, y + 13, "0.86 0.86 0.86", 0.35);
     y += 17;
   }
-  const productNote = pdfParagraph(left, y + 8, 8, "Unidades representam linhas registradas em pedidos; cancelamentos são apresentados em separado e não equivalem a vendas pagas.");
-  content += productNote.content;
-  y += productNote.height + 16;
+  y += 8;
+  addParagraph("Unidades representam linhas registradas em pedidos; cancelamentos são apresentados em separado e não equivalem a vendas pagas.", 8);
+  y += 10;
 
   if (report.orders.length) {
-    newPage(true);
+    ensureSpace(42);
     content += pdfText(left, y, 14, "Pedidos do período", "0.08 0.08 0.08", "F2");
     content += pdfText(left, y + 14, 8, `Amostra dos até 100 pedidos mais recentes; indicadores e tabelas de status abrangem todos os ${report.ordersCount} pedidos. Sem dados pessoais.`, "0.38 0.38 0.38");
     y += 32;
@@ -353,10 +424,12 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
   };
   header();
   for (const order of report.orders.slice(0, 100)) {
-    if (y > 785) { newPage(true); y += 5; header(); }
+    if (y + 17 > 792) { newPage(true); y += 5; content += pdfText(left, y - 2, 9, "Pedidos do período · continuação", "0.08 0.08 0.08", "F2"); y += 12; header(); }
     content += pdfText(left, y + 9, 8, `#${order.id}`, "0.05 0.05 0.05");
     content += pdfText(125, y + 9, 8, dateTime(order.createdAt), "0.05 0.05 0.05");
-    content += pdfText(292, y + 9, 8, statusLabels[order.status] ?? order.status, "0.05 0.05 0.05");
+    const [statusRed, statusGreen, statusBlue] = (logisticsColors[order.status] ?? "0.28 0.28 0.28").split(" ");
+    content += pdfRect(289, y + 2, 3, 8, `${statusRed} ${statusGreen} ${statusBlue}`);
+    content += pdfText(296, y + 9, 8, statusLabels[order.status] ?? order.status, "0.05 0.05 0.05");
     content += pdfText(405, y + 9, 8, order.paymentStatus === "confirmed" ? "Confirmado" : "Não confirmado", "0.05 0.05 0.05");
     content += pdfText(500, y + 9, 8, money(order.totalPriceCents), "0.05 0.05 0.05");
     content += pdfLine(left, y + 13, right, y + 13, "0.86 0.86 0.86", 0.35);

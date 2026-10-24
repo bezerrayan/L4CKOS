@@ -1,24 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { localDateKey, localDateRange, monthDateRange, previousEquivalentRange, saoPauloMidnightUtc } from "../../shared/reportPeriods";
+import { isValidDateKey, localDateRange, reportComparisonDescription, reportComparisonRange } from "../../shared/reportPeriods";
 
-describe("report business periods", () => {
-  it("converts Sao Paulo calendar boundaries to UTC without changing stored timestamps", () => {
-    expect(saoPauloMidnightUtc("2026-10-01").toISOString()).toBe("2026-10-01T03:00:00.000Z");
-    expect(localDateRange("2026-10-01", "2026-10-31")).toEqual({
+describe("gerencial reporting periods", () => {
+  it("converts local calendar boundaries to UTC without losing the final selected day", () => {
+    expect(localDateRange("2026-10-01", "2026-10-19")).toEqual({
       from: "2026-10-01T03:00:00.000Z",
-      to: "2026-11-01T02:59:59.999Z",
+      to: "2026-10-20T02:59:59.999Z",
     });
-    expect(localDateKey(new Date("2026-10-01T02:59:59.999Z"))).toBe("2026-09-30");
-    expect(localDateKey(new Date("2026-10-01T03:00:00.000Z"))).toBe("2026-10-01");
   });
 
-  it("selects leap-month boundaries and equivalent previous ranges", () => {
-    expect(monthDateRange(2024, 2)).toEqual({ from: "2024-02-01", to: "2024-02-29" });
-    expect(previousEquivalentRange("2026-10-01", "2026-10-31")).toEqual({ from: "2026-08-31", to: "2026-09-30" });
+  it("compares a completed month with the previous completed month", () => {
+    const input = { period: "month" as const, from: "2026-09-01", to: "2026-09-30", today: "2026-10-24" };
+    expect(reportComparisonRange(input)).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+    expect(reportComparisonDescription(input)).toBe("mês completo versus mês completo anterior");
   });
 
-  it("does not include a future portion when the selected range ends today", () => {
-    const now = new Date("2026-10-24T12:30:00.000Z");
-    expect(localDateRange("2026-10-24", "2026-10-24", now).to).toBe(now.toISOString());
+  it("compares an in-progress month over the same elapsed local dates, clamped at February's end", () => {
+    const input = { period: "thisMonth" as const, from: "2026-03-01", to: "2026-03-31", today: "2026-03-31" };
+    expect(reportComparisonRange(input)).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    expect(reportComparisonDescription(input)).toBe("mesmo intervalo transcorrido no mês anterior");
+  });
+
+  it("compares custom periods with the immediately preceding interval of equal duration", () => {
+    const input = { period: "custom" as const, from: "2026-10-01", to: "2026-10-19", today: "2026-10-24" };
+    expect(reportComparisonRange(input)).toEqual({ from: "2026-09-12", to: "2026-09-30" });
+    expect(reportComparisonDescription(input)).toBe("intervalos consecutivos de igual duração");
+  });
+
+  it("compares a year in progress with the same calendar interval in the previous year", () => {
+    const input = { period: "year" as const, from: "2026-01-01", to: "2026-10-24", selectedYear: 2026, today: "2026-10-24" };
+    expect(reportComparisonRange(input)).toEqual({ from: "2025-01-01", to: "2025-10-24" });
+    expect(reportComparisonDescription(input)).toBe("mesmas datas do ano anterior");
+  });
+
+  it("rejects impossible calendar days and handles leap February ranges", () => {
+    expect(isValidDateKey("2026-02-29")).toBe(false);
+    expect(isValidDateKey("2024-02-29")).toBe(true);
+    const february = { period: "month" as const, from: "2024-02-01", to: "2024-02-29", today: "2026-10-24" };
+    expect(reportComparisonRange(february)).toEqual({ from: "2024-01-01", to: "2024-01-31" });
   });
 });

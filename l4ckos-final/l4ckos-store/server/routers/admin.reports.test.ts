@@ -85,7 +85,7 @@ describe("admin reports contracts", () => {
   it("generates authorized PDF bytes from server data without including customer PII", async () => {
     const result = await (await caller(adminUser)).reportsSalesPdf(range);
     const pdf = Buffer.from(result.pdfBase64, "base64").toString("ascii");
-    expect(result.fileName).toContain("2026-10-20-2026-10-21");
+    expect(result.fileName).toContain("2026-10-19-2026-10-21");
     expect(pdf).toContain("%PDF-1.4");
     expect(pdf).toContain(Buffer.from("America/Sao_Paulo").toString("hex").toUpperCase());
     expect(pdf).toContain(Buffer.from("PEDIDOS CRIADOS").toString("hex").toUpperCase());
@@ -94,5 +94,13 @@ describe("admin reports contracts", () => {
     expect(pdf).not.toContain(Buffer.from("=HYPERLINK").toString("hex").toUpperCase());
     expect(dbMocks.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report.export.pdf", actorUserId: adminUser.id }));
     await expect((await caller(regularUser)).reportsSalesPdf(range)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("names exported files with the selected São Paulo dates, not the exclusive UTC boundary", async () => {
+    const range = { from: "2026-10-01T03:00:00.000Z", to: "2026-10-20T02:59:59.999Z" };
+    const csv = await (await caller(adminUser)).reportsSalesCsv(range);
+    const pdf = await (await caller(adminUser)).reportsSalesPdf(range);
+    expect(csv.fileName).toBe("l4ckos-relatorio-2026-10-01-2026-10-19.csv");
+    expect(pdf.fileName).toBe("l4ckos-relatorio-gerencial-2026-10-01-2026-10-19.pdf");
   });
 });
