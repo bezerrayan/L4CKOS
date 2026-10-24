@@ -196,6 +196,7 @@ export function OrderDetailPanel({
   const items = order.items ?? [];
   const itemCount = items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
   const paymentConfirmed = order.paymentStatus === "confirmed";
+  const reservationItems = items.filter(item => Boolean(item.status));
 
   return (
     <article className={`admin-order-detail${className ? ` ${className}` : ""}`}>
@@ -240,10 +241,18 @@ export function OrderDetailPanel({
               <div className="admin-order-address-lines">{addressLines(order.shippingAddress).map((line, index) => <span key={`${order.id}-address-${index}`}>{line}</span>)}</div>
             </div> : <p className="admin-order-muted">Nenhum endereço disponível para este pedido.</p>}
           </section>
+
+          {reservationItems.length ? <section className="admin-order-info-card admin-order-reservations" aria-labelledby="admin-order-reservations-heading">
+            <h4 id="admin-order-reservations-heading">Reserva de estoque</h4>
+            <ul>{reservationItems.map((item, index) => <li key={`${order.id}-reservation-${item.id ?? item.productId}-${index}`}>
+              <span>{item.productName || `Produto #${item.productId ?? "—"}`} · {Number(item.quantity ?? 0)} un.</span>
+              <strong>{reservationStateLabels[String(item.status)] ?? String(item.status)}</strong>
+            </li>)}</ul>
+          </section> : null}
         </div>
 
         <section className="admin-order-products-panel" aria-labelledby="admin-order-products-heading">
-          <header className="admin-order-products-header"><div><span>Itens registrados na compra</span><h4 id="admin-order-products-heading">Produtos do pedido</h4></div><strong>{items.length}</strong></header>
+          <header className="admin-order-products-header"><div><h4 id="admin-order-products-heading">Produtos do pedido</h4></div><strong aria-label={`${items.length} itens`}>{items.length}</strong></header>
           {items.length === 0 ? <AdminEmptyState title="Sem itens detalhados" description="Este pedido ainda não possui itens detalhados na reserva." /> : <div className="admin-order-products-list">
             {items.map((item, index) => {
               const quantity = Number(item.quantity ?? 0);
@@ -252,18 +261,17 @@ export function OrderDetailPanel({
               const spec = [item.variantName, item.color && `Cor ${item.color}`, item.size && `Tamanho ${item.size}`].filter(Boolean);
               return <article key={`${order.id}-${item.id ?? item.productId}-${index}`} className="admin-order-product-card">
                 <div className="admin-order-product-identity">
-                  {item.productImage ? <img src={item.productImage} alt="" loading="lazy" /> : <div className="admin-order-product-image-empty" aria-hidden="true">Sem imagem</div>}
+                  {item.productImage ? <img src={item.productImage} alt={item.productName || `Produto #${item.productId ?? "—"}`} loading="lazy" /> : <div className="admin-order-product-image-empty" aria-hidden="true">Sem imagem</div>}
                   <div className="admin-order-product-title"><span>Produto #{item.productId ?? "—"}{item.sku ? ` · SKU ${item.sku}` : ""}</span><h5>{item.productName || `Produto #${item.productId ?? "—"}`}</h5>
                     {spec.length ? <p>{spec.join(" · ")}</p> : <p>Variação não registrada</p>}
                     {item.salesModeAtPurchase === "PREORDER" && item.productionBatchNameAtPurchase ? <p>Pré-venda · {item.productionBatchNameAtPurchase}</p> : null}
-                    {item.status && reservationStateLabels[item.status] ? <span className="admin-reservation-state">Reserva: {reservationStateLabels[item.status]}</span> : null}
+                    <dl className="admin-order-product-pricing">
+                      <div><dt>Quantidade</dt><dd>{Number.isFinite(quantity) ? quantity : "—"}</dd></div>
+                      {unitPrice !== null && Number.isFinite(unitPrice) ? <div><dt>Preço unitário</dt><dd>{formatPrice(unitPrice / 100)}</dd></div> : null}
+                      {subtotal !== null ? <div><dt>Subtotal do item</dt><dd>{formatPrice(subtotal / 100)}</dd></div> : null}
+                    </dl>
                   </div>
                 </div>
-                <dl className="admin-order-product-pricing">
-                  <div><dt>Quantidade</dt><dd>{Number.isFinite(quantity) ? quantity : "—"}</dd></div>
-                  {unitPrice !== null && Number.isFinite(unitPrice) ? <div><dt>Preço unitário</dt><dd>{formatPrice(unitPrice / 100)}</dd></div> : null}
-                  {subtotal !== null ? <div><dt>Subtotal do item</dt><dd>{formatPrice(subtotal / 100)}</dd></div> : null}
-                </dl>
               </article>;
             })}
           </div>}

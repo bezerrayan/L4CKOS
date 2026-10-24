@@ -4,7 +4,7 @@ import { AdminBatches } from "../components/admin/batches/AdminBatches";
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
-import { ExternalLink, MoreHorizontal } from "lucide-react";
+import { AlertTriangle, ExternalLink, MoreHorizontal } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
@@ -57,6 +57,7 @@ import { AdminHomeHighlightsPanel } from "../components/admin/promotions/AdminHo
 import { AdminReportsPanel } from "../components/admin/reports/AdminReportsPanel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -369,7 +370,7 @@ function formatAdminAddressLine(address?: {
   return [lineOneWithComplement, lineTwo, lineThree].filter(Boolean);
 }
 
-function confirmAdminAction(message: string) {
+function confirmWaitlistCampaignSend(message: string) {
   return window.confirm(message);
 }
 
@@ -458,6 +459,8 @@ export default function Admin() {
   const [orderActionStatus, setOrderActionStatus] = useState<string>("pending");
   const [orderActionTracking, setOrderActionTracking] = useState("");
   const [orderActionFeedback, setOrderActionFeedback] = useState("");
+  const [pendingLogisticsConfirmation, setPendingLogisticsConfirmation] = useState<{ orderId: number; currentStatus: string; nextStatus: typeof orderStatuses[number] } | null>(null);
+  const [logisticsConfirmationError, setLogisticsConfirmationError] = useState("");
   const [newProduct, setNewProduct] = useState({ ...emptyProductForm });
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [editProduct, setEditProduct] = useState({ ...emptyProductForm });
@@ -511,11 +514,16 @@ export default function Admin() {
     if (orderActionDialog.kind === "logistics") {
       const nextStatus = orderActionStatus as typeof orderStatuses[number];
       if (!(orderLogisticsStatuses as readonly string[]).includes(nextStatus) || !isOrderStatusChoiceEnabled(nextStatus)) return;
-      if (!confirmAdminAction(`Alterar o pedido #${orderActionDialog.orderId} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
-      updateOrderMutation.mutate({ orderId: orderActionDialog.orderId, status: nextStatus });
+      setLogisticsConfirmationError("");
+      setPendingLogisticsConfirmation({ orderId: orderActionDialog.orderId, currentStatus: orderActionDialog.currentStatus, nextStatus });
     } else {
       updateOrderMutation.mutate({ orderId: orderActionDialog.orderId, trackingCode: orderActionTracking.trim() || null });
     }
+  };
+
+  const confirmLogisticsUpdate = () => {
+    if (!pendingLogisticsConfirmation || updateOrderMutation.isPending) return;
+    updateOrderMutation.mutate({ orderId: pendingLogisticsConfirmation.orderId, status: pendingLogisticsConfirmation.nextStatus });
   };
 
   async function uploadAdminImages(files: FileList | null, mode: "single" | "multiple", target: string) {
@@ -642,11 +650,15 @@ export default function Admin() {
       showToast({ message: "Pedido atualizado", duration: 2000 });
       setOrderActionDialog(null);
       setOrderActionFeedback("");
+      setPendingLogisticsConfirmation(null);
+      setLogisticsConfirmationError("");
       void ordersQuery.refetch();
       void dashboardQuery.refetch();
     },
     onError: error => {
-      setOrderActionFeedback(error.message || "Não foi possível atualizar o pedido. Revise os dados e tente novamente.");
+      const message = error.message || "Não foi possível atualizar o pedido. Revise os dados e tente novamente.";
+      setOrderActionFeedback(message);
+      if (pendingLogisticsConfirmation) setLogisticsConfirmationError(message);
       showToast({ message: error.message, duration: 2600 });
     },
   });
@@ -1337,7 +1349,7 @@ export default function Admin() {
                     showToast({ message: "Informe um lote válido entre 1 e 100", duration: 2400 });
                     return;
                   }
-                  if (!confirmAdminAction("Confirma o envio para toda a lista de espera?")) return;
+                  if (!confirmWaitlistCampaignSend("Confirma o envio para toda a lista de espera?")) return;
 
                   setLaunchEmailResult(null);
                   waitlistLaunchSendMutation.mutate({
@@ -1467,6 +1479,38 @@ export default function Admin() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={Boolean(pendingLogisticsConfirmation)} onOpenChange={open => {
+        if (!open && !updateOrderMutation.isPending) {
+          setPendingLogisticsConfirmation(null);
+          setLogisticsConfirmationError("");
+        }
+      }}>
+        {pendingLogisticsConfirmation ? <AlertDialogContent className="admin-order-confirm-dialog" onEscapeKeyDown={event => { if (updateOrderMutation.isPending) event.preventDefault(); }}>
+          <AlertDialogHeader className="admin-order-confirm-dialog__header">
+            <span className={`admin-order-confirm-dialog__icon${pendingLogisticsConfirmation.nextStatus === "cancelled" ? " is-danger" : ""}`} aria-hidden="true"><AlertTriangle size={19} /></span>
+            <AlertDialogTitle>{pendingLogisticsConfirmation.nextStatus === "cancelled" ? "Confirmar cancelamento" : "Confirmar atualização logística"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Pedido #{pendingLogisticsConfirmation.orderId}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="admin-order-confirm-dialog__transition">
+            <div><span>Situação atual</span><OrderStatusBadge status={pendingLogisticsConfirmation.currentStatus} label={getOrderStatusLabel(pendingLogisticsConfirmation.currentStatus)} tone={getOrderStatusTone(pendingLogisticsConfirmation.currentStatus)} /></div>
+            <span className="admin-order-confirm-dialog__arrow" aria-hidden="true">→</span>
+            <div><span>Situação desejada</span><OrderStatusBadge status={pendingLogisticsConfirmation.nextStatus} label={getOrderStatusLabel(pendingLogisticsConfirmation.nextStatus)} tone={getOrderStatusTone(pendingLogisticsConfirmation.nextStatus)} /></div>
+          </div>
+          {pendingLogisticsConfirmation.nextStatus === "cancelled" ? <div className="admin-order-confirm-dialog__warning" role="note">
+            <strong>O cancelamento é somente do pedido.</strong>
+            <p>Ele não cancela cobranças nem realiza reembolso. Confira a situação financeira e eventuais separações de estoque antes de continuar.</p>
+          </div> : null}
+          {logisticsConfirmationError ? <p className="admin-order-confirm-dialog__error" role="alert">{logisticsConfirmationError}</p> : null}
+          <AlertDialogFooter className="admin-order-confirm-dialog__footer">
+            <AlertDialogCancel className="admin-order-confirm-dialog__cancel" disabled={updateOrderMutation.isPending}>Voltar</AlertDialogCancel>
+            <AlertDialogAction className={`admin-order-confirm-dialog__action ${pendingLogisticsConfirmation.nextStatus === "cancelled" ? "is-danger" : "is-primary"}`} disabled={updateOrderMutation.isPending} onClick={event => { event.preventDefault(); confirmLogisticsUpdate(); }}>
+              {updateOrderMutation.isPending ? "Salvando…" : pendingLogisticsConfirmation.nextStatus === "cancelled" ? "Confirmar cancelamento" : "Confirmar atualização"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent> : null}
+      </AlertDialog>
         </main>
       </div>
     </div>
