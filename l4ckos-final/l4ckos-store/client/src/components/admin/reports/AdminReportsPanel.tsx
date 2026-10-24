@@ -144,7 +144,7 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
   }
 
   return <div className="admin-reports">
-    <header className="admin-reports-heading"><div><span>GESTÃO · ACOMPANHAMENTO GERENCIAL</span><p>Indicadores por data local de São Paulo. Valores e estados históricos permanecem inalterados.</p></div><button type="button" onClick={() => { void reportQuery.refetch(); if (!mockData) void comparisonQuery.refetch(); }} disabled={Boolean(mockData) || !enabled || !validRange || reportQuery.isFetching}><RefreshCw size={16} /> Atualizar</button></header>
+    <header className="admin-reports-heading"><div><p>Datas no fuso de São Paulo. Valores são históricos dos pedidos; estados financeiros e logísticos são atuais. Eventos financeiros usam suas datas registradas; períodos passados são recalculados dinamicamente.</p></div><button type="button" onClick={() => { void reportQuery.refetch(); if (!mockData) void comparisonQuery.refetch(); }} disabled={Boolean(mockData) || !enabled || !validRange || reportQuery.isFetching}><RefreshCw size={16} /> Atualizar</button></header>
 
     <section className="admin-reports-period" aria-label="Filtros do relatório">
       <div className="admin-reports-period-top"><div><h3>Período considerado</h3><p>{queryDateText}{isOpenPeriod ? " · período em andamento" : " · período encerrado, consulta dinâmica"}</p></div>

@@ -122,7 +122,7 @@ export function reportComparisonDescription(input: {
   if (["previousMonth"].includes(period) || (period === "month" && isValidDateKey(from) && to >= monthDateRange(Number(from.slice(0, 4)), Number(from.slice(5, 7))).to)) {
     return "mês completo versus mês completo anterior";
   }
-  if (period === "thisMonth" || period === "month") return "mesmo intervalo transcorrido no mês anterior";
+  if (period === "thisMonth" || period === "month") return "intervalo equivalente do mês anterior";
   if (period === "year") return Number(input.selectedYear ?? from.slice(0, 4)) < Number(today.slice(0, 4))
     ? "ano completo versus ano completo anterior"
     : "mesmas datas do ano anterior";

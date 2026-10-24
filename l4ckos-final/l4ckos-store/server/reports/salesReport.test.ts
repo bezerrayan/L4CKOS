@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateSalesReport, renderSalesReportPdf } from "./salesReport";
+import { aggregateSalesReport, pdfComparisonDescription, renderSalesReportPdf } from "./salesReport";
 
 describe("sales report aggregation and PDF", () => {
   const from = new Date("2026-10-20T03:00:00.000Z");
@@ -58,6 +58,27 @@ describe("sales report aggregation and PDF", () => {
     expect(pdf.toString("ascii")).toContain(Buffer.from("reembolsos/ajustes").toString("hex").toUpperCase());
   });
 
+  it("describes October elapsed comparison, September complete-month comparison, and year comparison accurately", () => {
+    const october = aggregateSalesReport([], new Date("2026-10-01T03:00:00.000Z"), new Date("2026-10-25T02:59:59.999Z"));
+    const septemberEquivalent = aggregateSalesReport([], new Date("2026-09-01T03:00:00.000Z"), new Date("2026-09-25T02:59:59.999Z"));
+    const september = aggregateSalesReport([], new Date("2026-09-01T03:00:00.000Z"), new Date("2026-10-01T02:59:59.999Z"));
+    const august = aggregateSalesReport([], new Date("2026-08-01T03:00:00.000Z"), new Date("2026-09-01T02:59:59.999Z"));
+    const yearToDate = aggregateSalesReport([], new Date("2026-01-01T03:00:00.000Z"), new Date("2026-10-25T02:59:59.999Z"));
+    const priorYearEquivalent = aggregateSalesReport([], new Date("2025-01-01T03:00:00.000Z"), new Date("2025-10-25T02:59:59.999Z"));
+    expect(pdfComparisonDescription(october, septemberEquivalent)).toBe("Intervalo equivalente do mês anterior");
+    expect(pdfComparisonDescription(september, august)).toBe("Mês completo versus mês completo anterior");
+    expect(pdfComparisonDescription(yearToDate, priorYearEquivalent)).toBe("Intervalo transcorrido versus o mesmo intervalo do ano anterior");
+  });
+
+  it("renders negative PDF deltas with a visible minus sign and unsigned percentage plus direction", () => {
+    const empty = aggregateSalesReport([], from, to);
+    const current = { ...empty, ordersCount: 4, ordersTotalCents: 400 };
+    const previous = { ...empty, ordersCount: 9, ordersTotalCents: 900 };
+    const pdf = renderSalesReportPdf(current, new Date("2026-10-22T12:00:00.000Z"), previous).toString("ascii");
+    expect(pdf).toContain(Buffer.from("-5").toString("hex").toUpperCase());
+    expect(pdf).toContain(Buffer.from("55,6% abaixo").toString("hex").toUpperCase());
+  });
+
   it("flows a small report through content instead of reserving a page for every section", () => {
     const rows = Array.from({ length: 9 }, (_, index) => ({
       id: index + 1,
@@ -69,7 +90,7 @@ describe("sales report aggregation and PDF", () => {
     const current = aggregateSalesReport(rows, from, to);
     const previous = aggregateSalesReport([], new Date("2026-10-17T03:00:00.000Z"), new Date("2026-10-20T02:59:59.999Z"));
     const pdf = renderSalesReportPdf(current, new Date("2026-10-22T12:00:00.000Z"), previous).toString("ascii");
-    expect(pdf.match(/\/Type \/Page\b/g)?.length).toBeLessThanOrEqual(2);
+    expect(pdf.match(/\/Type \/Page\b/g)?.length).toBe(2);
     expect(pdf).not.toContain(Buffer.from("Pago:").toString("hex").toUpperCase());
     expect(pdf).toContain("416775617264616E646F2070726570617261E7E36F");
     expect(pdf).toContain(Buffer.from("Base anterior zero").toString("hex").toUpperCase());

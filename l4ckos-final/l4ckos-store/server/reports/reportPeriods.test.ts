@@ -18,7 +18,16 @@ describe("gerencial reporting periods", () => {
   it("compares an in-progress month over the same elapsed local dates, clamped at February's end", () => {
     const input = { period: "thisMonth" as const, from: "2026-03-01", to: "2026-03-31", today: "2026-03-31" };
     expect(reportComparisonRange(input)).toEqual({ from: "2026-02-01", to: "2026-02-28" });
-    expect(reportComparisonDescription(input)).toBe("mesmo intervalo transcorrido no mês anterior");
+    expect(reportComparisonDescription(input)).toBe("intervalo equivalente do mês anterior");
+  });
+
+  it("uses the equivalent elapsed dates for October 2026 and complete-month dates for September", () => {
+    const october = { period: "month" as const, from: "2026-10-01", to: "2026-10-24", today: "2026-10-24" };
+    const september = { period: "month" as const, from: "2026-09-01", to: "2026-09-30", today: "2026-10-24" };
+    expect(reportComparisonRange(october)).toEqual({ from: "2026-09-01", to: "2026-09-24" });
+    expect(reportComparisonDescription(october)).toBe("intervalo equivalente do mês anterior");
+    expect(reportComparisonRange(september)).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+    expect(reportComparisonDescription(september)).toBe("mês completo versus mês completo anterior");
   });
 
   it("compares custom periods with the immediately preceding interval of equal duration", () => {

@@ -157,14 +157,14 @@ const paymentColors: Record<string, string> = { confirmed: "0.09 0.64 0.29", unc
 function reportDelta(current: number, previous: number, cents = false) {
   const delta = current - previous;
   const magnitude = cents ? money(Math.abs(delta)) : Math.abs(delta).toLocaleString("pt-BR");
-  const absolute = delta === 0 ? (cents ? money(0) : "0") : `${delta > 0 ? "+" : "−"}${magnitude}`;
+  const absolute = delta === 0 ? (cents ? money(0) : "0") : `${delta > 0 ? "+" : "-"}${magnitude}`;
   const percent = previous === 0
     ? "Indisponível · base anterior zero"
-    : `${delta === 0 ? "0,0" : (delta / previous * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ${delta > 0 ? "acima" : delta < 0 ? "abaixo" : "sem variação"}`;
+    : `${delta === 0 ? "0,0" : Math.abs(delta / previous * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ${delta > 0 ? "acima" : delta < 0 ? "abaixo" : "sem variação"}`;
   return { absolute, percent };
 }
 
-function pdfComparisonDescription(report: SalesReportData, comparison?: SalesReportData) {
+export function pdfComparisonDescription(report: SalesReportData, comparison?: SalesReportData) {
   if (!comparison) return "Comparação equivalente anterior não informada.";
   const currentFrom = localDateKey(new Date(report.from));
   const currentTo = localDateKey(new Date(report.to));
@@ -173,7 +173,14 @@ function pdfComparisonDescription(report: SalesReportData, comparison?: SalesRep
   const currentMonth = monthDateRange(Number(currentFrom.slice(0, 4)), Number(currentFrom.slice(5, 7)));
   const priorMonth = monthDateRange(Number(priorFrom.slice(0, 4)), Number(priorFrom.slice(5, 7)));
   if (currentFrom.endsWith("-01") && currentTo === currentMonth.to && priorFrom.endsWith("-01") && priorTo === priorMonth.to) return "Mês completo versus mês completo anterior";
-  if (currentFrom.endsWith("-01") && priorFrom.endsWith("-01") && currentFrom.slice(5) === priorFrom.slice(5)) return "Mesmo intervalo transcorrido versus mês anterior";
+  const currentMonthStart = `${currentFrom.slice(0, 7)}-01`;
+  const previousMonthStart = addDateMonths(currentMonthStart, -1);
+  if (currentFrom === currentMonthStart && priorFrom === previousMonthStart) {
+    const previousMonthEnd = monthDateRange(Number(previousMonthStart.slice(0, 4)), Number(previousMonthStart.slice(5, 7))).to;
+    const elapsedDay = Number(currentTo.slice(8, 10));
+    const equivalentPreviousEnd = addDateDays(previousMonthStart, Math.min(elapsedDay, Number(previousMonthEnd.slice(8, 10))) - 1);
+    if (priorTo === equivalentPreviousEnd) return "Intervalo equivalente do mês anterior";
+  }
   const currentYearFull = currentFrom.endsWith("-01-01") && currentTo.endsWith("-12-31");
   const previousYearFull = priorFrom.endsWith("-01-01") && priorTo.endsWith("-12-31");
   if (currentYearFull && previousYearFull) return "Ano completo versus ano completo anterior";
@@ -331,8 +338,9 @@ export function renderSalesReportPdf(report: SalesReportData, generatedAt = new 
   y += 17;
   const notes = [
     `Ticket médio = valor histórico de todos os pedidos criados ÷ ${report.ordersCount} pedido(s); inclui cancelados e não confirmados.`,
-    "Confirmações financeiras usam paymentConfirmedAt e o estado canônico confirmed; o valor é do pedido, não um extrato de liquidação. Registros legados sem timestamp não entram nesta métrica.",
-    "Não há registro financeiro normalizado de reembolsos/ajustes nem movimentos históricos de estoque; receita líquida e valores recebidos não são calculados.",
+    "Os valores são históricos do pedido. Os estados financeiros e logísticos exibidos refletem a situação atual na data da consulta.",
+    "Confirmações financeiras são eventos datados por paymentConfirmedAt e incluídos quando o estado canônico atual é confirmed; a soma usa o valor histórico do pedido. Legados sem timestamp não entram.",
+    "Períodos anteriores são recalculados dinamicamente; não são fechamentos imutáveis. Não há ledger de reembolsos/ajustes nem histórico confiável de estoque; receita líquida e valores recebidos não são calculados.",
   ];
   for (const note of notes) addParagraph(note, 8);
 
