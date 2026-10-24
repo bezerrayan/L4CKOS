@@ -18,13 +18,23 @@ const regularUser = { id: 102, openId: "reports-user", email: "reports-user@loca
 const range = { from: "2026-10-20T00:00:00.000Z", to: "2026-10-21T23:59:59.999Z" };
 const report = {
   ...range,
-  timeZone: "UTC" as const,
+  timeZone: "America/Sao_Paulo" as const,
   ordersCount: 1,
   ordersTotalCents: 8990,
+  averageOrderCents: 8990,
+  pendingPaymentsCount: 1,
+  pendingPaymentsCents: 8990,
   confirmedPaymentsCount: 0,
   confirmedPaymentsCents: 0,
+  confirmedPaymentEventsCount: 0,
+  confirmedPaymentEventsCents: 0,
+  newCustomersCount: 0,
+  buyersCount: 1,
   statuses: [{ status: "pending", count: 1, totalCents: 8990 }],
+  paymentStatuses: [{ status: "confirmed", count: 0, totalCents: 0 }, { status: "unconfirmed", count: 1, totalCents: 8990 }],
   daily: [{ day: "2026-10-21", ordersCount: 1, totalCents: 8990 }],
+  monthly: [{ month: "2026-10", ordersCount: 1, totalCents: 8990 }],
+  products: [{ productId: 1, productName: "Item de teste", unitsInOrders: 1, unitsInCancelledOrders: 0 }],
   orders: [{ id: 15, createdAt: "2026-10-21T12:00:00.000Z", status: "pending", paymentStatus: "unconfirmed", totalPriceCents: 8990 }],
 };
 
@@ -37,11 +47,7 @@ describe("admin reports contracts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMocks.getAdminSalesReport.mockResolvedValue(report);
-    dbMocks.getOrdersByFilters.mockResolvedValue([{
-      id: 15, createdAt: new Date("2026-10-21T12:00:00.000Z"), status: "pending", totalPrice: 8990,
-      customerName: "=HYPERLINK(\"https://example.invalid\")", customerEmail: "customer@example.invalid",
-      trackingCode: null, items: [{ productName: "Item de teste", productId: 1, quantity: 1 }],
-    }]);
+    dbMocks.getOrdersByFilters.mockResolvedValue([]);
     dbMocks.createAuditLog.mockResolvedValue(undefined);
   });
 
@@ -60,17 +66,18 @@ describe("admin reports contracts", () => {
     await expect((await caller(adminUser)).reportsSalesPdf(range)).rejects.toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
   });
 
-  it("preserves CSV columns and values while neutralizing formula-leading user text and auditing the export", async () => {
+  it("exports aggregate and order data without personal fields and audits the export", async () => {
     const result = await (await caller(adminUser)).reportsSalesCsv(range);
-    expect(result.csv).toContain("customerName,customerEmail,trackingCode,itemCount,items");
-    expect(result.csv).toContain("'=HYPERLINK(");
-    expect(result.csv).toContain("customer@example.invalid");
-    expect(result.csv).toContain("totalSalesCents");
+    expect(result.csv).toContain("orderId,createdAt,logisticsStatus,paymentStatus,orderTotalCents");
+    expect(result.csv).toContain("orderValueAllStatusesCents");
+    expect(result.csv).toContain("paymentConfirmationsRecordedInPeriod");
+    expect(result.csv).not.toContain("customerName");
+    expect(result.csv).not.toContain("customer@example.invalid");
     expect(dbMocks.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       actorUserId: adminUser.id,
       action: "report.export.csv",
       entity: "report",
-      metadata: { from: range.from, to: range.to, rows: 1 },
+      metadata: { from: range.from, to: range.to, comparisonFrom: "2026-10-16T03:00:00.000Z", comparisonTo: "2026-10-19T02:59:59.999Z", rows: 1 },
     }));
     await expect((await caller(regularUser)).reportsSalesCsv(range)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
@@ -80,6 +87,8 @@ describe("admin reports contracts", () => {
     const pdf = Buffer.from(result.pdfBase64, "base64").toString("ascii");
     expect(result.fileName).toContain("2026-10-20-2026-10-21");
     expect(pdf).toContain("%PDF-1.4");
+    expect(pdf).toContain(Buffer.from("America/Sao_Paulo").toString("hex").toUpperCase());
+    expect(pdf).toContain(Buffer.from("PEDIDOS CRIADOS").toString("hex").toUpperCase());
     expect(pdf).not.toContain("customer@example.invalid");
     expect(pdf).not.toContain(Buffer.from("customer@example.invalid").toString("hex").toUpperCase());
     expect(pdf).not.toContain(Buffer.from("=HYPERLINK").toString("hex").toUpperCase());

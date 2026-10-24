@@ -1,102 +1,137 @@
 import { useMemo, useState } from "react";
-import { addDays, addMonths, format, startOfMonth, subMonths } from "date-fns";
-import { ptBR } from "date-fns/locale";
-import { CalendarDays, ChevronLeft, ChevronRight, Download, FileText, RefreshCw } from "lucide-react";
-import { Calendar } from "../../ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover";
+import { Download, FileText, RefreshCw } from "lucide-react";
 import { trpc } from "../../../lib/trpc";
 import type { AdminSalesReportData } from "../../../../../shared/reports";
+import {
+  addDateDays,
+  addDateMonths,
+  formatLocalDate,
+  localDateKey,
+  localDateRange,
+  monthDateRange,
+  previousEquivalentRange,
+  REPORT_TIME_ZONE,
+} from "../../../../../shared/reportPeriods";
 import "./AdminReportsPanel.css";
 
 type Props = { enabled: boolean; onMessage: (message: string, isError?: boolean) => void; mockData?: AdminSalesReportData };
-type Period = "today" | "7days" | "30days" | "custom";
+type Period = "today" | "7days" | "30days" | "thisMonth" | "previousMonth" | "custom" | "month" | "year";
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-const dateTime = new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", dateStyle: "short", timeStyle: "short" });
+const dateTime = new Intl.DateTimeFormat("pt-BR", { timeZone: REPORT_TIME_ZONE, dateStyle: "short", timeStyle: "short" });
 const statusNames: Record<string, string> = {
   pending: "Pendente", processing: "Em preparação", paid: "Pago", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado",
 };
-const paymentStatusName: Record<string, string> = { confirmed: "Confirmado", unconfirmed: "Não confirmado" };
-const dateValue = (date: Date) => date.toISOString().slice(0, 10);
-const startIso = (date: string) => `${date}T00:00:00.000Z`;
-const endIso = (date: string) => `${date}T23:59:59.999Z`;
-function initialRange() {
-  const today = new Date();
-  const start = addDays(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())), -6);
-  return { from: dateValue(start), to: dateValue(today) };
-}
+const logisticsTone: Record<string, string> = {
+  pending: "amber", processing: "violet", paid: "cyan", shipped: "indigo", delivered: "green", cancelled: "red",
+};
+const paymentStatusName: Record<string, string> = { confirmed: "Confirmado", unconfirmed: "Pendente" };
+const todayKey = () => localDateKey(new Date());
+function dateInputRange(from: string, to: string) { return localDateRange(from, to, new Date(Date.now() - 1_000)); }
+function currentInitialRange() { const today = todayKey(); return { from: addDateDays(today, -6), to: today }; }
 function downloadBlob(name: string, type: string, value: BlobPart) {
   const blob = new Blob([value], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
+  anchor.href = url; anchor.download = name; anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-function DatePicker({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  const selected = new Date(`${value}T12:00:00.000Z`);
-  const [open, setOpen] = useState(false);
-  const [month, setMonth] = useState(() => startOfMonth(selected));
-  return <div className="admin-report-date">
-    <span>{label}</span>
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild><button type="button" className="admin-report-date-trigger" aria-haspopup="dialog" aria-expanded={open}><span>{format(selected, "dd/MM/yyyy")}</span><CalendarDays size={17} aria-hidden="true" /></button></PopoverTrigger>
-      <PopoverContent className="admin-report-calendar" align="start" side="bottom" sideOffset={6} collisionPadding={12} aria-label={`Calendário: ${label}`}>
-        <div className="admin-report-calendar-heading">
-          <button type="button" aria-label="Mês anterior" onClick={() => setMonth(value => subMonths(value, 1))}><ChevronLeft size={17} /></button>
-          <strong>{format(month, "LLLL yyyy", { locale: ptBR })}</strong>
-          <button type="button" aria-label="Próximo mês" onClick={() => setMonth(value => addMonths(value, 1))}><ChevronRight size={17} /></button>
-        </div>
-        <Calendar mode="single" locale={ptBR} selected={selected} month={month} onMonthChange={setMonth} onSelect={day => {
-          if (!day) return;
-          onChange(dateValue(day));
-          setOpen(false);
-        }} className="admin-report-calendar-days" aria-label={`Dias do mês para ${label}`} />
-        <small>Datas interpretadas em UTC.</small>
-      </PopoverContent>
-    </Popover>
-  </div>;
+function deltaText(current: number, previous: number, isMoney = false) {
+  const delta = current - previous;
+  const value = isMoney ? money.format(Math.abs(delta) / 100) : Math.abs(delta).toLocaleString("pt-BR");
+  const direction = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  if (delta === 0 && previous > 0) return `sem variação · 0,0%`;
+  if (previous === 0) return `${direction}${value} · comparação percentual indisponível (base zero)`;
+  return `${direction}${value} · ${delta === 0 ? "0,0" : Math.abs(delta / previous * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ${delta >= 0 ? "acima" : "abaixo"}`;
 }
 
 export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
-  const [range, setRange] = useState(initialRange);
-  const [period, setPeriod] = useState<Period>("7days");
-  const [detailMode, setDetailMode] = useState<"orders" | "products">("orders");
+  const initial = currentInitialRange();
+  const [range, setRange] = useState(() => mockData ? { from: localDateKey(new Date(mockData.from)), to: localDateKey(new Date(mockData.to)) } : initial);
+  const [period, setPeriod] = useState<Period>(mockData ? "custom" : "7days");
+  const [selectedMonth, setSelectedMonth] = useState(() => todayKey().slice(0, 7));
+  const [selectedYear, setSelectedYear] = useState(() => todayKey().slice(0, 4));
   const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
   const utils = trpc.useUtils();
   const pdfMutation = trpc.admin.reportsSalesPdf.useMutation();
-  const validRange = Boolean(range.from && range.to && range.from <= range.to);
-  const queryInput = useMemo(() => validRange ? ({ from: startIso(range.from), to: endIso(range.to) }) : undefined, [range, validRange]);
-  const reportQuery = trpc.admin.reportsSummary.useQuery(queryInput ?? { from: startIso(range.from), to: endIso(range.to) }, {
+  const today = todayKey();
+  const monthRange = useMemo(() => {
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const selected = monthDateRange(year, month);
+    return { from: selected.from, to: selected.to > today ? today : selected.to };
+  }, [selectedMonth, today]);
+  const yearRange = useMemo(() => ({ from: `${selectedYear}-01-01`, to: Number(selectedYear) === Number(today.slice(0, 4)) ? today : `${selectedYear}-12-31` }), [selectedYear, today]);
+  const queryRange = period === "month" ? monthRange : period === "year" ? yearRange : range;
+  const validRange = Boolean(queryRange.from && queryRange.to && queryRange.from <= queryRange.to && queryRange.to <= today);
+  const queryInput = useMemo(() => validRange ? dateInputRange(queryRange.from, queryRange.to) : undefined, [queryRange.from, queryRange.to, validRange]);
+  const comparisonDates = useMemo(() => {
+    if (!validRange) return undefined;
+    if (["month", "thisMonth", "previousMonth"].includes(period)) {
+      const currentMonthStart = `${queryRange.from.slice(0, 7)}-01`;
+      const previousMonthStart = addDateMonths(currentMonthStart, -1);
+      const previousMonthEnd = addDateDays(currentMonthStart, -1);
+      const currentDay = Number(queryRange.to.slice(8, 10));
+      const previousMonthMaxDay = Number(previousMonthEnd.slice(8, 10));
+      const sameElapsedEnd = addDateDays(previousMonthStart, Math.min(currentDay, previousMonthMaxDay) - 1);
+      return { from: previousMonthStart, to: period === "previousMonth" ? previousMonthEnd : sameElapsedEnd };
+    }
+    if (period === "year" && Number(selectedYear) < Number(today.slice(0, 4))) {
+      return { from: `${Number(selectedYear) - 1}-01-01`, to: `${Number(selectedYear) - 1}-12-31` };
+    }
+    return previousEquivalentRange(queryRange.from, queryRange.to);
+  }, [period, queryRange.from, queryRange.to, selectedYear, today, validRange]);
+  const comparisonInput = useMemo(() => comparisonDates ? dateInputRange(comparisonDates.from, comparisonDates.to) : undefined, [comparisonDates?.from, comparisonDates?.to]);
+  const reportQuery = trpc.admin.reportsSummary.useQuery(queryInput ?? { from: new Date(0).toISOString(), to: new Date(0).toISOString() }, {
     enabled: enabled && validRange,
     refetchOnWindowFocus: false,
   });
+  const comparisonQuery = trpc.admin.reportsSummary.useQuery(comparisonInput ?? { from: new Date(0).toISOString(), to: new Date(0).toISOString() }, {
+    enabled: enabled && validRange && !mockData,
+    refetchOnWindowFocus: false,
+  });
 
-  const choosePeriod = (next: Exclude<Period, "custom">) => {
-    const today = new Date();
-    const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-    const offset = next === "today" ? 0 : next === "7days" ? 6 : 29;
-    setRange({ from: dateValue(addDays(end, -offset)), to: dateValue(end) });
+  const choosePeriod = (next: Exclude<Period, "custom" | "month" | "year">) => {
+    const end = todayKey();
+    if (next === "today") setRange({ from: end, to: end });
+    if (next === "7days") setRange({ from: addDateDays(end, -6), to: end });
+    if (next === "30days") setRange({ from: addDateDays(end, -29), to: end });
+    if (next === "thisMonth") setRange({ from: `${end.slice(0, 7)}-01`, to: end });
+    if (next === "previousMonth") {
+      const start = addDateMonths(`${end.slice(0, 7)}-01`, -1);
+      setRange({ from: start, to: addDateDays(`${end.slice(0, 7)}-01`, -1) });
+    }
     setPeriod(next);
   };
+
   const data = validRange ? mockData ?? reportQuery.data : undefined;
-  const maxDaily = Math.max(1, ...(data?.daily.map(row => row.totalCents) ?? []));
+  const comparison = mockData ? undefined : comparisonQuery.data;
+  const queryDayCount = Math.round((Date.parse(`${queryRange.to}T00:00:00Z`) - Date.parse(`${queryRange.from}T00:00:00Z`)) / 86_400_000) + 1;
+  const chartIsMonthly = period === "year" || queryDayCount > 62;
+  const chartRows = data ? (chartIsMonthly ? data.monthly : data.daily) : [];
+  const chartMax = Math.max(1, ...chartRows.map(row => row.totalCents));
+  const queryDateText = `${formatLocalDate(queryRange.from)} — ${formatLocalDate(queryRange.to)} · ${REPORT_TIME_ZONE}`;
+  const comparisonDateText = comparisonDates ? `${formatLocalDate(comparisonDates.from)} — ${formatLocalDate(comparisonDates.to)}` : "";
+  const isOpenPeriod = queryRange.to === today;
 
   async function exportReport(format: "csv" | "pdf") {
     if (!queryInput || exporting) return;
     setExporting(format);
     try {
       if (format === "csv") {
-        const result = await utils.admin.reportsSalesCsv.fetch(queryInput);
+        const result = await utils.admin.reportsSalesCsv.fetch({
+          ...queryInput,
+          ...(comparisonInput ? { comparisonFrom: comparisonInput.from, comparisonTo: comparisonInput.to } : {}),
+        });
         downloadBlob(result.fileName, "text/csv;charset=utf-8", `\uFEFF${result.csv}`);
       } else {
-        const result = await pdfMutation.mutateAsync(queryInput);
+        const result = await pdfMutation.mutateAsync({
+          ...queryInput,
+          ...(comparisonInput ? { comparisonFrom: comparisonInput.from, comparisonTo: comparisonInput.to } : {}),
+        });
         const binary = atob(result.pdfBase64);
         const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
         downloadBlob(result.fileName, "application/pdf", bytes);
       }
-      onMessage(`${format.toUpperCase()} exportado.`);
+      onMessage(`${format.toUpperCase()} exportado. O arquivo foi baixado localmente; não existe arquivo histórico permanente no sistema.`);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : `Falha ao exportar ${format.toUpperCase()}.`, true);
     } finally {
@@ -105,46 +140,118 @@ export function AdminReportsPanel({ enabled, onMessage, mockData }: Props) {
   }
 
   return <div className="admin-reports">
-    <header className="admin-reports-heading"><div><span>SISTEMA · ANÁLISE OPERACIONAL</span><h2>Relatórios</h2><p>Pedidos agrupados pela data de criação. Todos os valores estão em UTC.</p></div><button type="button" onClick={() => void reportQuery.refetch()} disabled={Boolean(mockData) || !enabled || !validRange || reportQuery.isFetching}><RefreshCw size={16} /> Atualizar</button></header>
-    <section className="admin-reports-period" aria-label="Período do relatório">
-      <div className="admin-reports-period-top"><div><h3>Resumo do período</h3><p>{range.from && range.to ? `${range.from.split("-").reverse().join("/")} — ${range.to.split("-").reverse().join("/")} (UTC)` : "Selecione o período"}</p></div>
+    <header className="admin-reports-heading"><div><span>GESTÃO · ACOMPANHAMENTO GERENCIAL</span><p>Indicadores por data local de São Paulo. Valores e estados históricos permanecem inalterados.</p></div><button type="button" onClick={() => { void reportQuery.refetch(); if (!mockData) void comparisonQuery.refetch(); }} disabled={Boolean(mockData) || !enabled || !validRange || reportQuery.isFetching}><RefreshCw size={16} /> Atualizar</button></header>
+
+    <section className="admin-reports-period" aria-label="Filtros do relatório">
+      <div className="admin-reports-period-top"><div><h3>Período considerado</h3><p>{queryDateText}{isOpenPeriod ? " · período em andamento" : " · período encerrado, consulta dinâmica"}</p></div>
         <div className="admin-reports-presets" role="group" aria-label="Períodos rápidos">
-          {([ ["today", "Hoje"], ["7days", "7 dias"], ["30days", "30 dias"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={period === value} onClick={() => choosePeriod(value)}>{label}</button>)}
+          {([ ["today", "Hoje"], ["7days", "7 dias"], ["30days", "30 dias"], ["thisMonth", "Este mês"], ["previousMonth", "Mês anterior"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={period === value} onClick={() => choosePeriod(value)}>{label}</button>)}
           <button type="button" aria-pressed={period === "custom"} onClick={() => setPeriod("custom")}>Personalizado</button>
         </div>
       </div>
-      {period === "custom" ? <div className="admin-reports-date-range"><DatePicker label="De" value={range.from} onChange={from => setRange(current => ({ ...current, from }))} /><span>até</span><DatePicker label="Até" value={range.to} onChange={to => setRange(current => ({ ...current, to }))} /></div> : null}
-      {!validRange ? <p className="admin-reports-error" role="alert">A data inicial deve ser anterior ou igual à data final.</p> : null}
+      <div className="admin-reports-period-selectors">
+        <label>Consultar mês e ano<input type="month" max={today.slice(0, 7)} value={selectedMonth} onChange={event => { setSelectedMonth(event.target.value); setPeriod("month"); }} /></label>
+        <label>Consultar ano<select value={selectedYear} onChange={event => { setSelectedYear(event.target.value); setPeriod("year"); }}>
+          {Array.from({ length: Math.max(1, Number(today.slice(0, 4)) - 2017) }, (_, index) => Number(today.slice(0, 4)) - index).map(year => <option key={year} value={year}>{year}{year === Number(today.slice(0, 4)) ? " · em andamento" : ""}</option>)}
+        </select></label>
+        {period === "year" ? <span className="admin-reports-period-hint">Evolução agrupada por mês; o ano atual vai até hoje.</span> : null}
+      </div>
+      {period === "custom" ? <div className="admin-reports-date-range"><label>De<input type="date" max={today} value={range.from} onChange={event => setRange(current => ({ ...current, from: event.target.value }))} /></label><span>até</span><label>Até<input type="date" max={today} value={range.to} onChange={event => setRange(current => ({ ...current, to: event.target.value }))} /></label></div> : null}
+      {!validRange ? <p className="admin-reports-error" role="alert">Selecione um intervalo válido até a data de hoje.</p> : null}
     </section>
 
     {!mockData && reportQuery.isLoading ? <div className="admin-reports-state" role="status">Carregando dados do período…</div> : null}
     {!mockData && reportQuery.isError ? <div className="admin-reports-state is-error" role="alert"><span>{reportQuery.error.message}</span><button type="button" onClick={() => void reportQuery.refetch()}>Tentar novamente</button></div> : null}
     {data && (mockData || !reportQuery.isLoading) ? <>
-      <section className="admin-reports-kpis" aria-label="Indicadores do período">
-        <div><span>Pedidos criados</span><strong>{data.ordersCount}</strong></div>
-        <div><span>Valor total dos pedidos</span><strong>{money.format(data.ordersTotalCents / 100)}</strong><small>Todos os estados; inclui valores pendentes e cancelados.</small></div>
-        <div><span>Pedidos com pagamento confirmado</span><strong>{data.confirmedPaymentsCount}</strong><small>{money.format(data.confirmedPaymentsCents / 100)} · pedidos criados neste período</small></div>
-        <div><span>Pedidos cancelados</span><strong>{data.statuses.find(row => row.status === "cancelled")?.count ?? 0}</strong></div>
+      <nav className="admin-reports-section-nav" aria-label="Seções do relatório">{[["overview", "Visão geral"], ["movement", "Movimentações"], ["finance", "Financeiro"], ["products", "Produtos"], ["clients", "Clientes"], ["exports", "Exportações"]].map(([id, label]) => <a key={id} href={`#report-${id}`}>{label}</a>)}</nav>
+
+      <section id="report-overview" className="admin-reports-block" aria-labelledby="admin-report-overview">
+        <div className="admin-reports-section-title"><div><h3 id="admin-report-overview">Visão geral</h3><p>Pedidos agrupados pela data de criação e pelo período acima.</p></div></div>
+        <div className="admin-reports-kpis" aria-label="Indicadores do período">
+          <article className="is-primary"><span>Pedidos criados</span><strong>{data.ordersCount.toLocaleString("pt-BR")}</strong><small>{comparison ? deltaText(data.ordersCount, comparison.ordersCount) : "Contagem no período"}</small></article>
+          <article><span>Valor histórico dos pedidos</span><strong>{money.format(data.ordersTotalCents / 100)}</strong><small>Todos os estados; inclui pendentes e cancelados.</small></article>
+          <article><span>Pagamentos pendentes</span><strong>{data.pendingPaymentsCount}</strong><small>{money.format(data.pendingPaymentsCents / 100)} em pedidos criados no período.</small></article>
+          <article><span>Ticket médio</span><strong>{money.format(data.averageOrderCents / 100)}</strong><small>Valor dos pedidos ÷ {data.ordersCount}; inclui todos os estados.</small></article>
+        </div>
+        <div className="admin-reports-comparison"><strong>Comparação com período equivalente anterior · {comparisonDateText}</strong>{comparison ? <><div><span>Pedidos: {deltaText(data.ordersCount, comparison.ordersCount)}</span><span>Valor: {deltaText(data.ordersTotalCents, comparison.ordersTotalCents, true)}</span><span>Novos clientes: {deltaText(data.newCustomersCount, comparison.newCustomersCount)}</span><span>Unidades: {deltaText(data.products.reduce((sum, row) => sum + row.unitsInOrders, 0), comparison.products.reduce((sum, row) => sum + row.unitsInOrders, 0))}</span></div><ComparisonBars current={data} previous={comparison} money={money} /></> : <small>{mockData ? "Comparativo desativado na prévia." : comparisonQuery.isLoading ? "Calculando comparação…" : "Sem dados comparativos disponíveis."}</small>}</div>
+      </section>
+
+      <section id="report-movement" className="admin-reports-section" aria-labelledby="admin-report-movement"><div className="admin-reports-section-title"><div><h3 id="admin-report-movement">Movimentações</h3><p>Valor histórico dos pedidos pela data de criação · fuso {REPORT_TIME_ZONE}.</p></div></div>
+        {chartRows.some(row => row.ordersCount > 0) ? chartIsMonthly ? <div className="admin-reports-chart" role="img" aria-label={`Gráfico de barras com ${chartRows.length} meses. Valor histórico dos pedidos.`}>{chartRows.map(row => {
+          const label = "month" in row ? row.month : row.day;
+          const compactLabel = "month" in row ? row.month.slice(5) : row.day.slice(5).replace("-", "/");
+          return <div className="admin-reports-chart-day" key={label} title={`${label}: ${money.format(row.totalCents / 100)} · ${row.ordersCount} pedidos`}><div><i style={{ height: `${Math.max(row.totalCents > 0 ? 3 : 0, (row.totalCents / chartMax) * 100)}%` }} /></div><span>{compactLabel}</span></div>;
+        })}</div> : <DailyLineChart rows={data.daily} max={chartMax} money={money} /> : <p className="admin-reports-empty compact">Sem movimentação no período selecionado.</p>}
+        {data.monthly.length > 1 ? <div className="admin-reports-monthly-table"><h4>Evolução mensal</h4><div className="admin-reports-table-scroll"><table><thead><tr><th>Mês</th><th>Pedidos</th><th>Valor histórico</th></tr></thead><tbody>{data.monthly.map(row => <tr key={row.month}><td>{new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", month: "long", year: "numeric" }).format(new Date(`${row.month}-01T00:00:00Z`))}</td><td>{row.ordersCount}</td><td>{money.format(row.totalCents / 100)}</td></tr>)}</tbody></table></div></div> : null}
+        <div className="admin-reports-orders-list"><h4>Pedidos recentes</h4><p>Até 100 pedidos mais recentes; os indicadores abrangem todos os {data.ordersCount} registros.</p><div className="admin-reports-table-scroll"><table><thead><tr><th>Pedido</th><th>Criado · SP</th><th>Pagamento</th><th>Logística</th><th>Valor histórico</th></tr></thead><tbody>{data.orders.slice(0, 100).map(order => <tr key={order.id}><td><a href={`/gestao/pedidos/${order.id}`}>#{order.id}</a></td><td>{dateTime.format(new Date(order.createdAt))}</td><td><span className={`admin-report-badge payment-${order.paymentStatus}`}>{paymentStatusName[order.paymentStatus] ?? "Indisponível"}</span></td><td><span className={`admin-report-badge logistics-${logisticsTone[order.status] ?? "neutral"}`}>{statusNames[order.status] ?? order.status}</span></td><td>{money.format(order.totalPriceCents / 100)}</td></tr>)}{!data.ordersCount ? <tr><td colSpan={5}>Nenhum pedido no período.</td></tr> : null}</tbody></table></div></div>
       </section>
 
       <div className="admin-reports-columns">
-        <section className="admin-reports-section" aria-labelledby="admin-report-evolution"><div className="admin-reports-section-title"><div><h3 id="admin-report-evolution">Evolução diária</h3><p>Valor total dos pedidos pela data de criação (UTC).</p></div></div>
-          {data.daily.length >= 2 ? <div className="admin-reports-chart" role="img" aria-label={`Gráfico de ${data.daily.length} dias. Total dos pedidos criados no período.`}>{data.daily.map(row => <div className="admin-reports-chart-day" key={row.day} title={`${row.day}: ${money.format(row.totalCents / 100)} · ${row.ordersCount} pedidos`}><div><i style={{ height: `${Math.max(row.totalCents > 0 ? 3 : 0, (row.totalCents / maxDaily) * 100)}%` }} /></div><span>{row.day.slice(5).replace("-", "/")}</span></div>)}</div> : <p className="admin-reports-empty">São necessários pedidos em pelo menos dois dias para exibir a evolução.</p>}
+        <section id="report-finance" className="admin-reports-section" aria-labelledby="admin-report-finance"><div className="admin-reports-section-title"><div><h3 id="admin-report-finance">Financeiro</h3><p>Confirmação financeira separada da logística.</p></div></div>
+          <div className="admin-reports-finance-kpi"><span>Pedidos com confirmação financeira registrada no período</span><strong>{data.confirmedPaymentEventsCount} · {money.format(data.confirmedPaymentEventsCents / 100)}</strong><small>Usa paymentConfirmedAt com paymentStatus confirmado; soma o valor histórico do pedido.</small></div>
+          <p className="admin-reports-caveat">Não é extrato de liquidação nem receita líquida. O sistema não mantém valores normalizados de reembolso, estorno ou ajustes; por isso esses valores não são calculados.</p>
+          <h4>Status financeiros atuais dos pedidos criados no período</h4><StatusList rows={data.paymentStatuses} names={paymentStatusName} tonePrefix="payment" money={money} />
+          <h4>Status logísticos atuais dos pedidos criados no período</h4><StatusList rows={data.statuses} names={statusNames} tonePrefix="logistics" tones={logisticsTone} money={money} />
         </section>
-        <section className="admin-reports-section" aria-labelledby="admin-report-status"><div className="admin-reports-section-title"><div><h3 id="admin-report-status">Situação dos pedidos</h3><p>Contagem e total por status operacional.</p></div></div>
-          <ul className="admin-reports-status">{data.statuses.map(row => <li key={row.status}><span>{statusNames[row.status] ?? row.status}</span><strong>{row.count}</strong><small>{money.format(row.totalCents / 100)}</small></li>)}{!data.statuses.length ? <li className="is-empty">Nenhum pedido neste período.</li> : null}</ul>
+
+        <section id="report-products" className="admin-reports-section" aria-labelledby="admin-report-products"><div className="admin-reports-section-title"><div><h3 id="admin-report-products">Produtos</h3><p>Unidades registradas em itens de pedidos; cancelamentos separados.</p></div></div>
+          <div className="admin-reports-product-summary"><strong>{data.products.reduce((sum, row) => sum + row.unitsInOrders, 0)}</strong><span>unidades registradas em pedidos</span><small>Não equivale a unidades pagas. Não há histórico confiável de movimentação de estoque para este relatório.</small></div>
+          <div className="admin-reports-table-scroll"><table><thead><tr><th>Produto</th><th>Unidades em pedidos</th><th>Canceladas</th></tr></thead><tbody>{data.products.slice(0, 30).map(product => <tr key={product.productId}><td>#{product.productId} · {product.productName}</td><td>{product.unitsInOrders}</td><td>{product.unitsInCancelledOrders}</td></tr>)}{!data.products.length ? <tr><td colSpan={3}>Nenhum item registrado no período.</td></tr> : null}</tbody></table></div>
+          <p className="admin-reports-caveat">Estoque atual não representa histórico do período. Reservas de estoque também não são tratadas como movimentos de estoque vendidos.</p>
         </section>
       </div>
 
-      <section className="admin-reports-section admin-reports-orders" aria-labelledby="admin-report-orders"><div className="admin-reports-section-title"><div><h3 id="admin-report-orders">Detalhamento</h3><p>{detailMode === "orders" ? "Pedidos mais recentes do período, sem dados pessoais." : "Unidades registradas nas linhas de pedidos, incluindo cancelamentos."}</p></div><div className="admin-reports-detail-switch" role="group" aria-label="Detalhamento por pedidos ou produtos"><button type="button" aria-pressed={detailMode === "orders"} onClick={() => setDetailMode("orders")}>Pedidos</button><button type="button" aria-pressed={detailMode === "products"} onClick={() => setDetailMode("products")}>Produtos</button></div></div>
-        {detailMode === "orders" ? <><p className="admin-reports-table-note">Tabela limitada aos 100 mais recentes; os indicadores abrangem todos os {data.ordersCount} pedidos do período.</p><div className="admin-reports-table-scroll"><table><thead><tr><th>Pedido</th><th>Criado (UTC)</th><th>Situação</th><th>Pagamento</th><th>Valor</th></tr></thead><tbody>{data.orders.map(order => <tr key={order.id}><td>#{order.id}</td><td>{dateTime.format(new Date(order.createdAt))}</td><td>{statusNames[order.status] ?? order.status}</td><td>{paymentStatusName[order.paymentStatus] ?? "Não disponível"}</td><td>{money.format(order.totalPriceCents / 100)}</td></tr>)}{!data.ordersCount ? <tr><td colSpan={5}>Nenhum pedido no período selecionado.</td></tr> : null}</tbody></table></div></> : <div className="admin-reports-table-scroll"><table><thead><tr><th>Produto</th><th>Unidades em pedidos</th><th>Em pedidos cancelados</th></tr></thead><tbody>{data.products.map(product => <tr key={product.productId}><td>{product.productName}</td><td>{product.unitsInOrders}</td><td>{product.unitsInCancelledOrders}</td></tr>)}{!data.products.length ? <tr><td colSpan={3}>Nenhum item registrado no período.</td></tr> : null}</tbody></table></div>}
-      </section>
+      <section id="report-clients" className="admin-reports-section" aria-labelledby="admin-report-clients"><div className="admin-reports-section-title"><div><h3 id="admin-report-clients">Clientes</h3><p>Contas identificadas e pedidos registrados no período.</p></div></div><div className="admin-reports-client-kpis"><article><span>Novos cadastros</span><strong>{data.newCustomersCount}</strong><small>Contas cuja data de cadastro caiu no período.</small></article><article><span>Clientes com pedidos</span><strong>{data.buyersCount}</strong><small>Contas distintas associadas a pedidos criados no período; não inclui compradores sem conta.</small></article></div></section>
 
-      <section className="admin-reports-exports" aria-labelledby="admin-report-exports"><div className="admin-reports-section-title"><div><h3 id="admin-report-exports">Exportação disponível</h3><p>Mesmo período e critérios do resumo. CSV detalha pedidos; PDF é agregado e não inclui dados pessoais.</p></div></div>
-        <div className="admin-reports-export-row"><div><strong>CSV</strong><span>Exportação detalhada existente, incluindo nome, e-mail e rastreio. Compartilhe somente em canais autorizados.</span></div><button type="button" disabled={Boolean(mockData) || Boolean(exporting) || !validRange} onClick={() => void exportReport("csv")}><Download size={16} />{mockData ? "Desativado na prévia" : exporting === "csv" ? "Gerando CSV…" : "Exportar CSV"}</button></div>
-        <div className="admin-reports-export-row"><div><strong>PDF A4</strong><span>Resumo para leitura e arquivamento; inclui totais, situação, evolução e tabela sem nome, e-mail, telefone ou endereço.</span></div><button type="button" disabled={Boolean(mockData) || Boolean(exporting) || !validRange} onClick={() => void exportReport("pdf")}><FileText size={16} />{mockData ? "Desativado na prévia" : exporting === "pdf" ? "Gerando PDF…" : "Exportar PDF"}</button></div>
-        <p>O total dos pedidos inclui todos os estados. O indicador financeiro considera pedidos criados no período com paymentStatus=confirmed; não representa receita líquida ou recebimentos menos reembolsos.</p>
+      <section id="report-exports" className="admin-reports-exports" aria-labelledby="admin-report-exports"><div className="admin-reports-section-title"><div><h3 id="admin-report-exports">Exportações</h3><p>CSV e PDF usam o mesmo intervalo e os mesmos critérios agregados do painel.</p></div></div>
+        <div className="admin-reports-export-row"><div><strong>CSV gerencial</strong><span>Indicadores, séries, status, produtos e identificadores de pedidos. Não inclui nome, e-mail, telefone, endereço ou rastreio.</span></div><button type="button" disabled={Boolean(mockData) || Boolean(exporting) || !validRange} onClick={() => void exportReport("csv")}><Download size={16} />{mockData ? "Desativado na prévia" : exporting === "csv" ? "Gerando CSV…" : "Exportar CSV"}</button></div>
+        <div className="admin-reports-export-row"><div><strong>PDF gerencial A4</strong><span>Resumo executivo, comparativo, status separados, evolução, produtos e movimentação de clientes sem dados pessoais.</span></div><button type="button" disabled={Boolean(mockData) || Boolean(exporting) || !validRange} onClick={() => void exportReport("pdf")}><FileText size={16} />{mockData ? "Desativado na prévia" : exporting === "pdf" ? "Gerando PDF…" : "Exportar PDF"}</button></div>
+        <p>{period === "month" && queryRange.to < today ? "Período mensal encerrado: consulta histórica recalculada com os registros disponíveis." : period === "month" || period === "year" ? "Período em andamento; exportação provisória dos dados disponíveis até agora." : "Exportação por período; a seleção de um mês encerrado gera um relatório histórico consultivo."} Os arquivos são baixados localmente e não ficam arquivados no sistema. Não existe fechamento mensal persistente nem versão imutável nesta implementação.</p>
       </section>
     </> : null}
   </div>;
+}
+
+function StatusList({ rows, names, tonePrefix, tones, money: moneyFormat }: {
+  rows: Array<{ status: string; count: number; totalCents: number }>;
+  names: Record<string, string>;
+  tonePrefix: string;
+  tones?: Record<string, string>;
+  money: Intl.NumberFormat;
+}) {
+  return <ul className="admin-reports-status">{rows.map(row => <li key={row.status}><span><i className={`admin-report-status-dot ${tonePrefix}-${tones?.[row.status] ?? (row.status === "confirmed" ? "green" : row.status === "unconfirmed" ? "amber" : "neutral")}`} />{names[row.status] ?? row.status}</span><strong>{row.count}</strong><small>{moneyFormat.format(row.totalCents / 100)}</small></li>)}</ul>;
+}
+
+function DailyLineChart({ rows, max, money: moneyFormat }: {
+  rows: Array<{ day: string; ordersCount: number; totalCents: number }>;
+  max: number;
+  money: Intl.NumberFormat;
+}) {
+  const points = rows.map((row, index) => ({
+    ...row,
+    x: rows.length <= 1 ? 350 : 10 + index * (680 / (rows.length - 1)),
+    y: 94 - row.totalCents / max * 78,
+  }));
+  const labelStep = Math.max(1, Math.ceil(rows.length / 8));
+  return <div className="admin-reports-line-chart" role="img" aria-label={`Linha diária do valor de pedidos em ${rows.length} dias.`}>
+    <svg viewBox="0 0 700 112" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="8" y1="95" x2="692" y2="95" />
+      <polyline points={points.map(point => `${point.x},${point.y}`).join(" ")} />
+      {points.map(point => <circle key={point.day} cx={point.x} cy={point.y} r="2.5"><title>{`${point.day}: ${moneyFormat.format(point.totalCents / 100)} · ${point.ordersCount} pedidos`}</title></circle>)}
+    </svg>
+    <div className="admin-reports-line-labels">{rows.map((row, index) => <span key={row.day}>{index % labelStep === 0 || index === rows.length - 1 ? row.day.slice(5).replace("-", "/") : ""}</span>)}</div>
+  </div>;
+}
+
+function ComparisonBars({ current, previous, money: moneyFormat }: { current: AdminSalesReportData; previous: AdminSalesReportData; money: Intl.NumberFormat }) {
+  const metrics = [
+    { label: "Pedidos", current: current.ordersCount, previous: previous.ordersCount, format: (value: number) => String(value) },
+    { label: "Valor registrado", current: current.ordersTotalCents, previous: previous.ordersTotalCents, format: (value: number) => moneyFormat.format(value / 100) },
+    { label: "Novos clientes", current: current.newCustomersCount, previous: previous.newCustomersCount, format: (value: number) => String(value) },
+    { label: "Unidades em pedidos", current: current.products.reduce((sum, row) => sum + row.unitsInOrders, 0), previous: previous.products.reduce((sum, row) => sum + row.unitsInOrders, 0), format: (value: number) => String(value) },
+  ];
+  return <div className="admin-reports-compare-bars" aria-label="Barras comparativas entre os períodos"><div className="admin-reports-compare-legend"><span><i className="current" />Selecionado</span><span><i className="previous" />Anterior</span></div>{metrics.map(metric => {
+    const maximum = Math.max(1, metric.current, metric.previous);
+    return <div className="admin-reports-compare-row" key={metric.label}><span>{metric.label}</span><div><i className="current" style={{ width: `${metric.current / maximum * 100}%` }} /><i className="previous" style={{ width: `${metric.previous / maximum * 100}%` }} /></div><small>{metric.format(metric.current)} / {metric.format(metric.previous)}</small></div>;
+  })}</div>;
 }

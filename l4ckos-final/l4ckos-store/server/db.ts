@@ -1,7 +1,7 @@
 import { batchAcceptsSales, batchHasCapacity, type BatchPreview } from "../shared/preorder";
 import { readShippingSnapshot } from "./database/orderShippingSnapshot";
 import { createVariantOptionKey, normalizeVariantLabel } from "./database/productVariantIdentity";
-import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -3119,9 +3119,10 @@ export async function getAdminSalesReport(from: Date, to: Date) {
       status: orders.status,
       paymentStatus: orders.paymentStatus,
       totalPrice: orders.totalPrice,
+      userId: orders.userId,
     })
     .from(orders)
-    .where(and(gte(orders.createdAt, from), lte(orders.createdAt, to)))
+    .where(and(gte(orders.createdAt, from), lt(orders.createdAt, new Date(to.getTime() + 1))))
     .orderBy(desc(orders.createdAt), desc(orders.id))
     .limit(SALES_REPORT_MAX_ORDERS + 1);
 
@@ -3134,7 +3135,17 @@ export async function getAdminSalesReport(from: Date, to: Date) {
       quantity: orderItems.quantity,
     }).from(orderItems).where(inArray(orderItems.orderId, rows.map(row => row.id)))
     : [];
-  return aggregateSalesReport(rows, from, to, items);
+  const [confirmedPaymentEvents, newCustomers] = await Promise.all([
+    db.select({ id: orders.id, totalPrice: orders.totalPrice }).from(orders)
+      .where(and(eq(orders.paymentStatus, "confirmed"), gte(orders.paymentConfirmedAt, from), lt(orders.paymentConfirmedAt, new Date(to.getTime() + 1))))
+      .orderBy(desc(orders.paymentConfirmedAt), desc(orders.id)).limit(SALES_REPORT_MAX_ORDERS + 1),
+    db.select({ value: count() }).from(users).where(and(eq(users.role, "user"), gte(users.createdAt, from), lt(users.createdAt, new Date(to.getTime() + 1)))),
+  ]);
+  if (confirmedPaymentEvents.length > SALES_REPORT_MAX_ORDERS) throw new SalesReportTooLargeError();
+  return aggregateSalesReport(rows, from, to, items, {
+    confirmedPaymentEvents,
+    newCustomersCount: Number(newCustomers[0]?.value ?? 0),
+  });
 }
 
 export async function getSalesByPeriod(from: Date, to: Date) {

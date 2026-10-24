@@ -5,13 +5,20 @@ import type { AdminSalesReportData } from "../../../shared/reports";
 import "../components/admin/reports/AdminReportsIntegrationPreview.css";
 
 const syntheticReport: AdminSalesReportData = {
-  from: "2026-10-15T00:00:00.000Z",
-  to: "2026-10-21T23:59:59.999Z",
-  timeZone: "UTC",
+  from: "2026-10-15T03:00:00.000Z",
+  to: "2026-10-22T02:59:59.999Z",
+  timeZone: "America/Sao_Paulo",
   ordersCount: 8,
   ordersTotalCents: 134840,
+  averageOrderCents: 16855,
+  pendingPaymentsCount: 3,
+  pendingPaymentsCents: 44470,
   confirmedPaymentsCount: 4,
   confirmedPaymentsCents: 74370,
+  confirmedPaymentEventsCount: 3,
+  confirmedPaymentEventsCents: 50900,
+  newCustomersCount: 4,
+  buyersCount: 6,
   statuses: [
     { status: "pending", count: 2, totalCents: 24980 },
     { status: "processing", count: 1, totalCents: 15990 },
@@ -19,6 +26,10 @@ const syntheticReport: AdminSalesReportData = {
     { status: "shipped", count: 1, totalCents: 17990 },
     { status: "delivered", count: 1, totalCents: 21990 },
     { status: "cancelled", count: 1, totalCents: 19500 },
+  ],
+  paymentStatuses: [
+    { status: "confirmed", count: 4, totalCents: 74370 },
+    { status: "unconfirmed", count: 4, totalCents: 60470 },
   ],
   daily: [
     { day: "2026-10-15", ordersCount: 1, totalCents: 13990 },
@@ -29,6 +40,7 @@ const syntheticReport: AdminSalesReportData = {
     { day: "2026-10-20", ordersCount: 1, totalCents: 21990 },
     { day: "2026-10-21", ordersCount: 2, totalCents: 21910 },
   ],
+  monthly: [{ month: "2026-10", ordersCount: 8, totalCents: 134840 }],
   products: [
     { productId: 11, productName: "Camiseta Clã 14 Bis", unitsInOrders: 4, unitsInCancelledOrders: 1 },
     { productId: 12, productName: "Camiseta Ritmo Noturno", unitsInOrders: 3, unitsInCancelledOrders: 0 },

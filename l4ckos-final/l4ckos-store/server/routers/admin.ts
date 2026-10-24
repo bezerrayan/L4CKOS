@@ -27,7 +27,6 @@ import {
   getOrdersByFilters,
   getAdminSalesReport,
   SalesReportTooLargeError,
-  SALES_REPORT_MAX_ORDERS,
   getProductsAdmin,
   getAdminProductReviews,
   markOrderPaid,
@@ -70,6 +69,7 @@ import {
 } from "../services/emailService.js";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { dispatchOrderEmailEvent } from "../services/orderEmailDelivery";
+import { localDateKey, localDateRange, previousEquivalentRange } from "../../shared/reportPeriods";
 
 const variantCreateSchema = z.object({
   color: z.string().trim().min(1).max(60),
@@ -909,6 +909,8 @@ export const adminRouter = router({
       z.object({
         from: z.string().datetime(),
         to: z.string().datetime(),
+        comparisonFrom: z.string().datetime().optional(),
+        comparisonTo: z.string().datetime().optional(),
       }).refine(({ from, to }) => new Date(from).getTime() <= new Date(to).getTime(), "A data inicial deve ser anterior ou igual à data final."),
     )
     .query(async ({ ctx, input }) => {
@@ -923,54 +925,57 @@ export const adminRouter = router({
         }
         throw error;
       }
-      const ordersRows = await getOrdersByFilters({ from, to });
-      if (ordersRows.length > SALES_REPORT_MAX_ORDERS) {
-        throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: `O período contém mais de ${SALES_REPORT_MAX_ORDERS} pedidos. Selecione um intervalo menor.` });
-      }
-      const summaryRows = report.daily.map(row => ({ day: row.day, totalSales: row.totalCents, ordersCount: row.ordersCount }));
-      const totalSalesCents = report.ordersTotalCents;
-      const totalOrders = report.ordersCount;
+      const comparisonRange = input.comparisonFrom && input.comparisonTo
+        ? { from: input.comparisonFrom, to: input.comparisonTo }
+        : (() => {
+          const range = previousEquivalentRange(localDateKey(from), localDateKey(to));
+          return localDateRange(range.from, range.to);
+        })();
+      if (new Date(comparisonRange.from).getTime() > new Date(comparisonRange.to).getTime()) throw new TRPCError({ code: "BAD_REQUEST", message: "Período comparativo inválido." });
+      const comparison = await getAdminSalesReport(new Date(comparisonRange.from), new Date(comparisonRange.to));
       const lines = [
-        csvRow(["L4CKOS - Relatorio de vendas"]),
+        csvRow(["L4CKOS - Relatorio gerencial"]),
         csvRow(["periodFrom", input.from]),
         csvRow(["periodTo", input.to]),
-        csvRow(["totalSalesCents", totalSalesCents]),
-        csvRow(["totalSalesBRL", (totalSalesCents / 100).toFixed(2)]),
-        csvRow(["ordersCount", totalOrders]),
+        csvRow(["timeZone", report.timeZone]),
+        csvRow(["ordersCreated", report.ordersCount]),
+        csvRow(["orderValueAllStatusesCents", report.ordersTotalCents]),
+        csvRow(["orderValueAllStatusesBRL", (report.ordersTotalCents / 100).toFixed(2)]),
+        csvRow(["currentConfirmedStateOrdersCreatedInPeriod", report.confirmedPaymentsCount]),
+        csvRow(["currentConfirmedStateOrderValueCents", report.confirmedPaymentsCents]),
+        csvRow(["paymentConfirmationsRecordedInPeriod", report.confirmedPaymentEventsCount]),
+        csvRow(["paymentConfirmationOrderValueCents", report.confirmedPaymentEventsCents]),
+        csvRow(["pendingPaymentOrders", report.pendingPaymentsCount]),
+        csvRow(["cancelledOrders", report.statuses.find(row => row.status === "cancelled")?.count ?? 0]),
+        csvRow(["averageOrderCents", report.averageOrderCents]),
+        csvRow(["newCustomers", report.newCustomersCount]),
+        csvRow(["registeredCustomersWithOrders", report.buyersCount]),
         "",
-        csvRow(["section", "date", "totalSalesCents", "totalSalesBRL", "ordersCount"]),
-        ...summaryRows.map(row => csvRow(["daily_summary", row.day, row.totalSales, (Number(row.totalSales) / 100).toFixed(2), row.ordersCount])),
+        csvRow(["comparisonPeriodFrom", comparisonRange.from]),
+        csvRow(["comparisonPeriodTo", comparisonRange.to]),
+        csvRow(["comparisonOrdersCreated", comparison.ordersCount]),
+        csvRow(["comparisonOrderValueAllStatusesCents", comparison.ordersTotalCents]),
+        csvRow(["comparisonNewCustomers", comparison.newCustomersCount]),
         "",
-        csvRow([
-          "section",
-          "orderId",
-          "createdAt",
-          "status",
-          "totalPriceCents",
-          "totalPriceBRL",
-          "customerName",
-          "customerEmail",
-          "trackingCode",
-          "itemCount",
-          "items",
-        ]),
-        ...ordersRows.map(order => csvRow([
-          "order",
-          order.id,
-          order.createdAt instanceof Date ? order.createdAt.toISOString() : order.createdAt,
-          order.status,
-          order.totalPrice,
-          (Number(order.totalPrice ?? 0) / 100).toFixed(2),
-          order.customerName,
-          order.customerEmail,
-          order.trackingCode,
-          order.items?.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0) ?? 0,
-          order.items?.map(item => `${item.productName || `Produto #${item.productId}`} x${item.quantity}`).join("; ") ?? "",
-        ])),
+        csvRow(["section", "date", "ordersCount", "orderValueCents"]),
+        ...report.daily.map(row => csvRow(["daily_summary", row.day, row.ordersCount, row.totalCents])),
+        ...report.monthly.map(row => csvRow(["monthly_summary", row.month, row.ordersCount, row.totalCents])),
+        "",
+        csvRow(["section", "logisticsStatus", "ordersCount", "orderValueCents"]),
+        ...report.statuses.map(row => csvRow(["logistics_status", row.status, row.count, row.totalCents])),
+        "",
+        csvRow(["section", "paymentStatus", "ordersCount", "orderValueCents"]),
+        ...report.paymentStatuses.map(row => csvRow(["payment_status", row.status, row.count, row.totalCents])),
+        "",
+        csvRow(["section", "productId", "productName", "unitsInOrders", "unitsInCancelledOrders"]),
+        ...report.products.map(row => csvRow(["product", row.productId, row.productName, row.unitsInOrders, row.unitsInCancelledOrders])),
+        "",
+        csvRow(["section", "orderId", "createdAt", "logisticsStatus", "paymentStatus", "orderTotalCents"]),
+        ...report.orders.map(order => csvRow(["order", order.id, order.createdAt, order.status, order.paymentStatus, order.totalPriceCents])),
       ];
-      await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.csv", entity: "report", metadata: { from: input.from, to: input.to, rows: ordersRows.length } });
+      await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.csv", entity: "report", metadata: { from: input.from, to: input.to, comparisonFrom: comparisonRange.from, comparisonTo: comparisonRange.to, rows: report.ordersCount } });
       return {
-        fileName: `sales-report-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.csv`,
+        fileName: `l4ckos-relatorio-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.csv`,
         csv: lines.join("\n"),
       };
     }),
@@ -995,6 +1000,8 @@ export const adminRouter = router({
     .input(z.object({
       from: z.string().datetime(),
       to: z.string().datetime(),
+      comparisonFrom: z.string().datetime().optional(),
+      comparisonTo: z.string().datetime().optional(),
     }).refine(({ from, to }) => new Date(from).getTime() <= new Date(to).getTime(), "A data inicial deve ser anterior ou igual à data final."))
     .mutation(async ({ ctx, input }) => {
       let report;
@@ -1006,10 +1013,15 @@ export const adminRouter = router({
         }
         throw error;
       }
-      const pdf = renderSalesReportPdf(report);
-      await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.pdf", entity: "report", metadata: { from: input.from, to: input.to, orders: report.ordersCount } });
+      let comparison;
+      if (input.comparisonFrom && input.comparisonTo) {
+        if (new Date(input.comparisonFrom).getTime() > new Date(input.comparisonTo).getTime()) throw new TRPCError({ code: "BAD_REQUEST", message: "Período comparativo inválido." });
+        comparison = await getAdminSalesReport(new Date(input.comparisonFrom), new Date(input.comparisonTo));
+      }
+      const pdf = renderSalesReportPdf(report, new Date(), comparison);
+      await createAuditLog({ actorUserId: ctx.user.id, action: "report.export.pdf", entity: "report", metadata: { from: input.from, to: input.to, comparisonFrom: input.comparisonFrom, comparisonTo: input.comparisonTo, orders: report.ordersCount } });
       return {
-        fileName: `relatorio-pedidos-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.pdf`,
+        fileName: `l4ckos-relatorio-gerencial-${input.from.slice(0, 10)}-${input.to.slice(0, 10)}.pdf`,
         pdfBase64: pdf.toString("base64"),
       };
     }),
