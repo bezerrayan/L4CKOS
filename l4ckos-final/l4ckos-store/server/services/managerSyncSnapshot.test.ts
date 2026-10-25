@@ -18,7 +18,8 @@ const order = {
   paymentStatus: "confirmed" as const,
   paymentConfirmationSource: "asaas_webhook" as const,
   paymentConfirmedAt: "2026-10-03T12:00:00.000Z",
-  logisticsStatus: "delivered",
+  orderStatus: "paid",
+  fulfillmentStatus: "delivered",
   items: [{ productId: 9, variantId: 17, productName: "Camiseta histórica", variantName: "Preto / M", sku: "QA-001", color: "Preto", size: "M", quantity: 1, unitPriceCents: 10_000, lineTotalCents: 10_000 }],
 };
 
@@ -30,6 +31,8 @@ describe("Manager sync V2 snapshot", () => {
     expect(payload.snapshot.timezone).toBe("America/Sao_Paulo");
     expect(payload.orders[0]?.customerReference).toBeNull();
     expect(payload.orders[0]?.paymentConfirmationReference).toBeNull();
+    expect(payload.orders[0]?.orderStatus).toBe("paid");
+    expect(payload.orders[0]?.fulfillmentStatus).toBe("delivered");
     expect(JSON.stringify(payload)).not.toContain("email");
     expect(JSON.stringify(payload)).not.toContain("userId");
   });
@@ -40,6 +43,30 @@ describe("Manager sync V2 snapshot", () => {
     expect(first.snapshot.revision).toEqual(second.snapshot.revision);
     expect(first.snapshot.id).toEqual(second.snapshot.id);
     expect(first.orders[0]?.items[0]?.lineTotalCents).toBe(10_000);
+  });
+
+
+  it("preserves general order, payment and fulfillment states independently", () => {
+    const paidButUnconfirmed = buildManagerSyncSnapshot({
+      identity,
+      periodStart: "2026-09-01",
+      periodEndExclusive: "2026-10-01",
+      generatedAt: new Date("2026-10-02T12:00:00Z"),
+      newCustomers: 0,
+      customersWithOrders: 0,
+      orders: [{ ...order, paymentStatus: "unconfirmed", paymentConfirmationSource: null, paymentConfirmedAt: null, orderStatus: "paid", fulfillmentStatus: "ready" }],
+    });
+    expect(paidButUnconfirmed.orders[0]).toMatchObject({ orderStatus: "paid", paymentStatus: "unconfirmed", fulfillmentStatus: "ready", paymentConfirmedAt: null });
+    const missing = buildManagerSyncSnapshot({
+      identity, periodStart: "2026-09-01", periodEndExclusive: "2026-10-01", generatedAt: new Date(), newCustomers: 0, customersWithOrders: 0,
+      orders: [{ ...order, fulfillmentStatus: null }],
+    });
+    expect(missing.orders[0]?.fulfillmentStatus).toBeNull();
+    const unexpected = buildManagerSyncSnapshot({
+      identity, periodStart: "2026-09-01", periodEndExclusive: "2026-10-01", generatedAt: new Date(), newCustomers: 0, customersWithOrders: 0,
+      orders: [{ ...order, fulfillmentStatus: "legacy_hold_unmapped" }],
+    });
+    expect(unexpected.orders[0]?.fulfillmentStatus).toBe("legacy_hold_unmapped");
   });
 
   it("fails closed on absent historical item fields and invalid periods", () => {

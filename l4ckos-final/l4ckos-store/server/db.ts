@@ -3340,11 +3340,19 @@ export async function getManagerSyncPayload(
     if (["users", "orders", "orderitems"].some((table) => engines.get(table) !== "innodb")) {
       throw new Error("MANAGER_SYNC_NON_TRANSACTIONAL_SOURCE_TABLE");
     }
+    const fulfillmentColumn = extractExecutedRows(await tx.execute(sql`
+      SELECT COLUMN_NAME AS columnName
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'fulfillmentStatus'
+      LIMIT 1
+    `)) as Array<{ columnName: string }>;
+    if (fulfillmentColumn.length !== 1) throw new Error("MANAGER_SYNC_FULFILLMENT_STATUS_COLUMN_MISSING");
 
     const orderRows = await tx.select({
       id: orders.id,
       userId: orders.userId,
       status: orders.status,
+      fulfillmentStatus: orders.fulfillmentStatus,
       paymentStatus: orders.paymentStatus,
       paymentConfirmationSource: orders.paymentConfirmationSource,
       paymentConfirmedAt: orders.paymentConfirmedAt,
@@ -3402,7 +3410,8 @@ export async function getManagerSyncPayload(
         paymentStatus: order.paymentStatus,
         paymentConfirmationSource: order.paymentConfirmationSource,
         paymentConfirmedAt: order.paymentConfirmedAt,
-        logisticsStatus: order.status,
+        orderStatus: order.status,
+        fulfillmentStatus: order.fulfillmentStatus ?? null,
         items: (itemsByOrder.get(order.id) ?? []).map((item) => ({
           productId: item.productId,
           variantId: item.variantId,

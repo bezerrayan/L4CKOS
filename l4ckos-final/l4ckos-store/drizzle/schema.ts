@@ -158,6 +158,8 @@ export const orders = mysqlTable("orders", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   status: mysqlEnum("status", ["pending", "processing", "paid", "shipped", "delivered", "cancelled"]).default("pending").notNull(),
+  // Existing physical column in the audited orders table; no DDL is introduced by this mapping.
+  fulfillmentStatus: mysqlEnum("fulfillmentStatus", ["awaiting_payment", "ready", "processing", "shipped", "delivered", "cancelled", "on_hold", "inventory_exception"]).default("awaiting_payment").notNull(),
   paymentStatus: mysqlEnum("paymentStatus", ["unconfirmed", "confirmed"]).default("unconfirmed").notNull(),
   paymentConfirmationSource: mysqlEnum("paymentConfirmationSource", ["asaas_webhook", "manual"]),
   paymentConfirmedAt: timestamp("paymentConfirmedAt"),

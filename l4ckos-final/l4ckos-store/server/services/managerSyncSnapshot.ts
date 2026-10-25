@@ -62,7 +62,8 @@ type SnapshotOrder = {
   paymentStatus: "unconfirmed" | "confirmed";
   paymentConfirmationSource: "asaas_webhook" | "manual" | null;
   paymentConfirmedAt: Date | string | null;
-  logisticsStatus: string;
+  orderStatus: string;
+  fulfillmentStatus: string | null;
   items: SnapshotItem[];
 };
 
@@ -106,7 +107,8 @@ export function buildManagerSyncSnapshot(input: {
     if (order.items.length === 0) throw new Error("MANAGER_SYNC_ORDER_ITEMS_MISSING");
     if (!(order.paymentStatus === "confirmed" || order.paymentStatus === "unconfirmed")) throw new Error("MANAGER_SYNC_INVALID_PAYMENT_STATUS");
     if (order.paymentConfirmationSource !== null && !["asaas_webhook", "manual"].includes(order.paymentConfirmationSource)) throw new Error("MANAGER_SYNC_INVALID_PAYMENT_SOURCE");
-    if (!order.logisticsStatus || order.logisticsStatus.length > 80) throw new Error("MANAGER_SYNC_INVALID_LOGISTICS_STATUS");
+    if (typeof order.orderStatus !== "string" || order.orderStatus.length === 0 || order.orderStatus.length > 80) throw new Error("MANAGER_SYNC_INVALID_ORDER_STATUS");
+    if (order.fulfillmentStatus !== null && (typeof order.fulfillmentStatus !== "string" || order.fulfillmentStatus.length > 80)) throw new Error("MANAGER_SYNC_INVALID_FULFILLMENT_STATUS");
 
     return {
       id: order.id,
@@ -120,7 +122,8 @@ export function buildManagerSyncSnapshot(input: {
       paymentConfirmedAt: iso(order.paymentConfirmedAt, "payment_confirmed_at"),
       // External gateway references are not needed for the Manager's aggregate reports.
       paymentConfirmationReference: null,
-      logisticsStatus: order.logisticsStatus,
+      orderStatus: order.orderStatus,
+      fulfillmentStatus: order.fulfillmentStatus,
       items: order.items.map((item) => {
         if (item.productName === null || item.productName.trim() === "") throw new Error("MANAGER_SYNC_ITEM_SNAPSHOT_INCOMPLETE");
         if (item.lineTotalCents === null) throw new Error("MANAGER_SYNC_ITEM_TOTAL_MISSING");
