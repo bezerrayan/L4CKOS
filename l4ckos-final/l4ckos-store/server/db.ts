@@ -1,7 +1,7 @@
 import { batchAcceptsSales, batchHasCapacity, type BatchPreview } from "../shared/preorder";
 import { readShippingSnapshot } from "./database/orderShippingSnapshot";
 import { createVariantOptionKey, normalizeVariantLabel } from "./database/productVariantIdentity";
-import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -49,6 +49,7 @@ import {assertSelectedLedgerBinding,selectiveOrderAllowed} from './payments/stag
 import { aggregateSalesReport } from "./reports/salesReport";
 import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
 import { getSellableVariantIds } from "./database/productVariantAvailability";
+import { buildManagerSyncSnapshot, saoPauloMidnightUtc, type ManagerSyncIdentity } from "./services/managerSyncSnapshot";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -3314,4 +3315,107 @@ export async function restoreBackupPayload(payload: unknown) {
   const connection = await openBackupConnection(target.url, target.socketPath);
   try { return await restoreDatabase(connection, payload, target); }
   finally { await connection.end(); }
+}
+
+/** Return a complete monthly Manager snapshot from one repeatable-read transaction. */
+export async function getManagerSyncPayload(
+  periodStart: string,
+  periodEndExclusive: string,
+  identity: ManagerSyncIdentity,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DATABASE_UNAVAILABLE");
+  const startUtc = saoPauloMidnightUtc(periodStart);
+  const endUtc = saoPauloMidnightUtc(periodEndExclusive);
+  if (endUtc <= startUtc) throw new Error("MANAGER_SYNC_INVALID_PERIOD");
+
+  return db.transaction(async (tx) => {
+    const engineRows = extractExecutedRows(await tx.execute(sql`
+      SELECT TABLE_NAME AS tableName, ENGINE AS engine
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN ('users', 'orders', 'orderItems')
+    `)) as Array<{ tableName: string; engine: string | null }>;
+    const engines = new Map(engineRows.map((row) => [String(row.tableName).toLowerCase(), String(row.engine ?? "").toLowerCase()]));
+    if (["users", "orders", "orderitems"].some((table) => engines.get(table) !== "innodb")) {
+      throw new Error("MANAGER_SYNC_NON_TRANSACTIONAL_SOURCE_TABLE");
+    }
+
+    const orderRows = await tx.select({
+      id: orders.id,
+      userId: orders.userId,
+      status: orders.status,
+      paymentStatus: orders.paymentStatus,
+      paymentConfirmationSource: orders.paymentConfirmationSource,
+      paymentConfirmedAt: orders.paymentConfirmedAt,
+      totalPriceCents: orders.totalPrice,
+      createdAt: orders.createdAt,
+      updatedAt: orders.updatedAt,
+    }).from(orders).where(or(
+      and(gte(orders.createdAt, startUtc), lt(orders.createdAt, endUtc)),
+      and(gte(orders.paymentConfirmedAt, startUtc), lt(orders.paymentConfirmedAt, endUtc)),
+    )).orderBy(orders.id).limit(5_001);
+
+    if (orderRows.length > 5_000) throw new Error("MANAGER_SYNC_ORDER_LIMIT_EXCEEDED");
+    const orderIds = orderRows.map((order) => order.id);
+    const itemRows = orderIds.length === 0 ? [] : await tx.select({
+      id: orderItems.id,
+      orderId: orderItems.orderId,
+      productId: orderItems.productId,
+      variantId: orderItems.variantId,
+      productName: orderItems.productName,
+      variantName: orderItems.variantName,
+      sku: orderItems.sku,
+      color: orderItems.color,
+      size: orderItems.size,
+      quantity: orderItems.quantity,
+      unitPriceCents: orderItems.unitPrice,
+      lineTotalCents: orderItems.totalPrice,
+    }).from(orderItems).where(inArray(orderItems.orderId, orderIds)).orderBy(orderItems.orderId, orderItems.id).limit(25_001);
+    if (itemRows.length > 25_000) throw new Error("MANAGER_SYNC_ITEM_LIMIT_EXCEEDED");
+
+    const itemsByOrder = new Map<number, typeof itemRows>();
+    for (const item of itemRows) {
+      const current = itemsByOrder.get(item.orderId) ?? [];
+      current.push(item);
+      itemsByOrder.set(item.orderId, current);
+    }
+    const createdOrderUserIds = new Set(orderRows
+      .filter((order) => order.createdAt >= startUtc && order.createdAt < endUtc)
+      .map((order) => order.userId));
+    const newCustomerRows = await tx.select({ id: users.id }).from(users)
+      .where(and(gte(users.createdAt, startUtc), lt(users.createdAt, endUtc)));
+
+    return buildManagerSyncSnapshot({
+      identity,
+      periodStart,
+      periodEndExclusive,
+      generatedAt: new Date(),
+      newCustomers: newCustomerRows.length,
+      customersWithOrders: createdOrderUserIds.size,
+      orders: orderRows.map((order) => ({
+        id: order.id,
+        userId: order.userId,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        totalPriceCents: order.totalPriceCents,
+        paymentStatus: order.paymentStatus,
+        paymentConfirmationSource: order.paymentConfirmationSource,
+        paymentConfirmedAt: order.paymentConfirmedAt,
+        logisticsStatus: order.status,
+        items: (itemsByOrder.get(order.id) ?? []).map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          productName: item.productName,
+          variantName: item.variantName,
+          sku: item.sku,
+          color: item.color,
+          size: item.size,
+          quantity: item.quantity,
+          unitPriceCents: item.unitPriceCents,
+          lineTotalCents: item.lineTotalCents,
+        })),
+      })),
+    });
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }

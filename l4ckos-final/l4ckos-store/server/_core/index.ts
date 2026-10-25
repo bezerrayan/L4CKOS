@@ -36,6 +36,7 @@ import { getBackupPayload } from "../db";
 import { createBackupFile } from "../database/backupFiles";
 import { asaasWebhookHandler } from "../controllers/paymentController";
 import { createStagingMaintenanceMiddleware } from "./stagingMaintenance";
+import managerSyncRoutes from "../routes/managerSyncRoutes";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -457,6 +458,15 @@ async function startServer() {
       next();
     },
     express.static(path.resolve(process.cwd(), "uploads"))
+  );
+  app.use(
+    "/api/internal/manager",
+    createRateLimiter({
+      windowMs: 15 * 60 * 1000,
+      max: isProduction ? 30 : 60,
+      message: { error: "MANAGER_SYNC_RATE_LIMITED", message: "Manager sync request limit exceeded." },
+    }),
+    managerSyncRoutes,
   );
   app.use("/api/payments", paymentRoutes);
   app.use("/api/webhooks", webhookRoutes);
