@@ -44,6 +44,7 @@ describe("Manager sync V2 snapshot", () => {
 
   it("fails closed on absent historical item fields and invalid periods", () => {
     expect(() => buildManagerSyncSnapshot({ identity, periodStart: "2026-10-01", periodEndExclusive: "2026-11-01", generatedAt: new Date(), newCustomers: 0, customersWithOrders: 0, orders: [{ ...order, items: [{ ...order.items[0]!, productName: null }] }] })).toThrow("MANAGER_SYNC_ITEM_SNAPSHOT_INCOMPLETE");
+    expect(() => buildManagerSyncSnapshot({ identity, periodStart: "2026-10-01", periodEndExclusive: "2026-11-01", generatedAt: new Date(), newCustomers: 0, customersWithOrders: 0, orders: [{ ...order, items: [] }] })).toThrow("MANAGER_SYNC_ORDER_ITEMS_MISSING");
     expect(() => saoPauloMidnightUtc("2026-02-30")).toThrow("MANAGER_SYNC_INVALID_PERIOD");
   });
 
