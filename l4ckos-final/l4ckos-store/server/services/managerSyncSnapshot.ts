@@ -103,6 +103,7 @@ export function buildManagerSyncSnapshot(input: {
 
   const orders = input.orders.map((order) => {
     if (!validInteger(order.id, 1) || !validInteger(order.userId, 1) || !validInteger(order.totalPriceCents)) throw new Error("MANAGER_SYNC_INVALID_ORDER");
+    if (order.items.length === 0) throw new Error("MANAGER_SYNC_ORDER_ITEMS_MISSING");
     if (!(order.paymentStatus === "confirmed" || order.paymentStatus === "unconfirmed")) throw new Error("MANAGER_SYNC_INVALID_PAYMENT_STATUS");
     if (order.paymentConfirmationSource !== null && !["asaas_webhook", "manual"].includes(order.paymentConfirmationSource)) throw new Error("MANAGER_SYNC_INVALID_PAYMENT_SOURCE");
     if (!order.logisticsStatus || order.logisticsStatus.length > 80) throw new Error("MANAGER_SYNC_INVALID_LOGISTICS_STATUS");
