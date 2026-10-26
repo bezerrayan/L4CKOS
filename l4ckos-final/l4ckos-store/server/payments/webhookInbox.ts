@@ -59,10 +59,17 @@ export async function persistWebhook(payload: unknown) {
   if (!existing) {
     try {
       await db.insert(asaasWebhookInbox).values({ eventId: envelope.id, payload: content, payloadHash: digest(content) });
+      return envelope.id;
     } catch (error) { if (!isDuplicateKeyError(error)) throw error; }
+    // A simultaneous first delivery may have won the unique-key insert. Use a
+    // non-waiting current read to compare its committed payload; the processing
+    // transaction below owns the row lock and will return BUSY if it is active.
+    const [record] = await db.select({ payloadHash: asaasWebhookInbox.payloadHash }).from(asaasWebhookInbox)
+      .where(eq(asaasWebhookInbox.eventId, envelope.id)).for('update', { noWait: true });
+    if (!record || record.payloadHash !== digest(content)) throw new Error('WEBHOOK_EVENT_CONFLICT');
+    return envelope.id;
   }
-  const [record] = await db.select().from(asaasWebhookInbox).where(eq(asaasWebhookInbox.eventId, envelope.id)).for('update');
-  if (!record || record.payloadHash !== digest(content)) throw new Error('WEBHOOK_EVENT_CONFLICT');
+  if (existing.payloadHash !== digest(content)) throw new Error('WEBHOOK_EVENT_CONFLICT');
   return envelope.id;
 }
 /** No leases: processing and all financial writes share a row-locked transaction.

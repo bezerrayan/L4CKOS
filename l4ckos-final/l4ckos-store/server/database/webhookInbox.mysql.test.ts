@@ -26,7 +26,7 @@ vi.mock('../services/emailService.js', () => ({
 }));
 vi.mock('../services/asaasService', () => ({
   validateAsaasWebhookSignature: (headers: Record<string, unknown>) => headers['asaas-access-token'] === 'synthetic-token',
-  getAsaasPayment: vi.fn(async()=> { throw Error('OFFLINE_PROVIDER'); }),
+  getAsaasPayment: vi.fn(async(id:string)=> ({ id, externalReference:'901', status:'RECEIVED', value:100, deleted:false })),
   createAsaasCheckout: vi.fn(()=> { throw Error('FORBIDDEN_EXTERNAL_CHARGE'); }),
   createAsaasCustomer: vi.fn(()=> { throw Error('FORBIDDEN_EXTERNAL_CUSTOMER'); }),
 }));
@@ -34,7 +34,7 @@ const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? '/tmp/l4ckos-0022-so
 const name = 'l4ckos_test_inbox_' + randomUUID().replaceAll('-', '').slice(0,12);
 let root: Connection, c: Connection, pool: Pool;
 const event = (id = randomUUID(), type = 'PAYMENT_RECEIVED') => ({ id, event: type,
-  payment: { id: 'synthetic-payment', externalReference: '901', status: type === 'PAYMENT_DELETED' ? 'DELETED' : type === 'PAYMENT_REFUNDED' ? 'REFUNDED' : 'RECEIVED', value: 100, currency: 'BRL' } });
+  payment: { id: 'synthetic-payment', externalReference: '901', status: type === 'PAYMENT_DELETED' ? 'DELETED' : type === 'PAYMENT_REFUNDED' ? 'REFUNDED' : 'RECEIVED', ...(type === 'PAYMENT_DELETED' ? { deleted: true } : {}), value: 100, currency: 'BRL' } });
 async function state(id: string) { return (await rows(c, 'SELECT * FROM asaasWebhookInbox WHERE eventId=?', [id]))[0]; }
 async function paid() { return (await rows(c, 'SELECT status,paymentStatus FROM orders WHERE id=901'))[0]; }
 async function stock() { return Number((await rows(c,'SELECT stock FROM products WHERE id=901'))[0].stock); }
@@ -198,6 +198,8 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     const restored=await openBackupConnection(`mysql://root@localhost/${destination}`,socketPath);
     try {
       await bootstrapReleaseDatabase(restored,{url:`mysql://root@localhost/${destination}`,socketPath,applicationCommit:"a".repeat(40),approvedFingerprint:(await readReleaseContract()).fingerprint});
+      // Release bootstrap seeds this singleton; restore correctly requires an empty data target.
+      await restored.query('DELETE FROM homeHighlightSettings');
       await restoreDatabase(restored,artifact,{url:`mysql://root@localhost/${destination}`,socketPath});
       const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');
       expect((await inWebhookTransaction(actual.drizzle(restored),()=>recoverWebhooks(processWebhookEnvelope),[])).completed).toBe(1);
