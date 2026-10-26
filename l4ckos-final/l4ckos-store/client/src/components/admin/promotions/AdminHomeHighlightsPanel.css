@@ -76,7 +76,11 @@
 .home-highlight-preview-heading h3 { margin: 0; font-size: 17px; }
 .home-highlight-preview-content { display: grid; justify-items: start; margin-top: 14px; }
 .home-highlight-preview-content picture { display: block; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; }
-.home-highlight-preview-content picture img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.home-highlight-preview-content picture img, .home-highlight-preview-image { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; }
+.home-highlight-preview-content, .home-highlight-preview-content > *, .home-highlight-image-field-preview { min-width: 0; overflow-wrap: anywhere; }
+.home-highlight-preview-content picture { max-height: min(60vh, 420px); }
+.home-highlight-row-image, .home-highlight-field-image { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; }
+.home-highlight-image-error { display: grid; place-items: center; padding: 8px; color: #ffc1ca; background: #201216; font-size: 12px; text-align: center; }
 .home-highlight-preview-empty { display: grid; place-items: center; width: 100%; aspect-ratio: 4/3; color: #999; }
 .home-highlight-preview-badge { margin-top: 15px; color: var(--highlight-red); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .home-highlight-preview-content h4 { margin: 6px 0; font-size: 24px; line-height: 1.1; }
@@ -99,8 +103,7 @@
 .home-highlight-secondary .home-highlight-fields { margin-top: 14px; }
 .home-highlight-switch > span { min-height: 42px; display: flex; align-items: center; gap: 8px; color: #ddd; font-size: 14px; }
 .home-highlight-image-field { align-content: start; }
-.home-highlight-image-field-preview { display: grid; place-items: center; width: 100%; height: 112px; color: #999; font-weight: 400; background: #080808; }
-.home-highlight-image-field-preview img { width: 100%; height: 100%; object-fit: contain; }
+.home-highlight-image-field-preview { display: grid; place-items: center; width: 100%; max-width: 100%; height: 112px; overflow: hidden; color: #999; font-weight: 400; background: #080808; }
 .home-highlight-upload { position: relative; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #414146; border-radius: 4px; color: white; cursor: pointer; font-size: 13px; }
 .home-highlight-upload input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .home-highlight-image-field > button { min-height: 34px; justify-self: start; border: 0; background: none; color: #bbb; cursor: pointer; font: inherit; font-size: 13px; }

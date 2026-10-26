@@ -99,7 +99,7 @@ async function buy(
     checkoutAttemptId: randomUUID(),
     items: lines ?? [{ productId: 999901, quantity: 1 }],
     method,
-    shipping: { cep: "70000000", optionId: "synthetic" },
+    shipping: { cep: "70000000", optionId: "synthetic", expectedPriceCents: 0 },
     shippingAddress: {
       recipient: "Synthetic",
       zipCode: "70000000",

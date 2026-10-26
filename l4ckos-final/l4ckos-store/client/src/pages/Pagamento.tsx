@@ -42,6 +42,8 @@ type ShippingOption = {
   price: number;
   minDays: number | null;
   maxDays: number | null;
+  provider?: "melhor-envio" | "local";
+  serviceId?: string;
 };
 
 type SavedCheckoutAddress = {
@@ -125,7 +127,8 @@ export default function Pagamento() {
   const [cep, setCep] = useState("");
   const shippingRequestRef = useRef(0);
   const shippingContextRef = useRef("");
-  shippingContextRef.current = `${sanitizeCep(cep)}:${cart.itemCount}:${cart.total}`;
+  const shippingItemsKey = JSON.stringify(cart.items.map(item => [item.product.id, item.variant?.variantId ?? null, item.quantity]));
+  shippingContextRef.current = `${sanitizeCep(cep)}:${cart.itemCount}:${cart.total}:${shippingItemsKey}`;
   useEffect(() => {
     shippingRequestRef.current++;
     setShippingOptions([]);
@@ -256,7 +259,7 @@ export default function Pagamento() {
     if (normalizedCep.length !== 8 || shippingOptions.length === 0) return;
     void handleCalculateShipping();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart.total, cart.itemCount]);
+  }, [cart.total, cart.itemCount, shippingItemsKey]);
 
   const getItemKey = (productId: number, selectedOptions?: Record<string, string>, variantId?: number) => {
     if (variantId !== undefined) return `${productId}-variant-${variantId}`;
@@ -297,7 +300,7 @@ export default function Pagamento() {
 
   const handleCalculateShipping = async (cepValue = cep) => {
     const request = ++shippingRequestRef.current;
-    const context = `${sanitizeCep(cepValue)}:${cart.itemCount}:${cart.total}`;
+    const context = `${sanitizeCep(cepValue)}:${cart.itemCount}:${cart.total}:${shippingItemsKey}`;
     setShippingError("");
     const normalizedCep = sanitizeCep(cepValue);
 
@@ -318,8 +321,13 @@ export default function Pagamento() {
         },
         body: JSON.stringify({
           cep: normalizedCep,
-          itemCount: cart.itemCount,
-          subtotal: Number(cart.total.toFixed(2)),
+          items: cart.items.map(item => ({
+            productId: item.product.id,
+            variantId: item.variant?.variantId,
+            quantity: item.quantity,
+            size: item.variant?.size || item.selectedOptions?.tamanho || item.selectedOptions?.size,
+            color: item.variant?.color || item.selectedOptions?.cor || item.selectedOptions?.color,
+          })),
         }),
       });
 
@@ -336,7 +344,7 @@ export default function Pagamento() {
       if (request !== shippingRequestRef.current || context !== shippingContextRef.current) return;
       const options = data.options ?? [];
       setShippingOptions(options);
-      setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options[0]?.id ?? null);
+      setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options.length === 1 ? options[0].id : null);
       const sanitizedProviderError = (data.providerError || "")
         .replace(/\s*\|\s*/g, "; ")
         .replace(/\s+/g, " ")
@@ -450,6 +458,7 @@ export default function Pagamento() {
         shipping: {
           cep: sanitizeCep(cep),
           optionId: selectedShippingId || "",
+          expectedPriceCents: selectedShipping ? Math.round(selectedShipping.price * 100) : 0,
         },
       });
       setCouponDiscount(Number(result.discountAmount.toFixed(2)));
@@ -520,6 +529,7 @@ export default function Pagamento() {
         shipping: {
           cep: sanitizeCep(cep),
           optionId: selectedShipping.id,
+          expectedPriceCents: Math.round(selectedShipping.price * 100),
         },
         shippingAddress: {
           recipient: customerName.trim(),

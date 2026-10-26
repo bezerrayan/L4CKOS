@@ -32,7 +32,7 @@ export function AdminBatchDateField({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  zone: "UTC" | "Brasília";
+  zone: "UTC" | "Brasília" | "America/Sao_Paulo";
   withTime?: boolean;
 }) {
   const dayPart = value.slice(0, 10);
@@ -115,12 +115,12 @@ export function AdminBatchDateField({
         </Popover>
         {withTime ? <>
           <label className="admin-batch-date__part admin-batch-date__time-part">
-            <span>Hora · UTC</span>
+          <span>Hora · {zone === "America/Sao_Paulo" ? "Brasília" : zone}</span>
             <input
               type="text"
               inputMode="numeric"
               placeholder="HH:mm"
-              aria-label={`${label}, horário UTC`}
+              aria-label={`${label}, horário ${zone === "America/Sao_Paulo" ? "de Brasília" : zone}`}
               value={timeDraft}
               onChange={event => commitTime(event.target.value)}
               onBlur={() => { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(timeDraft)) setTimeDraft(timePart); }}
@@ -133,7 +133,7 @@ export function AdminBatchDateField({
               </button>
             </PopoverTrigger>
             <PopoverContent className="admin-batch-date__popover admin-batch-date__time-popover" align="end" side="bottom" sideOffset={6} collisionPadding={12} aria-label={`Seletor de horário de ${label}`}>
-              <div className="admin-batch-date__popover-heading"><strong>Horário</strong><span>UTC · precisão de minuto</span></div>
+              <div className="admin-batch-date__popover-heading"><strong>Horário</strong><span>{zone === "America/Sao_Paulo" ? "Brasília" : zone} · precisão de minuto</span></div>
               <div className="admin-batch-time-grid">
                 <label><span>Hora</span><input type="text" inputMode="numeric" maxLength={2} role="spinbutton" aria-label="Hora UTC" aria-valuemin={0} aria-valuemax={23} aria-valuenow={Number(timePart.slice(0, 2))} value={hourDraft} onChange={event => { const next = event.target.value.replace(/\D/g, "").slice(0, 2); setHourDraft(next); if (next && Number(next) <= 23) { const time = `${next.padStart(2, "0")}:${validMinute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); } }} onBlur={() => { const hour = /^\d{1,2}$/.test(hourDraft) && Number(hourDraft) <= 23 ? hourDraft.padStart(2, "0") : timePart.slice(0, 2); setHourDraft(hour); if (selectedDay) onChange(`${dayPart}T${hour}:${validMinute}`); }} onKeyDown={event => { if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return; event.preventDefault(); const next = (Number(timePart.slice(0, 2)) + (event.key === "ArrowUp" ? 1 : 23)) % 24; const hour = String(next).padStart(2, "0"); setHourDraft(hour); const time = `${hour}:${validMinute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); }} /></label>
                 <span aria-hidden="true">:</span>
@@ -144,7 +144,7 @@ export function AdminBatchDateField({
           </Popover>
         </> : null}
       </div>
-      <span className="admin-batch-date__zone-note">{withTime ? "Data e hora em UTC" : "Data civil de Brasília"}</span>
+        <span className="admin-batch-date__zone-note">{withTime ? `Data e hora em ${zone === "America/Sao_Paulo" ? "Brasília" : zone}` : "Data civil de Brasília"}</span>
     </div>
   );
 }

@@ -131,7 +131,7 @@ const input = (
   checkoutAttemptId: randomUUID(),
   items,
   method: "PIX",
-  shipping: { cep: "70000000", optionId: "local" },
+  shipping: { cep: "70000000", optionId: "local", expectedPriceCents: 500 },
   shippingAddress: {
     recipient: "Synthetic",
     zipCode: "70000000",
@@ -541,11 +541,11 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
     it("freezes postage and transport conditions; schedule edits and requotes do not rewrite purchases", async () => {
       const { c, id } = await fixture();
       const a = { quote: vi.fn(async () => ({ options: [{ id: "transport-fixture", label: "Synthetic carrier", price: 7, minDays: 2, maxDays: 5 }] })), charge: vi.fn(async () => payment) };
-      const request = { ...input(), shipping: { cep: "70000000", optionId: "transport-fixture" } };
+      const request = { ...input(), shipping: { cep: "70000000", optionId: "transport-fixture", expectedPriceCents: 700 } };
       const result = await checkout(c, request, a);
       const originalItems = await query(c, "SELECT * FROM orderItems WHERE orderId=?", [result.orderId]);
       const originalAudit = await query(c, "SELECT metadata FROM auditLogs WHERE action='checkout.created' AND entityId=?", [String(result.orderId)]);
-      expect(JSON.parse(originalAudit[0].metadata).shippingAtPurchase).toEqual({ id: "transport-fixture", label: "Synthetic carrier", minDays: 2, maxDays: 5 });
+      expect(JSON.parse(originalAudit[0].metadata).shippingAtPurchase).toMatchObject({ id: "transport-fixture", provider: "melhor-envio", serviceId: null, carrier: null, label: "Synthetic carrier", priceCents: 700, minDays: 2, maxDays: 5 });
       await saveBatch(c, { ...edit, id, estimatedShippingStart: "2026-12-01T00:00:00Z", estimatedShippingEnd: "2026-12-10T00:00:00Z" }, 1);
       a.quote.mockResolvedValue({ options: [{ id: "transport-fixture", label: "Synthetic carrier", price: 20, minDays: 10, maxDays: 20 }] });
       expect((await checkout(c, request, a)).replayed).toBe(true);

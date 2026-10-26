@@ -624,6 +624,14 @@ export default function Admin() {
     onError: error => showToast({ message: error.message, duration: 2600 }),
   });
 
+  const confirmOrderPaymentMutation = trpc.admin.orderConfirmPayment.useMutation({
+    onSuccess: async () => {
+      showToast({ message: "Pagamento confirmado com auditoria", duration: 2400 });
+      await Promise.all([ordersQuery.refetch(), dashboardQuery.refetch()]);
+    },
+    onError: error => showToast({ message: error.message, duration: 3000 }),
+  });
+
   const couponCreateMutation = trpc.admin.couponCreate.useMutation({
     onSuccess: () => {
       showToast({ message: "Cupom criado", duration: 2000 });
@@ -1164,6 +1172,13 @@ export default function Admin() {
                 statusLabel={getOrderStatusLabel}
                 statusTone={getOrderStatusTone}
                 addressLines={formatAdminAddressLine}
+                confirmingPayment={confirmOrderPaymentMutation.isPending}
+                onConfirmPayment={order => {
+                  if (!confirmAdminAction(`Confirmação manual do pedido #${order.id}. Confirme somente após verificar que o valor foi efetivamente recebido fora do sistema. Esta ação não consulta o banco nem desfaz cobranças.`)) return;
+                  const reference = window.prompt("Referência do comprovante ou conciliação conferida:");
+                  if (reference === null) return;
+                  confirmOrderPaymentMutation.mutate({ orderId: order.id, reference });
+                }}
               />
             </section>
           ) : (

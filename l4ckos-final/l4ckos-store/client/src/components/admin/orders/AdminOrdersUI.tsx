@@ -154,12 +154,16 @@ export function OrderDetailPanel({
   statusTone,
   addressLines,
   className,
+  onConfirmPayment,
+  confirmingPayment = false,
 }: {
   order: AdminOrderView | null;
   statusLabel: (status: string) => string;
   statusTone: (status: string) => CSSProperties;
   addressLines: (address: NonNullable<AdminOrderView["shippingAddress"]>) => string[];
   className?: string;
+  onConfirmPayment?: (order: AdminOrderView) => void;
+  confirmingPayment?: boolean;
 }) {
   if (!order) return null;
 
@@ -209,7 +213,8 @@ export function OrderDetailPanel({
         ) : (
           <div style={styles.paymentPending}>
             <strong style={styles.itemName}>Pagamento não confirmado</strong>
-            <span style={styles.secondaryText}>A confirmação é recebida pelo fluxo financeiro autorizado e não pode ser alterada nesta tela.</span>
+            <span style={styles.secondaryText}>Use a confirmação manual somente após conferir o recebimento efetivo fora do sistema. Ela não consulta nem cobra o provedor.</span>
+            {onConfirmPayment ? <button type="button" style={styles.confirmPaymentButton} disabled={confirmingPayment || order.status === "cancelled"} onClick={() => onConfirmPayment(order)}>{confirmingPayment ? "Confirmando…" : "Confirmar pagamento manualmente"}</button> : null}
           </div>
         )}
       </section>

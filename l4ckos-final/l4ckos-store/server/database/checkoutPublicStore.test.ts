@@ -10,7 +10,7 @@ function makeInput(): CheckoutInput {
     checkoutAttemptId: "a20485ea-35f8-4ea3-85dd-4084f593e695",
     method: "PIX",
     items: [{ productId: 4, quantity: 1 }],
-    shipping: { cep: "70000000", optionId: "local" },
+    shipping: { cep: "70000000", optionId: "local", expectedPriceCents: 0 },
     shippingAddress: {
       recipient: "Comprador sintético",
       zipCode: "70000000",

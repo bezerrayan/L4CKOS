@@ -17,12 +17,14 @@ export type TrustedPaymentConfirmation =
   | {
       source: "manual";
       actorUserId: number;
+      reference?: string;
       confirmedAt?: Date;
     };
 
 export const manualPaymentConfirmationInputSchema = z
   .object({
     orderId: z.number().int().positive(),
+    reference: z.string().trim().min(3).max(191),
   })
   .strict();
 
@@ -51,7 +53,7 @@ export function buildPaymentConfirmationValues(confirmation: TrustedPaymentConfi
       paymentConfirmationSource: "manual" as const,
       paymentConfirmedAt: confirmedAt,
       paymentConfirmedBy: confirmation.actorUserId,
-      paymentConfirmationReference: null,
+      paymentConfirmationReference: confirmation.reference?.trim() || null,
     };
   }
 

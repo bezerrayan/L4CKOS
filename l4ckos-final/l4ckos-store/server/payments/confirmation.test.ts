@@ -43,7 +43,7 @@ describe("payment confirmation policy", () => {
   });
 
   it("does not accept payment evidence fields from the manual endpoint input", () => {
-    expect(manualPaymentConfirmationInputSchema.safeParse({ orderId: 42 }).success).toBe(true);
+    expect(manualPaymentConfirmationInputSchema.safeParse({ orderId: 42, reference: "Comprovante conferido" }).success).toBe(true);
     expect(manualPaymentConfirmationInputSchema.safeParse({
       orderId: 42,
       paymentStatus: "confirmed",

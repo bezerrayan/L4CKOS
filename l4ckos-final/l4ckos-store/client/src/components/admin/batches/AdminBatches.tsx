@@ -44,7 +44,24 @@ function formatUtcInstant(value: Date | string | null | undefined) {
   if (!value) return "";
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return `${new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(date)} UTC`;
+  return `${new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(date)} Brasília`;
+}
+const ADMIN_TIME_ZONE = "America/Sao_Paulo";
+function partsInAdminZone(date: Date) {
+  return Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: ADMIN_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+}
+function instantToAdminInput(value: Date | string | null | undefined) {
+  if (!value) return "";
+  const parts = partsInAdminZone(new Date(value)) as Record<string, string>;
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+function adminInputToIso(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const desired = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]));
+  const shown = partsInAdminZone(new Date(desired)) as Record<string, string>;
+  const shownAsUtc = Date.UTC(Number(shown.year), Number(shown.month) - 1, Number(shown.day), Number(shown.hour), Number(shown.minute));
+  return new Date(desired - (shownAsUtc - desired)).toISOString();
 }
 export function AdminBatches() {
   const [selected, setSelected] = useState<number | null>(null);
@@ -97,21 +114,20 @@ export function AdminBatches() {
     "estimatedShippingEnd",
   ] as const;
   const dateLabels = [
-    "Abertura das vendas",
+    "Início das vendas",
     "Encerramento das vendas",
-    "Postagem estimada — início",
-    "Postagem estimada — fim",
+    "Início previsto das postagens",
+    "Fim previsto das postagens",
   ];
   function submit(event: FormEvent) {
     event.preventDefault();
-    const iso = (v: string) => (v ? new Date(v + "Z").toISOString() : null);
     save.mutate({
       id: editId,
       name: form.name,
-      salesOpenAt: iso(form.salesOpenAt),
-      salesCloseAt: iso(form.salesCloseAt),
-      estimatedShippingStart: iso(form.estimatedShippingStart),
-      estimatedShippingEnd: iso(form.estimatedShippingEnd),
+      salesOpenAt: adminInputToIso(form.salesOpenAt),
+      salesCloseAt: adminInputToIso(form.salesCloseAt),
+      estimatedShippingStart: adminInputToIso(form.estimatedShippingStart),
+      estimatedShippingEnd: adminInputToIso(form.estimatedShippingEnd),
       estimatedManufacturingStart: form.estimatedManufacturingStart || null,
       estimatedManufacturingEnd: form.estimatedManufacturingEnd || null,
       minimumQuantity: Number(form.minimumQuantity),
@@ -133,7 +149,7 @@ export function AdminBatches() {
       ...Object.fromEntries(
         dateKeys.map(key => [
           key,
-          batch[key] ? new Date(batch[key]).toISOString().slice(0, 16) : "",
+          instantToAdminInput(batch[key]),
         ])
       ),
     } as typeof empty);
@@ -204,14 +220,14 @@ export function AdminBatches() {
             <section className="l4-batches-form-section">
               <h4>Período de vendas e postagem</h4>
               <div className="l4-batches-form-grid">
-                {dateKeys.map((key, i) => <AdminBatchDateField key={key} name={key} label={dateLabels[i]} value={form[key]} onChange={value => setForm(current => ({ ...current, [key]: value }))} zone="UTC" withTime />)}
+                {dateKeys.map((key, i) => <AdminBatchDateField key={key} name={key} label={dateLabels[i]} value={form[key]} onChange={value => setForm(current => ({ ...current, [key]: value }))} zone="America/Sao_Paulo" withTime />)}
               </div>
-              <p>As datas de vendas e postagem são informadas em UTC. A janela de postagem não inclui o transporte.</p>
+              <p>Informe horários de Brasília (America/Sao_Paulo); o sistema salva os instantes em UTC. A janela de postagem não inclui o transporte.</p>
             </section>
             <section className="l4-batches-form-section">
               <h4>Cronograma de fabricação</h4>
               <div className="l4-batches-form-grid">
-                {(["estimatedManufacturingStart", "estimatedManufacturingEnd"] as const).map((key, i) => <AdminBatchDateField key={key} name={key} label={i === 0 ? "Início estimado da fabricação" : "Término estimado da fabricação"} value={form[key]} onChange={value => setForm(current => ({ ...current, [key]: value }))} zone="Brasília" />)}
+                {(["estimatedManufacturingStart", "estimatedManufacturingEnd"] as const).map((key, i) => <AdminBatchDateField key={key} name={key} label={i === 0 ? "Previsão de fabricação — início" : "Previsão de fabricação — fim"} value={form[key]} onChange={value => setForm(current => ({ ...current, [key]: value }))} zone="Brasília" />)}
               </div>
               <p>Fabricação usa datas civis de Brasília, conforme o compromisso do fornecedor. Antes de abrir vendas, o lote precisa ter início e término de fabricação. A postagem não pode anteceder o fim estimado da fabricação.</p>
             </section>

@@ -26,6 +26,7 @@ import { PublicCheckoutDisabledError, PublicStoreClosedError, assertPublicChecko
 const shippingSelectionSchema = z.object({
   cep: z.string().trim().regex(/^\d{8}$/),
   optionId: z.string().trim().min(1).max(120),
+  expectedPriceCents: z.number().int().nonnegative().max(2_147_483_647),
 }).strict();
 
 const shippingAddressSchema = z.object({
@@ -49,7 +50,7 @@ const shippingAddressEditableSchema = z.object({
 
 async function resolveOrderPricing(input: {
   items: CheckoutItem[];
-  shipping: { cep: string; optionId: string };
+  shipping: { cep: string; optionId: string; expectedPriceCents: number };
   couponCode?: string;
 }) {
   if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
@@ -65,6 +66,7 @@ async function resolveOrderPricing(input: {
     cep: input.shipping.cep,
     itemCount: input.items.reduce((sum, item) => sum + item.quantity, 0),
     subtotal: Number((itemsSubtotalCents / 100).toFixed(2)),
+    items: frozen.map(item => ({ key: item.sku?.trim() || `product:${item.productId}`, quantity: item.quantity, unitPriceCents: item.unitPrice })),
   });
 
   const shippingOption = shippingQuote.options.find(option => option.id === input.shipping.optionId);
@@ -73,6 +75,9 @@ async function resolveOrderPricing(input: {
   }
 
   const shippingCents = Math.round(Number(shippingOption.price) * 100);
+  if (input.shipping.expectedPriceCents !== shippingCents) {
+    throw new TRPCError({ code: "CONFLICT", message: "O preço do frete mudou. Calcule novamente antes de continuar." });
+  }
   const grossTotalCents = orderTotal(itemsSubtotalCents,shippingCents).totalPrice;
 
   let appliedCouponId: number | null = null;

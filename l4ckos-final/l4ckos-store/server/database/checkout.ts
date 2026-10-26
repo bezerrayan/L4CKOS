@@ -15,6 +15,7 @@ import {CANDIDATE,candidateMetadata} from '../payments/stagingCheckoutAdmission'
 import { assertPublicCheckoutEnabled } from "../_core/publicStore";
 import { createVariantOptionKey, normalizeVariantLabel } from "./productVariantIdentity";
 import { isRestrictedPublicPurchase } from "./publicPurchasePolicy";
+import type { ShippingProduct } from "../services/shippingService";
 
 export const checkoutItemSchema = z.object({
   productId: z.number().int().positive(),
@@ -27,7 +28,7 @@ export type CheckoutItem = z.infer<typeof checkoutItemSchema>;
 type Address = { recipient: string; zipCode: string; street: string; number: string; complement?: string; neighborhood: string; city: string; state: string };
 export type CheckoutInput = {
   userId: number; checkoutAttemptId: string; items: CheckoutItem[];
-  method: "PIX" | "BOLETO" | "CARD"; shipping: { cep: string; optionId: string };
+  method: "PIX" | "BOLETO" | "CARD"; shipping: { cep: string; optionId: string; expectedPriceCents: number };
   shippingAddress: Address; couponCode?: string; dueDate?: string;
   customer: { name: string; cpfCnpj: string; email?: string };
 };
@@ -146,7 +147,7 @@ export function orderTotal(subtotal: number, shipping: number, coupon?: { type: 
 }
 
 export type CheckoutAdapters = {
-  quote: (input: { cep: string; itemCount: number; subtotal: number }) => Promise<{ options: { id: string; label: string; price: number; minDays?: number | null; maxDays?: number | null }[] }>;
+  quote: (input: { cep: string; itemCount: number; subtotal: number; items: ShippingProduct[] }) => Promise<{ options: { id: string; label: string; description?: string; provider?: "melhor-envio" | "local"; serviceId?: string; price: number; minDays?: number | null; maxDays?: number | null }[] }>;
   charge: typeof createAsaasChargeForOrder;
 };
 /** Caller owns the dedicated connection. Only the advisory attempt lock spans provider IO. */
@@ -185,10 +186,11 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
     const quoted = await snapshots(c, items, false);
     if (quoted.some(item => item.salesModeAtPurchase === "PREORDER")) fail("CHECKOUT_PREORDER_DISABLED");
     const subtotal = cents(quoted.reduce((n,i) => n+i.totalPrice,0));
-    const quote = await adapters.quote({ cep: input.shipping.cep, itemCount: items.reduce((n,i)=>n+i.quantity,0), subtotal: subtotal/100 });
+    const quote = await adapters.quote({ cep: input.shipping.cep, itemCount: items.reduce((n,i)=>n+i.quantity,0), subtotal: subtotal/100, items: quoted.map(item => ({ key: item.sku?.trim() || `product:${item.productId}`, quantity: item.quantity, unitPriceCents: item.unitPrice })) });
     const option = quote.options.find(o => o.id === input.shipping.optionId);
     if (!option || !Number.isFinite(option.price) || option.price < 0) fail("CHECKOUT_SHIPPING_INVALID");
     const shippingCents = cents(Math.round(option.price*100));
+    if (!Number.isSafeInteger(input.shipping.expectedPriceCents) || input.shipping.expectedPriceCents !== shippingCents) fail("CHECKOUT_SHIPPING_PRICE_CHANGED");
     await c.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
     await c.beginTransaction(); transaction = true;
     const frozen = await snapshots(c,items,true);
@@ -227,7 +229,7 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
     await insert(c,"INSERT INTO payments(orderId,provider,billingType,amount,creationStatus,externalReference) VALUES (?,'asaas',?,?,'creating',?)",
       [orderId,input.method==='CARD'?'CREDIT_CARD':input.method,totalPrice,String(orderId)]);
     // Persist transport conditions before provider IO, alongside the existing immutable checkout evidence.
-    const shippingAtPurchase = { id: option.id, label: option.label, minDays: option.minDays ?? null, maxDays: option.maxDays ?? null };
+    const shippingAtPurchase = { id: option.id, provider: option.provider ?? "melhor-envio", serviceId: option.serviceId ?? null, carrier: option.description ?? null, label: option.label, priceCents: shippingCents, minDays: option.minDays ?? null, maxDays: option.maxDays ?? null };
     await insert(c,"INSERT INTO auditLogs (actorUserId,actorType,action,entity,entityId,metadata) VALUES (?,'user','checkout.created','order',?,?)",[input.userId,String(orderId),JSON.stringify({subtotalCents:subtotal,shippingCents,discountCents,totalPrice,shippingAtPurchase})]);
     await c.commit(); transaction = false;
     const description = `${frozen.slice(0,2).map(i=>i.productName).join(" + ")} | Frete: ${option.label}`;

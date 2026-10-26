@@ -75,6 +75,17 @@ describe("admin order integration contract (mock-only; no database or provider I
     expect(mocks.sendPaymentApprovedEmail).not.toHaveBeenCalled();
   });
 
+  it("allows an authorized admin to advance a paid local delivery without inventing tracking", async () => {
+    const paidLocalOrder = { ...order, status: "paid", paymentStatus: "confirmed", fulfillmentStatus: "ready", trackingCode: null };
+    mocks.getOrderById.mockResolvedValue(paidLocalOrder);
+    mocks.isTrustedPaymentConfirmation.mockReturnValue(true);
+    mocks.updateOrderAndReserveDeliveredEmailEvents.mockResolvedValue({ previousOrder: paidLocalOrder, updatedOrder: { ...paidLocalOrder, status: "processing" } });
+    mocks.createAuditLog.mockResolvedValue(undefined);
+    await expect((await caller(admin)).orderUpdate({ orderId: order.id, status: "processing" })).resolves.toEqual({ success: true });
+    expect(mocks.updateOrderAndReserveDeliveredEmailEvents).toHaveBeenCalledWith(order.id, { status: "processing", trackingCode: undefined }, admin.id);
+    expect(mocks.markOrderPaid).not.toHaveBeenCalled();
+  });
+
   it("preserves the existing tracking update handler and actor audit using only mocked persistence", async () => {
     const updatedOrder = { ...order, trackingCode: "MOCK-TRACKING" };
     mocks.getOrderById.mockResolvedValue(order);
@@ -109,13 +120,13 @@ describe("admin order integration contract (mock-only; no database or provider I
     mocks.getUserById.mockResolvedValue({ name: "Cliente sintético", email: "user@local.invalid" });
     mocks.getOrderReservationItems.mockResolvedValue([]);
 
-    await expect((await caller(customer)).orderConfirmPayment({ orderId: order.id }))
+    await expect((await caller(customer)).orderConfirmPayment({ orderId: order.id, reference: "Comprovante conferido" }))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(mocks.markOrderPaid).not.toHaveBeenCalled();
 
-    await expect((await caller(admin)).orderConfirmPayment({ orderId: order.id }))
+    await expect((await caller(admin)).orderConfirmPayment({ orderId: order.id, reference: "Comprovante conferido" }))
       .resolves.toMatchObject({ success: true, updated: true });
-    expect(mocks.markOrderPaid).toHaveBeenCalledWith(order.id, { source: "manual", actorUserId: admin.id });
+    expect(mocks.markOrderPaid).toHaveBeenCalledWith(order.id, { source: "manual", actorUserId: admin.id, reference: "Comprovante conferido" });
     expect(mocks.sendPaymentApprovedEmail).toHaveBeenCalledTimes(1);
   });
 });

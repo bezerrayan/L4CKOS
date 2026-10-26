@@ -270,35 +270,13 @@ router.post("/", requireAdminUser, async (req, res) => {
             storagePut(`uploads/${variantFiles.banner}`, variantBuffers.banner, "image/webp"),
           ]);
           securityLog("info", "upload.saved_remote", { userId: user.id, requestIp: req.ip || "unknown", fileName: filename });
-          let responseUrls = {
+          const responseUrls = {
             originalUrl,
             thumbnailUrl,
             detailUrl,
             bannerUrl,
             storage: "remote" as const,
           };
-
-          try {
-            const [localOriginalPath, localThumbnailPath, localDetailPath, localBannerPath] = await Promise.all([
-              saveLocally(filename, buffer),
-              saveLocally(variantFiles.thumbnail, variantBuffers.thumbnail),
-              saveLocally(variantFiles.detail, variantBuffers.detail),
-              saveLocally(variantFiles.banner, variantBuffers.banner),
-            ]);
-            responseUrls = {
-              originalUrl: buildAbsoluteUploadUrl(req, localOriginalPath),
-              thumbnailUrl: buildAbsoluteUploadUrl(req, localThumbnailPath),
-              detailUrl: buildAbsoluteUploadUrl(req, localDetailPath),
-              bannerUrl: buildAbsoluteUploadUrl(req, localBannerPath),
-              storage: "remote" as const,
-            };
-          } catch (localMirrorError) {
-            securityLog("warn", "upload.local_mirror_unavailable", {
-              userId: user.id,
-              requestIp: req.ip || "unknown",
-              reason: localMirrorError instanceof Error ? localMirrorError.message : "unknown",
-            });
-          }
 
           res.json({
             success: true,
@@ -317,6 +295,14 @@ router.post("/", requireAdminUser, async (req, res) => {
             requestIp: req.ip || "unknown",
             reason: storageError instanceof Error ? storageError.message : "unknown",
           });
+          if (process.env.NODE_ENV === "production") {
+            res.status(503).json(buildApiErrorResponse({
+              status: 503,
+              code: "DURABLE_STORAGE_UNAVAILABLE",
+              message: "O armazenamento durável está indisponível. Tente novamente mais tarde.",
+            }));
+            return;
+          }
           const [originalPath, thumbnailPath, detailPath, bannerPath] = await Promise.all([
             saveLocally(filename, buffer),
             saveLocally(variantFiles.thumbnail, variantBuffers.thumbnail),

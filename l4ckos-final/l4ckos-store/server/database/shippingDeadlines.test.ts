@@ -9,8 +9,8 @@ import { readShippingSnapshot } from "./orderShippingSnapshot";
 import { batchEditSchema } from "./productionBatches";
 import { renderEmailTemplate } from "../services/email/emailRenderer.js";
 
-vi.mock("axios", () => ({ default: { post: vi.fn(), isAxiosError: () => false } }));
-afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
+vi.mock("axios", () => ({ default: { post: vi.fn(), isAxiosError: vi.fn(() => false) } }));
+afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); vi.mocked(axios.post).mockReset(); vi.mocked(axios.isAxiosError).mockReturnValue(false); });
 const now = Date.parse("2026-10-09T12:00:00Z");
 const start = "2026-11-05T00:00:00Z", end = "2026-11-12T00:00:00Z";
 const batch = { id: 1, name: "Fixture", status: "OPEN" as const, salesOpenAt: null, salesCloseAt: "2100-11-01T02:00:00Z", estimatedShippingStart: start, estimatedShippingEnd: end };
@@ -89,13 +89,14 @@ describe("deadline communication and historical conditions", () => {
 
 describe("shipping integration, mocked provider only", () => {
   it("parses object ranges, zero days and missing transit without a made-up default", () => {
-    expect(parseMelhorEnvioQuotes([{ id: 1, price: "12.50", delivery_range: { min: 0, max: 4 } }])[0]).toMatchObject({ price: 12.5, minDays: 0, maxDays: 4 });
-    expect(parseMelhorEnvioQuotes([{ id: 1, price: "12.50" }])[0]).toMatchObject({ minDays: null, maxDays: null });
-    expect(parseMelhorEnvioQuotes([{ id: 1, price: "12.50", custom_delivery_range: { min: 2, max: 3 }, delivery_range: { min: 1, max: 5 } }])[0]).toMatchObject({ minDays: 2, maxDays: 3 });
+    const quote = { id: 1, name: "PAC", company: { name: "Correios" }, price: "12.50" };
+    expect(parseMelhorEnvioQuotes([{ ...quote, delivery_range: { min: 0, max: 4 } }])[0]).toMatchObject({ price: 12.5, minDays: 0, maxDays: 4 });
+    expect(parseMelhorEnvioQuotes([quote])[0]).toMatchObject({ minDays: null, maxDays: null });
+    expect(parseMelhorEnvioQuotes([{ ...quote, custom_delivery_range: { min: 2, max: 3 }, delivery_range: { min: 1, max: 5 } }])[0]).toMatchObject({ minDays: 2, maxDays: 3 });
   });
   it("rejects invalid prices rather than turning a provider failure into free shipping", () => {
-    expect(parseMelhorEnvioQuotes([{ price: "oops" }, {}, { price: -1 }, { price: null }])).toEqual([]);
-    expect(parseMelhorEnvioQuotes([{ price: 0, delivery_time: 0 }])[0]).toMatchObject({ price: 0, minDays: 0, maxDays: 0 });
+    expect(parseMelhorEnvioQuotes([{ id: 1, name: "PAC", company: { name: "Correios" }, price: "oops" }, {}, { id: 2, name: "PAC", company: { name: "Correios" }, price: -1 }, { id: 3, name: "PAC", company: { name: "Correios" }, price: null }])).toEqual([]);
+    expect(parseMelhorEnvioQuotes([{ id: 1, name: "PAC", company: { name: "Correios" }, price: 0, delivery_time: 0 }])[0]).toMatchObject({ price: 0, minDays: 0, maxDays: 0 });
   });
   it("offers no invented local option outside the existing service area without a token", async () => {
     vi.stubEnv("MELHOR_ENVIO_TOKEN", "");
@@ -115,5 +116,32 @@ describe("shipping integration, mocked provider only", () => {
     else vi.mocked(axios.post).mockResolvedValueOnce({ data: [] });
     const result = await quoteShippingDetailed({ cep: "01001000", itemCount: 1, subtotal: 80 });
     expect(result.options).toEqual([]); expect(result.warning).toBeTruthy();
+  });
+  it.each(["01001000", "40010000", "69005040"])("quotes national destination %s with server package data", async cep => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("MELHOR_ENVIO_TOKEN", "sandbox-test-token");
+    vi.stubEnv("MELHOR_ENVIO_API_URL", "https://sandbox.melhorenvio.com.br/api/v2");
+    vi.stubEnv("MELHOR_ENVIO_FROM_POSTAL_CODE", "70000000");
+    vi.stubEnv("MELHOR_ENVIO_CONTACT_EMAIL", "ops@example.invalid");
+    vi.stubEnv("MELHOR_ENVIO_PRODUCT_PACKING_JSON", JSON.stringify({ SHIRT: { width: 24, height: 8, length: 32, weight: 0.42 } }));
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: [{ id: 1, name: "PAC", company: { name: "Correios" }, custom_price: "24.90", custom_delivery_range: { min: 4, max: 8 } }] });
+    const result = await quoteShippingDetailed({ cep, items: [{ key: "SHIRT", quantity: 2, unitPriceCents: 12900 }] });
+    expect(result.options).toMatchObject([{ id: "melhor-envio-1", label: "PAC", description: "Correios", price: 24.9, minDays: 4, maxDays: 8, provider: "melhor-envio", serviceId: "1" }]);
+    const [url, payload, config] = vi.mocked(axios.post).mock.calls[0];
+    expect(url).toBe("https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate");
+    expect(payload).toMatchObject({ from: { postal_code: "70000000" }, to: { postal_code: cep }, products: [{ id: "SHIRT", width: 24, height: 8, length: 32, weight: 0.42, quantity: 2, insurance_value: 129 }] });
+    expect(config?.headers?.Authorization).toBe("Bearer sandbox-test-token");
+    expect(config?.headers?.["User-Agent"]).toBe("L4CKOS (ops@example.invalid)");
+  });
+  it("does not query postal freight when item packing is incomplete", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("MELHOR_ENVIO_TOKEN", "sandbox-test-token");
+    vi.stubEnv("MELHOR_ENVIO_API_URL", "https://sandbox.melhorenvio.com.br/api/v2");
+    vi.stubEnv("MELHOR_ENVIO_FROM_POSTAL_CODE", "70000000");
+    vi.stubEnv("MELHOR_ENVIO_CONTACT_EMAIL", "ops@example.invalid");
+    vi.stubEnv("MELHOR_ENVIO_PRODUCT_PACKING_JSON", "{}");
+    const result = await quoteShippingDetailed({ cep: "01001000", items: [{ key: "SHIRT", quantity: 1, unitPriceCents: 12900 }] });
+    expect(result.options).toEqual([]);
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });

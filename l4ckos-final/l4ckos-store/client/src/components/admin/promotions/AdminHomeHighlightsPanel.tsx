@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Check, ImagePlus, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { apiUrl } from "../../../const";
 import "./AdminHomeHighlightsPanel.css";
@@ -365,7 +365,7 @@ export function AdminHomeHighlightsPanel({
         <section className="home-highlight-list" aria-label="Destaques cadastrados">
           {sorted.map((record, index) => <article className={`home-highlight-row${selected?.id === record.id ? " is-selected" : ""}`} key={record.id}>
             <button type="button" className="home-highlight-select" onClick={() => { setSelectedId(record.id); closeEditor(); }} aria-label={`Visualizar ${record.title}`}>
-              {imageSrc(record.imageUrl) ? <img src={imageSrc(record.imageUrl)} alt="" /> : <span className="home-highlight-image-empty">Sem foto</span>}
+              {imageSrc(record.imageUrl) ? <ImageWithFallback src={imageSrc(record.imageUrl)!} alt="" className="home-highlight-row-image" /> : <span className="home-highlight-image-empty">Sem foto</span>}
               <span className="home-highlight-row-copy"><strong>{record.title}</strong><small>{record.badge || "Sem selo"} · ordem {record.sortOrder}</small></span>
               <span className={`home-highlight-status${record.isActive ? " is-active" : ""}`}>{record.isActive ? "Ativo" : "Inativo"}</span>
             </button>
@@ -383,7 +383,7 @@ export function AdminHomeHighlightsPanel({
         <aside className="home-highlight-preview" aria-label="Prévia do destaque selecionado">
           <div className="home-highlight-preview-heading"><div><span>PRÉVIA DA HOME</span><h3>{draft ? (editingId ? `Editando #${editingId}` : "Novo destaque") : selected?.id === principal?.id ? `Principal · #${selected.id}` : selected ? `Destaque #${selected.id}` : "Nenhum destaque"}</h3></div></div>
           {preview ? <div className="home-highlight-preview-content">
-            {imageSrc(preview.imageUrl) ? <picture>{preview.mobileImageUrl ? <source media="(max-width: 640px)" srcSet={imageSrc(preview.mobileImageUrl)} /> : null}<img src={imageSrc(preview.imageUrl)} alt={preview.imageAlt || preview.title || ""} /></picture> : <div className="home-highlight-preview-empty">Nenhuma imagem cadastrada</div>}
+            {imageSrc(preview.imageUrl) ? <picture>{preview.mobileImageUrl ? <source media="(max-width: 640px)" srcSet={imageSrc(preview.mobileImageUrl)} /> : null}<ImageWithFallback src={imageSrc(preview.imageUrl)!} alt={preview.imageAlt || preview.title || ""} className="home-highlight-preview-image" /></picture> : <div className="home-highlight-preview-empty">Nenhuma imagem cadastrada</div>}
             <span className="home-highlight-preview-badge">{preview.badge || "DESTAQUE L4CKOS"}</span><h4>{preview.title || "Título"}</h4><p>{preview.description || "Descrição"}</p>
             {destination.valid && destination.value ? <a href={destination.value} onClick={event => event.preventDefault()}>{preview.ctaLabel || "Ver produto"} <span aria-hidden="true">→</span></a> : <span className="home-highlight-preview-cta">{preview.ctaLabel || "Ver produto"}</span>}
           </div> : <p className="home-highlight-state">Ative ou cadastre um destaque para visualizar.</p>}
@@ -405,5 +405,12 @@ export function AdminHomeHighlightsPanel({
 
 function ImageField({ label, value, onChange, onFile, disabled }: { label: string; value: string | null; onChange: (value: string) => void; onFile: (file?: File) => void; disabled: boolean }) {
   const resolved = imageSrc(value);
-  return <label className="home-highlight-image-field">{label}<span className="home-highlight-image-field-preview">{resolved ? <img src={resolved} alt="" /> : "Sem imagem"}</span><input maxLength={500} value={value ?? ""} onChange={event => onChange(event.target.value)} placeholder="Caminho ou URL HTTPS" /><span className="home-highlight-upload"><ImagePlus size={15} /> Enviar imagem<input type="file" accept="image/*" disabled={disabled} onChange={event => { onFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} /></span><button type="button" onClick={() => onChange("")} disabled={!value}>Remover imagem</button></label>;
+  return <label className="home-highlight-image-field">{label}<span className="home-highlight-image-field-preview">{resolved ? <ImageWithFallback src={resolved} alt="" className="home-highlight-field-image" /> : "Sem imagem"}</span><input maxLength={500} value={value ?? ""} onChange={event => onChange(event.target.value)} placeholder="Caminho ou URL HTTPS" /><span className="home-highlight-upload"><ImagePlus size={15} /> Enviar imagem<input type="file" accept="image/*" disabled={disabled} onChange={event => { onFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} /></span><button type="button" onClick={() => onChange("")} disabled={!value}>Remover imagem</button></label>;
+}
+
+function ImageWithFallback({ src, alt, className }: { src: string; alt: string; className: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (failed) return <span className={`${className} is-image-error`} role="img" aria-label="Imagem cadastrada, mas indisponível">Imagem indisponível</span>;
+  return <img className={className} src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} />;
 }

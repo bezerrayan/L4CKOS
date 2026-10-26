@@ -1635,6 +1635,7 @@ export async function markOrderPaid(
         entityId: String(orderId),
         metadata: JSON.stringify({
           source: "manual",
+          reference: confirmationValues.paymentConfirmationReference,
           paymentConfirmedAt: confirmationValues.paymentConfirmedAt.toISOString(),
           previousOrderStatus: order.status,
           resultingOrderStatus: nextStatus,

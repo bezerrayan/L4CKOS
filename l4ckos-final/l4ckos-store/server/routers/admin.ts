@@ -637,6 +637,7 @@ export const adminRouter = router({
       const result = await markOrderPaid(input.orderId, {
         source: "manual",
         actorUserId: ctx.user.id,
+        reference: input.reference,
       });
 
       if ('invalidTransition' in result && result.invalidTransition) {
