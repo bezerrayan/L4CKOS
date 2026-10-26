@@ -35,8 +35,11 @@ describe("server-side public store mode", () => {
     const staging = { NODE_ENV: "production", PUBLIC_SITE_MODE: "store" };
     expect(isPublicStoreOpen(staging)).toBe(true);
     expect(isPublicCheckoutEnabled(staging)).toBe(false);
+    expect(isPublicCheckoutEnabled({ NODE_ENV: "development", PUBLIC_SITE_MODE: "store" })).toBe(false);
+    expect(isPublicCheckoutEnabled({ NODE_ENV: "test", PUBLIC_SITE_MODE: "store" })).toBe(false);
     expect(isPublicCheckoutEnabled({ NODE_ENV: "development", APP_ENV: "staging", PUBLIC_SITE_MODE: "store" })).toBe(false);
     expect(isPublicCheckoutEnabled({ ...staging, PUBLIC_CHECKOUT_ENABLED: "true" })).toBe(true);
+    expect(isPublicCheckoutEnabled({ NODE_ENV: "development", PUBLIC_SITE_MODE: "store", PUBLIC_CHECKOUT_ENABLED: "true" })).toBe(true);
     expect(isPublicCheckoutEnabled({ ...staging, PUBLIC_CHECKOUT_ENABLED: "false" })).toBe(false);
     expect(isPublicCheckoutEnabled({ NODE_ENV: "production", PUBLIC_SITE_MODE: "coming-soon", PUBLIC_CHECKOUT_ENABLED: "true" })).toBe(false);
   });

@@ -27,17 +27,13 @@ export function isPublicStoreOpen(env: Environment = process.env): boolean {
   return resolvePublicSiteMode(env) === "store";
 }
 
-/** Checkout is a separate capability from storefront visibility. Production-like
- * deployments must opt in explicitly; local development and tests keep their
- * existing open-store behavior unless the flag is explicitly disabled. */
+/** Checkout is a separate capability from storefront visibility. It is closed
+ * unless an operator explicitly enables it in the backend environment. */
 export function isPublicCheckoutEnabled(env: Environment = process.env): boolean {
   if (!isPublicStoreOpen(env)) return false;
   const configured = String(env.PUBLIC_CHECKOUT_ENABLED ?? "").trim().toLowerCase();
   if (configured === "true") return true;
-  if (configured === "false" || configured) return false;
-  if (String(env.APP_ENV ?? "").trim().toLowerCase() === "staging" ||
-      String(env.EMAIL_ENV ?? "").trim().toLowerCase() === "staging") return false;
-  return env.NODE_ENV !== "production";
+  return false;
 }
 
 export class PublicStoreClosedError extends Error {

@@ -170,12 +170,13 @@ describe("Coming Soon at the checkout transaction boundary", () => {
     expect(charge).not.toHaveBeenCalled();
   });
 
-  it("permits the new-attempt path in a test environment only when explicitly set to store", async () => {
+  it("permits the new-attempt path only when checkout is explicitly enabled", async () => {
     vi.stubEnv("NODE_ENV", "test");
     // Exercise the non-staging test default independently of the host's staging env.
     vi.stubEnv("APP_ENV", "");
     vi.stubEnv("EMAIL_ENV", "");
     vi.stubEnv("PUBLIC_SITE_MODE", "store");
+    vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
     const input = makeInput();
     const { connection, queries } = makeConnection(sql => {
       if (sql.includes("GET_LOCK")) return [{ acquired: 1 }];

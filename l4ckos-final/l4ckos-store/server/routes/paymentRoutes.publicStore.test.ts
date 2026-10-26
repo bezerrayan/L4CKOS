@@ -5,17 +5,20 @@ import { requirePublicCheckoutEnabled } from "../_core/publicStore";
 const handlers = vi.hoisted(() => ({
   createCheckoutHandler: vi.fn(),
   createCustomerHandler: vi.fn(),
+  asaasWebhookHandler: vi.fn(),
   createWaitlistEntry: vi.fn((_req: unknown, res: any) => res.status(201).json({ accepted: true })),
 }));
 
 vi.mock("../controllers/paymentController", () => ({
   createCheckoutHandler: handlers.createCheckoutHandler,
   createCustomerHandler: handlers.createCustomerHandler,
+  asaasWebhookHandler: handlers.asaasWebhookHandler,
 }));
 vi.mock("../controllers/waitlist.controller", () => ({ createWaitlistEntry: handlers.createWaitlistEntry }));
 
 import paymentRoutes from "./paymentRoutes";
 import waitlistRoutes from "./waitlist.routes";
+import webhookRoutes from "./webhookRoutes";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -70,6 +73,10 @@ describe("REST route boundaries for Coming Soon", () => {
     expect(response.status).toHaveBeenCalledWith(403);
     expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ code: "PUBLIC_CHECKOUT_DISABLED" }));
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Asaas webhook route outside the public checkout gate", () => {
+    expect(routeHandlers(webhookRoutes, "/asaas")).toEqual([handlers.asaasWebhookHandler]);
   });
 
   it("leaves the public waitlist route outside the commercial gate", () => {
