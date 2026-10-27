@@ -18,6 +18,7 @@ import { quoteShippingDetailed } from "../services/shippingService";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { sendOrderCreatedEmail, sendPaymentPendingEmail } from "../services/emailService.js";
 import { securityLog } from "../_core/security";
+import { assertPublicCheckoutEnabled } from "../_core/publicStore";
 
 const checkoutItemSchema = z.object({
   productId: z.number().int().positive(),
@@ -277,6 +278,7 @@ export const ordersRouter = router({
       }).strict(),
     )
     .mutation(async ({ input, ctx }) => {
+      assertPublicCheckoutEnabled();
       let orderId = 0;
 
       try {
