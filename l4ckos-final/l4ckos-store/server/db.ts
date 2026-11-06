@@ -4,6 +4,7 @@ import { createVariantOptionKey, normalizeVariantLabel } from "./database/produc
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createHash, randomUUID } from "node:crypto";
+import { createMysqlConnectionOptions } from "./database/mysqlTls.mjs";
 import {
   InsertUser,
   users,
@@ -145,7 +146,7 @@ export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
   if (scoped) return scoped;
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _db = drizzle({ connection: createMysqlConnectionOptions(process.env.DATABASE_URL) });
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
