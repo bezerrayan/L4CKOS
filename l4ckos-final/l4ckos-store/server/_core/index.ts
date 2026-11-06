@@ -26,6 +26,7 @@ import shippingRoutes from "../routes/shippingRoutes";
 import waitlistRoutes from "../routes/waitlist.routes";
 import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
+import { assertApprovedMysqlTlsCa } from "../database/mysqlTls.mjs";
 import managerSyncRoutes from "../routes/managerSyncRoutes";
 import { getBackupPayload } from "../db";
 import { asaasWebhookHandler } from "../controllers/paymentController";
@@ -188,6 +189,7 @@ async function listenWithRetry(
 }
 
 async function startServer() {
+  assertApprovedMysqlTlsCa();
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
 
