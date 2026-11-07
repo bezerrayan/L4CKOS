@@ -1,6 +1,7 @@
 /** Dedicated administrative CLI. No HTTP endpoint, no actor/token in argv or request. */
 import { readFileSync, readSync } from "node:fs";
 import { createConnection } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "../database/mysqlTls.mjs";
 import {
   reviewAsaasHoldsNoop,
   NOOP_SCOPE,
@@ -97,7 +98,7 @@ export async function noopCli(args = process.argv.slice(2)) {
         throw Error("NOOP_STAGING_REQUIRED");
       if (!process.env.DATABASE_URL) throw Error("NOOP_DATABASE_REQUIRED");
       c = await createConnection({
-        uri: process.env.DATABASE_URL,
+        ...createMysqlConnectionOptions(process.env.DATABASE_URL, process.env),
         dateStrings: true,
         multipleStatements: false,
       });

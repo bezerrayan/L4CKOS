@@ -1,9 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { renderEmailTemplate } from "../services/email/emailRenderer.js";
 import { shippingEstimate, purchasedSalesMode, MIXED_SHIPPING_NOTICE } from "../../shared/preorder";
+afterEach(() => vi.useRealTimers());
 describe("preorder order confirmation rendering (no provider)", () => {
   it("shows historical batch/estimate, full payment and mixed shipping even past the four-item summary", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-01T12:00:00.000Z"));
     const items = Array.from({ length: 4 }, (_, i) => ({
       name: `STOCK ${i}`,
       quantity: 1,

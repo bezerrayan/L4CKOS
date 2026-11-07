@@ -145,12 +145,11 @@ export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
   const scoped = webhookDb();
   if (scoped) return scoped;
   if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle({ connection: createMysqlConnectionOptions(process.env.DATABASE_URL) });
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+    _db = drizzle({
+      connection: createMysqlConnectionOptions(process.env.DATABASE_URL, process.env, {
+        socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET,
+      }),
+    });
   }
   return _db;
 }

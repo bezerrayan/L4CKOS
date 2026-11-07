@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "./mysqlTls.mjs";
 import { REQUIRED_TABLES, OPTIONAL_TABLES, OPTIONAL_TABLES_V3, OPTIONAL_TABLES_V4, TABLE_ORDER, TABLE_MANIFEST_VERSION, classifyTable } from "./tableManifest";
 
 type Cell = string | number | null | { binaryHex: string };
@@ -61,12 +62,13 @@ function decode(value: Cell) {
   return typeof value === "object" && value !== null ? Buffer.from(value.binaryHex, "hex") : value;
 }
 export async function openBackupConnection(url: string, socketPath?: string) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "mysql:") fail("INVALID_DATABASE_CONFIGURATION");
+  const connectionOptions = createMysqlConnectionOptions(url, process.env, { socketPath });
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "mysql:") fail("INVALID_DATABASE_CONFIGURATION");
     return await mysql.createConnection({
-      uri: url,
-      socketPath, dateStrings: true, timezone: "Z", supportBigNumbers: true, bigNumberStrings: true,
+      ...connectionOptions,
+      dateStrings: true, timezone: "Z", supportBigNumbers: true, bigNumberStrings: true,
       decimalNumbers: false, jsonStrings: true, multipleStatements: false,
     });
   } catch { return fail("DATABASE_CONNECTION_FAILED"); }

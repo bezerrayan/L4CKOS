@@ -1,4 +1,5 @@
 import { createConnection, type Connection } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "../database/mysqlTls.mjs";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, router } from "../_core/trpc";
@@ -20,9 +21,8 @@ async function withConnection<T>(fn: (c: Connection) => Promise<T>) {
       message: "Database unavailable",
     });
   const c = await createConnection({
-    uri: process.env.DATABASE_URL,
+    ...createMysqlConnectionOptions(process.env.DATABASE_URL, process.env, { socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET }),
     timezone: "Z",
-    socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET,
   });
   try {
     return await fn(c);

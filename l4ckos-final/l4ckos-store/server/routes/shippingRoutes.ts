@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createConnection } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "../database/mysqlTls.mjs";
 import { z } from "zod";
 import { checkoutItemSchema, previewCheckoutItems } from "../database/checkout";
 import { quoteShippingDetailed } from "../services/shippingService";
@@ -16,7 +17,7 @@ shippingRoutes.post("/quote", async (req, res) => {
       res.status(503).json({ error: "Cotação indisponível." });
       return;
     }
-    const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
+    const connection = await createConnection({ ...createMysqlConnectionOptions(process.env.DATABASE_URL, process.env, { socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET }), timezone: "Z" });
     const products = await (async () => {
       try { return await previewCheckoutItems(connection, input.items); }
       finally { await connection.end(); }

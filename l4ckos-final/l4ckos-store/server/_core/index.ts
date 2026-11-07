@@ -32,7 +32,7 @@ import shippingRoutes from "../routes/shippingRoutes";
 import waitlistRoutes from "../routes/waitlist.routes";
 import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
-import { assertApprovedMysqlTlsCa } from "../database/mysqlTls.mjs";
+import { assertMysqlConnectionReady } from "../database/mysqlTls.mjs";
 import { getBackupPayload } from "../db";
 import { createBackupFile } from "../database/backupFiles";
 import { asaasWebhookHandler } from "../controllers/paymentController";
@@ -178,7 +178,7 @@ async function listenWithRetry(
 }
 
 async function startServer() {
-  assertApprovedMysqlTlsCa();
+  await assertMysqlConnectionReady();
   initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
   const recoveryWorkers = prepareRecoveryWorkerStartup(process.env, {
     startAsaasWebhookRecovery: () => startWebhookRecovery(processWebhookEnvelope),

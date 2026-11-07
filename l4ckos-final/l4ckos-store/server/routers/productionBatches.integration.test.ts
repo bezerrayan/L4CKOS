@@ -37,7 +37,7 @@ async function caller(user: typeof admin | typeof regular | null) {
 describe("production batch router integration contract (mock-only connection)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("DATABASE_URL", "mysql://local-mock.invalid/test");
+    vi.stubEnv("DATABASE_URL", "mysql://local-mock@localhost/test");
     mocks.createConnection.mockResolvedValue(fakeConnection);
   });
   afterEach(() => vi.unstubAllEnvs());

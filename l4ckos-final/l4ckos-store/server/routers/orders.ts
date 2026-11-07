@@ -3,6 +3,7 @@ import { normalizeBuyerDocument } from "../../shared/buyerDocument";
 import { deliverPaymentNotifications } from "../payments/paymentNotificationOutbox";
 import { shippingEstimate, manufacturingEstimate } from "../../shared/preorder";
 import { createConnection } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "../database/mysqlTls.mjs";
 import { checkout, checkoutItemSchema, CheckoutError, previewCheckoutItems, orderTotal, type CheckoutItem } from "../database/checkout";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -54,7 +55,7 @@ async function resolveOrderPricing(input: {
   couponCode?: string;
 }) {
   if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
-  const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
+  const connection = await createConnection({ ...createMysqlConnectionOptions(process.env.DATABASE_URL, process.env, { socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET }), timezone: "Z" });
   const frozen = await (async () => {
     try { return await previewCheckoutItems(connection,input.items); }
     finally { await connection.end(); }
@@ -270,7 +271,7 @@ export const ordersRouter = router({
         assertCheckoutMethodEnabled(input.method);
         assertPublicCheckoutEnabled();
         if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
-        const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
+        const connection = await createConnection({ ...createMysqlConnectionOptions(process.env.DATABASE_URL, process.env, { socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET }), timezone: "Z" });
         const prepared = await (async () => {
           try { return await checkout(connection, { ...input, userId: ctx.user.id,
             customer: { ...input.customer, email: input.customer.email || ctx.user.email || undefined },

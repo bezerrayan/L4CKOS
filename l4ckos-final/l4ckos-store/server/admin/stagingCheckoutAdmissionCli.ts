@@ -1,6 +1,7 @@
 /** No endpoint or automatic startup. Signed session arrives exclusively on stdin. */
 import { readFileSync, readSync } from "node:fs";
 import { createConnection } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "../database/mysqlTls.mjs";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   administerCheckoutAdmission,
@@ -80,7 +81,7 @@ async function main() {
   requireAdmission(token.length > 0);
   requireAdmission(process.env.DATABASE_URL);
   const c = await createConnection({
-    uri: process.env.DATABASE_URL,
+    ...createMysqlConnectionOptions(process.env.DATABASE_URL, process.env),
     multipleStatements: false,
   });
   try {

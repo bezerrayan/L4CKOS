@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import managerSyncRoutes from "./managerSyncRoutes";
 
 const token = "ab".repeat(32);
@@ -25,6 +25,7 @@ async function withRoute(callback: (baseUrl: string) => Promise<void>) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const key of Object.keys(env)) {
     const value = originalEnv.get(key);
     if (value === undefined) delete process.env[key];
@@ -52,6 +53,8 @@ describe("Manager sync V2 route guards", () => {
   });
 
   it("rejects partial months and cursor pagination before database access", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-15T12:00:00.000Z"));
     Object.assign(process.env, env);
     await withRoute(async (url) => {
       const openMonth = await fetch(`${url}?periodStart=2026-10-01&periodEndExclusive=2026-11-01`, { headers: { authorization: `Bearer ${token}` } });

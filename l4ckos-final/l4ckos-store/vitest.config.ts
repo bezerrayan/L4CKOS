@@ -15,6 +15,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    setupFiles: [path.resolve(templateRoot, "server/database/mysqlTlsTestEnv.ts")],
     include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
     // The offline financial-recovery packager is not part of this storefront
     // candidate; its implementation and supporting kernels are not in this base.

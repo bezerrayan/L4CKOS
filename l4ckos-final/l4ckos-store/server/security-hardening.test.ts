@@ -1,3 +1,9 @@
+vi.hoisted(() => {
+  process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";
+  process.env.JWT_ISSUER = "l4ckos-test";
+  process.env.JWT_AUDIENCE = "l4ckos-test-web";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+});
 vi.mock("./payments/webhookInbox", () => ({ receiveWebhook: async (payload: unknown, process: (value: unknown) => Promise<unknown>) => process(payload) }));
 vi.mock('./database/webhookTransaction',async original=>({...await original<typeof import('./database/webhookTransaction')>(),webhookDb:()=>({})}));
 vi.mock('./payments/webhookRecovery',()=>({assertNoRecoveryHold:vi.fn(async()=>{}),assertWebhookBusinessEffectsAllowed:vi.fn()}));
@@ -11,11 +17,6 @@ import { hasForbiddenClientPaymentField } from "./controllers/paymentController"
 import { createApiCorsOptions, getAllowedOrigins, isAllowedOrigin } from "./_core/corsPolicy";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { isKnownClientRoute } from "./_core/vite";
-
-process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";
-process.env.JWT_ISSUER = "l4ckos-test";
-process.env.JWT_AUDIENCE = "l4ckos-test-web";
-process.env.ADMIN_EMAILS = "admin@example.com";
 
 vi.mock("./db", () => ({
   getOrderByAsaasCheckoutId: vi.fn(),

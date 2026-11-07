@@ -14,6 +14,7 @@ import { DECISION } from "./decision";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createConnection, type Connection } from "mysql2/promise";
+import { createMysqlConnectionOptions } from "../../server/database/mysqlTls.mjs";
 import { z } from "zod";
 import {
   digest,
@@ -504,6 +505,7 @@ export function liveStagingAdapter(artifactHash: string) {
   requireThat(process.version === "v22.23.2", "NODE_RUNTIME_MISMATCH");
   const env = Object.freeze({ ...process.env });
   const u = validateEnvironment(env);
+  const tlsOptions = createMysqlConnectionOptions(env.DATABASE_URL!, env).ssl;
   const open = () =>
     createConnection({
       host: u.hostname,
@@ -515,6 +517,7 @@ export function liveStagingAdapter(artifactHash: string) {
       dateStrings: true,
       timezone: "Z",
       connectTimeout: 10000,
+      ssl: tlsOptions,
     });
   return createStagingAdapter({
     administrativeObserver:
@@ -534,6 +537,7 @@ export function liveStagingAdapter(artifactHash: string) {
           password: env.ORDER13_OBSERVER_PASSWORD,
           multipleStatements: false,
           connectTimeout: 3000,
+          ssl: tlsOptions,
         });
       }, observerTarget),
     environment: env,
