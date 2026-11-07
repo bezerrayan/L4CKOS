@@ -1,8 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 
 export const MYSQL_TLS_HOST = "mysql-w5fk.railway.internal";
 export const MYSQL_TLS_CA_SHA256 =
   "bc5d33922ec3d772622d9dcf19fdc95a17c7a1f0106b344e78c1169687c24c54";
+export const MYSQL_STAGING_TLS_CA_SHA256 =
+  "1786e2e09e2ca153d1894967739219dd31faea7f08d773e77924ddf01c7a3a78";
 
 // Public trust anchor only. No private key material is included.
 const MYSQL_TLS_CA_PEM = `-----BEGIN CERTIFICATE-----
@@ -95,6 +97,32 @@ export function assertApprovedMysqlTlsCa() {
   return validateMysqlTlsCa(MYSQL_TLS_CA_PEM);
 }
 
+export function validateMysqlStagingTlsCa(
+  caPem,
+  expectedSha256 = MYSQL_STAGING_TLS_CA_SHA256,
+  now = Date.now(),
+) {
+  validateMysqlTlsCa(caPem, expectedSha256);
+  let certificate;
+  try {
+    certificate = new X509Certificate(caPem);
+  } catch {
+    throw new Error("MYSQL_STAGING_TLS_CA_INVALID");
+  }
+  if (!certificate.ca) throw new Error("MYSQL_STAGING_TLS_CA_NOT_CA");
+  const nowMs = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(nowMs)) throw new Error("MYSQL_STAGING_TLS_VALIDATION_TIME_INVALID");
+  if (nowMs < certificate.validFromDate.getTime()) throw new Error("MYSQL_STAGING_TLS_CA_NOT_YET_VALID");
+  if (nowMs > certificate.validToDate.getTime()) throw new Error("MYSQL_STAGING_TLS_CA_EXPIRED");
+  const productionCertificate = new X509Certificate(MYSQL_TLS_CA_PEM);
+  const stagingKey = certificate.publicKey.export({ type: "spki", format: "der" });
+  const productionKey = productionCertificate.publicKey.export({ type: "spki", format: "der" });
+  if (stagingKey.equals(productionKey) || certificate.fingerprint256 === productionCertificate.fingerprint256) {
+    throw new Error("MYSQL_STAGING_TLS_CA_NOT_INDEPENDENT");
+  }
+  return certificate;
+}
+
 function profileForRailway(environment, identity, hostname) {
   if (identity.RAILWAY_PROJECT_ID === STAGING_PROJECT_ID) {
     if (
@@ -107,18 +135,11 @@ function profileForRailway(environment, identity, hostname) {
       throw new Error("MYSQL_STAGING_TLS_HOST_MISMATCH");
     }
     const caPem = environment.L4CKOS_STAGING_MYSQL_TLS_CA_PEM;
-    const expectedSha256 = environment.L4CKOS_STAGING_MYSQL_TLS_CA_SHA256;
     if (typeof caPem !== "string" || !caPem.trim()) {
       throw new Error("MYSQL_STAGING_TLS_CA_REQUIRED");
     }
-    if (typeof expectedSha256 !== "string" || !expectedSha256.trim()) {
-      throw new Error("MYSQL_STAGING_TLS_CA_SHA256_REQUIRED");
-    }
-    if (expectedSha256.toLowerCase() === MYSQL_TLS_CA_SHA256) {
-      throw new Error("MYSQL_STAGING_TLS_CA_NOT_INDEPENDENT");
-    }
-    validateMysqlTlsCa(caPem, expectedSha256);
-    return Object.freeze({ profile: "staging", hostname, caPem, caSha256: expectedSha256.toLowerCase() });
+    validateMysqlStagingTlsCa(caPem);
+    return Object.freeze({ profile: "staging", hostname, caPem, caSha256: MYSQL_STAGING_TLS_CA_SHA256 });
   }
 
   if (identity.RAILWAY_PROJECT_ID === PRODUCTION_PROJECT_ID) {

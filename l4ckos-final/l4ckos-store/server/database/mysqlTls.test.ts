@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createConnection } from "mysql2/promise";
 import net from "node:net";
 import tls from "node:tls";
@@ -17,10 +17,12 @@ import {
   assertApprovedMysqlTlsCa,
   createMysqlConnectionOptions,
   MYSQL_STAGING_TLS_HOST,
+  MYSQL_STAGING_TLS_CA_SHA256,
   MYSQL_TLS_CA_SHA256,
   MYSQL_TLS_HOST,
   resolveMysqlTlsProfile,
   validateMysqlTlsCa,
+  validateMysqlStagingTlsCa,
 } from "./mysqlTls.mjs";
 
 type SyntheticCertificate = { ca: string; cert: string; key: string };
@@ -239,21 +241,44 @@ describe("dedicated MySQL TLS configuration", () => {
       .toThrow("MYSQL_PRODUCTION_TLS_HOST_MISMATCH");
   });
 
-  it("selects staging only for complete matching Railway identity and independent CA", () => {
+  it("requires the pinned staging CA for complete matching Railway identity", () => {
     const caPem = readFileSync(stagingCa, "utf8");
-    const environment = { ...stagingIdentity, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: caPem, L4CKOS_STAGING_MYSQL_TLS_CA_SHA256: sha256(caPem) };
-    expect(resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, environment)).toMatchObject({ profile: "staging", hostname: MYSQL_STAGING_TLS_HOST, caPem });
-    expect(createMysqlConnectionOptions(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, environment).ssl).toMatchObject({ ca: caPem, rejectUnauthorized: true, verifyIdentity: true });
+    const environment = { ...stagingIdentity, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: caPem };
+    expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, environment)).toThrow("MYSQL_TLS_CA_SHA256_MISMATCH");
+  });
+
+  it("pins the generated staging PEM and validates CA constraints, validity, independence, and malformed inputs", () => {
+    const caPem = readFileSync(stagingCa, "utf8");
+    expect(MYSQL_STAGING_TLS_CA_SHA256).toBe("1786e2e09e2ca153d1894967739219dd31faea7f08d773e77924ddf01c7a3a78");
+    expect(validateMysqlStagingTlsCa(caPem, sha256(caPem))).toMatchObject({ ca: true });
+    const ca = new X509Certificate(caPem);
+    expect(() => validateMysqlStagingTlsCa(caPem, sha256(caPem), ca.validToDate.getTime() + 1000)).toThrow("MYSQL_STAGING_TLS_CA_EXPIRED");
+    expect(() => validateMysqlStagingTlsCa(caPem, sha256(caPem), ca.validFromDate.getTime() - 1000)).toThrow("MYSQL_STAGING_TLS_CA_NOT_YET_VALID");
+    expect(() => validateMysqlStagingTlsCa(readFileSync(trusted.cert, "utf8"), sha256(readFileSync(trusted.cert, "utf8")))).toThrow("MYSQL_STAGING_TLS_CA_NOT_CA");
+    expect(() => validateMysqlStagingTlsCa(`${caPem}\n`, sha256(caPem))).toThrow("MYSQL_TLS_CA_SHA256_MISMATCH");
+    expect(() => validateMysqlStagingTlsCa("not a certificate", sha256("not a certificate"))).toThrow("MYSQL_STAGING_TLS_CA_INVALID");
+    expect(() => validateMysqlStagingTlsCa(assertApprovedMysqlTlsCa(), MYSQL_TLS_CA_SHA256)).toThrow("MYSQL_STAGING_TLS_CA_NOT_INDEPENDENT");
+  });
+
+  it("verifies the MySQL server certificate chain, SAN, and serverAuth EKU with X509Certificate", () => {
+    const ca = new X509Certificate(readFileSync(trusted.ca, "utf8"));
+    const server = new X509Certificate(readFileSync(trusted.cert, "utf8"));
+    expect(ca.ca).toBe(true);
+    expect(server.ca).toBe(false);
+    expect(server.verify(ca.publicKey)).toBe(true);
+    expect(server.checkHost("mysql-test.l4ckos.invalid")).toBe("mysql-test.l4ckos.invalid");
+    expect(server.checkHost("wrong-host.invalid")).toBeUndefined();
+    expect(server.keyUsage).toContain("1.3.6.1.5.5.7.3.1");
   });
 
   it("rejects staging identity/host drift, production host in staging, and missing or adulterated trust", () => {
     const caPem = readFileSync(stagingCa, "utf8");
-    const environment = { ...stagingIdentity, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: caPem, L4CKOS_STAGING_MYSQL_TLS_CA_SHA256: sha256(caPem) };
+    const environment = { ...stagingIdentity, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: caPem };
     expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_TLS_HOST}/db`, environment)).toThrow("MYSQL_STAGING_TLS_HOST_MISMATCH");
     expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, { ...environment, RAILWAY_ENVIRONMENT_ID: productionIdentity.RAILWAY_ENVIRONMENT_ID })).toThrow("MYSQL_STAGING_RAILWAY_IDENTITY_MISMATCH");
     expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, { ...stagingIdentity })).toThrow("MYSQL_STAGING_TLS_CA_REQUIRED");
     expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, { ...environment, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: `${caPem}\n` })).toThrow("MYSQL_TLS_CA_SHA256_MISMATCH");
-    expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, { ...environment, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: assertApprovedMysqlTlsCa(), L4CKOS_STAGING_MYSQL_TLS_CA_SHA256: MYSQL_TLS_CA_SHA256 })).toThrow("MYSQL_STAGING_TLS_CA_NOT_INDEPENDENT");
+    expect(() => resolveMysqlTlsProfile(`mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, { ...environment, NODE_ENV: "production", L4CKOS_MYSQL_TLS_PROFILE: "", L4CKOS_STAGING_MYSQL_TLS_CA_PEM: assertApprovedMysqlTlsCa() })).toThrow("MYSQL_TLS_CA_SHA256_MISMATCH");
   });
 
   it("fails closed for missing, partial, malformed, and unsupported Railway identity", () => {
@@ -268,13 +293,43 @@ describe("dedicated MySQL TLS configuration", () => {
     const connector = vi.fn(async () => ({ end: vi.fn(async () => undefined) }));
     await expect(assertMysqlConnectionReady({ databaseUrl: `mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, environment: stagingIdentity, connect: connector })).rejects.toThrow("MYSQL_STAGING_TLS_CA_REQUIRED");
     expect(connector).not.toHaveBeenCalled();
-    await expect(assertMysqlConnectionReady({ databaseUrl: `mysql://u:p@${MYSQL_STAGING_TLS_HOST}/db`, environment: { ...stagingIdentity, L4CKOS_STAGING_MYSQL_TLS_CA_PEM: readFileSync(stagingCa, "utf8"), L4CKOS_STAGING_MYSQL_TLS_CA_SHA256: sha256(readFileSync(stagingCa, "utf8")) }, connect: async () => { throw Error("credential details must not escape"); } })).rejects.toThrow("MYSQL_STARTUP_CONNECTION_FAILED");
+    await expect(assertMysqlConnectionReady({ databaseUrl: `mysql://u:p@${MYSQL_TLS_HOST}/db`, environment: productionIdentity, connect: async () => { throw Error("credential details must not escape"); } })).rejects.toThrow("MYSQL_STARTUP_CONNECTION_FAILED");
   });
 
   it("runs startup preflight before initializing listeners and workers", () => {
     const startup = readFileSync(resolve(process.cwd(), "server/_core/index.ts"), "utf8");
     expect(startup.indexOf("await assertMysqlConnectionReady()")).toBeLessThan(startup.indexOf("initializeWebhookRecoveryMode()"));
+    expect(startup.indexOf("await assertMysqlConnectionReady()")).toBeLessThan(startup.indexOf("prepareRecoveryWorkerStartup("));
     expect(startup.indexOf("await assertMysqlConnectionReady()")).toBeLessThan(startup.indexOf("createServer(app)"));
+    expect(startup.indexOf("await assertMysqlConnectionReady()")).toBeLessThan(startup.indexOf("listenWithRetry(server"));
+    expect(startup.indexOf("await assertMysqlConnectionReady()")).toBeLessThan(startup.indexOf("recoveryWorkers.start()"));
+  });
+
+  it("exits the real API entrypoint with code 1 before opening listeners or starting workers when staging CA is absent", () => {
+    const env = {
+      ...process.env,
+      NODE_ENV: "production",
+      DATABASE_URL: `mysql://startup-fixture:startup-fixture@${MYSQL_STAGING_TLS_HOST}:3306/l4ckos_staging`,
+      RAILWAY_PROJECT_ID: stagingIdentity.RAILWAY_PROJECT_ID,
+      RAILWAY_ENVIRONMENT_ID: stagingIdentity.RAILWAY_ENVIRONMENT_ID,
+      RAILWAY_SERVICE_ID: stagingIdentity.RAILWAY_SERVICE_ID,
+      RAILWAY_DEPLOYMENT_ID: stagingIdentity.RAILWAY_DEPLOYMENT_ID,
+    };
+    delete env.L4CKOS_STAGING_MYSQL_TLS_CA_PEM;
+    delete env.L4CKOS_LOCAL_MYSQL_SOCKET;
+
+    const child = spawnSync(process.execPath, ["--import", "tsx", "server/_core/index.ts"], {
+      cwd: process.cwd(),
+      env,
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(1);
+    expect(`${child.stdout}${child.stderr}`).toContain("[Startup] MYSQL_STAGING_TLS_CA_REQUIRED");
+    expect(`${child.stdout}${child.stderr}`).not.toContain("startup-fixture");
+    expect(`${child.stdout}${child.stderr}`).not.toContain("Server running on http://");
+    expect(`${child.stdout}${child.stderr}`).not.toContain("recovery worker");
   });
 
   it("routes direct Railway TCP connections through the shared policy and preserves local socket fixtures", () => {
