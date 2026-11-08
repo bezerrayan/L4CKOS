@@ -76,6 +76,7 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.3.0",
     "framer-motion": "^12.23.22",
+    "gsap": "3.12.5",
     "helmet": "^8.1.0",
     "input-otp": "^1.4.2",
     "jose": "6.1.0",

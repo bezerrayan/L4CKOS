@@ -184,6 +184,7 @@ export default defineConfig(({ command, mode }) => {
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
+          if (id.includes("/node_modules/gsap/")) return "gsap";
           if (id.includes("@trpc") || id.includes("@tanstack") || id.includes("superjson")) {
             return "data";
           }
