@@ -5,25 +5,26 @@ import { csrfFetch } from "../lib/csrf";
 import "./ComingSoon.css";
 import type { ComingSoonMotion } from "./comingSoonMotion";
 
-import logoHeader from "../images/coming-soon/l4k-mark-header.webp";
-import logoLayerL from "../images/coming-soon/l4k-layer-L.webp";
-import logoLayer4 from "../images/coming-soon/l4k-layer-4.webp";
-import logoLayerK from "../images/coming-soon/l4k-layer-K.webp";
+// Logo vetorial (viewBox 657x339 em todas as camadas): miolo do 4 vazado, sem halo.
+import logoHeader from "../images/coming-soon/l4k-logo-contorno.svg";
+import logoLayerL from "../images/coming-soon/l4k-L.svg";
+import logoLayer4 from "../images/coming-soon/l4k-four.svg";
+import logoLayerK from "../images/coming-soon/l4k-K.svg";
 import clanFront600 from "../images/coming-soon/cla-14-bis-frente-600.webp";
 import clanFront1000 from "../images/coming-soon/cla-14-bis-frente-1000.webp";
 import clanBack600 from "../images/coming-soon/cla-14-bis-costas-borrada-600.webp";
 import clanBack1000 from "../images/coming-soon/cla-14-bis-costas-borrada-1000.webp";
-import clanDetail from "../images/coming-soon/cla-14-bis-detalhe-peito-640.webp";
+import clanDetail from "../images/coming-soon/cla-14-bis-detalhe-peito-720.webp";
 import cityFront600 from "../images/coming-soon/city-noise-frente-600.webp";
 import cityFront1000 from "../images/coming-soon/city-noise-frente-1000.webp";
 import cityBack600 from "../images/coming-soon/city-noise-costas-borrada-600.webp";
 import cityBack1000 from "../images/coming-soon/city-noise-costas-borrada-1000.webp";
-import cityDetail from "../images/coming-soon/city-noise-detalhe-peito-640.webp";
+import cityDetail from "../images/coming-soon/city-noise-detalhe-peito-720.webp";
 import unknownFront600 from "../images/coming-soon/unknown-territory-frente-600.webp";
 import unknownFront1000 from "../images/coming-soon/unknown-territory-frente-1000.webp";
 import unknownBack600 from "../images/coming-soon/unknown-territory-costas-borrada-600.webp";
 import unknownBack1000 from "../images/coming-soon/unknown-territory-costas-borrada-1000.webp";
-import unknownDetail from "../images/coming-soon/unknown-territory-detalhe-peito-640.webp";
+import unknownDetail from "../images/coming-soon/unknown-territory-detalhe-peito-720.webp";
 
 /*
  * Conteúdo pendente: fica oculto até haver dados reais.
@@ -117,7 +118,7 @@ const TERRITORIES: Territory[] = [
     },
     detail: clanDetail,
     detailAlt: "Detalhe ampliado da estampa do peito da Clã 14 Bis",
-    detailSize: [640, 278],
+    detailSize: [720, 720],
   },
   {
     key: "city-noise",
@@ -136,7 +137,7 @@ const TERRITORIES: Territory[] = [
     },
     detail: cityDetail,
     detailAlt: "Detalhe ampliado da estampa do peito da City Noise",
-    detailSize: [640, 633],
+    detailSize: [720, 720],
   },
   {
     key: "unknown-territory",
@@ -155,7 +156,7 @@ const TERRITORIES: Territory[] = [
     },
     detail: unknownDetail,
     detailAlt: "Detalhe ampliado da estampa do peito da Unknown Territory",
-    detailSize: [640, 403],
+    detailSize: [720, 720],
     topo: true,
   },
 ];
@@ -315,9 +316,9 @@ export default function ComingSoon() {
       {introActive ? (
         <div className="l4cs-loader" aria-hidden="true">
           <div className="l4cs-loader-logo">
-            <img className="l4cs-lg lg-L" src={logoLayerL} alt="" width={739} height={382} decoding="async" />
-            <img className="l4cs-lg lg-4" src={logoLayer4} alt="" width={739} height={382} decoding="async" />
-            <img className="l4cs-lg lg-K" src={logoLayerK} alt="" width={739} height={382} decoding="async" />
+            <img className="l4cs-lg lg-L" src={logoLayerL} alt="" width={657} height={339} decoding="async" />
+            <img className="l4cs-lg lg-4" src={logoLayer4} alt="" width={657} height={339} decoding="async" />
+            <img className="l4cs-lg lg-K" src={logoLayerK} alt="" width={657} height={339} decoding="async" />
             <span className="l4cs-slash" />
           </div>
         </div>
@@ -325,7 +326,7 @@ export default function ComingSoon() {
 
       <header className="l4cs-top">
         <a className="l4cs-brand" href="#hero" aria-label="L4CKOS, voltar ao início">
-          <img src={logoHeader} alt="L4K" width={288} height={149} />
+          <img src={logoHeader} alt="L4K" width={657} height={339} />
         </a>
         <div className="l4cs-top-right">
           <span className="l4cs-pill l4cs-status-pill">
