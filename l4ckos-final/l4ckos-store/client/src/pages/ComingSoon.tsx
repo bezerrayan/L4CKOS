@@ -625,7 +625,7 @@ export default function ComingSoon() {
 
       <footer className="l4cs-footer">
         <span>
-          © {currentYear} <span className="red">L4CKOS</span>
+          © {currentYear} L<span className="red">4</span>CKOS
         </span>
         <span>Drop 01. Built for Adventure.</span>
       </footer>
