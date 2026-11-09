@@ -33,6 +33,11 @@ vi.mock('../services/asaasService', () => ({
 const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? '/tmp/l4ckos-0022-socket/mysqld.sock';
 const name = 'l4ckos_test_inbox_' + randomUUID().replaceAll('-', '').slice(0,12);
 let root: Connection, c: Connection, pool: Pool;
+function useLocalDatabaseEnvironment() {
+  vi.stubEnv('NODE_ENV', 'test');
+  vi.stubEnv('L4CKOS_LOCAL_MYSQL_SOCKET', socketPath);
+  vi.stubEnv('DATABASE_URL', `mysql://root@localhost/${name}`);
+}
 const event = (id = randomUUID(), type = 'PAYMENT_RECEIVED') => ({ id, event: type,
   payment: { id: 'synthetic-payment', externalReference: '901', status: type === 'PAYMENT_DELETED' ? 'DELETED' : type === 'PAYMENT_REFUNDED' ? 'REFUNDED' : 'RECEIVED', ...(type === 'PAYMENT_DELETED' ? { deleted: true } : {}), value: 100, currency: 'BRL' } });
 async function state(id: string) { return (await rows(c, 'SELECT * FROM asaasWebhookInbox WHERE eventId=?', [id]))[0]; }
@@ -62,10 +67,9 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     await bootstrapReleaseDatabase(c,{url:`mysql://root@localhost/${name}`,socketPath,applicationCommit:'a'.repeat(40),approvedFingerprint:(await readReleaseContract()).fingerprint});
     const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');
     pool=createPool({user:'root',socketPath,database:name,connectionLimit:5}); injected.orm=actual.drizzle(pool);
-    vi.stubEnv('DATABASE_URL','synthetic-present');
   });
   beforeEach(async()=>{
-    vi.unstubAllEnvs(); vi.stubEnv('DATABASE_URL','synthetic-present');
+    vi.unstubAllEnvs(); useLocalDatabaseEnvironment();
     for(const table of ['asaasWebhookInbox','asaasWebhookEvents','auditLogs','stockReservations','orderItems','orders','products','users'])await c.query(`DELETE FROM ${quote(table)}`);
     await c.query("INSERT INTO users (id,openId,name) VALUES (901,'inbox-synthetic','Synthetic')");
     await c.query("INSERT INTO products (id,name,category,price,stock) VALUES (901,'Synthetic','fixture',10000,5)");
@@ -177,7 +181,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     try {const base=`http://127.0.0.1:${(server.address() as any).port}`;
       for(const alias of ['/webhook/asaas','/api/webhooks/asaas'])expect((await fetch(base+alias,{method:'POST',headers:{'content-type':'application/json','asaas-access-token':'synthetic-token'},body:JSON.stringify(event())})).status).toBe(503);
       expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);expect(await stock()).toBe(5);
-    }finally{await new Promise<void>(r=>server.close(()=>r()));vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','synthetic-present');}
+    }finally{await new Promise<void>(r=>server.close(()=>r()));vi.unstubAllEnvs();useLocalDatabaseEnvironment();}
     expect((await recoverWebhooks(processWebhookEnvelope)).completed).toBe(1);expect(await stock()).toBe(4);
   });
   it('both aliases require authentication and share durable idempotency',async()=>{

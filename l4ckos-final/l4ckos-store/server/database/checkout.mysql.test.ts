@@ -1,4 +1,9 @@
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
+const mysqlOrmHarness = vi.hoisted(() => ({ pool: null as any }));
+vi.mock("drizzle-orm/mysql2", async (importOriginal) => {
+ const actual = await importOriginal<typeof import("drizzle-orm/mysql2")>();
+ return { ...actual, drizzle: (options: any) => mysqlOrmHarness.pool ? actual.drizzle(mysqlOrmHarness.pool) : actual.drizzle(options) };
+});
 import { readFile } from "node:fs/promises";
 import currentContract from "../../database/schema/contract-v6.json";
 import { randomUUID } from "node:crypto";
@@ -28,7 +33,7 @@ async function database(seed=true){
  }
  return c;
 }
-function input(items:CheckoutInput['items']=[{productId:1,quantity:3}]):CheckoutInput {return{userId:1,checkoutAttemptId:randomUUID(),items,method:'PIX',shipping:{cep:'70000000',optionId:'local'},shippingAddress:{recipient:'Synthetic',zipCode:'70000000',street:'Fixture',number:'1',neighborhood:'Fixture',city:'Brasilia',state:'DF'},customer:{name:'Synthetic',cpfCnpj:'11144477735'}};}
+function input(items:CheckoutInput['items']=[{productId:1,quantity:3}]):CheckoutInput {return{userId:1,checkoutAttemptId:randomUUID(),items,method:'PIX',shipping:{cep:'70000000',optionId:'local',expectedPriceCents:0},shippingAddress:{recipient:'Synthetic',zipCode:'70000000',street:'Fixture',number:'1',neighborhood:'Fixture',city:'Brasilia',state:'DF'},customer:{name:'Synthetic',cpfCnpj:'11144477735'}};}
 const payment={method:'PIX' as const,customerId:'synthetic-customer',paymentId:'synthetic-payment',invoiceUrl:'https://sandbox.asaas.com/fixture',pixQrCode:null,pixCopyPaste:'synthetic-pix',bankSlipUrl:null,digitableLine:null,nossoNumero:null,billingType:'PIX'};
 function adapters(){return{quote:vi.fn(async()=>({options:[{id:'local',label:'Local',price:0}]})),charge:vi.fn(async()=>({...payment,paymentId:`synthetic-payment-${randomUUID()}`}))};}
 async function rows(c:Connection,sql:string,values:any[]=[]){return(await c.query<any[]>(sql,values))[0].map(row=>Object.hasOwn(row,'n')?{...row,n:Number(row.n)}:row);}
@@ -155,6 +160,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('real MySQL atomic checkout
   const c=await database(),a=adapters();await c.query("INSERT INTO coupons (code,type,value,maxUses) VALUES ('SYNTHETIC','percent',10,1)");
   a.quote.mockResolvedValue({options:[{id:'local',label:'Local',price:5}]});
   const request={...input([{productId:2,variantId:1,quantity:2,size:'M',color:'Blue'},{productId:2,variantId:2,quantity:1,size:'L',color:'Red'}]),couponCode:'SYNTHETIC'};
+  request.shipping={...request.shipping,expectedPriceCents:500};
   const r=await checkout(c,request,a);expect(r.totalPrice).toBe(14850);
   await expect(c.query("UPDATE stockReservations SET orderItemId=999999")).rejects.toMatchObject({code:'ER_NO_REFERENCED_ROW_2'});
   await expect(checkout(c,{...request,checkoutAttemptId:randomUUID()},a)).rejects.toThrow('CHECKOUT_COUPON_INVALID');
@@ -193,7 +199,9 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('real MySQL atomic checkout
   });
   expect(await dbState()).toEqual({product:40,variants:[{id:1,stock:20},{id:2,stock:20}],reservations:[{status:'active',variantId:1,quantity:2}]});
   const previous=process.env.DATABASE_URL;
-  process.env.DATABASE_URL=url(c.config.database!)+'?socketPath='+encodeURIComponent(socketPath);
+  const ormPool=(await import('mysql2/promise')).createPool({user:'root',socketPath,database:c.config.database!});
+  mysqlOrmHarness.pool=ormPool;
+  process.env.DATABASE_URL=url(c.config.database!);
   const db=await import('../db');
   try {
    await c.query("UPDATE products SET price=1,name='Changed',imageUrl='/changed' WHERE id=2");
@@ -214,7 +222,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('real MySQL atomic checkout
    expect((await rows(c,'SELECT status FROM stockReservations WHERE orderId=?',[cancelled.orderId]))[0].status).toBe('released');
    expect((await rows(c,'SELECT stock FROM products WHERE id=1'))[0].stock).toBe(20);
   }finally{
-   const orm=await db.getDb();await (orm as any).$client.promise().end();
+   const orm=await db.getDb();await (orm as any).$client.end();mysqlOrmHarness.pool=null;
    if(previous===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=previous;
   }
  });

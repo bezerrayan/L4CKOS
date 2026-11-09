@@ -35,6 +35,7 @@ import {
 } from "../services/asaasService";
 import { securityLog } from "../_core/security";
 import { buildApiErrorResponse } from "../_core/appErrors";
+import { assertPublicCheckoutEnabled, PublicCheckoutDisabledError, PublicStoreClosedError } from "../_core/publicStore";
 import { getAllowedOrigins } from "../_core/corsPolicy";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import {
@@ -169,11 +170,13 @@ function parsePaidValueCentsFromWebhook(payload: any): number | null {
   return Math.round(parsed * 100);
 }
 
-async function ensureAsaasCustomerForUser(input: {
+/** Internal customer helper; its own gate protects future non-HTTP callers. */
+export async function ensureAsaasCustomerForUser(input: {
   userId: number;
   cpf?: string;
   phone?: string;
 }) {
+  assertPublicCheckoutEnabled();
   const user = await getUserById(input.userId);
   if (!user) {
     throw new Error("User not found");
@@ -206,6 +209,7 @@ async function ensureAsaasCustomerForUser(input: {
 
 export async function createCustomerHandler(req: Request, res: Response) {
   try {
+    assertPublicCheckoutEnabled();
     const authReq = req as AuthenticatedRequest;
     const userId = authReq.authUser?.id;
     if (!userId) {
@@ -230,6 +234,10 @@ export async function createCustomerHandler(req: Request, res: Response) {
       created: result.created,
     });
   } catch (error) {
+    if (error instanceof PublicCheckoutDisabledError || error instanceof PublicStoreClosedError) {
+      sendControllerError(res, 403, error.code, error.message);
+      return;
+    }
     securityLog("warn", "payment.create_customer_failed", {
       requestIp: req.ip || "unknown",
       reason: error instanceof Error ? error.message : "unknown",
@@ -240,6 +248,7 @@ export async function createCustomerHandler(req: Request, res: Response) {
 
 export async function createCheckoutHandler(req: Request, res: Response) {
   try {
+    assertPublicCheckoutEnabled();
     const authReq = req as AuthenticatedRequest;
     const userId = authReq.authUser?.id;
     if (!userId) {
@@ -336,6 +345,10 @@ export async function createCheckoutHandler(req: Request, res: Response) {
   } catch (error) {
     if (error instanceof CheckoutMethodDisabledError) {
       sendControllerError(res, 400, error.code, error.message);
+      return;
+    }
+    if (error instanceof PublicCheckoutDisabledError || error instanceof PublicStoreClosedError) {
+      sendControllerError(res, 403, error.code, error.message);
       return;
     }
     securityLog("warn", "payment.create_checkout_failed", {
