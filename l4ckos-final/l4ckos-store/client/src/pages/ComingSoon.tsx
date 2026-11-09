@@ -207,12 +207,25 @@ function TurnIcon() {
   );
 }
 
+const HEADER_SCROLL_THRESHOLD = 24;
 const DEFAULT_HINT = "Sem spam. Apenas novidades importantes sobre o lançamento.";
+
+/** Uma letra do logo: a imagem principal e 2 rastros (a mesma imagem, sem arquivos novos). */
+function LogoGlyph({ name, src }: { name: string; src: string }) {
+  return (
+    <div className={`l4cs-ld-glyph l4cs-ld-${name}`}>
+      <img className="l4cs-lg t2" src={src} alt="" width={657} height={339} decoding="async" />
+      <img className="l4cs-lg t1" src={src} alt="" width={657} height={339} decoding="async" />
+      <img className="l4cs-lg main" src={src} alt="" width={657} height={339} decoding="async" />
+    </div>
+  );
+}
 
 export default function ComingSoon() {
   const rootRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef<HTMLDivElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  const topRef = useRef<HTMLElement>(null);
   const [introActive, setIntroActive] = useState(() => !prefersReducedMotion());
   const [backs, setBacks] = useState<Record<string, boolean>>({});
   const [email, setEmail] = useState("");
@@ -272,6 +285,26 @@ export default function ComingSoon() {
     };
   }, []);
 
+  // Desfoque do cabeçalho: só alterna uma classe (listener passivo + rAF, sem cálculo por quadro).
+  useEffect(() => {
+    const top = topRef.current;
+    if (!top) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      top.classList.toggle("scrolled", window.scrollY > HEADER_SCROLL_THRESHOLD);
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
   useEffect(() => {
     if (submitted) doneRef.current?.focus();
   }, [submitted]);
@@ -315,16 +348,30 @@ export default function ComingSoon() {
     <div className="l4cs" ref={rootRef}>
       {introActive ? (
         <div className="l4cs-loader" aria-hidden="true">
+          <span className="l4cs-ld-text l4cs-ld-tl">Built for Adventure</span>
+          <span className="l4cs-ld-text l4cs-ld-br l4cs-ld-count" />
+          <div className="l4cs-ld-glow-wrap">
+            <div className="l4cs-ld-glow" />
+          </div>
+          <div className="l4cs-ld-frame">
+            <div className="l4cs-ld-horizon-wrap">
+              <div className="l4cs-ld-horizon" />
+            </div>
+            <svg className="l4cs-ld-wave" viewBox="0 0 340 100" aria-hidden="true">
+              <ellipse cx="170" cy="50" rx="169" ry="49.5" />
+            </svg>
+          </div>
           <div className="l4cs-loader-logo">
-            <img className="l4cs-lg lg-L" src={logoLayerL} alt="" width={657} height={339} decoding="async" />
-            <img className="l4cs-lg lg-4" src={logoLayer4} alt="" width={657} height={339} decoding="async" />
-            <img className="l4cs-lg lg-K" src={logoLayerK} alt="" width={657} height={339} decoding="async" />
-            <span className="l4cs-slash" />
+            <div className="l4cs-ld-inner">
+              <LogoGlyph name="L" src={logoLayerL} />
+              <LogoGlyph name="K" src={logoLayerK} />
+              <LogoGlyph name="4" src={logoLayer4} />
+            </div>
           </div>
         </div>
       ) : null}
 
-      <header className="l4cs-top">
+      <header className="l4cs-top" ref={topRef}>
         <a className="l4cs-brand" href="#hero" aria-label="L4CKOS, voltar ao início">
           <img src={logoHeader} alt="L4K" width={657} height={339} />
         </a>

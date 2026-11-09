@@ -91,6 +91,44 @@
   pointer-events: none;
 }
 
+/* v2.2: desfoque que some aos poucos atrás do cabeçalho (sem linha, sem borda, sem sombra) */
+.l4cs-top::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: -28px;
+  z-index: -1;
+  pointer-events: none;
+  /* sem backdrop-filter: só o gradiente, mais forte */
+  background: linear-gradient(to bottom, rgba(10, 10, 10, 0.85) 0%, rgba(10, 10, 10, 0.4) 55%, rgba(10, 10, 10, 0) 100%);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.l4cs-top.scrolled::before {
+  opacity: 1;
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .l4cs-top::before {
+    background: linear-gradient(to bottom, rgba(10, 10, 10, 0.36) 0%, rgba(10, 10, 10, 0.14) 55%, rgba(10, 10, 10, 0) 100%);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
+  }
+
+  @media (hover: none) and (pointer: coarse), (max-width: 720px) {
+    .l4cs-top::before {
+      background: linear-gradient(to bottom, rgba(10, 10, 10, 0.44) 0%, rgba(10, 10, 10, 0.16) 55%, rgba(10, 10, 10, 0) 100%);
+      -webkit-backdrop-filter: blur(6px);
+      backdrop-filter: blur(6px);
+    }
+  }
+}
+
 .l4cs-pill {
   pointer-events: auto;
   background: rgba(0, 0, 0, 0.62);
@@ -221,193 +259,396 @@
   display: block;
 }
 
-.l4cs-slash {
-  position: absolute;
-  left: -18%;
-  top: 54%;
-  width: 136%;
-  height: 5px;
-  background: var(--cs-red);
-  transform: rotate(-16deg) scaleX(0);
-  transform-origin: 0 50%;
-  box-shadow: 0 0 18px var(--cs-red);
-  opacity: 0;
-}
-
 /*
- * Montagem do logo em CSS puro (mesma timeline do protótipo, 0s → 2,45s).
- * Assim a abertura começa no primeiro paint, sem esperar o download do GSAP;
- * o GSAP assume depois para o voo até o cabeçalho e o scroll.
- * Curvas: expo.out ≈ (.16,1,.3,1) · power4.out ≈ (.165,.84,.44,1) · power3.in ≈ (.55,.055,.675,.19)
+ * Abertura v2.2: L e K deslizam pelo horizonte e se encontram deixando um vão;
+ * o 4 cai nesse vão (S = 1340 ms). Só transform e opacity, tudo em CSS puro,
+ * desde o primeiro paint e sem depender do GSAP (ele só assume no voo até o
+ * cabeçalho e no hero). Linha do tempo em ms, na ordem do documento de design.
  */
-.l4cs-loader .lg-4 {
-  animation: l4cs-logo-4 2.45s linear both;
+.l4cs-loader {
+  overflow: hidden;
+  contain: paint;
+  --lw: min(64vw, 440px);
+  /* Rede de segurança só de CSS: se o JS falhar, a abertura some sozinha aos 7 s. */
+  animation: l4cs-ld-failsafe 0.01s linear 7s forwards;
 }
 
-.l4cs-loader .lg-L {
-  animation: l4cs-logo-l 2.45s linear both;
-}
-
-.l4cs-loader .lg-K {
-  animation: l4cs-logo-k 2.45s linear both;
-}
-
-.l4cs-loader .l4cs-loader-logo {
-  animation: l4cs-logo-shake 0.32s linear 1.14s;
-}
-
-.l4cs-loader .l4cs-slash {
-  animation: l4cs-logo-slash 1.71s linear both;
-}
-
-@keyframes l4cs-logo-4 {
-  /* 1. o 4 cai na tela (0,15s → 0,9s, expo.out) */
-  0%,
-  6.12% {
+@keyframes l4cs-ld-failsafe {
+  to {
     opacity: 0;
-    transform: translateX(0) scale(2.8) rotate(-24deg) skewX(0deg);
-    filter: blur(16px) drop-shadow(0 0 0 rgba(225, 6, 0, 0));
-    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    visibility: hidden;
+    pointer-events: none;
   }
-  28.57% {
+}
+
+/* O hero fica oculto até o GSAP preparar o estado inicial (sem piscar antes da abertura).
+   Sem GSAP, o próprio CSS libera aos 7 s (visibility alterna só no fim, step-end). */
+.l4cs-loader:not([data-ready]) ~ main .l4cs-hero-main,
+.l4cs-loader:not([data-ready]) ~ main .l4cs-hero-foot,
+.l4cs-loader:not([data-ready]) ~ main .l4cs-topo {
+  animation: l4cs-ld-hold 7s step-end both;
+}
+
+@keyframes l4cs-ld-hold {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+
+.l4cs-ld-frame,
+.l4cs-loader-logo {
+  grid-area: 1 / 1;
+}
+
+.l4cs-ld-frame {
+  position: relative;
+  width: var(--lw);
+  aspect-ratio: 657 / 339;
+  pointer-events: none;
+}
+
+.l4cs-ld-inner {
+  position: absolute;
+  inset: 0;
+  animation: l4cs-ld-pulse 400ms ease-out 1340ms;
+}
+
+/* Textos e contador (100–700 ms), somem em S+420 */
+.l4cs-ld-text {
+  position: absolute;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  animation:
+    l4cs-ld-text-in 600ms ease-out 100ms both,
+    l4cs-ld-fade-out 380ms ease-in 1760ms forwards;
+}
+
+.l4cs-ld-tl {
+  top: calc(env(safe-area-inset-top, 0px) + 22px);
+  left: 22px;
+}
+
+.l4cs-ld-br {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+  right: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+@property --l4cs-n {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.l4cs-ld-count {
+  counter-reset: l4cs-n var(--l4cs-n);
+  animation:
+    l4cs-ld-text-in 600ms ease-out 100ms both,
+    l4cs-ld-count 1190ms cubic-bezier(0.65, 0, 0.35, 1) 150ms both,
+    l4cs-ld-fade-out 380ms ease-in 1760ms forwards;
+}
+
+.l4cs-ld-count::after {
+  content: counter(l4cs-n) "%";
+}
+
+@keyframes l4cs-ld-count {
+  from {
+    --l4cs-n: 0;
+  }
+  to {
+    --l4cs-n: 100;
+  }
+}
+
+@keyframes l4cs-ld-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
     opacity: 1;
-    transform: translateX(0) scale(1.01) rotate(-0.15deg) skewX(0deg);
-    filter: blur(0.1px) drop-shadow(0 0 0 rgba(225, 6, 0, 0));
-    animation-timing-function: ease-out;
+    transform: none;
   }
-  /* brilho vermelho (0,7s → 0,95s) */
-  36.73% {
-    opacity: 1;
-    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
-    filter: blur(0px) drop-shadow(0 0 28px rgba(225, 6, 0, 0.75));
+}
+
+@keyframes l4cs-ld-fade-out {
+  to {
+    opacity: 0;
   }
-  /* 4. glitch rápido (1,56s → 1,80s) */
-  63.67% {
-    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
+}
+
+/* Linha de horizonte (150–1150 ms), a 66% da altura do logo, atrás dele */
+.l4cs-ld-horizon-wrap {
+  position: absolute;
+  left: 50%;
+  top: 66%;
+  width: 100vw;
+  margin-left: -50vw;
+  height: 1px;
+  animation: l4cs-ld-fade-out 380ms ease-in 1760ms forwards;
+}
+
+.l4cs-ld-horizon {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.5) 22%, rgba(255, 255, 255, 0.5) 78%, rgba(255, 255, 255, 0));
+  transform: scaleX(0);
+  animation: l4cs-ld-draw 1000ms cubic-bezier(0.16, 1, 0.3, 1) 150ms forwards;
+}
+
+@keyframes l4cs-ld-draw {
+  to {
+    transform: scaleX(1);
   }
-  66.12% {
-    transform: translateX(-9px) scale(1) rotate(0deg) skewX(8deg);
+}
+
+/* Brilho vermelho (S-250, 1100 ms) e, em seguida, some */
+.l4cs-ld-glow-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--lw) * 1.7);
+  aspect-ratio: 1;
+  margin: calc(var(--lw) * -0.85) 0 0 calc(var(--lw) * -0.85);
+  animation: l4cs-ld-fade-out 600ms ease-in 1900ms forwards;
+}
+
+.l4cs-ld-glow {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(225, 6, 0, 0.55) 0%, rgba(225, 6, 0, 0.18) 38%, rgba(225, 6, 0, 0) 68%);
+  opacity: 0;
+  animation: l4cs-ld-glow 1100ms ease-out 1090ms both;
+}
+
+@keyframes l4cs-ld-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.55);
   }
-  68.57% {
-    transform: translateX(7px) scale(1) rotate(0deg) skewX(-6deg);
-  }
-  71.02% {
-    transform: translateX(-3px) scale(1) rotate(0deg) skewX(0deg);
-  }
-  73.47% {
-    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
-  }
-  /* brilho apaga (1,95s → 2,45s) */
-  79.59% {
-    opacity: 1;
-    filter: blur(0px) drop-shadow(0 0 28px rgba(225, 6, 0, 0.75));
-    animation-timing-function: ease-in-out;
+  35% {
+    opacity: 0.7;
+    transform: scale(1.1);
   }
   100% {
-    opacity: 1;
-    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
-    filter: blur(0px) drop-shadow(0 0 0 rgba(225, 6, 0, 0));
+    opacity: 0.22;
+    transform: scale(1.25);
   }
 }
 
-/* Celular: mesma montagem do 4, sem filter (blur/brilho) */
-@keyframes l4cs-logo-4-lite {
-  0%,
-  6.12% {
-    opacity: 0;
-    transform: translateX(0) scale(2.8) rotate(-24deg) skewX(0deg);
-    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  28.57% {
+/* Onda no chão (S…S+900): elipse fina sobre o horizonte, no ponto de pouso do 4 */
+.l4cs-ld-wave {
+  position: absolute;
+  left: 43.7%;
+  top: 66%;
+  width: 18%;
+  aspect-ratio: 3.4 / 1;
+  margin: calc(var(--lw) * -0.0265) 0 0 calc(var(--lw) * -0.09);
+  overflow: visible;
+  opacity: 0;
+  animation: l4cs-ld-wave 900ms cubic-bezier(0.2, 0.6, 0.3, 1) 1340ms both;
+}
+
+.l4cs-ld-wave ellipse {
+  fill: none;
+  stroke: var(--cs-red);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+@keyframes l4cs-ld-wave {
+  0% {
     opacity: 1;
-    transform: translateX(0) scale(1.01) rotate(-0.15deg) skewX(0deg);
-    animation-timing-function: ease-out;
+    transform: scale(0.2);
   }
-  36.73%,
-  63.67% {
-    opacity: 1;
-    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
+  50% {
+    opacity: 0.75;
+    transform: scale(2.2);
   }
-  66.12% {
-    transform: translateX(-9px) scale(1) rotate(0deg) skewX(8deg);
-  }
-  68.57% {
-    transform: translateX(7px) scale(1) rotate(0deg) skewX(-6deg);
-  }
-  71.02% {
-    transform: translateX(-3px) scale(1) rotate(0deg) skewX(0deg);
-  }
-  73.47%,
   100% {
+    opacity: 0;
+    transform: scale(4.4);
+  }
+}
+
+/* Letras: cada uma é um invólucro (impacto) com a letra e 2 rastros (mesma imagem) */
+.l4cs-ld-glyph {
+  position: absolute;
+  inset: 0;
+}
+
+.l4cs-ld-glyph .l4cs-lg {
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+/* L: 300–1150 · K: 360–1210 · 4: 820–1340 (S) */
+.l4cs-ld-L .main {
+  animation:
+    l4cs-ld-L-move 850ms cubic-bezier(0.16, 1, 0.3, 1) 300ms both,
+    l4cs-ld-in 170ms ease-out 300ms both;
+}
+
+.l4cs-ld-K .main {
+  animation:
+    l4cs-ld-K-move 850ms cubic-bezier(0.16, 1, 0.3, 1) 360ms both,
+    l4cs-ld-in 170ms ease-out 360ms both;
+}
+
+.l4cs-ld-4 .main {
+  animation:
+    l4cs-ld-4-move 520ms cubic-bezier(0.55, 0, 0.85, 0.5) 820ms both,
+    l4cs-ld-in 104ms ease-out 820ms both;
+}
+
+.l4cs-ld-L .t1 {
+  --o: 0.28;
+  animation:
+    l4cs-ld-L-move 850ms cubic-bezier(0.16, 1, 0.3, 1) 355ms both,
+    l4cs-ld-trail 850ms linear 355ms both;
+}
+
+.l4cs-ld-L .t2 {
+  --o: 0.14;
+  animation:
+    l4cs-ld-L-move 850ms cubic-bezier(0.16, 1, 0.3, 1) 410ms both,
+    l4cs-ld-trail 850ms linear 410ms both;
+}
+
+.l4cs-ld-K .t1 {
+  --o: 0.28;
+  animation:
+    l4cs-ld-K-move 850ms cubic-bezier(0.16, 1, 0.3, 1) 415ms both,
+    l4cs-ld-trail 850ms linear 415ms both;
+}
+
+.l4cs-ld-K .t2 {
+  --o: 0.14;
+  animation:
+    l4cs-ld-K-move 850ms cubic-bezier(0.16, 1, 0.3, 1) 470ms both,
+    l4cs-ld-trail 850ms linear 470ms both;
+}
+
+.l4cs-ld-4 .t1 {
+  --o: 0.3;
+  animation:
+    l4cs-ld-4-move 520ms cubic-bezier(0.55, 0, 0.85, 0.5) 860ms both,
+    l4cs-ld-trail 520ms linear 860ms both;
+}
+
+.l4cs-ld-4 .t2 {
+  --o: 0.15;
+  animation:
+    l4cs-ld-4-move 520ms cubic-bezier(0.55, 0, 0.85, 0.5) 900ms both,
+    l4cs-ld-trail 520ms linear 900ms both;
+}
+
+@keyframes l4cs-ld-L-move {
+  from {
+    transform: translateX(-95%) skewX(-16deg) scale(1.12);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes l4cs-ld-K-move {
+  from {
+    transform: translateX(95%) skewX(16deg) scale(1.12);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes l4cs-ld-4-move {
+  from {
+    transform: translateY(-135%) scale(1.2);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes l4cs-ld-in {
+  from {
+    opacity: 0;
+  }
+  to {
     opacity: 1;
-    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
+  }
+}
+
+@keyframes l4cs-ld-trail {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: var(--o);
+  }
+  80% {
+    opacity: var(--o);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Impacto em S (1340 ms), sem fill: nada fica depois */
+.l4cs-ld-4 {
+  transform-origin: 44% 80%;
+  animation: l4cs-ld-squash 280ms ease-out 1340ms;
+}
+
+.l4cs-ld-L {
+  animation: l4cs-ld-push-l 300ms ease-out 1340ms;
+}
+
+.l4cs-ld-K {
+  animation: l4cs-ld-push-k 300ms ease-out 1340ms;
+}
+
+@keyframes l4cs-ld-squash {
+  from {
+    transform: scale(1.06, 0.92);
+  }
+  to {
+    transform: scale(1, 1);
+  }
+}
+
+@keyframes l4cs-ld-push-l {
+  40% {
+    transform: translateX(-1.6%);
+  }
+}
+
+@keyframes l4cs-ld-push-k {
+  40% {
+    transform: translateX(1.6%);
+  }
+}
+
+@keyframes l4cs-ld-pulse {
+  from {
+    transform: scale(1.035);
+  }
+  to {
+    transform: scale(1);
   }
 }
 
 @keyframes l4cs-band {
   to {
     transform: translateX(-50%);
-  }
-}
-
-/* 2. L e K entram rasgando dos lados (power4.out) */
-@keyframes l4cs-logo-l {
-  0%,
-  28.57% {
-    opacity: 0;
-    transform: translateX(-42%) skewX(24deg);
-    animation-timing-function: cubic-bezier(0.165, 0.84, 0.44, 1);
-  }
-  48.98%,
-  100% {
-    opacity: 1;
-    transform: translateX(0) skewX(0deg);
-  }
-}
-
-@keyframes l4cs-logo-k {
-  0%,
-  31.02% {
-    opacity: 0;
-    transform: translateX(42%) skewX(-24deg);
-    animation-timing-function: cubic-bezier(0.165, 0.84, 0.44, 1);
-  }
-  51.43%,
-  100% {
-    opacity: 1;
-    transform: translateX(0) skewX(0deg);
-  }
-}
-
-/* 3. impacto: tremida (1,14s → 1,46s) + corte vermelho */
-@keyframes l4cs-logo-shake {
-  0% { transform: translate(0, 0); }
-  20% { transform: translate(-10px, 4px); }
-  40% { transform: translate(8px, -3px); }
-  60% { transform: translate(-5px, 2px); }
-  80% { transform: translate(3px, 0); }
-  100% { transform: translate(0, 0); }
-}
-
-@keyframes l4cs-logo-slash {
-  0%,
-  66.66% {
-    opacity: 0;
-    transform: rotate(-16deg) scaleX(0);
-  }
-  66.67% {
-    opacity: 1;
-    transform: rotate(-16deg) scaleX(0);
-    animation-timing-function: cubic-bezier(0.55, 0.055, 0.675, 0.19);
-  }
-  83.04%,
-  85.38% {
-    opacity: 1;
-    transform: rotate(-16deg) scaleX(1);
-  }
-  100% {
-    opacity: 0;
-    transform: rotate(-16deg) scaleX(1);
   }
 }
 
@@ -1553,8 +1794,11 @@
     background: rgba(0, 0, 0, 0.8);
   }
 
-  .l4cs-loader .lg-4 {
-    animation-name: l4cs-logo-4-lite;
+  /* Abertura simplificada no celular: sem rastros e sem a onda no chão */
+  .l4cs-ld-glyph .t1,
+  .l4cs-ld-glyph .t2,
+  .l4cs-ld-wave {
+    display: none;
   }
 
   /* Frente/costas: crossfade em vez de giro 3D */
@@ -1606,6 +1850,7 @@
     animation: none;
   }
 
+  .l4cs-top::before,
   .l4cs-flip-inner,
   .l4cs-face,
   .l4cs-turn svg,

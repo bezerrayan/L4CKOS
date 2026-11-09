@@ -63,7 +63,7 @@ export function startComingSoonMotion(root: HTMLElement, { onIntroDone }: Motion
   const topoEls = isMobileAtStart ? [] : q<SVGGeometryElement>(".l4cs-topo path, .l4cs-topo ellipse");
 
   let intro: gsap.core.Timeline | undefined;
-  let fly: gsap.core.Timeline | undefined;
+  let flyAnim: Animation | undefined;
 
   /* Abertura (uma vez só, igual em todos os tamanhos) */
   const ctx = gsap.context(() => {
@@ -78,40 +78,44 @@ export function startComingSoonMotion(root: HTMLElement, { onIntroDone }: Motion
     intro = gsap.timeline();
     let heroAt = 0;
 
+    // Estado inicial pronto: o hero (oculto por CSS até aqui) pode aparecer sem piscar.
+    loader?.setAttribute("data-ready", "1");
+
     if (loader && loaderLogo && brand && brandImg) {
       gsap.set(brand, { opacity: 0 });
-      // Etapas 1–4 (montagem do logo) rodam em CSS desde o primeiro paint; aqui
-      // só sincronizamos o voo com o tempo já decorrido dessa animação.
-      const cssIntro = q<HTMLElement>(".lg-4")[0]?.getAnimations?.()[0];
-      const elapsed = typeof cssIntro?.currentTime === "number" ? cssIntro.currentTime / 1000 : 0;
-      const flyAt = Math.max(0, 2.25 - elapsed);
-      heroAt = flyAt + 0.65;
-      /* 5. o logo voa até o cabeçalho */
+      // A montagem do logo (S = 1340 ms) roda em CSS desde o primeiro paint. Aqui
+      // só sincronizamos o voo (S+420 = 1760 ms) com o tempo já decorrido dela.
+      const elapsedMs = Number(loader.getAnimations?.()[0]?.currentTime ?? 0);
+      const flyAt = Math.max(0, 1.76 - elapsedMs / 1000);
+      heroAt = flyAt + 0.25;
+      /* O logo voa até a posição exata do logo do cabeçalho (Web Animations: transform) */
       intro.add(() => {
         const from = loaderLogo.getBoundingClientRect();
         const to = brandImg.getBoundingClientRect();
         const k = from.width > 0 ? to.width / from.width : 1;
-        fly = gsap
-          .timeline()
-          .to(loaderLogo, {
-            x: to.left + to.width / 2 - (from.left + from.width / 2),
-            y: to.top + to.height / 2 - (from.top + from.height / 2),
-            scale: k,
-            duration: 0.95,
-            ease: "expo.inOut",
-          })
-          .to(loader, { backgroundColor: "rgba(0,0,0,0)", duration: 0.6, ease: "power2.out" }, 0.35)
-          .set(brand, { opacity: 1 })
-          .set(loader, { display: "none" });
+        flyAnim = loaderLogo.animate(
+          [
+            { transform: "none" },
+            {
+              transform: `translate(${to.left + to.width / 2 - (from.left + from.width / 2)}px, ${to.top + to.height / 2 - (from.top + from.height / 2)}px) scale(${k})`,
+            },
+          ],
+          { duration: 900, easing: "cubic-bezier(0.76, 0, 0.24, 1)", fill: "forwards" },
+        );
       }, flyAt);
+      /* o fundo preto some (S+570), o logo do cabeçalho aparece (S+1220) e a abertura sai */
+      intro
+        .to(loader, { backgroundColor: "rgba(0,0,0,0)", duration: 0.7, ease: "power2.out" }, flyAt + 0.15)
+        .to(brand, { opacity: 1, duration: 0.2, ease: "none" }, flyAt + 0.8)
+        .set(loader, { display: "none" }, flyAt + 1.0)
+        // libera a rolagem em ~S+1620
+        .call(finishIntro, undefined, flyAt + 1.2);
+    } else {
+      intro.call(finishIntro, undefined, 0);
     }
 
-    intro
-      .to(q(".l4cs-hw"), { yPercent: 0, stagger: 0.12, duration: 1.1, ease: "expo.out" }, heroAt)
-      // O título já está de pé: libera o scroll e tira o loader. O resto da
-      // abertura (linhas e rodapé do hero) continua sem prender a página.
-      .call(finishIntro, undefined, heroAt + 1.34)
-      .to(q(".l4cs-hero-foot > *"), { y: 0, opacity: 1, stagger: 0.1, duration: 0.7, ease: "power3.out" }, heroAt + 1.64);
+    intro.to(q(".l4cs-hw"), { yPercent: 0, stagger: 0.12, duration: 1.1, ease: "expo.out" }, heroAt);
+    intro.to(q(".l4cs-hero-foot > *"), { y: 0, opacity: 1, stagger: 0.1, duration: 0.7, ease: "power3.out" }, heroAt + 1.25);
     if (topoEls.length) {
       intro.to(topoEls, { strokeDashoffset: 0, duration: 2.6, stagger: 0.08, ease: "power2.out" }, heroAt + 0.44);
     }
@@ -119,7 +123,7 @@ export function startComingSoonMotion(root: HTMLElement, { onIntroDone }: Motion
 
   const finishIntroNow = () => {
     if (introFinished || disposed) return;
-    fly?.kill();
+    flyAnim?.cancel();
     intro?.kill();
     // gsap.set aplica na hora, sem esperar o próximo quadro.
     ctx.add(() => {
