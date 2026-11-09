@@ -311,6 +311,46 @@
   }
 }
 
+/* Celular: mesma montagem do 4, sem filter (blur/brilho) */
+@keyframes l4cs-logo-4-lite {
+  0%,
+  6.12% {
+    opacity: 0;
+    transform: translateX(0) scale(2.8) rotate(-24deg) skewX(0deg);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  28.57% {
+    opacity: 1;
+    transform: translateX(0) scale(1.01) rotate(-0.15deg) skewX(0deg);
+    animation-timing-function: ease-out;
+  }
+  36.73%,
+  63.67% {
+    opacity: 1;
+    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
+  }
+  66.12% {
+    transform: translateX(-9px) scale(1) rotate(0deg) skewX(8deg);
+  }
+  68.57% {
+    transform: translateX(7px) scale(1) rotate(0deg) skewX(-6deg);
+  }
+  71.02% {
+    transform: translateX(-3px) scale(1) rotate(0deg) skewX(0deg);
+  }
+  73.47%,
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1) rotate(0deg) skewX(0deg);
+  }
+}
+
+@keyframes l4cs-band {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 /* 2. L e K entram rasgando dos lados (power4.out) */
 @keyframes l4cs-logo-l {
   0%,
@@ -584,7 +624,7 @@
   max-width: 46vw;
   object-fit: contain;
   transform-origin: 50% 90%;
-  filter: drop-shadow(0 30px 40px rgba(0, 0, 0, 0.6));
+  /* a sombra de chão já vem no próprio arquivo */
 }
 
 .l4cs-fan .f1 {
@@ -610,7 +650,7 @@
   flex-direction: column;
 }
 
-.l4cs.is-motion .l4cs-panels {
+.l4cs.is-hscroll .l4cs-panels {
   flex-direction: row;
   width: max-content;
 }
@@ -625,7 +665,7 @@
   align-items: center;
 }
 
-.l4cs.is-motion .l4cs-panel {
+.l4cs.is-hscroll .l4cs-panel {
   height: 100vh;
   height: 100svh;
   flex: 0 0 100vw;
@@ -721,72 +761,41 @@
   display: block;
   width: 100%;
   height: auto;
-  filter: drop-shadow(0 34px 40px rgba(0, 0, 0, 0.4));
 }
 
 .l4cs-face.back {
   position: absolute;
   inset: 0;
   transform: rotateY(180deg);
+  display: flex;
+  justify-content: center;
 }
 
-.l4cs-lock {
+/* As costas têm proporção própria: o quadro acompanha a imagem para o selo cair sobre a estampa */
+.l4cs-back-art {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+}
+
+.l4cs-back-art img {
+  height: 100%;
+  object-fit: contain;
+}
+
+.l4cs-soon {
   position: absolute;
-  left: 31%;
-  top: 20%;
-  width: 38%;
-  height: 36%;
-  border: 1.5px dashed rgba(255, 255, 255, 0.7);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.18);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 6px;
-  overflow: hidden;
-  color: var(--cs-white);
-  text-align: center;
-}
-
-.p3 .l4cs-lock {
-  border-color: rgba(20, 20, 20, 0.55);
-  color: #141414;
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.l4cs-lock b {
-  font-weight: 900;
-  font-stretch: 125%;
-  font-size: clamp(28px, 4vw, 48px);
-  line-height: 1;
-}
-
-.l4cs-lock small {
-  font-size: 13px;
-  font-weight: 600;
-  padding: 0 8px;
-}
-
-.l4cs-scanline {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 2px;
-  background: var(--cs-red);
-  box-shadow: 0 0 12px var(--cs-red);
-  animation: l4cs-scanline 2.2s linear infinite;
-}
-
-@keyframes l4cs-scanline {
-  from {
-    top: 0;
-  }
-  to {
-    top: 100%;
-  }
+  transform: translate(-50%, -50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .l4cs-detail {
@@ -819,7 +828,8 @@
 }
 
 .l4cs-stage.is-back .l4cs-detail {
-  opacity: 0;
+  /* vence o opacity inline que a entrada do GSAP deixa no desktop */
+  opacity: 0 !important;
 }
 
 .l4cs-panel-copy {
@@ -924,7 +934,7 @@
   display: none;
 }
 
-.l4cs.is-motion .l4cs-progress {
+.l4cs.is-hscroll .l4cs-progress {
   display: block;
   position: absolute;
   left: 24px;
@@ -1384,7 +1394,7 @@
     font-size: 34vw;
   }
 
-  .l4cs.is-motion .l4cs-progress {
+  .l4cs.is-hscroll .l4cs-progress {
     left: 20px;
     right: 20px;
     bottom: max(18px, env(safe-area-inset-bottom, 0px));
@@ -1508,15 +1518,73 @@
   }
 }
 
+/*
+ * Modo leve: celular (até 760px) ou qualquer tela de toque. Mesma condição de
+ * MOBILE_MOTION_QUERY em comingSoonMotion.ts. Nada de 3D, filter ou
+ * backdrop-filter; a faixa roda em CSS e as camisetas ficam empilhadas.
+ */
+@media (max-width: 760px), (pointer: coarse) {
+  .l4cs-pill {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(0, 0, 0, 0.8);
+  }
+
+  .l4cs-loader .lg-4 {
+    animation-name: l4cs-logo-4-lite;
+  }
+
+  /* Frente/costas: crossfade em vez de giro 3D */
+  .l4cs-flip {
+    perspective: none;
+  }
+
+  .l4cs-flip-inner,
+  .l4cs-stage.is-back .l4cs-flip-inner {
+    transform: none;
+    transform-style: flat;
+    transition: none;
+  }
+
+  .l4cs-face {
+    -webkit-backface-visibility: visible;
+    backface-visibility: visible;
+    transition: opacity 0.45s ease;
+  }
+
+  .l4cs-face.back {
+    transform: none;
+    opacity: 0;
+  }
+
+  .l4cs-stage.is-back .l4cs-face.back {
+    opacity: 1;
+  }
+
+  .l4cs-stage.is-back .l4cs-face.front {
+    opacity: 0;
+  }
+
+  /* Nome gigante em contorno: removido */
+  .l4cs-panel-bg {
+    display: none;
+  }
+
+  .l4cs.is-motion .l4cs-band-inner {
+    animation: l4cs-band 26s linear infinite;
+  }
+}
+
 /* Movimento reduzido: página completa e estática */
 @media (prefers-reduced-motion: reduce) {
   .l4cs-dot,
   .l4cs-cue-line::after,
-  .l4cs-scanline {
+  .l4cs-band-inner {
     animation: none;
   }
 
   .l4cs-flip-inner,
+  .l4cs-face,
   .l4cs-turn svg,
   .l4cs-detail {
     transition: none;

@@ -3,29 +3,44 @@ import { apiUrl } from "../const";
 import { contactChannels } from "../config/site";
 import { csrfFetch } from "../lib/csrf";
 import "./ComingSoon.css";
+import type { ComingSoonMotion } from "./comingSoonMotion";
 
 import logoHeader from "../images/coming-soon/l4k-mark-header.webp";
 import logoLayerL from "../images/coming-soon/l4k-layer-L.webp";
 import logoLayer4 from "../images/coming-soon/l4k-layer-4.webp";
 import logoLayerK from "../images/coming-soon/l4k-layer-K.webp";
-import clanFront from "../images/coming-soon/clan-14-bis-front.webp";
-import clanBack from "../images/coming-soon/clan-14-bis-back.webp";
-import clanDetail from "../images/coming-soon/clan-14-bis-detail.webp";
-import cityFront from "../images/coming-soon/city-noise-front.webp";
-import cityBack from "../images/coming-soon/city-noise-back.webp";
-import cityDetail from "../images/coming-soon/city-noise-detail.webp";
-import unknownFront from "../images/coming-soon/unknown-territory-front.webp";
-import unknownBack from "../images/coming-soon/unknown-territory-back.webp";
-import unknownDetail from "../images/coming-soon/unknown-territory-detail.webp";
+import clanFront600 from "../images/coming-soon/cla-14-bis-frente-600.webp";
+import clanFront1000 from "../images/coming-soon/cla-14-bis-frente-1000.webp";
+import clanBack600 from "../images/coming-soon/cla-14-bis-costas-borrada-600.webp";
+import clanBack1000 from "../images/coming-soon/cla-14-bis-costas-borrada-1000.webp";
+import clanDetail from "../images/coming-soon/cla-14-bis-detalhe-peito-640.webp";
+import cityFront600 from "../images/coming-soon/city-noise-frente-600.webp";
+import cityFront1000 from "../images/coming-soon/city-noise-frente-1000.webp";
+import cityBack600 from "../images/coming-soon/city-noise-costas-borrada-600.webp";
+import cityBack1000 from "../images/coming-soon/city-noise-costas-borrada-1000.webp";
+import cityDetail from "../images/coming-soon/city-noise-detalhe-peito-640.webp";
+import unknownFront600 from "../images/coming-soon/unknown-territory-frente-600.webp";
+import unknownFront1000 from "../images/coming-soon/unknown-territory-frente-1000.webp";
+import unknownBack600 from "../images/coming-soon/unknown-territory-costas-borrada-600.webp";
+import unknownBack1000 from "../images/coming-soon/unknown-territory-costas-borrada-1000.webp";
+import unknownDetail from "../images/coming-soon/unknown-territory-detalhe-peito-640.webp";
 
 /*
  * Conteúdo pendente: fica oculto até haver dados reais.
  * - Trecho dos fundadores, TikTok e WhatsApp: não renderizados.
  * - Política de privacidade: /privacidade é bloqueada pela própria Coming Soon,
  *   então a linha de consentimento aparece sem link por enquanto.
+ *
+ * Sigilo das estampas: o repositório é público. As costas usam SOMENTE os
+ * arquivos "costas-borrada", já borrados na origem. Nunca colocar a arte nítida
+ * aqui antes do lançamento.
  */
 
 const MOTION_LOAD_TIMEOUT_MS = 4000;
+// Trava de segurança: se a abertura não terminar neste tempo (GSAP lento,
+// requestAnimationFrame parado em janela coberta etc.), a página é liberada.
+// Usa setTimeout de propósito: não depende de requestAnimationFrame.
+const INTRO_FAILSAFE_MS = 6000;
 
 // Começa a baixar o módulo de animação (e o GSAP) assim que este chunk é avaliado,
 // em paralelo com o primeiro render, em vez de esperar o efeito pós-montagem.
@@ -43,6 +58,28 @@ if (!prefersReducedMotion()) {
 const MANIFESTO =
   "A L4CKOS nasceu em 2026 pra quem vive entre o asfalto e a trilha. Streetwear, aventura e cultura urbana na mesma peça. Sem promoção eterna, sem roupa genérica. Drops pequenos, feitos com calma e testados de verdade.";
 
+/** Imagem responsiva: versões 600w e ~1000w do mesmo recorte. */
+type ShirtImage = {
+  src600: string;
+  src1000: string;
+  /** Dimensões reais da versão grande (largura, altura). */
+  size: [number, number];
+};
+
+/**
+ * Costas da camiseta. Para a revelação no lançamento, basta trocar este campo:
+ * `{ status: "revelada", image: <costas nítidas> }`. O layout não muda; o selo
+ * "Em breve" some e o texto alternativo passa a descrever a estampa.
+ */
+type ShirtBack =
+  | {
+      status: "em-breve";
+      image: ShirtImage;
+      /** Centro da área da estampa, em % da imagem das costas (x, y), onde fica o selo. */
+      badgeAt: [number, number];
+    }
+  | { status: "revelada"; image: ShirtImage; alt: string };
+
 type Territory = {
   key: string;
   className: string;
@@ -52,10 +89,9 @@ type Territory = {
   name: string;
   desc: string;
   meta: string;
-  front: string;
+  front: ShirtImage;
   frontAlt: string;
-  frontSize: [number, number];
-  back: string;
+  back: ShirtBack;
   detail: string;
   detailAlt: string;
   detailSize: [number, number];
@@ -72,13 +108,16 @@ const TERRITORIES: Territory[] = [
     name: "Clã 14 Bis",
     desc: "L4CKOS × Clã Pioneiro XIV Bis. Uma peça feita junto com quem vive a aventura de verdade.",
     meta: "Base navy. Na frente, a assinatura com o 14 Bis.",
-    front: clanFront,
+    front: { src600: clanFront600, src1000: clanFront1000, size: [983, 1331] },
     frontAlt: "Camiseta Clã 14 Bis, navy, com L4CKOS e o avião 14 Bis no peito",
-    frontSize: [565, 667],
-    back: clanBack,
+    back: {
+      status: "em-breve",
+      image: { src600: clanBack600, src1000: clanBack1000, size: [897, 1327] },
+      badgeAt: [48, 32],
+    },
     detail: clanDetail,
     detailAlt: "Detalhe ampliado da estampa do peito da Clã 14 Bis",
-    detailSize: [420, 165],
+    detailSize: [640, 278],
   },
   {
     key: "city-noise",
@@ -88,13 +127,16 @@ const TERRITORIES: Territory[] = [
     name: "City Noise",
     desc: "O barulho, o concreto, o movimento. A camiseta pra quem vive a cidade em volume alto.",
     meta: "Base preta. Na frente, a tag L4CKOS em vermelho.",
-    front: cityFront,
+    front: { src600: cityFront600, src1000: cityFront1000, size: [984, 1287] },
     frontAlt: "Camiseta City Noise, preta, com a tag L4CKOS em vermelho no peito",
-    frontSize: [567, 647],
-    back: cityBack,
+    back: {
+      status: "em-breve",
+      image: { src600: cityBack600, src1000: cityBack1000, size: [992, 1295] },
+      badgeAt: [44, 31],
+    },
     detail: cityDetail,
     detailAlt: "Detalhe ampliado da estampa do peito da City Noise",
-    detailSize: [336, 354],
+    detailSize: [640, 633],
   },
   {
     key: "unknown-territory",
@@ -104,16 +146,34 @@ const TERRITORIES: Territory[] = [
     name: "Unknown Territory",
     desc: "Mapas, rotas e lugares que ainda não estão no GPS. Pra quem prefere o caminho que ninguém marcou.",
     meta: "Base off-white. Na frente, o recorte de mapa com L4K.",
-    front: unknownFront,
+    front: { src600: unknownFront600, src1000: unknownFront1000, size: [836, 1262] },
     frontAlt: "Camiseta Unknown Territory, off-white, com um recorte de mapa e L4K no peito",
-    frontSize: [575, 644],
-    back: unknownBack,
+    back: {
+      status: "em-breve",
+      image: { src600: unknownBack600, src1000: unknownBack1000, size: [782, 1219] },
+      badgeAt: [63, 34],
+    },
     detail: unknownDetail,
     detailAlt: "Detalhe ampliado da estampa do peito da Unknown Territory",
-    detailSize: [420, 258],
+    detailSize: [640, 403],
     topo: true,
   },
 ];
+
+/** Palco da camiseta: até 500px no desktop, ~68vw no celular. */
+const STAGE_SIZES = "(max-width: 760px) 68vw, 500px";
+/** Leque: cada camiseta ocupa no máximo ~46vw (50vw no celular). */
+const FAN_SIZES = "(max-width: 760px) 50vw, min(46vw, 480px)";
+
+function srcSet(image: ShirtImage) {
+  return `${image.src600} 600w, ${image.src1000} ${image.size[0]}w`;
+}
+
+function backAlt(item: Territory) {
+  return item.back.status === "revelada"
+    ? item.back.alt
+    : `Costas da camiseta ${item.name}, com a estampa borrada até o lançamento`;
+}
 
 const BAND_TEXT = ["Algo grande vem aí", "Built for Adventure", "Drop 01", "Clã 14 Bis", "City Noise", "Unknown Territory"];
 
@@ -168,28 +228,46 @@ export default function ComingSoon() {
     }
 
     let cancelled = false;
-    let stop: (() => void) | undefined;
+    let motion: ComingSoonMotion | undefined;
     // Se o GSAP não chegar a tempo (rede lenta/bloqueio), a página fica estática.
-    const timeout = window.setTimeout(() => {
+    const loadTimeout = window.setTimeout(() => {
       cancelled = true;
       setIntroActive(false);
     }, MOTION_LOAD_TIMEOUT_MS);
+    // Trava: a abertura tem até INTRO_FAILSAFE_MS para terminar; depois disso o
+    // loader sai, o scroll volta e o conteúdo da abertura aparece completo.
+    const failsafe = window.setTimeout(() => {
+      root.dataset.introFailsafe = "true";
+      if (motion) {
+        motion.finishIntroNow();
+      } else {
+        cancelled = true;
+        setIntroActive(false);
+      }
+    }, INTRO_FAILSAFE_MS);
 
     loadMotion()
       .then(({ startComingSoonMotion }) => {
         if (cancelled) return;
-        window.clearTimeout(timeout);
-        stop = startComingSoonMotion(root, { onIntroDone: () => setIntroActive(false) });
+        window.clearTimeout(loadTimeout);
+        motion = startComingSoonMotion(root, {
+          onIntroDone: () => {
+            window.clearTimeout(failsafe);
+            setIntroActive(false);
+          },
+        });
       })
       .catch(() => {
-        window.clearTimeout(timeout);
+        window.clearTimeout(loadTimeout);
+        window.clearTimeout(failsafe);
         if (!cancelled) setIntroActive(false);
       });
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
-      stop?.();
+      window.clearTimeout(loadTimeout);
+      window.clearTimeout(failsafe);
+      motion?.stop();
     };
   }, []);
 
@@ -332,10 +410,12 @@ export default function ComingSoon() {
               <img
                 key={item.key}
                 className={`f${index + 1}`}
-                src={item.front}
+                src={item.front.src600}
+                srcSet={srcSet(item.front)}
+                sizes={FAN_SIZES}
                 alt=""
-                width={item.frontSize[0]}
-                height={item.frontSize[1]}
+                width={item.front.size[0]}
+                height={item.front.size[1]}
                 loading="lazy"
                 decoding="async"
               />
@@ -367,29 +447,42 @@ export default function ComingSoon() {
                       <div className={`l4cs-stage${isBack ? " is-back" : ""}`}>
                         <div className="l4cs-flip">
                           <div className="l4cs-flip-inner">
-                            <div className="l4cs-face front">
+                            <div className="l4cs-face front" aria-hidden={isBack}>
                               <img
-                                src={item.front}
+                                src={item.front.src600}
+                                srcSet={srcSet(item.front)}
+                                sizes={STAGE_SIZES}
                                 alt={item.frontAlt}
-                                width={item.frontSize[0]}
-                                height={item.frontSize[1]}
+                                width={item.front.size[0]}
+                                height={item.front.size[1]}
                                 loading="lazy"
                                 decoding="async"
                               />
                             </div>
                             <div className="l4cs-face back" aria-hidden={!isBack}>
-                              <img
-                                src={item.back}
-                                alt=""
-                                width={item.frontSize[0]}
-                                height={item.frontSize[1]}
-                                loading="lazy"
-                                decoding="async"
-                              />
-                              <div className="l4cs-lock">
-                                <span className="l4cs-scanline" />
-                                <b aria-hidden="true">?</b>
-                                <small>Estampa revelada em breve</small>
+                              <div
+                                className="l4cs-back-art"
+                                style={{ aspectRatio: `${item.back.image.size[0]} / ${item.back.image.size[1]}` }}
+                              >
+                                <img
+                                  src={item.back.image.src600}
+                                  srcSet={srcSet(item.back.image)}
+                                  sizes={STAGE_SIZES}
+                                  alt={backAlt(item)}
+                                  width={item.back.image.size[0]}
+                                  height={item.back.image.size[1]}
+                                  loading="lazy"
+                                  decoding="async"
+                                />
+                                {item.back.status === "em-breve" ? (
+                                  <span
+                                    className="l4cs-soon"
+                                    aria-hidden="true"
+                                    style={{ left: `${item.back.badgeAt[0]}%`, top: `${item.back.badgeAt[1]}%` }}
+                                  >
+                                    Em breve
+                                  </span>
+                                ) : null}
                               </div>
                             </div>
                           </div>
