@@ -116,6 +116,15 @@ const COUNTED_UNITS_SQL = `
             a.status = 'released' AND a.providerState IN ('not_started', 'definitive_failure') AND a.reconciliationRequiredAt IS NULL))
      )`;
 
+/** Same counting rule as COUNTED_UNITS_SQL, split for the UI: paid attempts are CONSUMED, everything else still held is RESERVED. */
+async function quotaBreakdown(connection: Pool | PoolConnection, grantId: number, now: Date): Promise<{ reserved: number; consumed: number }> {
+  const [rows] = await connection.query<Row[]>(
+    COUNTED_UNITS_SQL.replace("SELECT COALESCE(SUM(u.units), 0) AS used",
+      "SELECT COALESCE(SUM(CASE WHEN a.status = 'paid' THEN u.units ELSE 0 END), 0) AS consumed, COALESCE(SUM(CASE WHEN a.status = 'paid' THEN 0 ELSE u.units END), 0) AS reserved"),
+    [grantId, sqlTime(new Date(now.getTime() - CLAIM_GRACE_MS))]);
+  return { reserved: Number(rows[0]?.reserved ?? 0), consumed: Number(rows[0]?.consumed ?? 0) };
+}
+
 async function countedUnits(connection: Pool | PoolConnection, grantId: number, now: Date): Promise<number> {
   const [rows] = await connection.query<Row[]>(COUNTED_UNITS_SQL, [grantId, sqlTime(new Date(now.getTime() - CLAIM_GRACE_MS))]);
   return Number(rows[0]?.used ?? 0);
@@ -184,8 +193,9 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
       if (status !== "approved") return { status };
       const grant = await activeGrant(pool, drop.id, userId, false);
       if (!grant) return { status: "revoked" };
-      const used = await countedUnits(pool, grant.id, now);
-      const base = { unitLimit: grant.unitLimit, unitsUsed: used, unitsRemaining: Math.max(0, grant.unitLimit - used), expiresAt: grant.expiresAt.toISOString() };
+      const { reserved, consumed } = await quotaBreakdown(pool, grant.id, now);
+      const used = reserved + consumed;
+      const base = { unitLimit: grant.unitLimit, unitsUsed: used, unitsReserved: reserved, unitsConsumed: consumed, unitsRemaining: Math.max(0, grant.unitLimit - used), expiresAt: grant.expiresAt.toISOString() };
       if (grant.expiresAt.getTime() <= now.getTime()) return { status: "expired", ...base, unitsRemaining: 0 };
       return { status: grant.unlockedAt ? "unlocked" : "approved", ...base };
     },
@@ -326,8 +336,10 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
       const needsGrant = [...unitsByDrop.values()].filter(entry => entry.drop.requiresAuthorization).sort((a, b) => a.drop.id - b.drop.id);
       if (!needsGrant.length) return { claimed: false };
 
+      let inserted = false;
       try {
         await withTransaction(pool, async connection => {
+          inserted = false; // a deadlock retry re-runs the whole block
           for (const { drop, units } of needsGrant) {
             const grant = await activeGrant(connection, drop.id, input.userId, true);
             if (!grant || !grant.unlockedAt || grant.expiresAt.getTime() <= now.getTime()) {
@@ -344,6 +356,7 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
               throw new ExclusiveError(CODES.quotaExceeded, `Limite de unidades excedido (restam ${Math.max(0, grant.unitLimit - used)}).`);
             }
             await connection.query(`INSERT INTO exclusiveGrantUsage (grantId, attemptId, units, createdAt) VALUES (?, ?, ?, ?)`, [grant.id, input.attemptId, units, sqlTime(now)]);
+            inserted = true;
             await event(connection, { dropId: drop.id, requestId: grant.requestId, grantId: grant.id, subjectUserId: input.userId, event: "units_claimed", details: `${units}`, at: now });
           }
         });
@@ -351,7 +364,9 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
         if (error instanceof ExclusiveError) throw error;
         throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
       }
-      return { claimed: true };
+      // Only a claim THIS request created may be rolled back by settleCheckout: a replay of the same attemptId must never
+      // delete the claim of a concurrent in-flight create.
+      return { claimed: inserted };
     },
 
     /**
@@ -446,12 +461,13 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
           ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY r.id DESC LIMIT 500`, params);
       const out = [];
       for (const row of rows) {
-        const used = row.grantId ? await countedUnits(pool, Number(row.grantId), now) : 0;
+        const quota = row.grantId ? await quotaBreakdown(pool, Number(row.grantId), now) : { reserved: 0, consumed: 0 };
+        const used = quota.reserved + quota.consumed;
         out.push({
           requestId: Number(row.id), dropId: Number(row.dropId), dropName: String(row.dropName), userId: Number(row.userId),
           userName: row.userName ?? null, userEmail: row.userEmail ?? null, status: row.status as AccessRequestStatus,
           createdAt: iso(parseTime(row.createdAt)), decidedAt: iso(parseTime(row.decidedAt)),
-          grant: row.grantId ? { id: Number(row.grantId), unitLimit: Number(row.unitLimit), unitsUsed: used, expiresAt: iso(parseTime(row.expiresAt)), unlocked: Boolean(row.unlockedAt) } : null,
+          grant: row.grantId ? { id: Number(row.grantId), unitLimit: Number(row.unitLimit), unitsUsed: used, unitsReserved: quota.reserved, unitsConsumed: quota.consumed, expiresAt: iso(parseTime(row.expiresAt)), unlocked: Boolean(row.unlockedAt) } : null,
         });
       }
       return out;

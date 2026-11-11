@@ -136,7 +136,12 @@ export type PublicDropView = {
 export type ViewerAccessView = {
   status: ViewerAccessStatus;
   unitLimit?: number;
+  /** Total counted against the limit = reserved + consumed (always server-derived from STOCK, never a client counter). */
   unitsUsed?: number;
+  /** Held by open STOCK attempts (pending / reserved / ambiguous / awaiting reconciliation). */
+  unitsReserved?: number;
+  /** Units of attempts the STOCK reports as paid. */
+  unitsConsumed?: number;
   unitsRemaining?: number;
   expiresAt?: string;
 };

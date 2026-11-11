@@ -237,12 +237,14 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     await createDrop();
     const request = await owner().exclusiveDrops.requestAccess.mutate({ dropId: 1 });
     for (const attempt of [
-      other().exclusiveDrops.admin.approve.mutate({ requestId: request.requestId, unitLimit: 3, expiresAt: "2026-11-30T12:00:00-03:00" }),
-      other().exclusiveDrops.admin.reject.mutate({ requestId: request.requestId }),
-      other().exclusiveDrops.admin.revoke.mutate({ requestId: request.requestId }),
-      other().exclusiveDrops.admin.listRequests.query({}),
-      owner().exclusiveDrops.admin.saveDrop.mutate({ ...DROP_INPUT, slug: "hack-drop" } as never),
-    ]) expect(trpcCode(await caught(attempt))).toBe("FORBIDDEN");
+      () => other().exclusiveDrops.admin.approve.mutate({ requestId: request.requestId, unitLimit: 3, expiresAt: "2026-11-30T12:00:00-03:00" }),
+      () => other().exclusiveDrops.admin.reject.mutate({ requestId: request.requestId }),
+      () => other().exclusiveDrops.admin.revoke.mutate({ requestId: request.requestId }),
+      () => other().exclusiveDrops.admin.reissueCode.mutate({ requestId: request.requestId }),
+      () => other().exclusiveDrops.admin.history.query({}),
+      () => other().exclusiveDrops.admin.listRequests.query({}),
+      () => owner().exclusiveDrops.admin.saveDrop.mutate({ ...DROP_INPUT, slug: "hack-drop" } as never),
+    ]) expect(trpcCode(await caught(attempt()))).toBe("FORBIDDEN");
     expect(trpcCode(await caught(client("no-session").exclusiveDrops.admin.listDrops.query()))).toBe("UNAUTHORIZED");
   });
 
@@ -403,6 +405,86 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     providerMode = "ok";
     expect(appCode(await caught(create(owner, "xiv-attempt-provfail-003", 10)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
     expect(providerCalls).toHaveLength(2);
+  });
+
+  // ---------------------------------------------------------------- Sprint 7: UX contract, isolation and concurrency
+  it("quota is split for the UI: reserved (open attempts, ambiguous) vs consumed (paid), always server-derived", async () => {
+    await createDrop();
+    await unlockedGrantFor(owner, 3);
+    const viewer = async () => { const v = await owner().exclusiveDrops.forProduct.query({ productId: 4 }); return v.exclusive ? v.viewer : null; };
+    expect(await viewer()).toMatchObject({ unitLimit: 3, unitsReserved: 0, unitsConsumed: 0, unitsRemaining: 3 });
+    await create(owner, "xiv-attempt-split-0001", 8, 2);
+    expect(await viewer()).toMatchObject({ unitsReserved: 2, unitsConsumed: 0, unitsUsed: 2, unitsRemaining: 1 });
+    await pool.query("UPDATE stockCheckoutAttempts SET status = 'paid', paidAt = NOW(3) WHERE attemptId = 'xiv-attempt-split-0001'");
+    await create(owner, "xiv-attempt-split-0002", 9, 1);
+    await pool.query("UPDATE stockCheckoutAttempts SET providerState = 'ambiguous' WHERE attemptId = 'xiv-attempt-split-0002'");
+    expect(await viewer()).toMatchObject({ unitsReserved: 1, unitsConsumed: 2, unitsUsed: 3, unitsRemaining: 0 });
+    const listed = await admin().exclusiveDrops.admin.listRequests.query({});
+    expect(listed[0].grant).toMatchObject({ unitsReserved: 1, unitsConsumed: 2 });
+  });
+
+  it("a replay of the same attemptId never deletes the claim of the request that created it", async () => {
+    await createDrop();
+    await unlockedGrantFor(owner, 2);
+    const first = await store().reserveForCheckout({ userId: 81, attemptId: "xiv-attempt-replay-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }] });
+    const replay = await store().reserveForCheckout({ userId: 81, attemptId: "xiv-attempt-replay-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }] });
+    expect(first.claimed).toBe(true);
+    expect(replay.claimed).toBe(false); // nothing for the replay to roll back
+    await expect(store().reserveForCheckout({ userId: 81, attemptId: "xiv-attempt-replay-0001", items: [{ productId: 4, variantId: 8, quantity: 2 }] })).rejects.toMatchObject({ code: "EXCLUSIVE_QUOTA_EXCEEDED" });
+    const [claims] = await pool.query<any[]>("SELECT units FROM exclusiveGrantUsage");
+    expect(claims).toHaveLength(1);
+  });
+
+  it("revocation with an OPEN attempt: new attempts are blocked at once, the open attempt keeps its own STOCK lifecycle and its units stay held", async () => {
+    await createDrop();
+    const granted = await unlockedGrantFor(owner, 2);
+    const open = await create(owner, "xiv-attempt-revoke-0001", 8);
+    await admin().exclusiveDrops.admin.revoke.mutate({ requestId: granted.requestId });
+    expect(appCode(await caught(create(owner, "xiv-attempt-revoke-0002", 9)))).toBe("EXCLUSIVE_ACCESS_REQUIRED");
+    // the open attempt is still resumable and payable (STOCK owns it)...
+    expect(await owner().stockCheckout.resume.query({ attemptId: "xiv-attempt-revoke-0001" })).toMatchObject({ status: "pending", orderId: open.orderId });
+    // ...and the same-id replay is refused too, because access is no longer provable (fail closed)
+    expect(appCode(await caught(create(owner, "xiv-attempt-revoke-0001", 8)))).toBe("EXCLUSIVE_ACCESS_REQUIRED");
+    const view = await owner().exclusiveDrops.forProduct.query({ productId: 4 });
+    expect(view.exclusive && view.viewer.status).toBe("revoked");
+  });
+
+  it("re-issuing a code during an active attempt: the attempt is untouched, the old code dies, the customer must unlock again, units stay counted", async () => {
+    await createDrop();
+    const granted = await unlockedGrantFor(owner, 2);
+    await create(owner, "xiv-attempt-reissue-001", 8);
+    const fresh = await admin().exclusiveDrops.admin.reissueCode.mutate({ requestId: granted.requestId });
+    expect(await owner().stockCheckout.resume.query({ attemptId: "xiv-attempt-reissue-001" })).toMatchObject({ status: "pending" });
+    expect(appCode(await caught(owner().exclusiveDrops.redeemCode.mutate({ code: granted.code })))).toBe("EXCLUSIVE_CODE_INVALID");
+    expect(appCode(await caught(create(owner, "xiv-attempt-reissue-002", 9)))).toBe("EXCLUSIVE_ACCESS_REQUIRED");
+    let view = await owner().exclusiveDrops.forProduct.query({ productId: 4 });
+    expect(view.exclusive && view.viewer).toMatchObject({ status: "approved", unitsReserved: 1, unitsRemaining: 1 });
+    await owner().exclusiveDrops.redeemCode.mutate({ code: fresh.code });
+    expect(await create(owner, "xiv-attempt-reissue-002", 9)).toMatchObject({ status: "pending" });
+    view = await owner().exclusiveDrops.forProduct.query({ productId: 4 });
+    expect(view.exclusive && view.viewer).toMatchObject({ status: "unlocked", unitsRemaining: 0 });
+  });
+
+  it("two tabs unlocking with the same code at once: both succeed, one 'redeemed' event; unlocking again is a harmless no-op", async () => {
+    await createDrop();
+    const request = await owner().exclusiveDrops.requestAccess.mutate({ dropId: 1 });
+    const approved = await admin().exclusiveDrops.admin.approve.mutate({ requestId: request.requestId, unitLimit: 1, expiresAt: "2026-11-30T12:00:00-03:00" });
+    const both = await Promise.all([owner().exclusiveDrops.redeemCode.mutate({ code: approved.code }), owner().exclusiveDrops.redeemCode.mutate({ code: approved.code })]);
+    expect(both).toEqual([{ unlocked: true }, { unlocked: true }]);
+    expect(await owner().exclusiveDrops.redeemCode.mutate({ code: approved.code.toLowerCase() })).toEqual({ unlocked: true });
+    const history = await admin().exclusiveDrops.admin.history.query({ requestId: request.requestId });
+    expect(history.filter(e => e.event === "code_redeemed")).toHaveLength(1);
+  });
+
+  it("isolation: another customer sees none of A's requests, quota or status, and an anonymous caller cannot redeem", async () => {
+    await createDrop();
+    await unlockedGrantFor(owner, 2);
+    expect(await other().exclusiveDrops.myRequests.query()).toEqual([]);
+    const view = await other().exclusiveDrops.forProduct.query({ productId: 4 });
+    expect(view.exclusive && view.viewer).toEqual({ status: "none" });
+    expect(trpcCode(await caught(client("no-session").exclusiveDrops.redeemCode.mutate({ code: "AAAAA-BBBBB-CCCCC-DDDDD" })))).toBe("UNAUTHORIZED");
+    const mine = await owner().exclusiveDrops.myRequests.query();
+    expect(JSON.stringify(mine)).not.toContain("outro@example.invalid");
   });
 
   // ---------------------------------------------------------------- drop lifecycle
