@@ -98,10 +98,12 @@ export const adminSaveDropInputSchema = z.object({
   status: dropStoredStatusSchema.default("draft"),
   productIds: z.array(z.number().int().positive()).min(1).max(30),
 }).strict().superRefine((value, ctx) => {
+  // Field errors (e.g. a date without offset) leave raw strings here: report only those, never throw.
+  if (!(value.purchaseStartsAt instanceof Date) || !(value.purchaseEndsAt instanceof Date)) return;
   if (value.purchaseEndsAt.getTime() <= value.purchaseStartsAt.getTime()) {
     ctx.addIssue({ code: "custom", path: ["purchaseEndsAt"], message: "O fim da compra deve ser posterior ao início." });
   }
-  if (value.requestStartsAt && value.requestEndsAt && value.requestEndsAt.getTime() <= value.requestStartsAt.getTime()) {
+  if (value.requestStartsAt instanceof Date && value.requestEndsAt instanceof Date && value.requestEndsAt.getTime() <= value.requestStartsAt.getTime()) {
     ctx.addIssue({ code: "custom", path: ["requestEndsAt"], message: "O fim das solicitações deve ser posterior ao início." });
   }
 });
