@@ -19,9 +19,13 @@ import {
   validateAsaasWebhookSignature,
 } from "../services/asaasService";
 import { securityLog } from "../_core/security";
+import { getConfiguredStockCheckoutRuntime } from "../_core/context";
 import { buildApiErrorResponse } from "../_core/appErrors";
 import { getAllowedOrigins } from "../_core/corsPolicy";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
+import { createAsaasStockWebhookBoundary } from "../stock/asaasStockWebhookBoundary";
+import type { StockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
+import { StockCheckoutError } from "../stock/stockCheckout";
 import {
   sendInternalLowStockAlertEmail,
   sendInternalNewSaleAlertEmail,
@@ -48,6 +52,7 @@ function sendControllerError(
 
 const PAID_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"]);
 const FAILED_EVENTS = new Set(["PAYMENT_REFUSED", "PAYMENT_DELETED", "PAYMENT_REPROVED", "PAYMENT_FAILED"]);
+const STOCK_PENDING_EVENTS = new Set(["PAYMENT_CREATED", "PAYMENT_AWAITING_RISK_ANALYSIS", "PAYMENT_PENDING"]);
 const PAID_PAYMENT_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
 const FAILED_PAYMENT_STATUSES = new Set(["REFUSED", "DELETED", "REPROVED", "FAILED"]);
 
@@ -297,7 +302,9 @@ export async function createCheckoutHandler(req: Request, res: Response) {
   }
 }
 
-export async function asaasWebhookHandler(req: Request, res: Response) {
+export function createAsaasWebhookHandler(resolveStockRuntime: () => StockCheckoutRuntime | undefined = () => undefined) {
+  return async function asaasWebhookHandler(req: Request, res: Response) {
+  let stockBranch = false;
   try {
     const signatureValid = validateAsaasWebhookSignature(req.headers as Record<string, unknown>);
     if (!signatureValid) {
@@ -312,7 +319,7 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
     const payload = req.body as any;
     const event = String(payload?.event || "").trim();
 
-    if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event)) {
+    if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event) && !STOCK_PENDING_EVENTS.has(event)) {
       res.status(200).json({ handled: false, reason: "event_ignored" });
       return;
     }
@@ -390,12 +397,33 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
     // STOCK payments require their own single-owner event dispatcher/ledger.
     // Never let the legacy handler mark them paid or consume product-level stock.
     if (order.stockAttemptId) {
-      securityLog("error", "payment.asaas_stock_owner_unavailable", {
-        requestIp: req.ip || "unknown",
-        orderId,
-        event,
+      stockBranch = true;
+      const runtime = resolveStockRuntime();
+      if (!runtime) {
+        securityLog("error", "payment.asaas_stock_owner_unavailable", { requestIp: req.ip || "unknown", orderId, event });
+        res.status(503).json({ handled: false, reason: "stock_payment_owner_unavailable" });
+        return;
+      }
+
+      const result = await runtime.receiveWebhook({
+        rawBody: JSON.stringify(payload),
+        headers: req.headers as Record<string, string | string[] | undefined>,
+        boundary: createAsaasStockWebhookBoundary(),
       });
-      res.status(503).json({ handled: false, reason: "stock_payment_owner_unavailable" });
+      if (result === "conflict") {
+        securityLog("warn", "payment.asaas_stock_event_conflict_acknowledged", { requestIp: req.ip || "unknown", orderId, event, paymentId });
+        res.status(200).json({ handled: false, reason: "stock_event_conflict" });
+        return;
+      }
+      securityLog("info", result === "duplicate" ? "payment.asaas_stock_webhook_duplicate" : "payment.asaas_stock_webhook_processed", {
+        requestIp: req.ip || "unknown", orderId, event, paymentId,
+      });
+      res.status(200).json({ handled: result === "processed", reason: result === "duplicate" ? "duplicate_event" : undefined, event, orderId });
+      return;
+    }
+
+    if (!PAID_EVENTS.has(event) && !FAILED_EVENTS.has(event)) {
+      res.status(200).json({ handled: false, reason: "event_ignored" });
       return;
     }
 
@@ -530,6 +558,17 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
       requestIp: req.ip || "unknown",
       reason: error instanceof Error ? error.message : "unknown",
     });
+    if (error instanceof StockCheckoutError && error.code.startsWith("WEBHOOK_")) {
+      sendControllerError(res, 400, "WEBHOOK_EVENT_INVALID", "A notificação de pagamento não pôde ser validada.");
+      return;
+    }
+    if (stockBranch) {
+      res.status(503).json({ success: false, code: "WEBHOOK_PROCESSING_RETRYABLE", message: "Não foi possível processar a notificação.", status: 503 });
+      return;
+    }
     sendControllerError(res, 500, "WEBHOOK_PROCESSING_FAILED", "Não foi possível processar a notificação.");
   }
+  };
 }
+
+export const asaasWebhookHandler = createAsaasWebhookHandler(getConfiguredStockCheckoutRuntime);

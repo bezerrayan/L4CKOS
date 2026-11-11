@@ -15,6 +15,12 @@ import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider }) {
   const store = createMysqlStockCheckoutStore(input.pool);
   return {
+    isForDisposableLocalHarness() {
+      const connection = (input.pool as unknown as { pool?: { config?: { connectionConfig?: { host?: unknown; user?: unknown; database?: unknown } } } }).pool?.config?.connectionConfig;
+      return /^(127\.0\.0\.1|localhost|::1)$/.test(String(connection?.host ?? "")) &&
+        connection?.database === "l4ckos_stock_test" &&
+        connection?.user === "stock_test";
+    },
     checkout(request: unknown, authenticatedUserId?: number) {
       // Gate check occurs before the domain can acquire a connection or invoke the provider.
       return createStockCheckout({ enabled: isPublicCheckoutEnabled(), ownerUserId: authenticatedUserId as number, store, provider: input.provider, request });
