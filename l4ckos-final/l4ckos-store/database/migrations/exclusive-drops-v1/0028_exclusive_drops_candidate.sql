@@ -2,7 +2,9 @@
 -- Not part of drizzle/meta/_journal.json. DO NOT run against staging or production without the release runbook
 -- (l4ckos-release-verification) and an attested backup. Additive only: new tables, no ALTER of existing tables.
 -- Tested on disposable MySQL 9.7.2 (server/exclusive/exclusiveDrops.mysql.test.ts).
--- Requires: users(id INT), products(id INT) and STOCK V1 0027 tables/columns before any DDL starts.
+-- Requires: users(id INT), products(id INT) and STOCK V1 0027 (legacy) OR 0027-V6 (stock-v1/v6) tables/columns before any DDL starts.
+-- Tables inherit the schema default collation (utf8mb4_0900_ai_ci on the legacy base, utf8mb4_unicode_ci on the V6 lineage)
+-- so the attemptId FK is collation-compatible with stockCheckoutAttempts on either lineage.
 
 DELIMITER $$
 DROP PROCEDURE IF EXISTS __l4ckos_exclusive_drops_0028_preflight$$
@@ -86,7 +88,7 @@ CREATE TABLE IF NOT EXISTS exclusiveDrops (
   UNIQUE KEY exclusiveDrops_slug_unique (slug),
   CONSTRAINT exclusiveDrops_window_check CHECK (purchaseEndsAt > purchaseStartsAt),
   CONSTRAINT exclusiveDrops_limit_check CHECK (defaultUnitLimit BETWEEN 1 AND 99)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- A product belongs to at most one drop: exclusivity can never be ambiguous.
 CREATE TABLE IF NOT EXISTS exclusiveDropProducts (
@@ -96,7 +98,7 @@ CREATE TABLE IF NOT EXISTS exclusiveDropProducts (
   KEY exclusiveDropProducts_drop_idx (dropId),
   CONSTRAINT exclusiveDropProducts_drop_fk FOREIGN KEY (dropId) REFERENCES exclusiveDrops (id),
   CONSTRAINT exclusiveDropProducts_product_fk FOREIGN KEY (productId) REFERENCES products (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- One row per (drop, user): a second click while pending is a no-op, not a duplicate.
 CREATE TABLE IF NOT EXISTS exclusiveAccessRequests (
@@ -112,7 +114,7 @@ CREATE TABLE IF NOT EXISTS exclusiveAccessRequests (
   KEY exclusiveAccessRequests_status_idx (status, createdAt),
   CONSTRAINT exclusiveAccessRequests_drop_fk FOREIGN KEY (dropId) REFERENCES exclusiveDrops (id),
   CONSTRAINT exclusiveAccessRequests_user_fk FOREIGN KEY (userId) REFERENCES users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- Individual authorization. Only the hash of the code is stored.
 CREATE TABLE IF NOT EXISTS exclusiveGrants (
@@ -135,7 +137,7 @@ CREATE TABLE IF NOT EXISTS exclusiveGrants (
   CONSTRAINT exclusiveGrants_drop_fk FOREIGN KEY (dropId) REFERENCES exclusiveDrops (id),
   CONSTRAINT exclusiveGrants_user_fk FOREIGN KEY (userId) REFERENCES users (id),
   CONSTRAINT exclusiveGrants_limit_check CHECK (unitLimit BETWEEN 1 AND 99)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- Quota ledger. A row claims `units` of a grant for one STOCK attempt (idempotent per attempt).
 -- The units still counted are DERIVED from stockCheckoutAttempts at read time (see server/exclusive/store.ts),
@@ -150,7 +152,7 @@ CREATE TABLE IF NOT EXISTS exclusiveGrantUsage (
   KEY exclusiveGrantUsage_attempt_idx (attemptId),
   CONSTRAINT exclusiveGrantUsage_grant_fk FOREIGN KEY (grantId) REFERENCES exclusiveGrants (id),
   CONSTRAINT exclusiveGrantUsage_units_check CHECK (units > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- Brute-force protection for code redemption (survives restarts and works across instances).
 CREATE TABLE IF NOT EXISTS exclusiveRedeemAttempts (
@@ -160,7 +162,7 @@ CREATE TABLE IF NOT EXISTS exclusiveRedeemAttempts (
   createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   KEY exclusiveRedeemAttempts_user_idx (userId, createdAt)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- Authorization history (decisions and usage). Never contains a code or a code hash.
 CREATE TABLE IF NOT EXISTS exclusiveEvents (
@@ -176,7 +178,7 @@ CREATE TABLE IF NOT EXISTS exclusiveEvents (
   PRIMARY KEY (id),
   KEY exclusiveEvents_drop_idx (dropId, createdAt),
   KEY exclusiveEvents_grant_idx (grantId, createdAt)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- Transactional e-mail outbox: the event is written in the same transaction as the decision.
 -- eventKey is the persistent logical idempotency key (request + event + decision version): retries never duplicate it.
@@ -195,7 +197,7 @@ CREATE TABLE IF NOT EXISTS exclusiveNotificationOutbox (
   PRIMARY KEY (id),
   UNIQUE KEY exclusiveNotificationOutbox_key_unique (eventKey),
   KEY exclusiveNotificationOutbox_status_idx (status, createdAt)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB;
 
 -- IF NOT EXISTS is only an idempotent DDL replay. Verify the complete table set
 -- after DDL so a partially existing/divergent schema cannot be declared ready.
