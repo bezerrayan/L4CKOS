@@ -20,7 +20,7 @@ import { appErrorCodeOf, createStockCheckoutClient, stockAttemptStatusLabel, sto
 import { stockCheckoutHttpRequestV1Schema } from "../../../shared/stockCheckoutV1";
 import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } from "../stock/stockAttemptView";
 import { cartBlockingIssues } from "../stock/availability";
-import { createUserAttemptStorage } from "../stock/attemptStorage";
+import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/attemptStorage";
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
 import { StockAttemptRecovery } from "../components/StockAttemptRecovery";
 import { useCartCatalogSync } from "../hooks/useCartCatalogSync";
@@ -100,7 +100,13 @@ function getOrderStatusLabel(status?: string | null) {
   }
 }
 
+/** Remounts per identity so no financial state (attempt, confirmation, form data) can outlive an account switch. */
 export default function Pagamento() {
+  const { user } = useUser();
+  return <PagamentoContent key={String(user?.id ?? "anonymous")} />;
+}
+
+function PagamentoContent() {
   // O resumo passa a ser compacto no mesmo ponto em que o layout deixa as duas colunas.
   const isMobile = useIsMobile(900);
   const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
@@ -117,7 +123,7 @@ export default function Pagamento() {
     retry: false,
     staleTime: 30_000,
   });
-  const serverOpenAttempt = latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
+  const serverOpenAttempt = isAuthenticated && latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
   const [stockConfirmation, setStockConfirmation] = useState<{ orderId: string | number | null; amountCents: number } | null>(null);
   const stockClient = useMemo(() => createStockCheckoutClient({
     enabled: true,
@@ -203,6 +209,17 @@ export default function Pagamento() {
       if (stockConsultCountRef.current === 0) setStockConsulting(false);
     }
   };
+
+  // Another tab created/changed this account's attempt: learn about it from the backend before any click here.
+  const refreshStockAttemptRef = useRef(refreshStockAttempt);
+  refreshStockAttemptRef.current = refreshStockAttempt;
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (isUserAttemptStorageKey(user?.id, event.key)) void refreshStockAttemptRef.current();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [user?.id]);
 
   useEffect(() => {
     if (stockPaymentData?.status !== "paid" || stockConfirmation) return;

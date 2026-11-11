@@ -30,13 +30,15 @@ export type StockAttemptViewInput = {
 };
 
 const BLOCKING: ReadonlySet<StockResumeStatus> = new Set(["reserved", "creating", "pending", "ambiguous", "paid"]);
+const TERMINAL: ReadonlySet<StockResumeStatus> = new Set(["failed", "expired", "cancelled"]);
 
 export function describeStockAttempt(input: StockAttemptViewInput): StockAttemptView {
   const serverAllowsRetry = input.canStartNewAttempt === true;
   const base = {
     canContinuePayment: false,
     canStartNewAttempt: false,
-    blocksCheckout: BLOCKING.has(input.status),
+    // Terminal states only unblock when the server says a new attempt is allowed (stock may still be releasing).
+    blocksCheckout: BLOCKING.has(input.status) || (TERMINAL.has(input.status) && !serverAllowsRetry),
     canRefresh: true,
   };
 
