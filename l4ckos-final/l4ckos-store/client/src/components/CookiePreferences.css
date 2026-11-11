@@ -205,6 +205,38 @@
     width: 100%;
   }
 
+  /* Compact banner: leaves room for the cart drawer above it on small phones. */
+  .l4-cookie-banner {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .l4-cookie-banner h2 {
+    font-size: 18px;
+  }
+
+  .l4-cookie-banner p {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .l4-cookie-actions {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .l4-cookie-actions .l4-cookie-text-link,
+  .l4-cookie-actions button {
+    flex: 1 1 0;
+    width: auto;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
   .l4-cookie-category {
     flex-direction: column;
   }
