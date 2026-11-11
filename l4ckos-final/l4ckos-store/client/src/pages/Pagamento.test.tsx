@@ -18,6 +18,7 @@ import { CartProvider } from "../contexts/CartContext";
 import { createUserAttemptStorage } from "../stock/attemptStorage";
 import { getOrCreateStockAttemptId, saveStockAttemptStatus } from "../stock/stockCheckoutClient";
 import { resetTrpc, setTrpc } from "../test/fakeTrpc";
+import { catalogVariant, serveCatalog } from "../test/v6Catalog";
 import { cartItem, product, seedCart, variant } from "../test/fixtures";
 import Pagamento from "./Pagamento";
 
@@ -68,6 +69,7 @@ const finalize = () => screen.getByRole("button", { name: /Finalizar compra|Comp
 
 beforeEach(() => {
   resetTrpc();
+  serveCatalog();
   create.mockReset();
   resume.mockReset();
   resumeLatest.mockReset();
@@ -210,9 +212,9 @@ describe("Pagamento — creating and payment states", () => {
   });
 
   it("blocks new attempts for sold-out lines but lists the reason", async () => {
-    const soldOut = product({ variants: [variant({ stock: 0 })] });
-    mountPagamento({ items: [cartItem({ product: soldOut })] });
-    expect(await screen.findByText(/Item esgotado/)).toBeTruthy();
+    serveCatalog({ variants: [catalogVariant({ availableUnits: 0 })] });
+    mountPagamento();
+    expect(await screen.findByText(/não está disponível na quantidade escolhida/)).toBeTruthy();
     expect(finalize().disabled).toBe(true);
   });
 

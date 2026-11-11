@@ -18,6 +18,7 @@ import { CartProvider } from "../contexts/CartContext";
 import { createUserAttemptStorage } from "../stock/attemptStorage";
 import { ATTEMPTS_STORAGE_KEY, getOrCreateStockAttemptId, saveStockAttemptStatus } from "../stock/stockCheckoutClient";
 import { resetTrpc, setTrpc } from "../test/fakeTrpc";
+import { catalogVariant, serveCatalog } from "../test/v6Catalog";
 import { cartItem, seedCart } from "../test/fixtures";
 import Pagamento from "./Pagamento";
 
@@ -64,6 +65,7 @@ const ready = async () => { await waitFor(() => expect(finalize().disabled).toBe
 
 beforeEach(() => {
   resetTrpc();
+  serveCatalog();
   create.mockReset(); resume.mockReset(); resumeLatest.mockReset(); csrfFetch.mockReset();
   csrfFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ options: [localOption] }) });
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ logradouro: "SQS 308", bairro: "Asa Sul", localidade: "Brasília", uf: "DF" }) })));
@@ -323,21 +325,24 @@ describe("server-side dedupe (equivalent open cart rejected with CHECKOUT_ATTEMP
 });
 
 describe("STOCK_UNAVAILABLE", () => {
-  it("refreshes the cart catalog so the customer sees the real stock, and creates nothing", async () => {
-    let stock = 5;
-    const catalog = vi.fn(async (id: number) => ({ id, price: 9990, stock, variants: [{ id: 11, productId: 1, size: "M", color: "Preto", active: true, isActive: 1, stock }] }));
-    setTrpc("utils.products.getById.fetch", (id: number) => catalog(id));
-    create.mockRejectedValue(trpcError("CONFLICT", "STOCK_UNAVAILABLE"));
+  it("refreshes the live catalog so the customer sees the real availability, and creates nothing", async () => {
+    const fresh = vi.fn(async (productId: number) => ({
+      productId, hasVariants: true, publicPurchaseAllowed: true, variants: [] as unknown[],
+    }));
+    // The last unit disappears exactly when the backend rejects the attempt.
+    create.mockImplementation(async () => {
+      serveCatalog({ variants: [catalogVariant({ availableUnits: 0 })] });
+      setTrpc("utils.products.sellableVariants.fetch", fresh);
+      throw trpcError("CONFLICT", "STOCK_UNAVAILABLE");
+    });
     const { user } = mount({ user: userA });
     await fillCheckout(user);
     await ready();
-    const before = catalog.mock.calls.length;
-    stock = 0; // what the backend reports once the last unit is gone
     await user.click(finalize());
     expect(await screen.findByText(/acabou de ficar indisponível/)).toBeTruthy();
-    await waitFor(() => expect(catalog.mock.calls.length).toBeGreaterThan(before));
-    // the refreshed stock now blocks a pointless retry
-    expect((await screen.findAllByText(/Item esgotado|Resta apenas|indispon/i)).length).toBeGreaterThan(0);
+    await waitFor(() => expect(fresh).toHaveBeenCalled());
+    // the refreshed availability now blocks a pointless retry
+    expect((await screen.findAllByText(/não está disponível na quantidade escolhida|indispon/i)).length).toBeGreaterThan(0);
     await waitFor(() => expect(finalize().disabled).toBe(true));
     expect(create).toHaveBeenCalledTimes(1);
   });
