@@ -9,6 +9,7 @@ import { ordersRouter } from "./routers/orders";
 import { profileRouter } from "./routers/profile";
 import { adminRouter } from "./routers/admin";
 import { stockCheckoutRouter } from "./routers/stockCheckout";
+import { exclusiveDropsRouter } from "./routers/exclusiveDrops";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import bcrypt from "bcryptjs";
@@ -570,6 +571,7 @@ export const appRouter = router({
   favorites: favoritesRouter,
   orders: ordersRouter,
   stockCheckout: stockCheckoutRouter,
+  exclusiveDrops: exclusiveDropsRouter,
   profile: profileRouter,
   admin: adminRouter,
 });
