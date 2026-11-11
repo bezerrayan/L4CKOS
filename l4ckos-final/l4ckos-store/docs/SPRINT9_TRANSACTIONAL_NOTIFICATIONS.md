@@ -2,7 +2,7 @@
 
 ## Escopo local
 
-Branch `codex/transactional-notifications-sprint9`, iniciada sobre o estado local da Sprint 8 (`9689fd8`). Esta worktree não altera a branch nem os arquivos do Claude. O snapshot atual observado da V6 é `d1a7cbd2dfc18cce0cc986433f29ca5b515ecd0f`; há três arquivos de checkout STOCK modificados sem commit no worktree do Claude. Esses arquivos foram somente consultados para mapear as dependências.
+Branch `codex/transactional-notifications-sprint9`, iniciada sobre o estado local da Sprint 8 (`9689fd8`). Esta worktree não altera a branch nem os arquivos do Claude. No início da revisão, o HEAD V6 observado era `d1a7cbd2dfc18cce0cc986433f29ca5b515ecd0f`; na conferência final, avançara para `41f788b48f1e905ad0595e310aae7c1cb21e8b21`, com `server/stock/stockCheckout.integration.mysql.test.ts` modificado sem commit. Esses arquivos foram somente consultados para mapear as dependências; o HEAD pode avançar novamente.
 
 Nenhuma chamada remota, migration, cobrança ou entrega de e-mail foi realizada. O preflight apenas avalia configuração local ou um snapshot sanitizado fornecido pelo operador.
 
