@@ -154,6 +154,10 @@ const viewer = async (session: Session) => {
   const view = await session().exclusiveDrops.forProduct.query({ productId: 6 });
   return view.exclusive ? view.viewer : null;
 };
+const viewerFor = async (session: Session, productId: number) => {
+  const view = await session().exclusiveDrops.forProduct.query({ productId });
+  return view.exclusive ? view.viewer : null;
+};
 const batchClaimed = () =>
   count(`SELECT COALESCE(SUM(i.quantity),0) AS n FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId = ${BATCH} AND i.salesModeAtPurchase='PREORDER' AND o.status <> 'cancelled'`);
 
@@ -410,4 +414,65 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       expect(await viewer(other)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 });
     });
   });
+  describe("late financial approval and manual reconciliation", () => {
+    it("SAFE: a provider-created attempt held for reconciliation (expired window) is still confirmed by a later paid event, exactly once", async () => {
+      await createDrop([4]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "late-held-owner-00000001", 8, 1);
+      await pool.query("UPDATE stockCheckoutAttempts SET reservationExpiresAt = '2026-01-01 00:00:00.000'");
+      const swept = await stockRuntime.expireReservations(50);
+      expect(swept.reconciliationAttemptIds).toContain("late-held-owner-00000001"); // flagged, NOT released
+      expect(await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE reconciliationRequiredAt IS NOT NULL")).toBe(1);
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "late-held-paid-event-0001")).resolves.toBe("processed");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "late-held-paid-event-0001")).resolves.toBe("duplicate");
+      expect(await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE status = 'paid' AND reconciliationRequiredAt IS NULL")).toBe(1);
+      expect(await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND paymentStatus = 'confirmed'")).toBe(1);
+      expect((await viewerFor(owner, 4))).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
+    });
+
+    it("a paid event AFTER a signed terminal failure is refused (no resurrection of stock, capacity, quota or order), whatever the amount", async () => {
+      await createDrop([6]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "late-after-fail-0000001", 21, 1, 6);
+      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "late-fail-event-0001");
+      const state = async () => ({
+        claimed: await batchClaimed(),
+        reserved: await count("SELECT COALESCE(SUM(reservedStock),0) AS n FROM productVariants"),
+        paidOrders: await count("SELECT COUNT(*) AS n FROM orders WHERE paymentStatus = 'confirmed'"),
+        cancelled: await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'cancelled'"),
+        calls: providerCalls.length,
+      });
+      const before = await state();
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "late-paid-event-0001")).resolves.toBe("conflict");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents - 100, "paid", "late-paid-wrong-amount-0001")).resolves.toBe("conflict"); // terminal state wins over any payload
+      expect(await state()).toEqual(before);
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 0, unitsConsumed: 0, unitsRemaining: 1 });
+    });
+
+    // CHARACTERISATION of the CURRENT record: a refused late approval leaves only a bare dedupe row (event id, payload hash, time).
+    it("CURRENT RECORD: a contradictory late approval is acknowledged but leaves no orderId/paymentId/amount nor a manual-reconciliation marker", async () => {
+      await createDrop([4]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "late-record-owner-0000001", 8, 1);
+      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "record-fail-event-0001");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "record-late-paid-0001")).resolves.toBe("conflict");
+      const [events] = await pool.query<any[]>("SELECT * FROM stockWebhookEvents WHERE eventId = 'record-late-paid-0001'");
+      expect(events).toHaveLength(1);
+      expect(Object.keys(events[0]).sort()).toEqual(["eventId", "payloadHash", "receivedAt"]); // nothing links it to an order or an amount
+      const [attempt] = await pool.query<any[]>("SELECT status, providerState, reconciliationRequiredAt FROM stockCheckoutAttempts WHERE attemptId = 'late-record-owner-0000001'");
+      expect(attempt[0]).toMatchObject({ status: "released", providerState: "definitive_failure", reconciliationRequiredAt: null });
+      expect(await count("SELECT COUNT(*) AS n FROM auditLogs WHERE action LIKE '%reconcil%' OR action LIKE '%late%'")).toBe(0);
+    });
+
+    // Desired behaviour, tracked as a backend gap (customer may have been charged for an order the system cancelled).
+    it.fails("DESIRED: a late approval after a terminal failure leaves a durable marker for manual reconciliation", async () => {
+      await createDrop([4]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "late-desired-owner-000001", 8, 1);
+      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "desired-fail-event-0001");
+      await webhook(a.orderId, "pay-1", a.amountCents, "paid", "desired-late-paid-0001");
+      expect(await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE reconciliationRequiredAt IS NOT NULL")).toBe(1);
+    });
+  });
+
 });
