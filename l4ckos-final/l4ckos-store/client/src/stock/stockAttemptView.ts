@@ -123,7 +123,7 @@ export function describeStockCheckoutError(error: unknown): StockCheckoutErrorVi
 
   // Stable contract: only `error.data.appError.code` is interpreted. Message text is never parsed.
   const appCode = typeof like.data?.appError?.code === "string" ? like.data.appError.code : "";
-  if (appCode === "CHECKOUT_ATTEMPT_NOT_REUSABLE") return { message: "Esta tentativa não pode ser repetida. Consulte o status do pedido.", outcomeUnknown: true, needsCartReview: false };
+  if (appCode === "CHECKOUT_ATTEMPT_NOT_REUSABLE") return { message: "Já existe um pedido em aberto com estes itens, ou esta tentativa não pode ser repetida. Consulte o status do pedido.", outcomeUnknown: true, needsCartReview: false };
   if (appCode === "STOCK_UNAVAILABLE") return { message: "Esse item acabou de ficar indisponível. Ajuste a quantidade ou escolha outra variação.", outcomeUnknown: false, needsCartReview: true };
   if (appCode === "CHECKOUT_ATTEMPT_EXPIRED") return { message: "A reserva expirou. Atualize o carrinho e inicie uma nova tentativa.", outcomeUnknown: false, needsCartReview: true };
   if (appCode === "PAYMENT_UNDER_ANALYSIS") return { message: "O pagamento está em análise. Não inicie outra tentativa.", outcomeUnknown: true, needsCartReview: false };

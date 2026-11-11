@@ -3,6 +3,13 @@ import { useCart } from "../contexts/CartContext";
 import { trpc } from "../lib/trpc";
 import { mapCatalogVariants } from "../stock/catalogVariants";
 
+const REFRESH_EVENT = "l4ckos:cart-catalog-refresh";
+
+/** Asks the mounted cart/catalog sync to re-read stock from the backend now (e.g. after STOCK_UNAVAILABLE). */
+export function requestCartCatalogRefresh() {
+  window.dispatchEvent(new Event(REFRESH_EVENT));
+}
+
 export type CartCatalogSyncState = "idle" | "syncing" | "synced" | "error";
 
 /**
@@ -56,9 +63,11 @@ export function useCartCatalogSync(): CartCatalogSyncState {
     void run();
     const onFocus = () => { void run(); };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(REFRESH_EVENT, onFocus);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(REFRESH_EVENT, onFocus);
     };
   }, [idsKey, syncCatalog, utils]);
 

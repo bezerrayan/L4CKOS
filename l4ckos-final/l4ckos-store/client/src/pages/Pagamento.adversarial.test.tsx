@@ -280,3 +280,65 @@ describe("failures never cause an automatic second charge", () => {
     expect(window.localStorage.getItem("loja-escoteira:cart")).not.toBeNull();
   });
 });
+
+describe("server-side dedupe (equivalent open cart rejected with CHECKOUT_ATTEMPT_NOT_REUSABLE)", () => {
+  const notReusable = () => trpcError("CONFLICT", "CHECKOUT_ATTEMPT_NOT_REUSABLE");
+
+  it("second device/tab without a local record: the rejected id never exists on the server, so the UI recovers the existing attempt instead of looping", async () => {
+    resumeLatest.mockResolvedValue(null); // nothing known when the page loaded
+    create.mockRejectedValue(notReusable());
+    const { user } = mount({ user: userA });
+    await fillCheckout(user);
+    await ready();
+    // by the time the server answers, the other device's attempt exists
+    resumeLatest.mockResolvedValue(body({ attemptId: "attempt-0000000000000099", status: "pending" }));
+    await user.click(finalize());
+    expect((await screen.findByRole("status")).getAttribute("data-stock-status")).toBe("pending");
+    expect(screen.getByRole("link", { name: "Continuar pagamento" })).toBeTruthy();
+    await waitFor(() => expect(finalize().disabled).toBe(true));
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the customer they already have an open order with these items (not a generic 'cannot be repeated')", async () => {
+    create.mockRejectedValue(notReusable());
+    resumeLatest.mockResolvedValue(null);
+    const { user } = mount({ user: userA });
+    await fillCheckout(user);
+    await ready();
+    await user.click(finalize());
+    expect(await screen.findByText(/já existe um pedido em aberto com estes itens/i)).toBeTruthy();
+  });
+
+  it("an ambiguous existing attempt is shown as 'em análise' and keeps checkout blocked after NOT_REUSABLE", async () => {
+    create.mockRejectedValue(notReusable());
+    resumeLatest.mockResolvedValue(null);
+    const { user } = mount({ user: userA });
+    await fillCheckout(user);
+    await ready();
+    resumeLatest.mockResolvedValue(body({ attemptId: "attempt-0000000000000099", status: "ambiguous", checkoutUrl: undefined }));
+    await user.click(finalize());
+    expect(await screen.findByText("Pagamento em análise")).toBeTruthy();
+    await waitFor(() => expect(finalize().disabled).toBe(true));
+  });
+});
+
+describe("STOCK_UNAVAILABLE", () => {
+  it("refreshes the cart catalog so the customer sees the real stock, and creates nothing", async () => {
+    let stock = 5;
+    const catalog = vi.fn(async (id: number) => ({ id, price: 9990, stock, variants: [{ id: 11, productId: 1, size: "M", color: "Preto", active: true, isActive: 1, stock }] }));
+    setTrpc("utils.products.getById.fetch", (id: number) => catalog(id));
+    create.mockRejectedValue(trpcError("CONFLICT", "STOCK_UNAVAILABLE"));
+    const { user } = mount({ user: userA });
+    await fillCheckout(user);
+    await ready();
+    const before = catalog.mock.calls.length;
+    stock = 0; // what the backend reports once the last unit is gone
+    await user.click(finalize());
+    expect(await screen.findByText(/acabou de ficar indisponível/)).toBeTruthy();
+    await waitFor(() => expect(catalog.mock.calls.length).toBeGreaterThan(before));
+    // the refreshed stock now blocks a pointless retry
+    expect((await screen.findAllByText(/Item esgotado|Resta apenas|indispon/i)).length).toBeGreaterThan(0);
+    await waitFor(() => expect(finalize().disabled).toBe(true));
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+});
