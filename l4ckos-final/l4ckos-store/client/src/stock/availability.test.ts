@@ -73,13 +73,23 @@ describe("evaluateCartLine", () => {
 });
 
 describe("mapCatalogVariants", () => {
+  it("trusts only `active`, never `isActive`", () => {
+    const rows = [
+      { id: 1, productId: 7, size: " M ", color: "Preto", active: true, isActive: 1, stock: "4" },
+      { id: 2, productId: 7, size: "G", color: "Preto", active: false, isActive: 1, stock: 3 }, // disagree: inactive wins
+      { id: 3, productId: 7, size: "P", color: "Preto", isActive: 1, stock: 3 }, // legacy column only: not sellable
+      { id: 4, productId: 7, size: "GG", color: "Preto", active: "true", isActive: 1, stock: 3 }, // not a boolean
+    ];
+    expect(mapCatalogVariants(rows, 7).map(v => [v.id, v.active])).toEqual([[1, true], [2, false], [3, false], [4, false]]);
+  });
+
   it("keeps only rows with real id, parent and attributes", () => {
     const rows = [
-      { id: 1, productId: 7, size: " M ", color: "Preto", isActive: 1, stock: "4" },
-      { id: 0, productId: 7, size: "M", color: "Preto", isActive: 1 },
-      { id: 2, productId: 8, size: "M", color: "Preto", isActive: 1 },
-      { id: 3, productId: 7, size: "", color: "Preto", isActive: 1 },
-      { id: 4, productId: 7, size: "G", color: "Preto", isActive: false, stock: -3 },
+      { id: 1, productId: 7, size: " M ", color: "Preto", active: true, stock: "4" },
+      { id: 0, productId: 7, size: "M", color: "Preto", active: true },
+      { id: 2, productId: 8, size: "M", color: "Preto", active: true },
+      { id: 3, productId: 7, size: "", color: "Preto", active: true },
+      { id: 4, productId: 7, size: "G", color: "Preto", active: false, stock: -3 },
       null,
     ];
     expect(mapCatalogVariants(rows, 7)).toEqual([

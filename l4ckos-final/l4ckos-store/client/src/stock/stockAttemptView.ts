@@ -119,7 +119,9 @@ export function describeStockCheckoutError(error: unknown): StockCheckoutErrorVi
   const local = LOCAL_CODE_MESSAGES[rawMessage];
   if (local) return { ...local, outcomeUnknown: false };
 
+  // Stable contract: only `error.data.appError.code` is interpreted. Message text is never parsed.
   const appCode = typeof like.data?.appError?.code === "string" ? like.data.appError.code : "";
+  if (appCode === "CHECKOUT_ATTEMPT_NOT_REUSABLE") return { message: "Esta tentativa não pode ser repetida. Consulte o status do pedido.", outcomeUnknown: true, needsCartReview: false };
   if (appCode === "STOCK_UNAVAILABLE") return { message: "Esse item acabou de ficar indisponível. Ajuste a quantidade ou escolha outra variação.", outcomeUnknown: false, needsCartReview: true };
   if (appCode === "CHECKOUT_ATTEMPT_EXPIRED") return { message: "A reserva expirou. Atualize o carrinho e inicie uma nova tentativa.", outcomeUnknown: false, needsCartReview: true };
   if (appCode === "PAYMENT_UNDER_ANALYSIS") return { message: "O pagamento está em análise. Não inicie outra tentativa.", outcomeUnknown: true, needsCartReview: false };
@@ -129,13 +131,7 @@ export function describeStockCheckoutError(error: unknown): StockCheckoutErrorVi
     case "UNAUTHORIZED":
       return { message: "Sua sessão expirou. Entre novamente para finalizar a compra.", outcomeUnknown: false, needsCartReview: false };
     case "CONFLICT":
-      // Backend uses CONFLICT both for insufficient stock and for "payment under analysis".
-      if (/an[aá]lise/i.test(rawMessage)) {
-        return { message: "O pagamento está em análise. Não inicie outra tentativa.", outcomeUnknown: true, needsCartReview: false };
-      }
-      if (/estoque/i.test(rawMessage)) {
-        return { message: "Esse item acabou de ficar indisponível. Ajuste a quantidade ou escolha outra variação.", outcomeUnknown: false, needsCartReview: true };
-      }
+      // CONFLICT without a recognized appError.code: treat as unknown outcome (safest) and re-query.
       return { message: "Esta tentativa não pode ser repetida. Consulte o status do pedido.", outcomeUnknown: true, needsCartReview: false };
     case "NOT_FOUND":
       return { message: "Não encontramos esta tentativa de compra.", outcomeUnknown: false, needsCartReview: false };

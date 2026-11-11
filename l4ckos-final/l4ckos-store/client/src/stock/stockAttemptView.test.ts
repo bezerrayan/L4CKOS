@@ -59,16 +59,30 @@ describe("describeStockCheckoutError", () => {
     expect(describeStockCheckoutError(new Error("PUBLIC_CHECKOUT_DISABLED")).message).toMatch(/ainda não está disponível/);
   });
 
-  it("maps insufficient stock to a cart review", () => {
-    const view = describeStockCheckoutError(trpc("CONFLICT", "Estoque indisponível para esta variante."));
-    expect(view.needsCartReview).toBe(true);
-    expect(view.outcomeUnknown).toBe(false);
+  const stable = (appCode: string, message = "texto que pode mudar") => ({ message, data: { code: "CONFLICT", appError: { code: appCode } } });
+
+  it("maps STOCK_UNAVAILABLE by stable code to a cart review", () => {
+    const view = describeStockCheckoutError(stable("STOCK_UNAVAILABLE"));
+    expect(view).toMatchObject({ needsCartReview: true, outcomeUnknown: false });
     expect(view.message).toMatch(/indisponível/);
   });
 
-  it("treats payment-under-analysis conflicts as unknown outcome", () => {
-    const view = describeStockCheckoutError(trpc("CONFLICT", "O pagamento está em análise. Não inicie outra tentativa."));
-    expect(view.outcomeUnknown).toBe(true);
+  it("maps CHECKOUT_ATTEMPT_EXPIRED: definitive, not an unknown outcome", () => {
+    expect(describeStockCheckoutError(stable("CHECKOUT_ATTEMPT_EXPIRED"))).toMatchObject({ outcomeUnknown: false, needsCartReview: true, message: expect.stringMatching(/expirou/) });
+  });
+
+  it("maps PAYMENT_UNDER_ANALYSIS and CHECKOUT_ATTEMPT_NOT_REUSABLE as unknown outcome", () => {
+    expect(describeStockCheckoutError(stable("PAYMENT_UNDER_ANALYSIS")).outcomeUnknown).toBe(true);
+    expect(describeStockCheckoutError(stable("CHECKOUT_ATTEMPT_NOT_REUSABLE")).outcomeUnknown).toBe(true);
+  });
+
+  it("never interprets message text: the same words without a code do not change the mapping", () => {
+    // Misleading texts must not be read as stock/analysis; unknown CONFLICT stays "unknown outcome".
+    const withText = describeStockCheckoutError({ message: "Estoque indisponível para esta variante.", data: { code: "CONFLICT" } });
+    expect(withText.needsCartReview).toBe(false);
+    expect(withText.outcomeUnknown).toBe(true);
+    // And a stable code wins over a contradicting message.
+    expect(describeStockCheckoutError(stable("STOCK_UNAVAILABLE", "O pagamento está em análise.")).outcomeUnknown).toBe(false);
   });
 
   it("keeps the cart when the server gate is closed and never marks the outcome unknown", () => {

@@ -2,6 +2,7 @@ import type { StockCatalogVariant } from "./stockCheckoutClient";
 
 /**
  * Normalizes the `variants` array returned by `products.getById`.
+ * The API sends both `active: boolean` and `isActive: 0|1`; only `active` is trusted.
  * A row is only kept when it carries a real positive ID, belongs to the product and has
  * real size/color attributes: the frontend never infers a variant from names/options.
  */
@@ -22,7 +23,9 @@ export function mapCatalogVariants(raw: unknown, productId: number): StockCatalo
       productId,
       size: variant.size.trim(),
       color: variant.color.trim(),
-      active: variant.isActive === true || Number(variant.isActive) === 1,
+      // `active` (boolean) is the contract field. `isActive` (0|1) is the raw column and is NOT
+      // used here: a row without `active === true` is never treated as sellable.
+      active: variant.active === true,
       stock: Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : 0,
     });
   }
