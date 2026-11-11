@@ -171,7 +171,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     expect(created).toMatchObject({ status: "pending", amountCents: 12900, replayed: false });
     expect(providerCalls).toHaveLength(1);
     await expect(owner.stockCheckout.create.mutate({ ...request, attemptId: "stock-e2e-insufficient-0001" }))
-      .rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      .rejects.toMatchObject({ data: { appError: { code: "CHECKOUT_ATTEMPT_NOT_REUSABLE" } } });
 
     const [reservedRows] = await pool.execute<(Record<string, unknown> & { reservedStock: number })[]>("SELECT reservedStock FROM productVariants WHERE id = 8");
     expect(Number(reservedRows[0]?.reservedStock)).toBe(1);

@@ -18,7 +18,7 @@ function mapCheckoutError(error: unknown): never {
   if (error.code === "CHECKOUT_ATTEMPT_EXPIRED") {
     throw createAppError({ trpcCode: "CONFLICT", appCode: "CHECKOUT_ATTEMPT_EXPIRED", message: "Esta tentativa expirou. Inicie uma nova tentativa." });
   }
-  if (error.code === "CHECKOUT_ALREADY_PAID" || error.code === "CHECKOUT_ATTEMPT_RELEASED" || error.code === "CHECKOUT_ATTEMPT_CHANGED") {
+  if (error.code === "CHECKOUT_ALREADY_PAID" || error.code === "CHECKOUT_ATTEMPT_RELEASED" || error.code === "CHECKOUT_ATTEMPT_CHANGED" || error.code === "CHECKOUT_ATTEMPT_NOT_REUSABLE") {
     throw createAppError({ trpcCode: "CONFLICT", appCode: "CHECKOUT_ATTEMPT_NOT_REUSABLE", message: "Esta tentativa não pode ser repetida com os dados atuais." });
   }
   if (error.code === "CHECKOUT_PROVIDER_OUTCOME_UNKNOWN" || error.code === "CHECKOUT_PROVIDER_RECONCILIATION_REQUIRED" || error.code === "CHECKOUT_RECONCILIATION_REQUIRED" || error.code === "CHECKOUT_PAYMENT_CORRELATION_REQUIRED") {

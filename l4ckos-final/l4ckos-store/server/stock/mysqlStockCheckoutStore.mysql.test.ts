@@ -260,6 +260,24 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
     expect(Number(rows[0].total)).toBe(1);
   });
 
+  it("serializes equivalent carts with different attemptIds and creates one provider payment", async () => {
+    const payments = provider();
+    const results = await Promise.allSettled([
+      createStockCheckout({ enabled: true, store, provider: payments, request: checkoutRequest("mysql-equivalent-cart-0001", 9) }),
+      createStockCheckout({ enabled: true, store, provider: payments, request: checkoutRequest("mysql-equivalent-cart-0002", 9) }),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "CHECKOUT_ATTEMPT_NOT_REUSABLE" } });
+    expect(payments.calls).toHaveLength(1);
+    expect(await readInventory(9)).toMatchObject({ stock: 2, reservedStock: 1 });
+    const [rows] = await pool.execute<(Record<string, unknown> & { attempts: number; reservations: number })[]>(
+      "SELECT (SELECT COUNT(*) FROM stockCheckoutAttempts WHERE ownerUserId = 81) AS attempts, (SELECT COUNT(*) FROM stockReservations WHERE variantId = 9 AND status = 'active') AS reservations",
+    );
+    expect(Number(rows[0].attempts)).toBe(1);
+    expect(Number(rows[0].reservations)).toBe(1);
+  });
+
   it("rolls back the attempt and first variant reservation if a later reservation step fails", async () => {
     const failingStore = wrapTransactionFault("reserve-after-first");
     await expect(createStockCheckout({
@@ -358,6 +376,33 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
     expect(second.releasedAttemptIds).toHaveLength(1);
     expect(await readInventory(9)).toMatchObject({ stock: 2, reservedStock: 0 });
     expect(await expireStockReservations(store, 1)).toEqual({ releasedAttemptIds: [], reconciliationAttemptIds: [] });
+  });
+
+  it("releases this owner's expired unstarted attempt before accepting a replacement cart", async () => {
+    await seedReservedAttempt("mysql-owner-expired-attempt-0001", 9);
+    await forceAttemptExpired("mysql-owner-expired-attempt-0001");
+    const payments = provider();
+    const replacement = await createStockCheckout({
+      enabled: true, store, provider: payments, request: checkoutRequest("mysql-owner-expired-attempt-0002", 9),
+    });
+    expect(replacement.replayed).toBe(false);
+    expect(await attemptStatus("mysql-owner-expired-attempt-0001")).toMatchObject({ status: "released" });
+    expect(await readInventory(9)).toMatchObject({ reservedStock: 1 });
+    expect(payments.calls).toHaveLength(1);
+  });
+
+  it("keeps an expired provider-created attempt reserved and blocks a duplicate pending reconciliation", async () => {
+    const payments = provider();
+    await createStockCheckout({
+      enabled: true, store, provider: payments, request: checkoutRequest("mysql-owner-uncertain-expiry-0001", 9),
+    });
+    await forceAttemptExpired("mysql-owner-uncertain-expiry-0001");
+    await expect(createStockCheckout({
+      enabled: true, store, provider: payments, request: checkoutRequest("mysql-owner-uncertain-expiry-0002", 9),
+    })).rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_NOT_REUSABLE" });
+    expect(await attemptStatus("mysql-owner-uncertain-expiry-0001")).toMatchObject({ status: "reserved", providerState: "created" });
+    expect(payments.calls).toHaveLength(1);
+    expect(await readInventory(9)).toMatchObject({ reservedStock: 1 });
   });
 
   it("flags creating, ambiguous and provider-pending attempts for reconciliation without releasing stock", async () => {

@@ -47,7 +47,10 @@ export type StockAttemptResumeRecord = {
 };
 
 export interface StockCheckoutTransaction {
+  /** Serializes checkout creation for one authenticated owner until this transaction commits. */
+  lockOwnerForCheckout(ownerUserId: number): Promise<void>;
   findAttempt(attemptId: string): Promise<StockAttempt | null>;
+  findOpenAttemptsForOwner(ownerUserId: number): Promise<StockAttempt[]>;
   findVariant(variantId: number): Promise<StockVariant | null>;
   isSkuUnique(sku: string, variantId: number): Promise<boolean>;
   /** Must atomically claim units, conditional on active unreserved stock >= quantity. */
@@ -66,7 +69,7 @@ export interface StockCheckoutTransaction {
   releaseReservations(attemptId: string): Promise<void>;
   markPaid(attemptId: string, paymentId: string): Promise<"paid" | "already-paid" | "not-pending">;
   markReleased(attemptId: string): Promise<"released" | "already-released" | "not-pending">;
-  expireDueReservations(batchSize: number): Promise<{ releasedAttemptIds: string[]; reconciliationAttemptIds: string[] }>;
+  expireDueReservations(batchSize: number, ownerUserId?: number): Promise<{ releasedAttemptIds: string[]; reconciliationAttemptIds: string[] }>;
 }
 
 export interface StockCheckoutStore {
@@ -109,6 +112,14 @@ function fail(code: string): never {
   throw new StockCheckoutError(code);
 }
 const sha256 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function canonicalCart(items: Array<{ productId: number; variantId: number; quantity: number }>): string {
+  const quantities = new Map<string, number>();
+  for (const item of items) {
+    const key = `${item.productId}:${item.variantId}`;
+    quantities.set(key, (quantities.get(key) ?? 0) + item.quantity);
+  }
+  return sha256([...quantities].map(([key, quantity]) => [key, quantity]).sort(([a], [b]) => String(a).localeCompare(String(b))));
+}
 // orders.totalPrice, orderItems.price and stockReservations.unitPriceCents are
 // signed MySQL INT in the frozen legacy contract. Reject overflow before any
 // order, reservation, or provider side effect.
@@ -155,10 +166,14 @@ export async function createStockCheckout(input: {
   if (!input.enabled) fail("PUBLIC_CHECKOUT_DISABLED");
   if (!Number.isSafeInteger(input.ownerUserId) || input.ownerUserId <= 0) fail("AUTHENTICATION_REQUIRED");
   const request = parseRequest(input.request);
-  const fingerprint = sha256({ items: request.items, delivery: request.delivery ?? null });
+  const cartFingerprint = canonicalCart(request.items);
+  const fingerprint = sha256({ cart: cartFingerprint, delivery: request.delivery ?? null });
   let prepared: { attempt: StockAttempt; replayed: boolean };
   try {
     prepared = await input.store.transaction(async tx => {
+      // A locked owner row prevents the empty-result race: two tabs with different
+      // attemptIds cannot both observe that the owner has no equivalent open cart.
+      await tx.lockOwnerForCheckout(input.ownerUserId);
       const existing = await tx.findAttempt(request.attemptId);
       if (existing) {
         if (existing.ownerUserId !== input.ownerUserId) fail("CHECKOUT_ATTEMPT_NOT_FOUND");
@@ -166,6 +181,22 @@ export async function createStockCheckout(input: {
         if (existing.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
         if (existing.status === "paid") fail("CHECKOUT_ALREADY_PAID");
         return { attempt: existing, replayed: true };
+      }
+
+      // Clear this owner's definitively unstarted expired reservations before
+      // deciding whether a new equivalent cart is still open. Uncertain provider
+      // outcomes remain reserved and are marked for reconciliation.
+      let expiryBatch;
+      do {
+        expiryBatch = await tx.expireDueReservations(500, input.ownerUserId);
+      } while (expiryBatch.releasedAttemptIds.length + expiryBatch.reconciliationAttemptIds.length === 500);
+
+      for (const open of await tx.findOpenAttemptsForOwner(input.ownerUserId)) {
+        if (canonicalCart(open.snapshots.map(item => ({
+          productId: item.productId,
+          variantId: item.id,
+          quantity: item.quantity,
+        }))) === cartFingerprint) fail("CHECKOUT_ATTEMPT_NOT_REUSABLE");
       }
 
       const variants = new Map<number, StockVariant>();
