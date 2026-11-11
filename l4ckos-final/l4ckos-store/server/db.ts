@@ -869,9 +869,14 @@ export async function moderateProductReview(input: {
   return { success: true } as const;
 }
 
-function getDatabaseErrorMessage(error: unknown) {
+function getDatabaseErrorMessage(error: unknown, seen = new Set<unknown>()): string {
+  if (seen.has(error)) return "";
+  seen.add(error);
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return message;
+  const cause = typeof error === "object" && error !== null && "cause" in error
+    ? getDatabaseErrorMessage((error as { cause?: unknown }).cause, seen)
+    : "";
+  return `${message} ${cause}`.trim();
 }
 
 function isMissingDatabaseObjectError(error: unknown) {

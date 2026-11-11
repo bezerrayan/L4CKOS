@@ -1,10 +1,10 @@
 # STOCK checkout backend contract V1
 
-Status: shared contract for the checkout UI work. The runtime/store wiring and payment-owner reconciliation are still release blockers; this contract does not enable public checkout or authorize a deploy.
+Status: shared contract for the checkout UI work. The disposable loopback test server composes the runtime and webhook owner through an explicit fixture-only injection; production deliberately has no STOCK runtime. This contract does not enable public checkout or authorize a deploy.
 
 ## Calls
 
-The application uses tRPC (`trpc.stockCheckout.*`) with the existing authenticated session. The router is mounted in `appRouter` in this candidate, but `ctx.stockCheckoutRuntime` is not composed by the production server yet; until that wiring and schema gates are complete, calls return `SERVICE_UNAVAILABLE` (and create is also blocked by the public-checkout gate).
+The application uses tRPC (`trpc.stockCheckout.*`) with the existing authenticated session. The test server composes `ctx.stockCheckoutRuntime` only when the explicit disposable loopback guard matches. Production intentionally has no runtime and returns `SERVICE_UNAVAILABLE`; create is also blocked by the public-checkout gate until schema and release gates are approved.
 
 | Procedure | Input | Result |
 | --- | --- | --- |
@@ -56,7 +56,7 @@ The stable application code is `error.data.appError.code`; do not interpret mess
 
 Asaas authenticity uses the existing `asaas-access-token` verifier and configured `ASAAS_WEBHOOK_TOKEN`; missing token fails closed. The candidate STOCK boundary validates signature before decoding or database I/O, accepts recognized payment event/status pairs, BRL amount, external order reference and payment ID, then claims `(eventId, payloadHash)` transactionally. Same event/hash is duplicate; same ID with changed payload is conflict. A paid event must match payment ID and exact cents before one atomic attempt/order transition and reservation consumption.
 
-The mounted `/webhook/asaas` handler is the only production route. It owns legacy orders through `asaasWebhookEvents`/`markOrderPaid`; orders with `stockAttemptId` are rejected with HTTP 503 before the legacy ledger or any financial mutation. This is fail-closed, exclusive ownership: STOCK has no mounted production event owner yet and cannot be enabled until a single dispatching owner is composed with its persistent event ledger. The standalone STOCK boundary validates the existing `asaas-access-token` mechanism and its SQL store transactionally deduplicates event ID/hash, but it is not wired into the route. No parallel legacy/STOCK processors are allowed.
+The mounted `/webhook/asaas` and `/api/webhooks/asaas` URLs share one handler. It resolves the order once; legacy orders go to `asaasWebhookEvents`/`markOrderPaid`, while `stockAttemptId` orders go only to the STOCK runtime and `stockWebhookEvents` ledger. The STOCK branch validates the existing `asaas-access-token` mechanism, transactionally claims event ID/hash, and returns before the legacy ledger or financial writes. If the STOCK runtime is absent, it returns HTTP 503 without acknowledging or mutating the event. Runtime injection requires `STOCK_LOCAL_HARNESS=true`, `NODE_ENV!=production`, loopback host, database `l4ckos_stock_test`, user `stock_test`, and the runtime's effective MySQL pool identity to match that disposable target. Production has no STOCK runtime composition until schema/backup/homologation gates are approved, so it remains fail-closed. No parallel legacy/STOCK processors are allowed.
 
 ## Test interface
 

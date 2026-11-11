@@ -11,12 +11,12 @@ import superjson from "superjson";
 import { appRouter } from "../routers";
 import { getOrderById, getOrderByIdAndUser, setStockLocalHarnessDb } from "../db";
 import { ENV } from "../_core/env";
-import { createContext } from "../_core/context";
+import { configureStockCheckoutRuntimeForLocalHarness, createContext } from "../_core/context";
+import { asaasWebhookHandler, createAsaasWebhookHandler } from "../controllers/paymentController";
 import { sdk } from "../_core/sdk";
 import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "./stockCheckoutRuntime";
-import { createAsaasStockWebhookBoundary } from "./asaasStockWebhookBoundary";
-import { processSignedStockWebhook, StockCheckoutError, type StockCheckoutStore } from "./stockCheckout";
+import { processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 
 const database = process.env.STOCK_MYSQL_DATABASE ?? "";
@@ -118,24 +118,19 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
         },
       },
     });
+    configureStockCheckoutRuntimeForLocalHarness(runtime);
     const app = express();
     app.use("/api/trpc", createExpressMiddleware({
       router: appRouter,
-      createContext: async options => ({ ...await createContext(options), stockCheckoutRuntime: runtime }),
+      createContext,
     }));
     app.use("/api/trpc-runtime-absent", createExpressMiddleware({
       router: appRouter,
-      createContext: options => createContext(options),
+      createContext: async options => ({ ...await createContext(options), stockCheckoutRuntime: undefined }),
     }));
-    app.use(express.text({ type: "application/json" }));
-    app.post("/api/test-stock-webhook", async (req, res) => {
-      try {
-        await runtime.receiveWebhook({ rawBody: typeof req.body === "string" ? req.body : "", headers: req.headers, boundary: createAsaasStockWebhookBoundary() });
-        res.sendStatus(204);
-      } catch (error) {
-        res.sendStatus(error instanceof StockCheckoutError && error.code === "WEBHOOK_SIGNATURE_INVALID" ? 401 : 500);
-      }
-    });
+    app.use(express.json({ limit: "64kb" }));
+    app.post("/webhook/asaas", asaasWebhookHandler);
+    app.post("/webhook-asaas-runtime-absent", createAsaasWebhookHandler(() => undefined));
     httpServer = createServer(app);
     await new Promise<void>(resolveListen => httpServer.listen(0, "127.0.0.1", resolveListen));
     const address = httpServer.address();
@@ -153,6 +148,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
 
   afterAll(async () => {
     vi.unstubAllEnvs();
+    configureStockCheckoutRuntimeForLocalHarness(undefined);
     if (httpServer) await new Promise<void>(resolveClose => httpServer.close(() => resolveClose()));
     if (pool && process.env.STOCK_LOCAL_HARNESS === "true") setStockLocalHarnessDb(null);
     if (pool) await pool.end();
@@ -160,6 +156,8 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
 
   it("runs checkout over authenticated HTTP, accepts a signed synthetic webhook, and resumes paid state", async () => {
     const owner = httpClient("owner-81");
+    const product = await owner.products.getById.query(4);
+    expect(product.variants).toEqual([expect.objectContaining({ id: 8, productId: 4, size: "M", color: "Preto", active: true, stock: 1 })]);
     const request = { attemptId: "stock-e2e-attempt-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery };
     const missingDelivery = { attemptId: request.attemptId, items: request.items };
     await expect(owner.stockCheckout.create.mutate(missingDelivery as never))
@@ -172,6 +170,8 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     const created = await owner.stockCheckout.create.mutate(request);
     expect(created).toMatchObject({ status: "pending", amountCents: 12900, replayed: false });
     expect(providerCalls).toHaveLength(1);
+    await expect(owner.stockCheckout.create.mutate({ ...request, attemptId: "stock-e2e-insufficient-0001" }))
+      .rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
 
     const [reservedRows] = await pool.execute<(Record<string, unknown> & { reservedStock: number })[]>("SELECT reservedStock FROM productVariants WHERE id = 8");
     expect(Number(reservedRows[0]?.reservedStock)).toBe(1);
@@ -190,21 +190,27 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     await expect(httpClient("anonymous").stockCheckout.resume.query({ attemptId: request.attemptId })).rejects.toMatchObject({ data: { code: "UNAUTHORIZED" } });
     await expect(owner.stockCheckout.create.mutate({ ...request, items: [{ ...request.items[0], price: 1 }] } as never)).rejects.toMatchObject({ data: { code: "BAD_REQUEST" } });
 
-    const boundary = createAsaasStockWebhookBoundary();
     const webhookBody = JSON.stringify({
       id: "evt-synthetic-paid-1",
       event: "PAYMENT_RECEIVED",
       payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" },
     });
-    const invalidWebhook = await fetch(`${baseUrl}/api/test-stock-webhook`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": "invalid" }, body: webhookBody });
+    const invalidWebhook = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": "invalid" }, body: webhookBody });
     expect(invalidWebhook.status).toBe(401);
-    const validWebhook = await fetch(`${baseUrl}/api/test-stock-webhook`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: webhookBody });
-    const duplicateWebhook = await fetch(`${baseUrl}/api/test-stock-webhook`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: webhookBody });
-    expect(validWebhook.status).toBe(204);
-    expect(duplicateWebhook.status).toBe(204);
+    const deliver = () => fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: webhookBody });
+    const [validWebhook, duplicateWebhook] = await Promise.all([deliver(), deliver()]);
+    expect(validWebhook.status).toBe(200);
+    expect(duplicateWebhook.status).toBe(200);
+    const [ledgerRows] = await pool.execute<(Record<string, unknown> & { count: number })[]>("SELECT COUNT(*) AS count FROM stockWebhookEvents WHERE eventId = 'evt-synthetic-paid-1'");
+    expect(Number(ledgerRows[0]?.count)).toBe(1);
+    const latePending = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-synthetic-late-pending", event: "PAYMENT_CREATED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "PENDING", value: 129, currency: "BRL" } }) });
+    const lateFailed = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-synthetic-late-failed", event: "PAYMENT_REFUSED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "REFUSED", value: 129, currency: "BRL" } }) });
+    expect(latePending.status).toBe(200);
+    expect(lateFailed.status).toBe(200);
 
     const resumed = await owner.stockCheckout.resume.query({ attemptId: request.attemptId });
     expect(resumed).toMatchObject({ status: "paid", orderId: created.orderId, amountCents: 12900 });
+    await expect(owner.stockCheckout.resumeLatest.query()).resolves.toMatchObject({ attemptId: request.attemptId, status: "paid" });
     const [inventoryRows] = await pool.execute<(Record<string, unknown> & { stock: number; reservedStock: number })[]>("SELECT stock, reservedStock FROM productVariants WHERE id = 8");
     expect(inventoryRows[0]).toMatchObject({ stock: 0, reservedStock: 0 });
     const [adminOrders] = await pool.execute<(Record<string, unknown> & { id: number; userId: number; status: string; paymentStatus: string; stockAttemptId: string; stockPaymentId: string; productName: string; variantId: number; skuSnapshot: string; sizeSnapshot: string; colorSnapshot: string })[]>(
@@ -308,8 +314,9 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
         },
       },
     });
-    const retried = await fetch(`${baseUrl}/api/test-stock-webhook`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body });
-    expect(retried.status).toBe(204);
+    configureStockCheckoutRuntimeForLocalHarness(runtime);
+    const retried = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body });
+    expect(retried.status).toBe(200);
     const [recoveredOrder] = await pool.execute<(Record<string, unknown> & { status: string; paymentStatus: string })[]>("SELECT status, paymentStatus FROM orders WHERE stockAttemptId = ?", [request.attemptId]);
     expect(recoveredOrder[0]).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
   });
@@ -332,7 +339,28 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       .rejects.toMatchObject({ data: { code: "SERVICE_UNAVAILABLE" } });
     await expect(offline.stockCheckout.resume.query({ attemptId: "stock-attempt-absent-00001" }))
       .rejects.toMatchObject({ data: { code: "SERVICE_UNAVAILABLE" } });
+    await expect(offline.stockCheckout.resumeLatest.query())
+      .rejects.toMatchObject({ data: { code: "SERVICE_UNAVAILABLE" } });
     expect(providerCalls).toHaveLength(0);
+
+    const enabledOwner = httpClient("owner-81");
+    const request = { attemptId: "stock-webhook-no-owner-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery };
+    const created = await enabledOwner.stockCheckout.create.mutate(request);
+    const eventBody = JSON.stringify({
+      id: "evt-stock-no-owner",
+      event: "PAYMENT_RECEIVED",
+      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" },
+    });
+    const rejectedWebhook = await fetch(`${baseUrl}/webhook-asaas-runtime-absent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken },
+      body: eventBody,
+    });
+    expect(rejectedWebhook.status).toBe(503);
+    const [ledger] = await pool.execute<(Record<string, unknown> & { count: number })[]>("SELECT COUNT(*) AS count FROM stockWebhookEvents WHERE eventId = 'evt-stock-no-owner'");
+    expect(Number(ledger[0]?.count)).toBe(0);
+    const resumed = await enabledOwner.stockCheckout.resume.query({ attemptId: request.attemptId });
+    expect(resumed.status).toBe("pending");
   });
 
   it("projects definitive payment cancellation and releases the reservation once", async () => {
@@ -344,8 +372,8 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       event: "PAYMENT_REFUSED",
       payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "REFUSED", value: 129, currency: "BRL" },
     });
-    const failed = await fetch(`${baseUrl}/api/test-stock-webhook`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body });
-    expect(failed.status).toBe(204);
+    const failed = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body });
+    expect(failed.status).toBe(200);
     const [orderRows] = await pool.execute<(Record<string, unknown> & { status: string; paymentStatus: string })[]>("SELECT status, paymentStatus FROM orders WHERE stockAttemptId = ?", [request.attemptId]);
     expect(orderRows[0]).toMatchObject({ status: "cancelled", paymentStatus: "unconfirmed" });
     const [reservationRows] = await pool.execute<(Record<string, unknown> & { status: string })[]>("SELECT status FROM stockReservations WHERE attemptId = ?", [request.attemptId]);

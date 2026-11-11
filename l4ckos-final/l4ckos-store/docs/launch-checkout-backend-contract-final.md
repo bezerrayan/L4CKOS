@@ -31,7 +31,7 @@ Leia `error.data.appError.code` (a mensagem pode mudar):
 
 - Para linhas STOCK, `orderItems.variantId`, `skuSnapshot`, `sizeSnapshot` e `colorSnapshot` recebem o snapshot persistido; não inferir essas dimensões em pedidos antigos.
 - Estados financeiros válidos: evento normalizado `pending | paid | failed`; pedido começa `pending/unconfirmed`, passa a `paid/confirmed` somente após webhook autêntico e correlação/valor conferidos. Evento tardio não pode regredir estado pago.
-- `/webhook/asaas` é atualmente a única rota montada. Mantém ownership legado e responde 503 a ordem com `stockAttemptId` antes de tocar ledger ou pedido legado. A fronteira e ledger STOCK estão implementadas isoladamente e cobertas por testes; composição no handler de produção ainda é bloqueador. Portanto checkout público continua fechado.
+- `/webhook/asaas` e `/api/webhooks/asaas` compartilham o mesmo handler/dispatcher. Ele envia pedidos `stockAttemptId` exclusivamente ao runtime STOCK e interrompe antes do caminho legado. O dispatcher responde 503 sem tocar ledger quando o runtime está ausente. Composição é permitida somente no harness loopback `l4ckos_stock_test`; produção continua sem runtime e o checkout público continua fechado até schema, backup e homologação.
 - Testes MySQL usam exclusivamente `l4ckos_stock_test` em loopback; não são chamadas de pagamento real.
 
 ## Arquivos para compilar a integração
