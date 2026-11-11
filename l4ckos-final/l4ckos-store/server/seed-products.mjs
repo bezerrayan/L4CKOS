@@ -1,8 +1,8 @@
 import { drizzle } from "drizzle-orm/mysql2";
-import { createMysqlConnectionOptions } from "./database/mysqlTls.mjs";
+import { createMysqlConnectionOptionsForEnvironment } from "./database/mysqlConnection.mjs";
 import { products } from "../drizzle/schema.ts";
 
-const db = drizzle({ connection: createMysqlConnectionOptions(process.env.DATABASE_URL) });
+const db = drizzle({ connection: createMysqlConnectionOptionsForEnvironment(process.env.DATABASE_URL) });
 
 const seedProducts = [
   {
