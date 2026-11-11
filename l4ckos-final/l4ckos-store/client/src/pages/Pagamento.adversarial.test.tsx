@@ -176,6 +176,16 @@ describe("multiple tabs and reloads", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("with items in the cart, a cached server attempt feeds the status card on the form, not a replacement screen", async () => {
+    setTrpc("stockCheckout.resumeLatest.useQuery", () => ({ data: body({ status: "pending" }), isLoading: false, error: null, refetch: vi.fn() }));
+    resumeLatest.mockResolvedValue(body({ attemptId: "attempt-0000000000000099", status: "pending" }));
+    mount({ user: userA });
+    expect((await screen.findByRole("status")).getAttribute("data-stock-status")).toBe("pending");
+    expect(screen.queryByText("Seu pedido em andamento")).toBeNull();
+    expect(screen.getByLabelText(/CPF ou CNPJ/)).toBeTruthy();
+    expect(finalize().disabled).toBe(true);
+  });
+
   it("cart changed after an attempt exists: the open attempt still blocks a second one", async () => {
     seedLocalAttempt(userA.id, "pending"); // fingerprint of qty 1
     resumeLatest.mockResolvedValue(body({ attemptId: ATTEMPT, status: "pending" }));

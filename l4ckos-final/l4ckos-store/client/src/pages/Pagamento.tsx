@@ -123,7 +123,8 @@ function PagamentoContent() {
     retry: false,
     staleTime: 30_000,
   });
-  const serverOpenAttempt = isAuthenticated && latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
+  // Recovery screen only for an empty cart: with items, the same data feeds the status card on the form instead.
+  const serverOpenAttempt = isAuthenticated && cart.items.length === 0 && latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
   const [stockConfirmation, setStockConfirmation] = useState<{ orderId: string | number | null; amountCents: number } | null>(null);
   const stockClient = useMemo(() => createStockCheckoutClient({
     enabled: true,
