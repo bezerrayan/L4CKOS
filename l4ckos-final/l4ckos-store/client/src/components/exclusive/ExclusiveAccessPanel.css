@@ -18,3 +18,9 @@
 .l4-xd-code input { min-height: 48px; padding: 0 14px; border: 1px solid #3a3a3a; background: #080808; color: #fff; font: 700 15px "Space Mono", monospace; letter-spacing: .08em; text-transform: uppercase; width: 100%; box-sizing: border-box; }
 .l4-xd-unlocked { border-left-color: #2f9e44; }
 @media (max-width: 480px) { .l4-xd-panel { padding: 14px; margin-left: 0; margin-right: 0; } .l4-xd-btn { width: 100%; } }
+.l4-xd-quota { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.l4-xd-quota div { padding: 8px; border: 1px solid #2c2c2c; display: grid; gap: 2px; }
+.l4-xd-quota dt { font-size: 11px; color: #9d958d; }
+.l4-xd-quota dd { margin: 0; font: 700 18px "Space Mono", monospace; }
+.l4-xd-note { color: #c8c1ba; font-size: 13px; }
+@media (max-width: 480px) { .l4-xd-quota { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

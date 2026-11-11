@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { trpc } from "../../../lib/trpc";
 import { formatDropInstant, isoToZonedLocal, zonedLocalToIso } from "../../../lib/dropTime";
 import "./AdminExclusiveDrops.css";
@@ -18,8 +18,26 @@ const emptyForm: DropForm = {
   isPublic: true, requiresAuthorization: true, defaultUnitLimit: 1, status: "draft", productIds: "",
 };
 
+/** Moves keyboard/screen-reader focus to a panel that just appeared far from the control that opened it. */
+function useFocusWhen(active: boolean) {
+  const ref = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    ref.current?.focus();
+    ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [active]);
+  return ref;
+}
+
 export default function AdminExclusiveDrops() {
   const utils = trpc.useUtils();
+  // Synchronous guard: a double click fires twice before React re-renders `isPending`.
+  const inFlight = useRef(false);
+  const guarded = async (work: () => Promise<void>) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try { await work(); } finally { inFlight.current = false; }
+  };
   const dropsQuery = trpc.exclusiveDrops.admin.listDrops.useQuery();
   const [filterDrop, setFilterDrop] = useState<number | undefined>();
   const [filterStatus, setFilterStatus] = useState<Status | undefined>();
@@ -37,6 +55,12 @@ export default function AdminExclusiveDrops() {
   // The plaintext code is shown ONCE, here, and never persisted or logged by the page.
   const [issued, setIssued] = useState<{ requestId: number; code: string } | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
+  // Irreversible actions (revoke invalidates access; re-issue kills the previous code) need a second, explicit click.
+  const [confirming, setConfirming] = useState<{ kind: "revoke" | "reissue"; requestId: number } | null>(null);
+  const formRef = useFocusWhen(form !== null) as React.RefObject<HTMLFormElement>;
+  const approveRef = useFocusWhen(approving !== null) as React.RefObject<HTMLFormElement>;
+  const issuedRef = useFocusWhen(issued !== null) as React.RefObject<HTMLDivElement>;
+  const historyRef = useFocusWhen(historyFor !== null) as React.RefObject<HTMLDivElement>;
   const historyQuery = trpc.exclusiveDrops.admin.history.useQuery({ requestId: historyFor ?? undefined }, { enabled: historyFor !== null });
 
   const drops = dropsQuery.data ?? [];
@@ -45,10 +69,10 @@ export default function AdminExclusiveDrops() {
   const refresh = async () => {
     await Promise.all([utils.exclusiveDrops.admin.listDrops.invalidate(), utils.exclusiveDrops.admin.listRequests.invalidate()]);
   };
-  const run = async (work: () => Promise<unknown>, ok: string) => {
-    setError(""); setMessage("");
+  const run = (work: () => Promise<unknown>, ok: string) => guarded(async () => {
+    setError(""); setMessage(""); setConfirming(null);
     try { await work(); setMessage(ok); await refresh(); } catch (err) { setError(errorText(err)); }
-  };
+  });
 
   const editDrop = (id: number) => {
     const drop = dropById.get(id)!;
@@ -87,14 +111,25 @@ export default function AdminExclusiveDrops() {
     const tz = dropById.get(approving.dropId)?.timezone ?? "America/Sao_Paulo";
     const expiresAt = zonedLocalToIso(approving.expiresAt, tz);
     if (!expiresAt) { setError("Informe a validade do acesso."); return; }
-    setError(""); setMessage("");
+    await guarded(async () => {
+      setError(""); setMessage("");
+      try {
+        const result = await approve.mutateAsync({ requestId: approving.requestId, unitLimit: approving.unitLimit, expiresAt });
+        setIssued({ requestId: approving.requestId, code: result.code });
+        setApproving(null);
+        await refresh();
+      } catch (err) { setError(errorText(err)); }
+    });
+  };
+
+  const doReissue = (requestId: number) => guarded(async () => {
+    setError(""); setMessage(""); setConfirming(null);
     try {
-      const result = await approve.mutateAsync({ requestId: approving.requestId, unitLimit: approving.unitLimit, expiresAt });
-      setIssued({ requestId: approving.requestId, code: result.code });
-      setApproving(null);
+      const result = await reissue.mutateAsync({ requestId });
+      setIssued({ requestId, code: result.code });
       await refresh();
     } catch (err) { setError(errorText(err)); }
-  };
+  });
 
   return (
     <section className="l4-axd" aria-label="Drops exclusivos">
@@ -106,7 +141,7 @@ export default function AdminExclusiveDrops() {
       {error ? <p role="alert" className="l4-axd-err">{error}</p> : null}
 
       {issued ? (
-        <div className="l4-axd-code" role="alert">
+        <div className="l4-axd-code" role="alert" tabIndex={-1} ref={issuedRef}>
           <strong>Código individual (exibido uma única vez):</strong>
           <code data-testid="issued-code">{issued.code}</code>
           <p>Envie ao cliente por um canal seguro. Ele não é armazenado em texto puro e não poderá ser consultado depois (use “Reemitir código”).</p>
@@ -114,12 +149,14 @@ export default function AdminExclusiveDrops() {
         </div>
       ) : null}
 
-      <div className="l4-axd-table-wrap">
+      <div className="l4-axd-table-wrap" role="region" aria-label="Tabela de drops (role horizontalmente)" tabIndex={0}>
         <table className="l4-axd-table">
           <caption>Drops</caption>
           <thead><tr><th>Drop</th><th>Estado</th><th>Compra</th><th>Produtos</th><th>Limite padrão</th><th><span className="sr-only">Ações</span></th></tr></thead>
           <tbody>
-            {drops.length === 0 ? <tr><td colSpan={6}>Nenhum drop cadastrado.</td></tr> : drops.map(drop => (
+            {dropsQuery.isLoading ? <tr><td colSpan={6} role="status">Carregando drops…</td></tr>
+              : dropsQuery.error ? <tr><td colSpan={6} role="alert">Não foi possível carregar os drops.</td></tr>
+              : drops.length === 0 ? <tr><td colSpan={6}>Nenhum drop cadastrado.</td></tr> : drops.map(drop => (
               <tr key={drop.id}>
                 <td><strong>{drop.name}</strong><br /><small>{drop.slug}</small></td>
                 <td>{STATE_LABEL[drop.state]}</td>
@@ -134,7 +171,7 @@ export default function AdminExclusiveDrops() {
       </div>
 
       {form ? (
-        <form className="l4-axd-form" onSubmit={submitDrop} aria-label={form.id ? "Editar drop" : "Novo drop"}>
+        <form className="l4-axd-form" onSubmit={submitDrop} aria-label={form.id ? "Editar drop" : "Novo drop"} tabIndex={-1} ref={formRef}>
           <h3>{form.id ? "Editar drop" : "Novo drop"}</h3>
           <label>Nome<input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required minLength={2} /></label>
           <label>Slug<input value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} required pattern="[a-z0-9]+(-[a-z0-9]+)*" /></label>
@@ -174,7 +211,7 @@ export default function AdminExclusiveDrops() {
       </div>
 
       {approving ? (
-        <form className="l4-axd-form" onSubmit={submitApprove} aria-label="Aprovar solicitação">
+        <form className="l4-axd-form" onSubmit={submitApprove} aria-label="Aprovar solicitação" tabIndex={-1} ref={approveRef}>
           <h3>Aprovar solicitação #{approving.requestId}</h3>
           <label>Unidades autorizadas (total, qualquer combinação de tamanhos)
             <input type="number" min={1} max={99} value={approving.unitLimit} onChange={e => setApproving({ ...approving, unitLimit: Number(e.target.value) })} required />
@@ -189,25 +226,39 @@ export default function AdminExclusiveDrops() {
         </form>
       ) : null}
 
-      <div className="l4-axd-table-wrap">
+      <div className="l4-axd-table-wrap" role="region" aria-label="Tabela de solicitações (role horizontalmente)" tabIndex={0} aria-busy={requestsQuery.isLoading}>
         <table className="l4-axd-table">
           <caption>Solicitações de acesso</caption>
           <thead><tr><th>#</th><th>Cliente</th><th>Drop</th><th>Status</th><th>Autorização</th><th><span className="sr-only">Ações</span></th></tr></thead>
           <tbody>
-            {(requestsQuery.data ?? []).length === 0 ? <tr><td colSpan={6}>Nenhuma solicitação.</td></tr> : (requestsQuery.data ?? []).map(item => (
+            {requestsQuery.isLoading ? <tr><td colSpan={6} role="status">Carregando solicitações…</td></tr>
+              : requestsQuery.error ? <tr><td colSpan={6} role="alert">Não foi possível carregar as solicitações.</td></tr>
+              : (requestsQuery.data ?? []).length === 0 ? <tr><td colSpan={6}>Nenhuma solicitação.</td></tr> : (requestsQuery.data ?? []).map(item => (
               <tr key={item.requestId}>
                 <td>{item.requestId}</td>
                 <td>{item.userName ?? "—"}<br /><small>{item.userEmail ?? ""}</small></td>
                 <td>{item.dropName}</td>
                 <td>{STATUS_LABEL[item.status as Status]}</td>
-                <td>{item.grant ? <>até {item.grant.unitLimit} un. · usadas {item.grant.unitsUsed}<br /><small>{item.grant.unlocked ? "desbloqueado" : "não desbloqueado"} · expira {formatDropInstant(item.grant.expiresAt, dropById.get(item.dropId)?.timezone ?? "America/Sao_Paulo")}</small></> : "—"}</td>
+                <td>{item.grant ? <>até {item.grant.unitLimit} un. · reservadas {item.grant.unitsReserved} · compradas {item.grant.unitsConsumed}<br /><small>{item.grant.unlocked ? "desbloqueado" : "não desbloqueado"} · expira {formatDropInstant(item.grant.expiresAt, dropById.get(item.dropId)?.timezone ?? "America/Sao_Paulo")}</small></> : "—"}</td>
                 <td className="l4-axd-row-actions">
                   {(item.status === "pending" || item.status === "rejected" || item.status === "revoked") ? <button type="button" className="l4-axd-btn" onClick={() => startApprove(item.requestId, item.dropId)}>Aprovar</button> : null}
                   {item.status === "pending" ? <button type="button" className="l4-axd-btn secondary" onClick={() => void run(() => reject.mutateAsync({ requestId: item.requestId }), "Solicitação recusada.")}>Recusar</button> : null}
-                  {item.status === "approved" ? <>
-                    <button type="button" className="l4-axd-btn secondary" onClick={() => void run(() => revoke.mutateAsync({ requestId: item.requestId }), "Acesso revogado.")}>Revogar</button>
-                    <button type="button" className="l4-axd-btn secondary" onClick={async () => { setError(""); try { const r = await reissue.mutateAsync({ requestId: item.requestId }); setIssued({ requestId: item.requestId, code: r.code }); await refresh(); } catch (err) { setError(errorText(err)); } }}>Reemitir código</button>
-                  </> : null}
+                  {item.status === "approved" ? (
+                    confirming?.requestId === item.requestId ? (
+                      <>
+                        <span role="alert">{confirming.kind === "revoke" ? "Revogar bloqueia novas compras deste cliente." : "O código atual deixará de funcionar."}</span>
+                        <button type="button" className="l4-axd-btn" onClick={() => void (confirming.kind === "revoke" ? run(() => revoke.mutateAsync({ requestId: item.requestId }), "Acesso revogado.") : doReissue(item.requestId))}>
+                          {confirming.kind === "revoke" ? "Confirmar revogação" : "Confirmar reemissão"}
+                        </button>
+                        <button type="button" className="l4-axd-btn secondary" onClick={() => setConfirming(null)}>Cancelar</button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" className="l4-axd-btn secondary" onClick={() => setConfirming({ kind: "revoke", requestId: item.requestId })}>Revogar</button>
+                        <button type="button" className="l4-axd-btn secondary" onClick={() => setConfirming({ kind: "reissue", requestId: item.requestId })}>Reemitir código</button>
+                      </>
+                    )
+                  ) : null}
                   <button type="button" className="l4-axd-btn secondary" onClick={() => setHistoryFor(item.requestId)}>Histórico</button>
                 </td>
               </tr>
@@ -217,7 +268,7 @@ export default function AdminExclusiveDrops() {
       </div>
 
       {historyFor !== null ? (
-        <div className="l4-axd-history" role="region" aria-label={`Histórico da solicitação ${historyFor}`}>
+        <div className="l4-axd-history" role="region" aria-label={`Histórico da solicitação ${historyFor}`} tabIndex={-1} ref={historyRef}>
           <h3>Histórico da solicitação #{historyFor}</h3>
           <ul>
             {(historyQuery.data ?? []).map(entry => <li key={entry.id}><time>{entry.createdAt}</time> — {entry.event}{entry.details ? ` (${entry.details})` : ""}{entry.actorUserId ? ` · admin #${entry.actorUserId}` : ""}</li>)}

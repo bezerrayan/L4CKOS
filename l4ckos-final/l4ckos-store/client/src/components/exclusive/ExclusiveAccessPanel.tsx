@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { trpc } from "../../lib/trpc";
 import { formatDropInstant } from "../../lib/dropTime";
@@ -48,6 +48,8 @@ export default function ExclusiveAccessPanel({ view, productId }: { view: Exclus
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const { drop, viewer } = view;
+  // A typed code must never outlive the state it was typed for (account switch, reissue, status change).
+  useEffect(() => { setCode(""); setError(""); }, [viewer.status]);
   const refresh = () => utils.exclusiveDrops.forProduct.invalidate({ productId });
 
   const submitRequest = async () => {
@@ -125,13 +127,25 @@ export default function ExclusiveAccessPanel({ view, productId }: { view: Exclus
 }
 
 /** Shown above the purchase buttons once the viewer is unlocked and may buy. */
-export function ExclusiveUnlockedNotice({ view }: { view: Exclusive }) {
+export function ExclusiveUnlockedNotice({ view, inCartUnits = 0 }: { view: Exclusive; inCartUnits?: number }) {
   const remaining = view.viewer.unitsRemaining ?? 0;
+  const { unitLimit, unitsReserved, unitsConsumed } = view.viewer;
   return (
     <section className="l4-xd-panel l4-xd-unlocked" aria-label="Acesso ao drop exclusivo">
       <ExclusiveDropBadge view={view} />
       {view.drop.requiresAuthorization ? (
-        <p role="status" className="l4-xd-state">Acesso liberado: você pode comprar até {remaining} {remaining === 1 ? "unidade" : "unidades"} (qualquer combinação de tamanhos).</p>
+        <>
+          <p role="status" className="l4-xd-state">Acesso liberado: você pode comprar até {remaining} {remaining === 1 ? "unidade" : "unidades"} (qualquer combinação de tamanhos).</p>
+          {unitLimit !== undefined ? (
+            <dl className="l4-xd-quota" aria-label="Sua cota neste drop">
+              <div><dt>Autorizadas</dt><dd>{unitLimit}</dd></div>
+              <div><dt>Em pedidos abertos</dt><dd>{unitsReserved ?? 0}</dd></div>
+              <div><dt>Compradas</dt><dd>{unitsConsumed ?? 0}</dd></div>
+              <div><dt>Disponíveis</dt><dd>{remaining}</dd></div>
+            </dl>
+          ) : null}
+          {inCartUnits > 0 ? <p className="l4-xd-state l4-xd-note">Você já tem {inCartUnits} {inCartUnits === 1 ? "unidade" : "unidades"} deste produto na sacola.</p> : null}
+        </>
       ) : null}
     </section>
   );

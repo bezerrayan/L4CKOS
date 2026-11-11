@@ -101,7 +101,7 @@ export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { addToCart, closeCartDrawer } = useCart();
+  const { addToCart, closeCartDrawer, cart } = useCart();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const { showToast } = useToast();
 
@@ -120,7 +120,16 @@ export default function ProductDetail() {
     enabled: Boolean(productId),
   });
   // Exclusive-drop status of this product for the viewer. The SERVER enforces it at cart/checkout; this only drives the UI.
-  const dropQuery = trpc.exclusiveDrops.forProduct.useQuery({ productId: productId ?? 0 }, { enabled: Boolean(productId), retry: false });
+  const dropQuery = trpc.exclusiveDrops.forProduct.useQuery({ productId: productId ?? 0 }, {
+    enabled: Boolean(productId),
+    retry: false,
+    // The status changes outside this page (admin decision): re-read it when the customer comes back, and poll gently while waiting.
+    refetchOnWindowFocus: true,
+    refetchInterval: (query: { state: { data?: unknown } }) => {
+      const data = query.state.data as { exclusive?: boolean; viewer?: { status?: string } } | undefined;
+      return data?.exclusive && data.viewer?.status === "pending" ? 30_000 : false;
+    },
+  });
   const dropView = dropQuery.data;
   const product = productQuery.data
     ? {
@@ -259,11 +268,15 @@ export default function ProductDetail() {
   const variantsTotalStock = activeStockVariants.reduce((sum, variant) => sum + Math.max(0, variant.stock ?? 0), 0);
   const displayedStock = selectedStockVariant?.stock ?? (product.variantCatalogPresent ? variantsTotalStock : product.stock);
   // Exclusive product: never offer more units than the viewer's authorization has left.
-  const quotaCap = dropView?.exclusive && dropView.viewer.status === "unlocked" ? Math.max(1, dropView.viewer.unitsRemaining ?? 1) : MAX_LINE_QUANTITY;
+  // Units already in the cart for this product count against the SERVER-reported remaining units (a hint; the server re-checks at checkout).
+  const inCartUnits = cart.items.filter(item => item.product.id === product.id).reduce((sum, item) => sum + item.quantity, 0);
+  const quotaLeft = dropView?.exclusive && dropView.viewer.status === "unlocked" ? Math.max(0, (dropView.viewer.unitsRemaining ?? 0) - inCartUnits) : Infinity;
+  const quotaCap = Number.isFinite(quotaLeft) ? Math.max(1, quotaLeft) : MAX_LINE_QUANTITY;
   const maxQuantity = Math.min(MAX_LINE_QUANTITY, Math.max(1, displayedStock), quotaCap);
   // Purchase controls stay hidden while the exclusivity is being checked and whenever the viewer cannot buy.
   const exclusiveBlocked = Boolean(dropView?.exclusive && !canPurchaseExclusive(dropView));
-  const purchaseLocked = dropQuery.isLoading || exclusiveBlocked;
+  const quotaUsedUpByCart = Number.isFinite(quotaLeft) && quotaLeft <= 0;
+  const purchaseLocked = dropQuery.isLoading || exclusiveBlocked || quotaUsedUpByCart;
   const effectiveQuantity = clampQuantity(quantity, maxQuantity);
   const hasVariantCatalog = Boolean(product.variantCatalogPresent);
   const isColorSoldOut = (name: string) => hasVariantCatalog && !isColorPurchasable(activeStockVariants, name, selectedSize);
@@ -686,8 +699,9 @@ export default function ProductDetail() {
             ) : null}
           </div>
 
-          {dropView?.exclusive ? (exclusiveBlocked ? <ExclusiveAccessPanel view={dropView} productId={product.id} /> : <ExclusiveUnlockedNotice view={dropView} />) : null}
-          {!dropQuery.isLoading && !exclusiveBlocked && (
+          {dropView?.exclusive ? (exclusiveBlocked ? <ExclusiveAccessPanel view={dropView} productId={product.id} /> : <ExclusiveUnlockedNotice view={dropView} inCartUnits={inCartUnits} />) : null}
+          {quotaUsedUpByCart && !exclusiveBlocked ? <p role="status" className="l4-xd-state">Sua sacola já usa todas as unidades da autorização. <Link to="/carrinho">Ver sacola</Link></p> : null}
+          {!dropQuery.isLoading && !exclusiveBlocked && !quotaUsedUpByCart && (
           <div
             style={{
               ...styles.actionButtons,

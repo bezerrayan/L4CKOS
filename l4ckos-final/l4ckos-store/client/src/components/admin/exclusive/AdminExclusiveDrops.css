@@ -22,3 +22,6 @@
 .l4-axd-history { padding: 12px; border: 1px solid #333; }
 .l4-axd-history ul { margin: 8px 0; padding-left: 18px; font-size: 13px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.l4-axd-table-wrap:focus-visible, .l4-axd-form:focus-visible, .l4-axd-code:focus-visible, .l4-axd-history:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.l4-axd-row-actions { align-items: center; }
+@media (max-width: 480px) { .l4-axd-btn { min-height: 44px; } .l4-axd-form { max-width: none; } }

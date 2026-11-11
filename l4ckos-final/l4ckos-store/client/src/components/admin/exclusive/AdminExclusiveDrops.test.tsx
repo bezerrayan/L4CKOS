@@ -82,13 +82,67 @@ describe("AdminExclusiveDrops", () => {
     expect(reject).toHaveBeenCalledWith({ requestId: 10 });
     unmount();
 
-    rows = [requestRow({ status: "approved", grant: { id: 5, unitLimit: 3, unitsUsed: 1, expiresAt: "2026-11-30T15:00:00.000Z", unlocked: true } })];
+    rows = [requestRow({ status: "approved", grant: { id: 5, unitLimit: 3, unitsUsed: 2, unitsReserved: 1, unitsConsumed: 1, expiresAt: "2026-11-30T15:00:00.000Z", unlocked: true } })];
     render(<AdminExclusiveDrops />);
-    expect(screen.getByText(/até 3 un\. · usadas 1/)).toBeTruthy();
+    expect(screen.getByText(/até 3 un\. · reservadas 1 · compradas 1/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Revogar" }));
+    expect(revoke).not.toHaveBeenCalled(); // irreversible: needs an explicit second click
+    await user.click(screen.getByRole("button", { name: "Confirmar revogação" }));
     expect(revoke).toHaveBeenCalledWith({ requestId: 10 });
     await user.click(screen.getByRole("button", { name: "Reemitir código" }));
+    expect(reissue).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirmar reemissão" }));
     expect((await screen.findByTestId("issued-code")).textContent).toBe("ZZZZZ-YYYYY-XXXXX-WWWWW");
+  });
+
+  it("a double click on 'Aprovar e gerar código' approves ONCE (no second request, no confusing 'already approved' error)", async () => {
+    const user = userEvent.setup();
+    let release: (value: unknown) => void = () => {};
+    approve.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    render(<AdminExclusiveDrops />);
+    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    await user.dblClick(screen.getByRole("button", { name: "Aprovar e gerar código" }));
+    release({ grantId: 5, code: "ABCDE-FGHJK-MNPQR-STVWX", unitLimit: 3, expiresAt: "x" });
+    await screen.findByTestId("issued-code");
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert", { name: "" })?.textContent ?? "").not.toMatch(/já aprovada/);
+  });
+
+  it("a double click on the reissue confirmation re-issues ONCE (a second call would silently kill the code just shown)", async () => {
+    const user = userEvent.setup();
+    rows = [requestRow({ status: "approved", grant: { id: 5, unitLimit: 3, unitsUsed: 0, unitsReserved: 0, unitsConsumed: 0, expiresAt: "2026-11-30T15:00:00.000Z", unlocked: true } })];
+    let release: (value: unknown) => void = () => {};
+    reissue.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    render(<AdminExclusiveDrops />);
+    await user.click(screen.getByRole("button", { name: "Reemitir código" }));
+    await user.dblClick(screen.getByRole("button", { name: "Confirmar reemissão" }));
+    release({ grantId: 5, code: "ZZZZZ-YYYYY-XXXXX-WWWWW" });
+    await screen.findByTestId("issued-code");
+    expect(reissue).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves focus to the approval form when it opens (it appears far below the row)", async () => {
+    const user = userEvent.setup();
+    render(<AdminExclusiveDrops />);
+    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    expect(document.activeElement).toBe(screen.getByRole("form", { name: "Aprovar solicitação" }));
+  });
+
+  it("shows loading and error states instead of a misleading 'nenhuma solicitação'", () => {
+    setTrpc("exclusiveDrops.admin.listRequests.useQuery", () => ({ data: undefined, isLoading: true, error: null }));
+    const { unmount } = render(<AdminExclusiveDrops />);
+    expect(screen.getByText("Carregando solicitações…")).toBeTruthy();
+    expect(screen.queryByText("Nenhuma solicitação.")).toBeNull();
+    unmount();
+    setTrpc("exclusiveDrops.admin.listRequests.useQuery", () => ({ data: undefined, isLoading: false, error: new Error("down") }));
+    render(<AdminExclusiveDrops />);
+    expect(screen.getByRole("alert", { name: "" }).textContent ?? "").toBeDefined();
+    expect(screen.getByText("Não foi possível carregar as solicitações.")).toBeTruthy();
+  });
+
+  it("wide tables are keyboard-scrollable labelled regions (small screens)", () => {
+    render(<AdminExclusiveDrops />);
+    for (const region of screen.getAllByRole("region", { name: /role horizontalmente/ })) expect(region.getAttribute("tabindex")).toBe("0");
   });
 
   it("shows the authorization history of a request", async () => {

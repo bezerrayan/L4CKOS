@@ -142,6 +142,18 @@ describe("ExclusiveAccessPanel — one state per access status", () => {
   });
 });
 
+describe("typed code lifecycle", () => {
+  it("a typed code is wiped when the access status changes (reissue, revocation, account switch) — it never leaks to the next state", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<MemoryRouter><ExclusiveAccessPanel view={view({ status: "approved" })} productId={4} /></MemoryRouter>);
+    await user.type(screen.getByLabelText("Código individual"), "AAAAA-BBBBB-CCCCC-DDDDD");
+    expect((screen.getByLabelText("Código individual") as HTMLInputElement).value).toBe("AAAAA-BBBBB-CCCCC-DDDDD");
+    rerender(<MemoryRouter><ExclusiveAccessPanel view={view({ status: "pending" })} productId={4} /></MemoryRouter>);
+    rerender(<MemoryRouter><ExclusiveAccessPanel view={view({ status: "approved" })} productId={4} /></MemoryRouter>);
+    expect((screen.getByLabelText("Código individual") as HTMLInputElement).value).toBe("");
+  });
+});
+
 describe("ExclusiveUnlockedNotice", () => {
   it("tells the viewer how many units (any sizes) they can still buy", () => {
     render(<ExclusiveUnlockedNotice view={view({ status: "unlocked", unitsRemaining: 3 })} />);
