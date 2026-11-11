@@ -41,6 +41,7 @@ function assertSyntheticTarget() {
 
 let pool: Pool;
 let httpServer: Server;
+let runtime: ReturnType<typeof createStockCheckoutRuntime>;
 let baseUrl = "";
 let providerCalls: Array<{ orderId: string }>;
 let providerMode: "ok" | "definitive" | "unknown" = "ok";
@@ -122,7 +123,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
       "admin-83": await sdk.createSessionToken("synthetic-admin-83", { name: "Admin", sessionVersion: 1 }),
       "third-84": await sdk.createSessionToken("synthetic-third-84", { name: "Terceiro", sessionVersion: 1 }),
     };
-    const runtime = createStockCheckoutRuntime({
+    runtime = createStockCheckoutRuntime({
       pool,
       provider: { supportsIdempotencyKey: true, async createPayment(input) { providerCalls.push(input); if (providerMode === "definitive") throw new StockProviderError("rejected by provider", true); if (providerMode === "unknown") throw new Error("socket hang up"); return { paymentId: `pay-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/checkout" }; } },
     });
@@ -485,6 +486,37 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     expect(trpcCode(await caught(client("no-session").exclusiveDrops.redeemCode.mutate({ code: "AAAAA-BBBBB-CCCCC-DDDDD" })))).toBe("UNAUTHORIZED");
     const mine = await owner().exclusiveDrops.myRequests.query();
     expect(JSON.stringify(mine)).not.toContain("outro@example.invalid");
+  });
+
+  it("with the STOCK expiry sweeper: an expired UNSTARTED attempt frees the units; an expired provider-created attempt keeps them (reconciliation)", async () => {
+    await createDrop();
+    await unlockedGrantFor(owner, 2);
+    await create(owner, "xiv-attempt-sweep-0001", 8); // provider-created (pending payment)
+    await create(owner, "xiv-attempt-sweep-0002", 9);
+    await pool.query("UPDATE stockCheckoutAttempts SET providerState = 'not_started', paymentId = NULL, checkoutUrl = NULL WHERE attemptId = 'xiv-attempt-sweep-0002'");
+    await pool.query("UPDATE stockCheckoutAttempts SET reservationExpiresAt = '2026-01-01 00:00:00.000' WHERE attemptId IN ('xiv-attempt-sweep-0001', 'xiv-attempt-sweep-0002')");
+    const viewer = async () => { const v = await owner().exclusiveDrops.forProduct.query({ productId: 4 }); return v.exclusive ? v.viewer : null; };
+    expect(await viewer()).toMatchObject({ unitsReserved: 2, unitsRemaining: 0 }); // expired in time but not yet swept: still held
+    const swept = await runtime.expireReservations(50);
+    expect(swept.releasedAttemptIds).toContain("xiv-attempt-sweep-0002");
+    expect(swept.releasedAttemptIds).not.toContain("xiv-attempt-sweep-0001");
+    expect(swept.reconciliationAttemptIds).toContain("xiv-attempt-sweep-0001");
+    // the unstarted one is free again; the provider-created one stays held until STOCK reconciles it
+    expect(await viewer()).toMatchObject({ unitsReserved: 1, unitsRemaining: 1 });
+    expect(await create(owner, "xiv-attempt-sweep-0003", 10)).toMatchObject({ status: "pending" });
+    expect(appCode(await caught(create(owner, "xiv-attempt-sweep-0004", 8)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+  });
+
+  it("the e-mail context carries recipient, drop and grant data but never a code or a hash", async () => {
+    await createDrop();
+    const granted = await unlockedGrantFor(owner, 2);
+    const context = await store().notificationContext(granted.requestId);
+    expect(context).toMatchObject({ userEmail: "um@example.invalid", dropName: "Clã XIV Bis × L4CKOS", timezone: "America/Sao_Paulo", unitLimit: 2, productId: 4 });
+    const [grants] = await pool.query<any[]>("SELECT codeHash FROM exclusiveGrants");
+    const dump = JSON.stringify(context);
+    expect(dump).not.toContain(granted.code);
+    expect(dump).not.toContain(grants[0].codeHash);
+    expect(await store().notificationContext(99999)).toBeNull();
   });
 
   // ---------------------------------------------------------------- drop lifecycle

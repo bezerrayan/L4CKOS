@@ -550,6 +550,25 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
         subjectUserId: Number(row.subjectUserId), actorUserId: row.actorUserId == null ? null : Number(row.actorUserId), event: String(row.event), details: row.details ?? null, createdAt: iso(parseTime(row.createdAt))! }));
     },
 
+    /** Read-only data an e-mail needs. Never includes a code or hash. */
+    async notificationContext(requestId: number) {
+      const [rows] = await pool.query<Row[]>(
+        `SELECT r.id, r.userId, u.name AS userName, u.email AS userEmail, ${DROP_COLUMNS},
+                (SELECT MIN(productId) FROM exclusiveDropProducts WHERE dropId = d.id) AS productId,
+                (SELECT unitLimit FROM exclusiveGrants WHERE requestId = r.id ORDER BY id DESC LIMIT 1) AS unitLimit,
+                (SELECT DATE_FORMAT(expiresAt, '%Y-%m-%d %H:%i:%s.%f') FROM exclusiveGrants WHERE requestId = r.id ORDER BY id DESC LIMIT 1) AS grantExpiresAt
+           FROM exclusiveAccessRequests r JOIN exclusiveDrops d ON d.id = r.dropId JOIN users u ON u.id = r.userId WHERE r.id = ?`, [requestId]);
+      const row = rows[0];
+      if (!row) return null;
+      const drop = toDrop(row);
+      return {
+        userName: (row.userName as string | null) ?? null, userEmail: (row.userEmail as string | null) ?? null,
+        dropName: drop.name, timezone: drop.timezone, purchaseStartsAt: drop.purchaseStartsAt,
+        productId: row.productId == null ? null : Number(row.productId),
+        unitLimit: row.unitLimit == null ? null : Number(row.unitLimit), expiresAt: parseTime(row.grantExpiresAt),
+      };
+    },
+
     // ------------------------------------------------------------------ e-mail outbox (adapter only; no provider is wired here)
     /**
      * Claims pending (or lease-expired) notifications atomically, hands them to the adapter with `eventKey` as the provider
