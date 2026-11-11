@@ -1,4 +1,5 @@
 import { assertCheckoutMethodEnabled, CheckoutMethodDisabledError } from "../../shared/checkoutMethods";
+import { runtimeConnectionOptions } from "../database/runtimeConnection";
 import { normalizeBuyerDocument } from "../../shared/buyerDocument";
 import { deliverPaymentNotifications } from "../payments/paymentNotificationOutbox";
 import { shippingEstimate, manufacturingEstimate } from "../../shared/preorder";
@@ -54,7 +55,7 @@ async function resolveOrderPricing(input: {
   couponCode?: string;
 }) {
   if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
-  const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
+  const connection = await createConnection(runtimeConnectionOptions({ timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET }));
   const frozen = await (async () => {
     try { return await previewCheckoutItems(connection,input.items); }
     finally { await connection.end(); }
@@ -268,7 +269,7 @@ export const ordersRouter = router({
         // Exclusive-drop products can only be bought through the STOCK checkout (with a valid individual authorization).
         await assertNoExclusiveInLegacyCheckout(input.items.map(item => item.productId));
         if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
-        const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
+        const connection = await createConnection(runtimeConnectionOptions({ timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET }));
         const prepared = await (async () => {
           try { return await checkout(connection, { ...input, userId: ctx.user.id,
             customer: { ...input.customer, email: input.customer.email || ctx.user.email || undefined },

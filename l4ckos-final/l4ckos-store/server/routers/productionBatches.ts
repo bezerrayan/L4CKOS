@@ -1,4 +1,5 @@
 import { createConnection, type Connection } from "mysql2/promise";
+import { runtimeConnectionOptions } from "../database/runtimeConnection";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, router } from "../_core/trpc";
@@ -19,11 +20,10 @@ async function withConnection<T>(fn: (c: Connection) => Promise<T>) {
       code: "INTERNAL_SERVER_ERROR",
       message: "Database unavailable",
     });
-  const c = await createConnection({
-    uri: process.env.DATABASE_URL,
+  const c = await createConnection(runtimeConnectionOptions({
     timezone: "Z",
     socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET,
-  });
+  }));
   try {
     return await fn(c);
   } catch (error) {

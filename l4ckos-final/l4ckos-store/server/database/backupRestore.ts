@@ -60,13 +60,13 @@ function encode(value: unknown): Cell {
 function decode(value: Cell) {
   return typeof value === "object" && value !== null ? Buffer.from(value.binaryHex, "hex") : value;
 }
-export async function openBackupConnection(url: string, socketPath?: string) {
+export async function openBackupConnection(url: string, socketPath?: string, tls?: { ssl?: mysql.ConnectionOptions["ssl"] }) {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "mysql:") fail("INVALID_DATABASE_CONFIGURATION");
     return await mysql.createConnection({
       uri: url,
-      socketPath, dateStrings: true, timezone: "Z", supportBigNumbers: true, bigNumberStrings: true,
+      socketPath, ...(tls?.ssl ? { ssl: tls.ssl } : {}), dateStrings: true, timezone: "Z", supportBigNumbers: true, bigNumberStrings: true,
       decimalNumbers: false, jsonStrings: true, multipleStatements: false,
     });
   } catch { return fail("DATABASE_CONNECTION_FAILED"); }

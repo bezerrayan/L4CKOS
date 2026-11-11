@@ -7,6 +7,7 @@ import type { Pool } from "mysql2/promise";
 import { createHash, randomUUID } from "node:crypto";
 import { createMysqlConnectionOptionsForEnvironment } from "./database/mysqlConnection.mjs";
 import { toPromisePool } from "./database/promisePool";
+import { runtimeTlsOptions } from "./database/runtimeConnection";
 import {
   InsertUser,
   users,
@@ -3369,7 +3370,7 @@ function extractExecutedRows(result: unknown) {
 export async function getBackupPayload() {
   const { backupDatabase, openBackupConnection, BackupError } = await import("./database/backupRestore");
   if (!process.env.DATABASE_URL) throw new BackupError("DATABASE_CONFIGURATION_REQUIRED");
-  const connection = await openBackupConnection(process.env.DATABASE_URL, process.env.L4CKOS_LOCAL_MYSQL_SOCKET);
+  const connection = await openBackupConnection(process.env.DATABASE_URL, process.env.L4CKOS_LOCAL_MYSQL_SOCKET, runtimeTlsOptions());
   try { return await backupDatabase(connection); }
   finally { await connection.end(); }
 }
@@ -3379,7 +3380,7 @@ export async function restoreBackupPayload(payload: unknown) {
   if (!process.env.DATABASE_URL) throw new BackupError("DATABASE_CONFIGURATION_REQUIRED");
   const target = { url: process.env.DATABASE_URL, socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET };
   assertLocalRestoreTarget(target.url, target.socketPath); // Reject remote before any connection.
-  const connection = await openBackupConnection(target.url, target.socketPath);
+  const connection = await openBackupConnection(target.url, target.socketPath, runtimeTlsOptions());
   try { return await restoreDatabase(connection, payload, target); }
   finally { await connection.end(); }
 }
