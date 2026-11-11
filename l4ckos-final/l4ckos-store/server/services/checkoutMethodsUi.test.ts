@@ -8,7 +8,7 @@ vi.mock("../../client/src/hooks/useIsMobile",()=>({useIsMobile:()=>view.mobile})
 vi.mock("../../client/src/contexts/CartContext",()=>({useCart:()=>({isCatalogReady:true,cart:{itemCount:1,total:99,items:[{quantity:1,addedAt:1,product:{id:1,name:"Synthetic",price:99,stock:96,salesMode:"STOCK",images:[],imageUrl:"",category:"fixture"}}]},hasUnavailableItems:false,revalidateCart:vi.fn(),removeFromCart:vi.fn(),updateQuantity:vi.fn(),clearCart:vi.fn()})}));
 vi.mock("../../client/src/contexts/UserContext",()=>({useUser:()=>({user:null,isAuthenticated:false})}));
 vi.mock("../../client/src/hooks/useOrders",()=>({useCreateAsaasCharge:()=>({isPending:false,mutateAsync:vi.fn()})}));
-vi.mock("../../client/src/lib/trpc",()=>({trpc:{orders:{validateCoupon:{useMutation:()=>({})},detail:{useQuery:()=>({})}},profile:{get:{useQuery:()=>({})}},stockCheckout:{create:{useMutation:()=>({isPending:false,mutateAsync:vi.fn()})},resumeLatest:{useQuery:()=>({data:undefined})}},useUtils:()=>({})}}));
+vi.mock("../../client/src/lib/trpc",()=>({trpc:{orders:{validateCoupon:{useMutation:()=>({})},detail:{useQuery:()=>({})}},profile:{get:{useQuery:()=>({})}},stockCheckout:{create:{useMutation:()=>({isPending:false,mutateAsync:vi.fn()})},quoteShipping:{useMutation:()=>({isPending:false,mutateAsync:vi.fn()})},resumeLatest:{useQuery:()=>({data:undefined})}},useUtils:()=>({})}}));
 vi.mock("../../client/src/components/PreorderInfo",()=>({PreorderInfo:()=>null,CheckoutPreorderNotice:()=>null}));
 describe("actual checkout rendering without remote IO",()=>{
  it.each([false,true])("offers only PIX/card with valid PIX default, mobile=%s",mobile=>{
