@@ -19,6 +19,7 @@ import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { sendOrderCreatedEmail, sendPaymentPendingEmail } from "../services/emailService.js";
 import { securityLog } from "../_core/security";
 import { assertPublicCheckoutEnabled } from "../_core/publicStore";
+import { assertNoExclusiveInLegacyCheckout } from "../exclusive/checkoutGuard";
 
 const checkoutItemSchema = z.object({
   productId: z.number().int().positive(),
@@ -279,6 +280,8 @@ export const ordersRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       assertPublicCheckoutEnabled();
+      // Exclusive-drop products can only be bought through the STOCK checkout (with a valid individual authorization).
+      await assertNoExclusiveInLegacyCheckout(input.items.map(item => item.productId));
       let orderId = 0;
 
       try {
