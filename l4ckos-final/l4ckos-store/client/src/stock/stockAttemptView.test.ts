@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeStockAttempt, describeStockCheckoutError } from "./stockAttemptView";
+import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } from "./stockAttemptView";
 
 describe("describeStockAttempt", () => {
   it("never presents a pending charge as approved", () => {
@@ -69,6 +69,23 @@ describe("describeStockCheckoutError", () => {
   it("treats payment-under-analysis conflicts as unknown outcome", () => {
     const view = describeStockCheckoutError(trpc("CONFLICT", "O pagamento está em análise. Não inicie outra tentativa."));
     expect(view.outcomeUnknown).toBe(true);
+  });
+
+  it("keeps the cart when the server gate is closed and never marks the outcome unknown", () => {
+    const view = describeStockCheckoutError(trpc("FORBIDDEN", "x"));
+    expect(view.message).toMatch(/ainda não está liberada/);
+    expect(view.outcomeUnknown).toBe(false);
+  });
+
+  it("keeps the attempt when the runtime is unavailable", () => {
+    const view = describeStockCheckoutError(trpc("SERVICE_UNAVAILABLE", "x"));
+    expect(view.message).toMatch(/tentativa foi mantida/);
+    expect(view.outcomeUnknown).toBe(false);
+  });
+
+  it("detects NOT_FOUND on resume", () => {
+    expect(isAttemptNotFound(trpc("NOT_FOUND", "x"))).toBe(true);
+    expect(isAttemptNotFound(new Error("x"))).toBe(false);
   });
 
   it("asks to log in on UNAUTHORIZED", () => {
