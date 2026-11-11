@@ -642,7 +642,7 @@ export default function ProductDetail() {
             <div style={styles.quantityControl as CSSProperties} role="group" aria-label="Quantidade">
               <button
                 type="button"
-                onClick={() => setQuantity(Math.max(1, effectiveQuantity - 1))}
+                onClick={() => setQuantity(current => Math.max(1, clampQuantity(current, maxQuantity) - 1))}
                 style={styles.quantityBtn as CSSProperties}
                 disabled={displayedStock <= 0 || effectiveQuantity <= 1}
                 aria-label="Diminuir quantidade"
@@ -661,7 +661,7 @@ export default function ProductDetail() {
               />
               <button
                 type="button"
-                onClick={() => setQuantity(clampQuantity(effectiveQuantity + 1, maxQuantity))}
+                onClick={() => setQuantity(current => clampQuantity(clampQuantity(current, maxQuantity) + 1, maxQuantity))}
                 style={styles.quantityBtn as CSSProperties}
                 disabled={displayedStock <= 0 || effectiveQuantity >= maxQuantity}
                 aria-label="Aumentar quantidade"
