@@ -73,6 +73,10 @@ function fail(code: string): never {
   throw new Error(code);
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return (error as { data?: { code?: unknown } | null } | null)?.data?.code === "NOT_FOUND";
+}
+
 /** Stable backend error code (`error.data.appError.code`). Message text is never interpreted. */
 export function appErrorCodeOf(error: unknown): string {
   const code = (error as { data?: { appError?: { code?: unknown } | null } | null } | null)?.data?.appError?.code;
@@ -250,18 +254,30 @@ export function createStockCheckoutClient(input: {
       if (!input.enabled) return fail("PUBLIC_CHECKOUT_DISABLED");
       const items = identityItems(lines);
       const attemptId = findStoredStockAttemptId({ storage: input.storage, items, now: input.now?.() });
-      if (!attemptId) {
-        if (!input.transport.resumeLatest) return fail("STOCK_ATTEMPT_NOT_FOUND_LOCALLY");
-        // Owner-scoped on the server. Only an attempt still in flight may block a new one: a settled or
-        // dead attempt (paid/failed/expired/cancelled) belongs to an older purchase and must never be
-        // shown as pending, confirm this cart, or clear it.
-        const latest = await input.transport.resumeLatest();
+      // Owner-scoped on the server. Only an attempt still in flight may block a new one: a settled or
+      // dead attempt (paid/failed/expired/cancelled) belongs to an older purchase and must never be
+      // shown as pending, confirm this cart, or clear it.
+      const fromServerLatest = async (): Promise<StockAttemptResumeV1> => {
+        const latest = await input.transport.resumeLatest!();
         if (latest == null) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
         const parsed = stockAttemptResumeV1Schema.parse(latest);
         if (!OPEN_STATUSES.has(parsed.status)) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
         return parsed;
+      };
+      if (!attemptId) {
+        if (!input.transport.resumeLatest) return fail("STOCK_ATTEMPT_NOT_FOUND_LOCALLY");
+        return fromServerLatest();
       }
-      const response = stockAttemptResumeV1Schema.parse(await input.transport.resume(attemptId));
+      let raw: unknown;
+      try {
+        raw = await input.transport.resume(attemptId);
+      } catch (error) {
+        // The local id never reached the server (e.g. the server rejected it because the owner already has an
+        // equivalent open cart under another id). Ask the server for that attempt instead of looping on a ghost id.
+        if (isNotFoundError(error) && input.transport.resumeLatest) return fromServerLatest();
+        throw error;
+      }
+      const response = stockAttemptResumeV1Schema.parse(raw);
       if (response.attemptId !== attemptId) return fail("STOCK_ATTEMPT_CORRELATION_MISMATCH");
       saveStockAttemptStatus({ storage: input.storage, items, attemptId, status: response.status, now: input.now?.(), canStartNewAttempt: response.canStartNewAttempt });
       return response;

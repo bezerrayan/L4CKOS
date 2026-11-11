@@ -23,7 +23,7 @@ import { cartBlockingIssues } from "../stock/availability";
 import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/attemptStorage";
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
 import { StockAttemptRecovery } from "../components/StockAttemptRecovery";
-import { useCartCatalogSync } from "../hooks/useCartCatalogSync";
+import { requestCartCatalogRefresh, useCartCatalogSync } from "../hooks/useCartCatalogSync";
 import { buildShippingQuoteRequest, interpretShippingQuote, sanitizeCep, SHIPPING_UNAVAILABLE_MESSAGE, type ShippingOption, type ShippingQuoteResponse } from "../lib/shippingQuote";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
@@ -667,6 +667,7 @@ function PagamentoContent() {
         const view = describeStockCheckoutError(error);
         setPaymentError(view.message);
         trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
+        if (view.needsCartReview) requestCartCatalogRefresh();
         if (appErrorCodeOf(error) === "PAYMENT_UNDER_ANALYSIS") setStockUnderAnalysis(true);
         if (view.outcomeUnknown) void refreshStockAttempt();
         return;
