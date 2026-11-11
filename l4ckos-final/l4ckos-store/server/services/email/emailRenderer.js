@@ -2,6 +2,7 @@ import { ComingSoonConfirmation } from "../../emails/transactional/ComingSoonCon
 import { ContactConfirmation } from "../../emails/transactional/ContactConfirmation.jsx";
 import { NewContactInternal } from "../../emails/transactional/NewContactInternal.jsx";
 import { OrderCreated } from "../../emails/transactional/OrderCreated.jsx";
+import { OrderCancelled } from "../../emails/transactional/OrderCancelled.jsx";
 import { PaymentPending } from "../../emails/transactional/PaymentPending.jsx";
 import { PaymentApproved } from "../../emails/transactional/PaymentApproved.jsx";
 import { PaymentFailed } from "../../emails/transactional/PaymentFailed.jsx";
@@ -45,6 +46,7 @@ const templateMap = {
   passwordReset: PasswordReset,
   paymentNotFinished: PaymentNotFinished,
   orderCreated: OrderCreated,
+  orderCancelled: OrderCancelled,
   paymentPending: PaymentPending,
   paymentApproved: PaymentApproved,
   paymentFailed: PaymentFailed,

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { OrderCancelled } from "./OrderCancelled.jsx";
+import { renderEmailTemplate } from "../../services/email/emailRenderer.js";
 
 describe("OrderCancelled transactional email", () => {
   it("renders order data and recorded refund state without invented delivery dates or secrets", async () => {
@@ -27,5 +28,12 @@ describe("OrderCancelled transactional email", () => {
     );
     expect(html).toContain("consulte o atendimento");
     expect(html).not.toContain("estorno foi confirmado");
+  });
+
+  it("is registered in the existing email renderer", () => {
+    const html = renderToStaticMarkup(
+      renderEmailTemplate("orderCancelled", { orderNumber: "ST-125" })
+    );
+    expect(html).toContain("Pedido #ST-125 cancelado");
   });
 });

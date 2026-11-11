@@ -50,6 +50,16 @@ export function sendOrderCreatedEmail(payload: {
   orderUrl?: string;
 }): Promise<unknown>;
 
+export function sendOrderCancelledEmail(payload: {
+  idempotencyKey?: string;
+  customerEmail: string;
+  customerName?: string;
+  orderNumber: string;
+  total?: string;
+  items?: Array<{ name: string; quantity: number; price?: string }>;
+  refundStatus?: "pending" | "refunded" | "unknown";
+}): Promise<unknown>;
+
 export function sendPaymentPendingEmail(payload: {
   idempotencyKey?: string;
   customerEmail: string;
@@ -248,9 +258,7 @@ export function sendOrderShippedEmail(payload: {
   trackingUrl?: string;
 }): Promise<unknown>;
 
-export function sendWaitlistEmail(payload: {
-  email: string;
-}): Promise<unknown>;
+export function sendWaitlistEmail(payload: { email: string }): Promise<unknown>;
 
 export function sendWaitlistAutoReply(payload: {
   email: string;

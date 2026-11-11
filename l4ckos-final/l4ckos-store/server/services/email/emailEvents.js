@@ -8,6 +8,7 @@ export const emailEvents = {
   exclusiveDropAccessRevoked: "exclusive_drop.access_revoked",
   passwordResetRequested: "account.password_reset_requested",
   orderCreated: "order.created",
+  orderCancelled: "order.cancelled",
   paymentPending: "payment.pending",
   paymentNotFinished: "payment.not_finished",
   paymentApproved: "payment.approved",

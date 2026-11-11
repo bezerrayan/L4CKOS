@@ -18,6 +18,7 @@ import {
   sendContactConfirmationEmail,
   sendNewContactInternalEmail,
   sendOrderCreatedEmail,
+  sendOrderCancelledEmail,
   sendOrderDeliveredEmail,
   sendOrderPreparingEmail,
   sendPasswordResetEmail,
@@ -40,6 +41,7 @@ export {
   sendWelcomeAccountEmail,
   sendPasswordResetEmail,
   sendOrderCreatedEmail,
+  sendOrderCancelledEmail,
   sendPaymentPendingEmail,
   sendPaymentNotFinishedEmail,
   sendPaymentApprovedEmail,
@@ -80,7 +82,11 @@ export async function sendOrderReceivedEmail(payload) {
   return sendOrderCreatedEmail(payload);
 }
 
-export async function sendOrderShippedEmail({ trackingCode, trackingUrl, ...payload }) {
+export async function sendOrderShippedEmail({
+  trackingCode,
+  trackingUrl,
+  ...payload
+}) {
   return sendShippingEmail({ ...payload, trackingCode, trackingUrl });
 }
 
@@ -101,29 +107,38 @@ export async function sendWaitlistAutoReply({ email }) {
 }
 
 export async function sendSupportEmail({ to, subject, html }) {
-  console.warn("[Email] sendSupportEmail is deprecated and should be replaced by a dedicated transactional email", {
-    to,
-    subject,
-    hasHtml: Boolean(html),
-  });
+  console.warn(
+    "[Email] sendSupportEmail is deprecated and should be replaced by a dedicated transactional email",
+    {
+      to,
+      subject,
+      hasHtml: Boolean(html),
+    }
+  );
   return { skipped: true };
 }
 
 export async function sendSalesEmail({ to, subject, html }) {
-  console.warn("[Email] sendSalesEmail is deprecated and should be replaced by a dedicated transactional email", {
-    to,
-    subject,
-    hasHtml: Boolean(html),
-  });
+  console.warn(
+    "[Email] sendSalesEmail is deprecated and should be replaced by a dedicated transactional email",
+    {
+      to,
+      subject,
+      hasHtml: Boolean(html),
+    }
+  );
   return { skipped: true };
 }
 
 export async function sendFinanceEmail({ to, subject, html }) {
-  console.warn("[Email] sendFinanceEmail is deprecated and should be replaced by a dedicated transactional email", {
-    to,
-    subject,
-    hasHtml: Boolean(html),
-  });
+  console.warn(
+    "[Email] sendFinanceEmail is deprecated and should be replaced by a dedicated transactional email",
+    {
+      to,
+      subject,
+      hasHtml: Boolean(html),
+    }
+  );
   return { skipped: true };
 }
 

@@ -1,31 +1,46 @@
 export const emailSubjects = {
   comingSoonConfirmation: "Seu acesso antecipado à L4CKOS foi confirmado",
   contactConfirmation: "Recebemos sua mensagem",
-  newContactInternal: ({ subject }) => `Novo contato do site: ${subject || "L4CKOS"}`,
+  newContactInternal: ({ subject }) =>
+    `Novo contato do site: ${subject || "L4CKOS"}`,
   welcomeAccount: "Sua conta L4CKOS está pronta",
-  exclusiveDropRequestReceived: ({ dropName }) => `Recebemos seu pedido de acesso: ${dropName || "drop exclusivo"}`,
-  exclusiveDropAccessApproved: ({ dropName }) => `Seu acesso foi aprovado: ${dropName || "drop exclusivo"}`,
-  exclusiveDropAccessRejected: ({ dropName }) => `Sobre o seu pedido de acesso: ${dropName || "drop exclusivo"}`,
-  exclusiveDropAccessRevoked: ({ dropName }) => `Seu acesso foi encerrado: ${dropName || "drop exclusivo"}`,
-  exclusiveAccessNotification: ({ eventType }) => ({
-    request_received: "Recebemos sua solicitação de acesso",
-    access_approved: "Seu acesso ao drop exclusivo foi aprovado",
-    access_rejected: "Atualização da sua solicitação de acesso",
-    access_revoked: "Atualização do seu acesso ao drop",
-  }[eventType] || "Atualização sobre seu acesso ao drop"),
+  exclusiveDropRequestReceived: ({ dropName }) =>
+    `Recebemos seu pedido de acesso: ${dropName || "drop exclusivo"}`,
+  exclusiveDropAccessApproved: ({ dropName }) =>
+    `Seu acesso foi aprovado: ${dropName || "drop exclusivo"}`,
+  exclusiveDropAccessRejected: ({ dropName }) =>
+    `Sobre o seu pedido de acesso: ${dropName || "drop exclusivo"}`,
+  exclusiveDropAccessRevoked: ({ dropName }) =>
+    `Seu acesso foi encerrado: ${dropName || "drop exclusivo"}`,
+  exclusiveAccessNotification: ({ eventType }) =>
+    ({
+      request_received: "Recebemos sua solicitação de acesso",
+      access_approved: "Seu acesso ao drop exclusivo foi aprovado",
+      access_rejected: "Atualização da sua solicitação de acesso",
+      access_revoked: "Atualização do seu acesso ao drop",
+    })[eventType] || "Atualização sobre seu acesso ao drop",
   passwordReset: "Redefina sua senha da L4CKOS",
-  paymentNotFinished: ({ orderNumber }) => `O pedido #${orderNumber} ainda pode ser concluído`,
+  paymentNotFinished: ({ orderNumber }) =>
+    `O pedido #${orderNumber} ainda pode ser concluído`,
   orderCreated: ({ orderNumber }) => `Recebemos o pedido #${orderNumber}`,
-  paymentPending: ({ orderNumber }) => `Pagamento pendente do pedido #${orderNumber}`,
-  paymentApproved: ({ orderNumber }) => `Pagamento aprovado para o pedido #${orderNumber}`,
-  paymentFailed: ({ orderNumber }) => `Pagamento não aprovado para o pedido #${orderNumber}`,
-  internalNewSaleAlert: ({ orderNumber }) => `Nova venda confirmada: pedido #${orderNumber}`,
-  internalLowStockAlert: ({ totalProducts }) => `Estoque baixo: ${totalProducts || 0} item(ns) exigem atenção`,
-  internalPaymentFailedAlert: ({ orderNumber }) => `Falha de pagamento no pedido #${orderNumber}`,
+  orderCancelled: ({ orderNumber }) => `Pedido #${orderNumber} cancelado`,
+  paymentPending: ({ orderNumber }) =>
+    `Pagamento pendente do pedido #${orderNumber}`,
+  paymentApproved: ({ orderNumber }) =>
+    `Pagamento aprovado para o pedido #${orderNumber}`,
+  paymentFailed: ({ orderNumber }) =>
+    `Pagamento não aprovado para o pedido #${orderNumber}`,
+  internalNewSaleAlert: ({ orderNumber }) =>
+    `Nova venda confirmada: pedido #${orderNumber}`,
+  internalLowStockAlert: ({ totalProducts }) =>
+    `Estoque baixo: ${totalProducts || 0} item(ns) exigem atenção`,
+  internalPaymentFailedAlert: ({ orderNumber }) =>
+    `Falha de pagamento no pedido #${orderNumber}`,
   orderPreparing: ({ orderNumber }) => `Pedido #${orderNumber} em preparação`,
   orderShipped: ({ orderNumber }) => `Pedido #${orderNumber} enviado`,
   orderDelivered: ({ orderNumber }) => `Pedido #${orderNumber} entregue`,
-  reviewRequest: ({ orderNumber }) => `Como foi sua experiência com o pedido #${orderNumber}?`,
+  reviewRequest: ({ orderNumber }) =>
+    `Como foi sua experiência com o pedido #${orderNumber}?`,
   launchAnnouncement: "A L4CKOS está no ar",
   newDropAnnouncement: "Novo drop L4CKOS disponível",
   newProductsAnnouncement: "Novidades no catálogo da L4CKOS",

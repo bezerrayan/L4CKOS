@@ -2,7 +2,10 @@ import { resolveAnnouncementUrl } from "./publicUrls";
 import { getResendClient } from "./resendClient.js";
 import { renderEmailTemplate } from "./emailRenderer.js";
 import { emailSubjects } from "../../utils/email/emailSubjects.js";
-import { buildUnsubscribeUrl, ensureMarketingAllowed } from "./emailSubscriptions.js";
+import {
+  buildUnsubscribeUrl,
+  ensureMarketingAllowed,
+} from "./emailSubscriptions.js";
 import { renderToStaticMarkup } from "react-dom/server";
 
 function sanitizeText(value) {
@@ -68,7 +71,9 @@ async function sendEmail({
   idempotencyKey,
 }) {
   const client = getResendClient();
-  const recipients = (Array.isArray(to) ? to : [to]).map(sanitizeText).filter(Boolean);
+  const recipients = (Array.isArray(to) ? to : [to])
+    .map(sanitizeText)
+    .filter(Boolean);
   if (!recipients.length) {
     throw new Error("Email recipients are required");
   }
@@ -135,7 +140,12 @@ async function sendMarketingEmail({
       ...templatePayload,
       unsubscribeUrl: buildUnsubscribeUrl(normalizedEmail),
     },
-    from: from || requireEmailConfig("EMAIL_FROM_MARKETING", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    from:
+      from ||
+      requireEmailConfig("EMAIL_FROM_MARKETING", [
+        "EMAIL_FROM_NOREPLY",
+        "EMAIL_FROM",
+      ]),
     to: normalizedEmail,
     replyTo: replyTo || getDefaultReplyTo(),
     tags,
@@ -159,7 +169,10 @@ function normalizeProducts(products = []) {
     name: sanitizeText(item.name || item.productName || "Produto"),
     price: sanitizeText(item.price || item.formattedPrice || ""),
     imageUrl: sanitizeText(item.imageUrl || item.productImage || ""),
-    stock: item.stock === undefined || item.stock === null ? undefined : Number(item.stock),
+    stock:
+      item.stock === undefined || item.stock === null
+        ? undefined
+        : Number(item.stock),
   }));
 }
 
@@ -171,12 +184,19 @@ function logEmailFailure(scope, error, context = {}) {
   });
 }
 
-export async function sendComingSoonConfirmationEmail({ email, name, launchUrl }) {
+export async function sendComingSoonConfirmationEmail({
+  email,
+  name,
+  launchUrl,
+}) {
   return sendEmail({
     templateName: "comingSoonConfirmation",
     subjectKey: "comingSoonConfirmation",
     templatePayload: { name, launchUrl: launchUrl || resolveAppUrl() },
-    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    from: requireEmailConfig("NO_REPLY_EMAIL", [
+      "EMAIL_FROM_NOREPLY",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(email),
     replyTo: getDefaultReplyTo(),
   });
@@ -187,14 +207,25 @@ export async function sendContactConfirmationEmail({ email, name }) {
     templateName: "contactConfirmation",
     subjectKey: "contactConfirmation",
     templatePayload: { name },
-    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    from: requireEmailConfig("NO_REPLY_EMAIL", [
+      "EMAIL_FROM_NOREPLY",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(email),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendNewContactInternalEmail({ name, email, phone, subject, message }) {
-  const to = sanitizeText(process.env.CONTACT_NOTIFICATION_EMAIL) || requireEmailConfig("EMAIL_TO_CONTACT", ["EMAIL_TO"]);
+export async function sendNewContactInternalEmail({
+  name,
+  email,
+  phone,
+  subject,
+  message,
+}) {
+  const to =
+    sanitizeText(process.env.CONTACT_NOTIFICATION_EMAIL) ||
+    requireEmailConfig("EMAIL_TO_CONTACT", ["EMAIL_TO"]);
   return sendEmail({
     templateName: "newContactInternal",
     subjectKey: "newContactInternal",
@@ -211,22 +242,43 @@ export async function sendWelcomeAccountEmail({ email, name }) {
     templateName: "welcomeAccount",
     subjectKey: "welcomeAccount",
     templatePayload: { name, appUrl: `${resolveAppUrl()}/login` },
-    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    from: requireEmailConfig("NO_REPLY_EMAIL", [
+      "EMAIL_FROM_NOREPLY",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(email),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendExclusiveAccessNotificationEmail({ email, name, eventType, eventKey }) {
-  const validEvents = new Set(["request_received", "access_approved", "access_rejected", "access_revoked"]);
-  if (!validEvents.has(eventType)) throw new Error("Invalid exclusive access notification event");
-  if (typeof eventKey !== "string" || !/^(req|grant):[A-Za-z0-9:_-]{1,112}$/.test(eventKey)) throw new Error("Invalid exclusive notification idempotency key");
+export async function sendExclusiveAccessNotificationEmail({
+  email,
+  name,
+  eventType,
+  eventKey,
+}) {
+  const validEvents = new Set([
+    "request_received",
+    "access_approved",
+    "access_rejected",
+    "access_revoked",
+  ]);
+  if (!validEvents.has(eventType))
+    throw new Error("Invalid exclusive access notification event");
+  if (
+    typeof eventKey !== "string" ||
+    !/^(req|grant):[A-Za-z0-9:_-]{1,112}$/.test(eventKey)
+  )
+    throw new Error("Invalid exclusive notification idempotency key");
   return sendEmail({
     templateName: "exclusiveAccessNotification",
     subjectKey: "exclusiveAccessNotification",
     subjectPayload: { eventType },
     templatePayload: { customerName: name, eventType },
-    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    from: requireEmailConfig("NO_REPLY_EMAIL", [
+      "EMAIL_FROM_NOREPLY",
+      "EMAIL_FROM",
+    ]),
     to: email,
     tags: [{ name: "category", value: "exclusive-access" }],
     idempotencyKey: eventKey,
@@ -238,13 +290,23 @@ export async function sendPasswordResetEmail({ email, name, resetUrl }) {
     templateName: "passwordReset",
     subjectKey: "passwordReset",
     templatePayload: { name, resetUrl },
-    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    from: requireEmailConfig("NO_REPLY_EMAIL", [
+      "EMAIL_FROM_NOREPLY",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(email),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendOrderCreatedEmail({ customerEmail, customerName, orderNumber, total, items, orderUrl, idempotencyKey,
+export async function sendOrderCreatedEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  total,
+  items,
+  orderUrl,
+  idempotencyKey,
 }) {
   return sendEmail({
     templateName: "orderCreated",
@@ -257,14 +319,54 @@ export async function sendOrderCreatedEmail({ customerEmail, customerName, order
       items: normalizeOrderItems(items),
       orderUrl,
     },
-    from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
     idempotencyKey,
   });
 }
 
-export async function sendPaymentPendingEmail({ customerEmail, customerName, orderNumber, total, paymentUrl, dueLabel, idempotencyKey,
+export async function sendOrderCancelledEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  total,
+  items,
+  refundStatus,
+  idempotencyKey,
+}) {
+  return sendEmail({
+    templateName: "orderCancelled",
+    subjectKey: "orderCancelled",
+    subjectPayload: { orderNumber },
+    templatePayload: {
+      customerName,
+      orderNumber,
+      total,
+      items: normalizeOrderItems(items),
+      refundStatus,
+    },
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
+    to: sanitizeEmail(customerEmail),
+    replyTo: getDefaultReplyTo(),
+    idempotencyKey,
+  });
+}
+
+export async function sendPaymentPendingEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  total,
+  paymentUrl,
+  dueLabel,
+  idempotencyKey,
 }) {
   return sendEmail({
     templateName: "paymentPending",
@@ -290,19 +392,39 @@ export async function sendPaymentNotFinishedEmail({
     templateName: "paymentNotFinished",
     subjectKey: "paymentNotFinished",
     subjectPayload: { orderNumber },
-    templatePayload: { customerName, orderNumber, total, paymentUrl, recoveryWindowLabel },
+    templatePayload: {
+      customerName,
+      orderNumber,
+      total,
+      paymentUrl,
+      recoveryWindowLabel,
+    },
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendPaymentApprovedEmail({ customerEmail, customerName, orderNumber, total, salesMode = "STOCK", scheduleMessages = [], idempotencyKey }) {
+export async function sendPaymentApprovedEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  total,
+  salesMode = "STOCK",
+  scheduleMessages = [],
+  idempotencyKey,
+}) {
   return sendEmail({
     templateName: "paymentApproved",
     subjectKey: "paymentApproved",
     subjectPayload: { orderNumber },
-    templatePayload: { customerName, orderNumber, total, salesMode, scheduleMessages },
+    templatePayload: {
+      customerName,
+      orderNumber,
+      total,
+      salesMode,
+      scheduleMessages,
+    },
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
@@ -310,49 +432,88 @@ export async function sendPaymentApprovedEmail({ customerEmail, customerName, or
   });
 }
 
-export async function sendPaymentFailedEmail({ customerEmail, customerName, orderNumber, total, paymentUrl, failureReason }) {
+export async function sendPaymentFailedEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  total,
+  paymentUrl,
+  failureReason,
+}) {
   return sendEmail({
     templateName: "paymentFailed",
     subjectKey: "paymentFailed",
     subjectPayload: { orderNumber },
-    templatePayload: { customerName, orderNumber, total, paymentUrl, failureReason },
+    templatePayload: {
+      customerName,
+      orderNumber,
+      total,
+      paymentUrl,
+      failureReason,
+    },
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendOrderPreparingEmail({ customerEmail, customerName, orderNumber, total }) {
+export async function sendOrderPreparingEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  total,
+}) {
   return sendEmail({
     templateName: "orderPreparing",
     subjectKey: "orderPreparing",
     subjectPayload: { orderNumber },
     templatePayload: { customerName, orderNumber, total },
-    from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendShippingEmail({ customerEmail, customerName, orderNumber, trackingCode, trackingUrl }) {
+export async function sendShippingEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  trackingCode,
+  trackingUrl,
+}) {
   return sendEmail({
     templateName: "orderShipped",
     subjectKey: "orderShipped",
     subjectPayload: { orderNumber },
     templatePayload: { customerName, orderNumber, trackingCode, trackingUrl },
-    from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendOrderDeliveredEmail({ customerEmail, customerName, orderNumber, orderUrl, idempotencyKey }) {
+export async function sendOrderDeliveredEmail({
+  customerEmail,
+  customerName,
+  orderNumber,
+  orderUrl,
+  idempotencyKey,
+}) {
   return sendEmail({
     templateName: "orderDelivered",
     subjectKey: "orderDelivered",
     subjectPayload: { orderNumber },
     templatePayload: { customerName, orderNumber, orderUrl },
-    from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
     to: sanitizeEmail(customerEmail),
     replyTo: getDefaultReplyTo(),
     idempotencyKey,
@@ -378,7 +539,12 @@ export async function sendReviewRequestEmail({
   });
 }
 
-export async function sendAbandonedCartReminder1Email({ email, name, cartUrl, products }) {
+export async function sendAbandonedCartReminder1Email({
+  email,
+  name,
+  cartUrl,
+  products,
+}) {
   return sendMarketingEmail({
     templateName: "abandonedCartReminder1",
     subjectKey: "abandonedCartReminder1",
@@ -387,7 +553,12 @@ export async function sendAbandonedCartReminder1Email({ email, name, cartUrl, pr
   });
 }
 
-export async function sendAbandonedCartReminder2Email({ email, name, cartUrl, products }) {
+export async function sendAbandonedCartReminder2Email({
+  email,
+  name,
+  cartUrl,
+  products,
+}) {
   return sendMarketingEmail({
     templateName: "abandonedCartReminder2",
     subjectKey: "abandonedCartReminder2",
@@ -396,7 +567,12 @@ export async function sendAbandonedCartReminder2Email({ email, name, cartUrl, pr
   });
 }
 
-export async function sendAbandonedCartReminder3Email({ email, name, cartUrl, products }) {
+export async function sendAbandonedCartReminder3Email({
+  email,
+  name,
+  cartUrl,
+  products,
+}) {
   return sendMarketingEmail({
     templateName: "abandonedCartReminder3",
     subjectKey: "abandonedCartReminder3",
@@ -405,16 +581,32 @@ export async function sendAbandonedCartReminder3Email({ email, name, cartUrl, pr
   });
 }
 
-export async function sendLaunchAnnouncementEmail({ email, name, launchUrl, couponCode, discountPercent }) {
+export async function sendLaunchAnnouncementEmail({
+  email,
+  name,
+  launchUrl,
+  couponCode,
+  discountPercent,
+}) {
   return sendMarketingEmail({
     templateName: "launchAnnouncement",
     subjectKey: "launchAnnouncement",
-    templatePayload: { name, launchUrl: resolveAnnouncementUrl(launchUrl), couponCode, discountPercent },
+    templatePayload: {
+      name,
+      launchUrl: resolveAnnouncementUrl(launchUrl),
+      couponCode,
+      discountPercent,
+    },
     email,
   });
 }
 
-export async function sendNewDropAnnouncementEmail({ email, name, dropUrl, products }) {
+export async function sendNewDropAnnouncementEmail({
+  email,
+  name,
+  dropUrl,
+  products,
+}) {
   return sendMarketingEmail({
     templateName: "newDropAnnouncement",
     subjectKey: "newDropAnnouncement",
@@ -423,16 +615,31 @@ export async function sendNewDropAnnouncementEmail({ email, name, dropUrl, produ
   });
 }
 
-export async function sendNewProductsAnnouncementEmail({ email, name, productsUrl, products }) {
+export async function sendNewProductsAnnouncementEmail({
+  email,
+  name,
+  productsUrl,
+  products,
+}) {
   return sendMarketingEmail({
     templateName: "newProductsAnnouncement",
     subjectKey: "newProductsAnnouncement",
-    templatePayload: { name, productsUrl, products: normalizeProducts(products) },
+    templatePayload: {
+      name,
+      productsUrl,
+      products: normalizeProducts(products),
+    },
     email,
   });
 }
 
-export async function sendPromotionEmail({ email, name, promotionUrl, couponCode, couponDescription }) {
+export async function sendPromotionEmail({
+  email,
+  name,
+  promotionUrl,
+  couponCode,
+  couponDescription,
+}) {
   return sendMarketingEmail({
     templateName: "promotionEmail",
     subjectKey: "promotionEmail",
@@ -441,16 +648,31 @@ export async function sendPromotionEmail({ email, name, promotionUrl, couponCode
   });
 }
 
-export async function sendCrossSellEmail({ email, name, collectionUrl, products }) {
+export async function sendCrossSellEmail({
+  email,
+  name,
+  collectionUrl,
+  products,
+}) {
   return sendMarketingEmail({
     templateName: "crossSellEmail",
     subjectKey: "crossSellEmail",
-    templatePayload: { name, collectionUrl, products: normalizeProducts(products) },
+    templatePayload: {
+      name,
+      collectionUrl,
+      products: normalizeProducts(products),
+    },
     email,
   });
 }
 
-export async function sendLoyaltyCouponEmail({ email, name, couponCode, couponDescription, shopUrl }) {
+export async function sendLoyaltyCouponEmail({
+  email,
+  name,
+  couponCode,
+  couponDescription,
+  shopUrl,
+}) {
   return sendMarketingEmail({
     templateName: "loyaltyCouponEmail",
     subjectKey: "loyaltyCouponEmail",
@@ -459,7 +681,14 @@ export async function sendLoyaltyCouponEmail({ email, name, couponCode, couponDe
   });
 }
 
-export async function sendInternalNewSaleAlertEmail({ customerName, customerEmail, orderNumber, total, items, orderUrl }) {
+export async function sendInternalNewSaleAlertEmail({
+  customerName,
+  customerEmail,
+  orderNumber,
+  total,
+  items,
+  orderUrl,
+}) {
   const to = getAlertsRecipient();
   if (!to) {
     throw new Error("Missing env var: ALERTS_NOTIFICATION_EMAIL");
@@ -477,7 +706,10 @@ export async function sendInternalNewSaleAlertEmail({ customerName, customerEmai
       items: normalizeProducts(items),
       orderUrl,
     },
-    from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
     to,
     replyTo: getDefaultReplyTo(),
   });
@@ -492,9 +724,19 @@ export async function sendInternalLowStockAlertEmail({ products }) {
   return sendEmail({
     templateName: "internalLowStockAlert",
     subjectKey: "internalLowStockAlert",
-    subjectPayload: { totalProducts: Array.isArray(products) ? products.length : 0 },
-    templatePayload: { products: normalizeProducts(products).map(item => ({ ...item, stock: Number(item.stock ?? 0) })) },
-    from: requireEmailConfig("ORDERS_EMAIL", ["EMAIL_FROM_SALES", "EMAIL_FROM"]),
+    subjectPayload: {
+      totalProducts: Array.isArray(products) ? products.length : 0,
+    },
+    templatePayload: {
+      products: normalizeProducts(products).map(item => ({
+        ...item,
+        stock: Number(item.stock ?? 0),
+      })),
+    },
+    from: requireEmailConfig("ORDERS_EMAIL", [
+      "EMAIL_FROM_SALES",
+      "EMAIL_FROM",
+    ]),
     to,
     replyTo: getDefaultReplyTo(),
   });
@@ -516,14 +758,25 @@ export async function sendInternalPaymentFailedAlertEmail({
     templateName: "internalPaymentFailedAlert",
     subjectKey: "internalPaymentFailedAlert",
     subjectPayload: { orderNumber },
-    templatePayload: { customerName, customerEmail, orderNumber, total, failureReason },
+    templatePayload: {
+      customerName,
+      customerEmail,
+      orderNumber,
+      total,
+      failureReason,
+    },
     from: requireEmailConfig("EMAIL_FROM_FINANCE", ["EMAIL_FROM"]),
     to,
     replyTo: getDefaultReplyTo(),
   });
 }
 
-export async function sendWaitlistLaunchEmail({ email, couponCode, discountPercent, launchUrl }) {
+export async function sendWaitlistLaunchEmail({
+  email,
+  couponCode,
+  discountPercent,
+  launchUrl,
+}) {
   return sendLaunchAnnouncementEmail({
     email,
     couponCode,
@@ -533,4 +786,9 @@ export async function sendWaitlistLaunchEmail({ email, couponCode, discountPerce
   });
 }
 
-export { logEmailFailure, normalizeOrderItems, normalizeProducts, resolveAppUrl };
+export {
+  logEmailFailure,
+  normalizeOrderItems,
+  normalizeProducts,
+  resolveAppUrl,
+};
