@@ -11,11 +11,16 @@ export type StockVariant = {
   color: string;
   unitPriceCents: number;
   availableUnits: number;
+  /** V6 sales mode of the parent product. PREORDER lines never touch variant stock: capacity belongs to the production batch. */
+  salesMode?: "STOCK" | "PREORDER";
+  productionBatchId?: number | null;
 };
 
 export type StockSnapshot = Pick<StockVariant, "id" | "productId" | "sku" | "size" | "color" | "unitPriceCents"> & {
   quantity: number;
   totalCents: number;
+  salesMode?: "STOCK" | "PREORDER";
+  productionBatchId?: number | null;
 };
 
 export type StockAttempt = {
@@ -57,6 +62,13 @@ export interface StockCheckoutTransaction {
   isSkuUnique(sku: string, variantId: number): Promise<boolean>;
   /** Must atomically claim units, conditional on active unreserved stock >= quantity. */
   reserveVariant(variantId: number, quantity: number, attemptId: string): Promise<boolean>;
+  /**
+   * PREORDER lines: serialize on the production batch row, require an open sales window and verify, with a locking read of the
+   * latest committed order items, that already-sold units + `quantity` stay within maximumQuantity. Called BEFORE the attempt's
+   * order items are inserted.
+   * A store without this method cannot sell pre-orders (the domain fails closed).
+   */
+  reservePreorderCapacity?(attemptId: string, batchId: number, quantity: number): Promise<"ok" | "batch_unavailable" | "capacity_exceeded">;
   /** Creates the admin order projection and STOCK attempt atomically; returns the canonical numeric order id. */
   createAttempt(attempt: StockAttempt): Promise<string>;
   beginProviderAttempt(attemptId: string, allowIdempotentRetry: boolean): Promise<boolean>;
@@ -217,11 +229,12 @@ export async function createStockCheckout(input: {
         if (variant.productId !== item.productId) fail("CHECKOUT_VARIANT_OWNERSHIP");
         if (!variant.active) fail("CHECKOUT_VARIANT_INACTIVE");
         if (item.size && item.color && (normalizeText(variant.size).toLowerCase() !== item.size.toLowerCase() || normalizeText(variant.color).toLowerCase() !== item.color.toLowerCase())) fail("CHECKOUT_VARIANT_DIMENSIONS_MISMATCH");
+        if (variant.salesMode === "PREORDER" && !variant.productionBatchId) fail("CHECKOUT_BATCH_REQUIRED");
         if (!variant.sku.trim() || !Number.isSafeInteger(variant.unitPriceCents) || variant.unitPriceCents <= 0) fail("CHECKOUT_VARIANT_CATALOG_INVALID");
         if (!await tx.isSkuUnique(variant.sku, variant.id)) fail("CHECKOUT_VARIANT_SKU_DUPLICATE");
         const totalCents = variant.unitPriceCents * item.quantity;
         if (!Number.isSafeInteger(totalCents) || totalCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
-        snapshots.push({ id: variant.id, productId: variant.productId, sku: variant.sku, size: variant.size, color: variant.color, unitPriceCents: variant.unitPriceCents, quantity: item.quantity, totalCents });
+        snapshots.push({ id: variant.id, productId: variant.productId, sku: variant.sku, size: variant.size, color: variant.color, unitPriceCents: variant.unitPriceCents, quantity: item.quantity, totalCents, salesMode: variant.salesMode === "PREORDER" ? "PREORDER" : "STOCK", productionBatchId: variant.salesMode === "PREORDER" ? variant.productionBatchId ?? null : null });
       }
 
       const amountCents = snapshots.reduce((sum, item) => sum + item.totalCents, 0);
@@ -230,6 +243,19 @@ export async function createStockCheckout(input: {
       // The quota ledger, STOCK attempt, and variant reservations commit or roll
       // back together. A crash cannot leave an expiring pre-claim outside STOCK.
       await tx.reserveExclusiveQuota?.({ userId: input.ownerUserId, attemptId: request.attemptId, items: request.items });
+
+      // Production capacity FIRST (before any order item is inserted): every pre-order writer takes the batch lock before it
+      // writes, so the locking count never waits on another transaction's uncommitted rows (no lock-order inversion).
+      const preorderTotals = new Map<number, number>();
+      for (const snapshot of snapshots) {
+        if (snapshot.salesMode === "PREORDER") preorderTotals.set(snapshot.productionBatchId!, (preorderTotals.get(snapshot.productionBatchId!) ?? 0) + snapshot.quantity);
+      }
+      for (const [batchId, quantity] of [...preorderTotals].sort(([a], [b]) => a - b)) {
+        if (!tx.reservePreorderCapacity) fail("CHECKOUT_PREORDER_UNSUPPORTED");
+        const outcome = await tx.reservePreorderCapacity!(request.attemptId, batchId, quantity);
+        if (outcome === "batch_unavailable") fail("CHECKOUT_BATCH_UNAVAILABLE");
+        if (outcome === "capacity_exceeded") fail("CHECKOUT_BATCH_CAPACITY_EXCEEDED");
+      }
 
       const orderId = `stock-${sha256([request.attemptId, fingerprint]).slice(0, 32)}`;
       const attempt: StockAttempt = {
@@ -242,6 +268,7 @@ export async function createStockCheckout(input: {
       // Aggregate duplicate variant lines and lock variants in stable order to avoid deadlocks.
       const quantities = new Map<number, { productId: number; quantity: number }>();
       for (const snapshot of snapshots) {
+        if (snapshot.salesMode === "PREORDER") continue; // capacity lives in the production batch ledger, not variant stock
         const previous = quantities.get(snapshot.id);
         quantities.set(snapshot.id, { productId: snapshot.productId, quantity: (previous?.quantity ?? 0) + snapshot.quantity });
       }

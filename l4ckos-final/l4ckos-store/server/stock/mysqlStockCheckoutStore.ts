@@ -163,8 +163,11 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         price: number | null;
         stock: number;
         isActive: number;
+        salesMode: string;
+        productionBatchId: number | null;
       })[]>(
-        `SELECT v.id, v.productId, v.sku, v.size, v.color, v.price, v.stock, v.isActive
+        `SELECT v.id, v.productId, v.sku, v.size, v.color, v.price, v.stock, v.isActive, p.salesMode,
+                (SELECT bp.productionBatchId FROM productionBatchProducts bp WHERE bp.productId = v.productId LIMIT 1) AS productionBatchId
            FROM productVariants v
            INNER JOIN products p ON p.id = v.productId
           WHERE v.id = ? LIMIT 1 FOR UPDATE OF v`,
@@ -184,6 +187,8 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         color: row.color,
         unitPriceCents: asNumber(row.price),
         availableUnits: asNumber(row.stock),
+        salesMode: row.salesMode === "PREORDER" ? "PREORDER" : "STOCK",
+        productionBatchId: row.productionBatchId == null ? null : asNumber(row.productionBatchId),
       };
     },
 
@@ -260,6 +265,27 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       return true;
     },
 
+    async reservePreorderCapacity(_attemptId, batchId, quantity): Promise<"ok" | "batch_unavailable" | "capacity_exceeded"> {
+      // The batch row lock serializes every pre-order writer; the locking count below always reads the latest committed rows
+      // (not the transaction snapshot). It runs before this attempt inserts its own order items.
+      const [batches] = await connection.execute<(RowDataPacket & { maximumQuantity: number | null; open: number })[]>(
+        `SELECT maximumQuantity,
+                (status = 'OPEN' AND (salesOpenAt IS NULL OR salesOpenAt <= CURRENT_TIMESTAMP)
+                  AND (salesCloseAt IS NULL OR salesCloseAt > CURRENT_TIMESTAMP)) AS open
+           FROM productionBatches WHERE id = ? FOR UPDATE`,
+        [batchId],
+      );
+      const batch = batches[0];
+      if (!batch || Number(batch.open) !== 1) return "batch_unavailable";
+      if (batch.maximumQuantity === null || batch.maximumQuantity === undefined) return "ok";
+      const [claimed] = await connection.execute<(RowDataPacket & { n: number | string })[]>(
+        `SELECT COALESCE(SUM(i.quantity), 0) AS n FROM orderItems i JOIN orders o ON o.id = i.orderId
+          WHERE i.productionBatchId = ? AND i.salesModeAtPurchase = 'PREORDER' AND o.status <> 'cancelled' FOR UPDATE`,
+        [batchId],
+      );
+      return asNumber(claimed[0]?.n) + quantity > asNumber(batch.maximumQuantity) ? "capacity_exceeded" : "ok";
+    },
+
     async createAttempt(attempt): Promise<string> {
       const amountCents = attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
       let orderId: string;
@@ -300,12 +326,20 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
           // admin and customer order views; the STOCK-specific *Snapshot columns keep the attempt-level identity.
           `INSERT INTO orderItems
             (orderId, productId, quantity, unitPrice, totalPrice, variantId, skuSnapshot, sizeSnapshot, colorSnapshot,
-             productName, variantName, sku, size, color, imageUrl)
+             productName, variantName, sku, size, color, imageUrl,
+             salesModeAtPurchase, productionBatchId, productionBatchNameAtPurchase,
+             estimatedShippingStartAtPurchase, estimatedShippingEndAtPurchase,
+             estimatedManufacturingStartAtPurchase, estimatedManufacturingEndAtPurchase)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
              (SELECT name FROM products WHERE id = ?), (SELECT name FROM productVariants WHERE id = ?), ?, ?, ?,
-             (SELECT imageUrl FROM products WHERE id = ?))`,
+             (SELECT imageUrl FROM products WHERE id = ?),
+             ?, ?, (SELECT name FROM productionBatches WHERE id = ?),
+             (SELECT estimatedShippingStart FROM productionBatches WHERE id = ?), (SELECT estimatedShippingEnd FROM productionBatches WHERE id = ?),
+             (SELECT estimatedManufacturingStart FROM productionBatches WHERE id = ?), (SELECT estimatedManufacturingEnd FROM productionBatches WHERE id = ?))`,
           [orderId, item.productId, item.quantity, item.unitPriceCents, item.totalCents, item.id, item.sku, item.size, item.color,
-            item.productId, item.id, item.sku, item.size, item.color, item.productId],
+            item.productId, item.id, item.sku, item.size, item.color, item.productId,
+            item.salesMode === "PREORDER" ? "PREORDER" : "STOCK", item.productionBatchId ?? null,
+            item.productionBatchId ?? null, item.productionBatchId ?? null, item.productionBatchId ?? null, item.productionBatchId ?? null, item.productionBatchId ?? null],
         );
         await connection.execute<ResultSetHeader>(
           `INSERT INTO stockCheckoutItems
@@ -449,7 +483,16 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
 
     async consumeReservations(attemptId): Promise<void> {
       const reservations = await activeReservations(connection, attemptId);
-      if (reservations.length === 0) throw new StockMySqlInvariantError("Cannot consume an attempt without active reservations");
+      if (reservations.length === 0) {
+        // Legitimate only for an all-PREORDER attempt (capacity lives in the batch ledger, there is no variant stock to consume).
+        const [stockLines] = await connection.execute<(RowDataPacket & { n: number | string })[]>(
+          `SELECT COUNT(*) AS n FROM orderItems i JOIN orders o ON o.id = i.orderId
+            WHERE o.stockAttemptId = ? AND i.salesModeAtPurchase = 'STOCK'`,
+          [attemptId],
+        );
+        if (asNumber(stockLines[0]?.n) > 0) throw new StockMySqlInvariantError("Cannot consume an attempt without active reservations");
+        return;
+      }
       for (const reservation of reservations) {
         const [result] = await connection.execute<ResultSetHeader>(
           `UPDATE productVariants

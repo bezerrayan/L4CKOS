@@ -124,7 +124,8 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
         supportsIdempotencyKey: true,
         async createPayment(input) {
           providerCalls.push(input);
-          return { paymentId: "pay-synthetic-1", checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
+          // unique per call (a sync push+length), so concurrent attempts never collide on the payment unique key
+          return { paymentId: `pay-synthetic-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
         },
       },
     });
@@ -375,6 +376,100 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     // 5. Without a configured token nothing can be verified.
     vi.stubEnv("ASAAS_WEBHOOK_TOKEN", "");
     expect((await processWebhookEnvelope({ ...body(129), id: "evt-replay-other" })).status).toBe(503);
+  });
+
+  describe("XIV Bis pre-order over STOCK: transactional production-batch capacity", () => {
+    const BATCH = 70;
+    async function seedPreorder(opts: { maximumQuantity: number | null; status?: string; salesCloseAt?: string | null } = { maximumQuantity: 3 }) {
+      await pool.query("SET FOREIGN_KEY_CHECKS = 0");
+      for (const t of ["productionBatchProducts", "productionBatches"]) await pool.query(`DELETE FROM ${t}`);
+      await pool.query("DELETE FROM productVariants WHERE productId = 6"); await pool.query("DELETE FROM products WHERE id = 6");
+      await pool.query("SET FOREIGN_KEY_CHECKS = 1");
+      await pool.execute(
+        "INSERT INTO productionBatches (id, name, status, salesOpenAt, salesCloseAt, estimatedShippingStart, estimatedShippingEnd, estimatedManufacturingStart, estimatedManufacturingEnd, minimumQuantity, maximumQuantity) VALUES (?, 'Lote XIV Bis #1', ?, '2020-01-01 00:00:00', ?, '2027-02-01 00:00:00', '2027-02-20 00:00:00', '2026-12-10', '2027-01-20', 0, ?)",
+        [BATCH, opts.status ?? "OPEN", opts.salesCloseAt ?? null, opts.maximumQuantity],
+      );
+      // NO fictitious stock: the pre-order variants carry stock 0.
+      await pool.execute("INSERT INTO products (id, name, category, price, stock, salesMode) VALUES (6, 'Camiseta Clã XIV Bis (pré-venda)', 'camisetas', 12900, 0, 'PREORDER')");
+      await pool.execute("INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) VALUES (21, 6, 'XIV-M', 'XIV-PRE-M', 'M', 'Preto', 12900, 0, 0, 1), (22, 6, 'XIV-G', 'XIV-PRE-G', 'G', 'Preto', 12900, 0, 0, 1)");
+      await canonicalizeSeedVariants(pool);
+      await pool.execute("INSERT INTO productionBatchProducts (productionBatchId, productId) VALUES (?, 6)", [BATCH]);
+    }
+    const buy = (session: string, attemptId: string, quantity: number, variantId = 21) =>
+      httpClient(session).stockCheckout.create.mutate({ attemptId, items: [{ productId: 6, variantId, quantity }], delivery: syntheticDelivery });
+    const claimed = async () => Number(((await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COALESCE(SUM(i.quantity),0) AS n FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId = 70 AND i.salesModeAtPurchase='PREORDER' AND o.status <> 'cancelled'"))[0] as any)[0].n);
+    const variantStock = async () => ((await pool.query<(Record<string, unknown> & { stock: number; reservedStock: number })[]>("SELECT stock, reservedStock FROM productVariants WHERE id IN (21,22) ORDER BY id"))[0] as any[]).map(r => [Number(r.stock), Number(r.reservedStock)]);
+    const webhook = (eventId: string, event: string, status: string, orderId: string, paymentId: string, value: number) =>
+      fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: eventId, event, payment: { id: paymentId, externalReference: orderId, status, value, currency: "BRL" } }) });
+
+    it("sells against batch capacity without touching variant stock, snapshotting the batch on the order item", async () => {
+      await seedPreorder({ maximumQuantity: 3 });
+      const catalog = await httpClient("owner-81").products.sellableVariants.query(6);
+      expect(catalog.variants.map(v => v.availableUnits)).toEqual([null, null]); // unlimited per variant; capacity is the batch's
+      const created = await buy("owner-81", "xiv-preorder-attempt-0001", 2);
+      expect(created).toMatchObject({ status: "pending", amountCents: 25800 });
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      const [items] = await pool.query<(Record<string, unknown>)[]>("SELECT salesModeAtPurchase, productionBatchId, productionBatchNameAtPurchase, quantity, unitPrice, totalPrice, productName FROM orderItems");
+      expect(items).toEqual([expect.objectContaining({ salesModeAtPurchase: "PREORDER", productionBatchId: BATCH, productionBatchNameAtPurchase: "Lote XIV Bis #1", quantity: 2, unitPrice: 12900, totalPrice: 25800 })]);
+      const [reservations] = await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockReservations");
+      expect(Number(reservations[0].n)).toBe(0);
+      expect(await claimed()).toBe(2);
+    });
+
+    it("concurrent buyers racing for the last units: capacity is never exceeded", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      // three DIFFERENT buyers at once, one unit each, two units available
+      const results = await Promise.allSettled([buy("owner-81", "xiv-preorder-race-attempt-1", 1), buy("other-82", "xiv-preorder-race-attempt-2", 1), buy("admin-83", "xiv-preorder-race-attempt-3", 1, 22)]);
+      const ok = results.filter(r => r.status === "fulfilled");
+      const rejected = results.filter(r => r.status === "rejected") as PromiseRejectedResult[];
+      expect(ok).toHaveLength(2);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      expect(await claimed()).toBe(2);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      // a full batch disappears from the public catalog
+      expect((await httpClient("owner-81").products.sellableVariants.query(6)).variants).toEqual([]);
+    });
+
+    it("an over-capacity request rolls back completely (no order, attempt or item)", async () => {
+      await seedPreorder({ maximumQuantity: 3 });
+      await expect(buy("owner-81", "xiv-preorder-big-attempt-0001", 4)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      for (const t of ["orders", "orderItems", "stockCheckoutAttempts", "stockCheckoutItems"]) {
+        const [r] = await pool.query<(Record<string, unknown> & { n: number })[]>(`SELECT COUNT(*) AS n FROM ${t}`);
+        expect(Number(r[0].n)).toBe(0);
+      }
+      expect(providerCalls).toHaveLength(0);
+    });
+
+    it("closing the batch (status or sales window) stops sales; an unlimited batch has no cap", async () => {
+      await seedPreorder({ maximumQuantity: 3, status: "CLOSED" });
+      await expect(buy("owner-81", "xiv-preorder-closed-attempt-1", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      await seedPreorder({ maximumQuantity: 3, salesCloseAt: "2021-01-01 00:00:00" });
+      await expect(buy("owner-81", "xiv-preorder-window-attempt-1", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      await seedPreorder({ maximumQuantity: null });
+      expect(await buy("owner-81", "xiv-preorder-unlimited-0001", 9)).toMatchObject({ status: "pending" });
+      await pool.execute("UPDATE productionBatches SET status = 'CLOSED' WHERE id = ?", [BATCH]);
+      await expect(buy("other-82", "xiv-preorder-closed-attempt-2", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      expect(providerCalls).toHaveLength(1);
+    });
+
+    it("a released attempt frees capacity; a paid one keeps it and consumes no variant stock", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const a = await buy("owner-81", "xiv-preorder-release-attempt-0001", 2);
+      await expect(buy("other-82", "xiv-preorder-release-attempt-0002", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      const failed = await webhook("evt-pre-refused-1", "PAYMENT_REFUSED", "REFUSED", a.orderId, "pay-synthetic-1", 258);
+      expect(failed.status).toBe(200);
+      expect(await claimed()).toBe(0);
+      const b = await buy("other-82", "xiv-preorder-release-attempt-0003", 2);
+      expect(b).toMatchObject({ status: "pending" });
+      const paid = await webhook("evt-pre-paid-1", "PAYMENT_RECEIVED", "RECEIVED", b.orderId, "pay-synthetic-2", 258);
+      expect(paid.status).toBe(200);
+      const [orderRows] = await pool.query<(Record<string, unknown> & { status: string })[]>("SELECT status FROM orders WHERE id = ?", [b.orderId]);
+      expect(orderRows[0].status).toBe("paid");
+      expect(await claimed()).toBe(2);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      await expect(buy("admin-83", "xiv-preorder-release-attempt-0004", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+    });
   });
 
   it("keeps the public gate ahead of all MySQL and provider work", async () => {

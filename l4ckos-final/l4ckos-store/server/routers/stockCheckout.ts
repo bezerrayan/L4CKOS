@@ -31,7 +31,7 @@ function mapCheckoutError(error: unknown): never {
   if (error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") {
     throw new TRPCError({ code: "NOT_FOUND", message: "Tentativa não encontrada." });
   }
-  if (error.code === "CHECKOUT_STOCK_INSUFFICIENT" || error.code === "CHECKOUT_VARIANT_INACTIVE") {
+  if (error.code === "CHECKOUT_STOCK_INSUFFICIENT" || error.code === "CHECKOUT_VARIANT_INACTIVE" || error.code === "CHECKOUT_BATCH_CAPACITY_EXCEEDED" || error.code === "CHECKOUT_BATCH_UNAVAILABLE" || error.code === "CHECKOUT_BATCH_REQUIRED") {
     throw createAppError({ trpcCode: "CONFLICT", appCode: "STOCK_UNAVAILABLE", message: "Estoque indisponível para esta variante." });
   }
   if (error.code === "CHECKOUT_ATTEMPT_EXPIRED") {
