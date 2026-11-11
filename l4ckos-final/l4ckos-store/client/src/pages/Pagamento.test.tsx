@@ -139,6 +139,57 @@ describe("Pagamento — creating and payment states", () => {
     expect(request.delivery.optionId).toBe("local-plano-piloto");
   });
 
+  describe("carrier freight on a STOCK cart", () => {
+    const sedex = { id: "melhor-envio-1", label: "SEDEX", description: "Correios", price: 31.9, minDays: 2, maxDays: 4 };
+    const quote = vi.fn();
+    const signed = (priceCents: number) => ({ source: "melhor-envio", options: [{ optionId: "melhor-envio-1", label: "SEDEX", description: "Correios", priceCents, minDays: 2, maxDays: 4, quoteToken: "signed-token-".padEnd(60, "x"), expiresAt: "2026-12-01T12:00:00.000Z" }] });
+    async function chooseSedex(user: ReturnType<typeof userEvent.setup>) {
+      csrfFetch.mockResolvedValue(jsonResponse({ options: [sedex] }));
+      setTrpc("stockCheckout.quoteShipping.useMutation", () => ({ mutateAsync: quote, isPending: false, error: null }));
+      await user.type(screen.getByLabelText(/CPF ou CNPJ/), "12345678909");
+      await user.type(screen.getByLabelText(/^CEP/), "01001000");
+      await user.click(await screen.findByRole("button", { name: /SEDEX/ }, { timeout: 3000 }));
+      await user.type(screen.getByLabelText(/^Número/), "10");
+    }
+    beforeEach(() => quote.mockReset());
+
+    it("asks the server for a signed quote and creates with its token, never with a client price", async () => {
+      quote.mockResolvedValue(signed(3190));
+      create.mockResolvedValue({ attemptId: ATTEMPT, orderId: "501", status: "pending", amountCents: 16090, replayed: false });
+      resume.mockImplementation(echo({ status: "pending", amountCents: 16090 }));
+      const user = mountPagamento();
+      await chooseSedex(user);
+      await waitFor(() => expect(finalize().disabled).toBe(false));
+      await user.click(finalize());
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+      const request = create.mock.calls[0][0];
+      expect(request.delivery).toMatchObject({ optionId: "melhor-envio-1", quoteToken: expect.stringMatching(/^signed-token-/) });
+      expect(request.delivery.address.zipCode).toBe("01001000");
+      expect(JSON.stringify(request)).not.toMatch(/priceCents|shippingPrice|"price"|amount/i);
+      expect(quote.mock.calls[0][0].items).toEqual([{ productId: 1, variantId: 11, quantity: 1 }]);
+    });
+
+    it("stops with an explanation when the server quote differs from the displayed price, and creates nothing", async () => {
+      quote.mockResolvedValue(signed(4590));
+      const user = mountPagamento();
+      await chooseSedex(user);
+      await waitFor(() => expect(finalize().disabled).toBe(false));
+      await user.click(finalize());
+      expect(await screen.findByText(/O valor do frete mudou/)).toBeTruthy();
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("stops when the carrier option is no longer offered by the server", async () => {
+      quote.mockResolvedValue({ source: "unavailable", options: [] });
+      const user = mountPagamento();
+      await chooseSedex(user);
+      await waitFor(() => expect(finalize().disabled).toBe(false));
+      await user.click(finalize());
+      expect(await screen.findByText(/não está mais disponível/)).toBeTruthy();
+      expect(create).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not create twice on a double click", async () => {
     let release: (value: unknown) => void = () => {};
     create.mockImplementation(() => new Promise(resolve => { release = resolve; }));

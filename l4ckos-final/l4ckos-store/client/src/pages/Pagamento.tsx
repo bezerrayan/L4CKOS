@@ -106,6 +106,7 @@ function PagamentoContent() {
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
   const stockCreate = trpc.stockCheckout.create.useMutation();
+  const stockShippingQuote = trpc.stockCheckout.quoteShipping.useMutation();
   const trpcUtils = trpc.useUtils();
   const attemptStorage = useMemo(() => createUserAttemptStorage(user?.id), [user?.id]);
   const localOpenAttempt = cart.items.length === 0 && isAuthenticated ? listOpenStockAttempts(attemptStorage)[0] ?? null : null;
@@ -624,24 +625,40 @@ function PagamentoContent() {
           setPaymentError("Revise as variantes do carrinho. Itens STOCK precisam de uma variante válida e ativa.");
           return;
         }
-        if (selectedShipping.id !== "local-plano-piloto") {
+        const stockAddress = {
+          recipient: customerName.trim(),
+          zipCode: sanitizeCep(cep),
+          street: addressStreet.trim(),
+          number: addressNumber.trim(),
+          complement: addressComplement.trim() || undefined,
+          neighborhood: addressNeighborhood.trim(),
+          city: addressCity.trim(),
+          state: addressState.trim(),
+        };
+        const stockLines = stockLinesFromCart(cart.items);
+        if (selectedShipping.id === "local-plano-piloto") {
+          // Price and stock stay server-authoritative; this is only a delivery snapshot.
+          await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress });
+        } else if (selectedShipping.id.startsWith("melhor-envio-")) {
+          // Carrier freight: the server re-quotes from ITS catalog and signs the terms; the charge uses only that signed quote.
+          const signed = await stockShippingQuote.mutateAsync({
+            items: cart.items.map(item => ({ productId: item.product.id, variantId: item.variant!.variantId, quantity: item.quantity })), // stockCartCompatible guarantees a variant
+            address: stockAddress,
+          });
+          const option = signed.options.find(candidate => candidate.optionId === selectedShipping.id);
+          if (!option) {
+            setPaymentError("Esta opção de frete não está mais disponível. Recalcule o frete e tente novamente.");
+            return;
+          }
+          if (option.priceCents !== Math.round(selectedShipping.price * 100)) {
+            setPaymentError(`O valor do frete mudou para ${formatPrice(option.priceCents / 100)}. Recalcule o frete para revisar o total antes de finalizar.`);
+            return;
+          }
+          await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress });
+        } else {
           setPaymentError("Esta modalidade de entrega ainda não está disponível para pedidos STOCK.");
           return;
         }
-        // Price and stock stay server-authoritative; this is only a delivery snapshot.
-        await stockClient.create(stockLinesFromCart(cart.items), {
-          optionId: "local-plano-piloto",
-          address: {
-            recipient: customerName.trim(),
-            zipCode: sanitizeCep(cep),
-            street: addressStreet.trim(),
-            number: addressNumber.trim(),
-            complement: addressComplement.trim() || undefined,
-            neighborhood: addressNeighborhood.trim(),
-            city: addressCity.trim(),
-            state: addressState.trim(),
-          },
-        });
         await refreshStockAttempt();
         return;
       }
