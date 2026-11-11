@@ -6,6 +6,7 @@ import {
   createStagingMaintenanceMiddleware,
   isStagingMaintenanceEnabled,
 } from "./stagingMaintenance";
+import { ISOLATED_HOMOLOGATION_IDENTITY } from "./railwayEnvironment";
 
 const stagingEnv = {
   NODE_ENV: "production",
@@ -131,5 +132,16 @@ describe("staging maintenance", () => {
       expect(response.status).toBe(200);
       expect(handled()).toBe(1);
     });
+  });
+
+  it("reconhece somente o conjunto completo de IDs do staging isolado", () => {
+    const isolated = {
+      ...stagingEnv,
+      RAILWAY_PROJECT_ID: ISOLATED_HOMOLOGATION_IDENTITY.projectId,
+      RAILWAY_ENVIRONMENT_ID: ISOLATED_HOMOLOGATION_IDENTITY.environmentId,
+      RAILWAY_SERVICE_ID: ISOLATED_HOMOLOGATION_IDENTITY.serviceId,
+    };
+    expect(isStagingMaintenanceEnabled(isolated)).toBe(true);
+    expect(isStagingMaintenanceEnabled({ ...isolated, RAILWAY_SERVICE_ID: "unknown" })).toBe(false);
   });
 });

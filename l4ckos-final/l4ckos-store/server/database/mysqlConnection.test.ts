@@ -8,6 +8,7 @@ import {
 import { MYSQL_TLS_CA_SHA256, MYSQL_TLS_HOST } from "./mysqlTls.mjs";
 
 const STAGING_PROJECT = "2bb90c8e-eb65-43ee-826b-f93750f0499c";
+const ISOLATED_STAGING_PROJECT = "66faf690-a068-40d1-b85c-cb5d8595560a";
 const STAGING_HOST = "mysql-staging.railway.internal";
 const STAGING_CA = "-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDLVNUQUdJTkctQ0EtRk9SLVRFU1RT\n-----END CERTIFICATE-----\n";
 const STAGING_CA_SHA = createHash("sha256").update(STAGING_CA, "utf8").digest("hex");
@@ -62,6 +63,17 @@ describe("MySQL connection policy per environment", () => {
     it("is detected from the staging Railway identity even without APP_ENV", () => {
       const { APP_ENV: _omit, ...withoutAppEnv } = staging;
       expect(resolveMysqlConnection(stagingUrl, withoutAppEnv).environment).toBe("staging");
+    });
+    it("treats the isolated homologation project as staging and never production", () => {
+      expect(resolveDatabaseEnvironment({
+        NODE_ENV: "production",
+        RAILWAY_PROJECT_ID: ISOLATED_STAGING_PROJECT,
+      })).toBe("staging");
+      reject(productionUrl, {
+        NODE_ENV: "production",
+        APP_ENV: "production",
+        RAILWAY_PROJECT_ID: ISOLATED_STAGING_PROJECT,
+      }, "DB_ENVIRONMENT_CONFLICT");
     });
     it("fails closed when host, CA or CA pin is missing", () => {
       for (const key of ["STAGING_DB_TLS_HOST", "STAGING_DB_TLS_CA_PEM", "STAGING_DB_TLS_CA_SHA256"] as const) {

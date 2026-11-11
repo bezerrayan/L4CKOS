@@ -1,12 +1,7 @@
 import type { RequestHandler } from "express";
+import { isApprovedStagingIdentity } from "./railwayEnvironment";
 
 type RuntimeEnvironment = Record<string, string | undefined>;
-
-const STAGING = Object.freeze({
-  projectId: "2bb90c8e-eb65-43ee-826b-f93750f0499c",
-  environmentId: "15545eee-bc02-4b70-afc4-19a5db9e6f46",
-  serviceId: "9f1c7705-f2f9-48cf-b957-8f63a6bba4db",
-});
 
 export function isStagingMaintenanceEnabled(
   env: RuntimeEnvironment = process.env,
@@ -14,9 +9,7 @@ export function isStagingMaintenanceEnabled(
   return (
     env.STAGING_MAINTENANCE_MODE === "true" &&
     env.NODE_ENV === "production" &&
-    env.RAILWAY_PROJECT_ID === STAGING.projectId &&
-    env.RAILWAY_ENVIRONMENT_ID === STAGING.environmentId &&
-    env.RAILWAY_SERVICE_ID === STAGING.serviceId
+    isApprovedStagingIdentity(env)
   );
 }
 

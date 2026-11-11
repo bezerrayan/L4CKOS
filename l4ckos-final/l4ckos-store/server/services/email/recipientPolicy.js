@@ -1,16 +1,27 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 const recoveryRecipient = new AsyncLocalStorage();
+const STAGING_PROJECT = "2bb90c8e-eb65-43ee-826b-f93750f0499c";
+const STAGING_ENVIRONMENT = "15545eee-bc02-4b70-afc4-19a5db9e6f46";
+const STAGING_SERVICE = "9f1c7705-f2f9-48cf-b957-8f63a6bba4db";
+const HOMOLOGATION_PROJECT = "66faf690-a068-40d1-b85c-cb5d8595560a";
+const HOMOLOGATION_ENVIRONMENT = "5335340d-311c-47e9-9713-6e5a86969c88";
+const HOMOLOGATION_SERVICE = "d66762a4-422a-4656-94a1-502215a27aa2";
+const isApprovedStagingIdentity = () => (
+  process.env.RAILWAY_PROJECT_ID === STAGING_PROJECT
+    && process.env.RAILWAY_ENVIRONMENT_ID === STAGING_ENVIRONMENT
+    && process.env.RAILWAY_SERVICE_ID === STAGING_SERVICE
+) || (
+  process.env.RAILWAY_PROJECT_ID === HOMOLOGATION_PROJECT
+    && process.env.RAILWAY_ENVIRONMENT_ID === HOMOLOGATION_ENVIRONMENT
+    && process.env.RAILWAY_SERVICE_ID === HOMOLOGATION_SERVICE
+);
 // Called only after a transactional selective grant check; never grants financial scope.
 export function withRecoveryRecipient(email, action) {
-  if(process.env.NODE_ENV!=='production'||process.env.RAILWAY_PROJECT_ID!==STAGING_PROJECT
-    ||process.env.RAILWAY_ENVIRONMENT_ID!==STAGING_ENVIRONMENT
-    ||process.env.RAILWAY_SERVICE_ID!=='9f1c7705-f2f9-48cf-b957-8f63a6bba4db'
+  if(process.env.NODE_ENV!=='production'||!isApprovedStagingIdentity()
     ||process.env.ASAAS_WEBHOOK_RECOVERY_MODE!=='review_only'||process.env.EMAIL_MODE!=='restricted')
     throw new EmailPolicyError('ASAAS_WEBHOOK_RECOVERY_EMAIL_BLOCKED');
   return recoveryRecipient.run(normalize(email), action);
 }
-const STAGING_PROJECT = "2bb90c8e-eb65-43ee-826b-f93750f0499c";
-const STAGING_ENVIRONMENT = "15545eee-bc02-4b70-afc4-19a5db9e6f46";
 const normalize = (value) => String(value ?? "").trim().toLowerCase();
 // Only plain mailboxes are accepted. Display names, wildcards and address lists
 // embedded in a single recipient fail closed instead of being partially parsed.
@@ -29,7 +40,10 @@ export function isStagingEmailEnvironment() {
   return normalize(process.env.APP_ENV) === "staging"
     || normalize(process.env.EMAIL_ENV) === "staging"
     || process.env.RAILWAY_PROJECT_ID === STAGING_PROJECT
-    || process.env.RAILWAY_ENVIRONMENT_ID === STAGING_ENVIRONMENT;
+    || process.env.RAILWAY_ENVIRONMENT_ID === STAGING_ENVIRONMENT
+    || process.env.RAILWAY_PROJECT_ID === HOMOLOGATION_PROJECT
+    || process.env.RAILWAY_ENVIRONMENT_ID === HOMOLOGATION_ENVIRONMENT
+    || process.env.RAILWAY_SERVICE_ID === HOMOLOGATION_SERVICE;
 }
 
 export function assertEmailRecipientsAllowed(payload) {

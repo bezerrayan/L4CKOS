@@ -1,4 +1,5 @@
 /** Staging-only grants. Original holds are immutable; releases add exact event audit records. */
+import { isApprovedStagingIdentity } from "../_core/railwayEnvironment";
 import { assertSelectiveFinancialBuyer } from "./stagingFinancialBuyer";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
@@ -204,7 +205,11 @@ export async function loadSelectedGrant(
       c.fingerprint === order.checkoutFingerprint &&
       c.method === d.request.method &&
       d.candidateHash === admissionHash(c) &&
-      c.stageProject === "2bb90c8e-eb65-43ee-826b-f93750f0499c" &&
+      isApprovedStagingIdentity({
+        RAILWAY_PROJECT_ID: c.stageProject,
+        RAILWAY_ENVIRONMENT_ID: process.env.RAILWAY_ENVIRONMENT_ID,
+        RAILWAY_SERVICE_ID: process.env.RAILWAY_SERVICE_ID,
+      }) &&
       candidate.id < grant.id
   );
   const payments = await admissionRows(

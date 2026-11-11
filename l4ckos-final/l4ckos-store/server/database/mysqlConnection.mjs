@@ -8,6 +8,8 @@ import {
 // Known staging identity (same constants the staging guards in services/asaasConfig.ts and payments/webhookRecovery.ts use).
 const STAGING_RAILWAY_PROJECT_ID = "2bb90c8e-eb65-43ee-826b-f93750f0499c";
 const STAGING_RAILWAY_ENVIRONMENT_ID = "15545eee-bc02-4b70-afc4-19a5db9e6f46";
+const ISOLATED_STAGING_RAILWAY_PROJECT_ID = "66faf690-a068-40d1-b85c-cb5d8595560a";
+const ISOLATED_STAGING_RAILWAY_ENVIRONMENT_ID = "5335340d-311c-47e9-9713-6e5a86969c88";
 const APP_ENVIRONMENTS = new Set(["production", "staging", "local-test"]);
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const DISPOSABLE_DATABASE = /^l4ckos_(?:stock_)?test(?:_[a-z0-9_]+)?$/;
@@ -38,7 +40,10 @@ export function resolveDatabaseEnvironment(env = process.env) {
   if (appEnv !== undefined && appEnv !== "" && !APP_ENVIRONMENTS.has(appEnv)) fail("DB_ENVIRONMENT_UNKNOWN");
   const stagingIdentity =
     env.RAILWAY_PROJECT_ID === STAGING_RAILWAY_PROJECT_ID ||
-    env.RAILWAY_ENVIRONMENT_ID === STAGING_RAILWAY_ENVIRONMENT_ID;
+    env.RAILWAY_ENVIRONMENT_ID === STAGING_RAILWAY_ENVIRONMENT_ID ||
+    env.RAILWAY_PROJECT_ID === ISOLATED_STAGING_RAILWAY_PROJECT_ID ||
+    env.RAILWAY_ENVIRONMENT_ID === ISOLATED_STAGING_RAILWAY_ENVIRONMENT_ID ||
+    (env.RAILWAY_SERVICE_ID === "d66762a4-422a-4656-94a1-502215a27aa2");
   if (appEnv === "local-test") {
     // The local exception can never coexist with a deployed identity or a production runtime.
     if (env.NODE_ENV === "production" || stagingIdentity || env.RAILWAY_PROJECT_ID || env.RAILWAY_ENVIRONMENT_ID || env.RAILWAY_SERVICE_ID) {

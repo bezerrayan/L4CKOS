@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
+import { isIsolatedHomologationIdentity } from "./railwayEnvironment";
 import { sdk } from "./sdk";
 import { sendWelcomeAccountEmail } from "../services/emailService.js";
 
@@ -118,6 +119,10 @@ function hasConfiguredGoogleCredentials() {
 
 export function registerOAuthRoutes(app: Express) {
   app.get("/api/oauth/login", async (req: Request, res: Response) => {
+    if (isIsolatedHomologationIdentity(process.env)) {
+      res.status(503).json({ error: "STAGING_OAUTH_DISABLED" });
+      return;
+    }
     try { getFrontendBaseUrl(req); } catch { res.status(503).json({ error: "OAuth frontend configuration unavailable" }); return; }
     if (!hasConfiguredGoogleCredentials()) {
       const status = getGoogleCredentialStatus();
@@ -153,6 +158,10 @@ export function registerOAuthRoutes(app: Express) {
   });
 
   app.get("/api/oauth/callback", async (req: Request, res: Response) => {
+    if (isIsolatedHomologationIdentity(process.env)) {
+      res.status(503).json({ error: "STAGING_OAUTH_DISABLED" });
+      return;
+    }
     try { getFrontendBaseUrl(req); } catch { res.status(503).json({ error: "OAuth frontend configuration unavailable" }); return; }
     const code = getQueryParam(req, "code");
     const state = getQueryParam(req, "state");

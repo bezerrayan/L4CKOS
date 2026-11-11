@@ -42,6 +42,7 @@ import managerSyncRoutes from "../routes/managerSyncRoutes";
 import { createStockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
 import { createConfiguredStockAsaasProvider } from "../stock/configuredStockAsaasProvider";
 import { startStockReservationExpiryScheduler } from "../stock/stockReservationExpiryScheduler";
+import { assertStagingApiAccessConfiguration, createStagingApiAccessMiddleware } from "./stagingApiAccess";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -182,6 +183,7 @@ async function listenWithRetry(
 }
 
 async function startServer() {
+  assertStagingApiAccessConfiguration(process.env);
   assertApprovedMysqlTlsCa();
   initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
   const recoveryWorkers = prepareRecoveryWorkerStartup(process.env, {
@@ -234,6 +236,9 @@ async function startServer() {
   function isAllowed(origin?: string) {
     return isAllowedOrigin(origin, { isProduction, allowedOrigins });
   }
+
+  // Protect direct API calls, including webhooks, before every route except the static health probe.
+  app.use(createStagingApiAccessMiddleware(process.env));
   const hasGoogleClientId = Boolean(process.env.GOOGLE_CLIENT_ID?.trim());
   const hasGoogleClientSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim());
   const hasGoogleRedirectUri = Boolean(process.env.GOOGLE_REDIRECT_URI?.trim());

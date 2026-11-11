@@ -4,7 +4,7 @@ vi.mock("./env", () => ({ ENV: { frontendUrl: "https://frontend.example", isProd
 vi.mock("../db", () => ({ getUserByOpenId: vi.fn(async () => ({ id: 1 })), upsertUser: vi.fn(), rotateUserSessionVersion: vi.fn(async () => 2) }));
 vi.mock("./sdk", () => ({ sdk: { createSessionToken: vi.fn(async () => "synthetic-session") } }));
 vi.mock("../services/emailService.js", () => ({ sendWelcomeAccountEmail: vi.fn() }));
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 const base = "https://frontend.example";
 const rejected = ["/a/..//evil.invalid", "/a/%2e%2e//evil.invalid", "//evil.invalid", "\\\\evil.invalid", "/\\evil.invalid", "https://evil.invalid", "http://frontend.example/", "//user@evil.invalid", "https://frontend.example@evil.invalid/", "/%2f%2fevil.invalid", "/%5cevil.invalid", "/%0d%0aevil", " /gestao", "/\nevil"];
 function routes() { const map = new Map<string, any>(); registerOAuthRoutes({ get: (path: string, cb: any) => map.set(path, cb) } as any); return map; }
@@ -26,6 +26,19 @@ describe("OAuth same-origin returnTo", () => {
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const r = res();
     await routes().get("/api/oauth/callback")(req({ code: "synthetic", state: "wrong" }, "oauth_state=expected"), r);
     expect(r.status).toHaveBeenCalledWith(400); expect(fetch).not.toHaveBeenCalled();
+  });
+  it("blocks Google OAuth in isolated homologation so only synthetic accounts can log in", async () => {
+    vi.stubEnv("RAILWAY_PROJECT_ID", "66faf690-a068-40d1-b85c-cb5d8595560a");
+    vi.stubEnv("RAILWAY_ENVIRONMENT_ID", "5335340d-311c-47e9-9713-6e5a86969c88");
+    vi.stubEnv("RAILWAY_SERVICE_ID", "d66762a4-422a-4656-94a1-502215a27aa2");
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const r = res();
+    await routes().get("/api/oauth/login")(req({}), r);
+    expect(r.status).toHaveBeenCalledWith(503);
+    expect(r.json).toHaveBeenCalledWith({ error: "STAGING_OAUTH_DISABLED" });
+    const callback = res();
+    await routes().get("/api/oauth/callback")(req({ code: "synthetic", state: "synthetic" }), callback);
+    expect(callback.status).toHaveBeenCalledWith(503);
+    expect(fetch).not.toHaveBeenCalled();
   });
   it("revalidates callback state without changing session flow", async () => {
     for (const path of ["/path?x=1#y", ...rejected]) {

@@ -4,6 +4,7 @@ import {z} from 'zod';
 import {canonical} from '../../database/schema/fingerprint';
 import {parseAsaasOrderReference} from '../../shared/asaasWebhookSemantics';
 import {selectiveEffectsAllowed,selectiveEventAllowed,selectiveOrderAllowed} from './stagingCheckoutAdmission';
+import { isApprovedStagingIdentity } from "../_core/railwayEnvironment";
 
 export const RECOVERY_HOLD_ACTION='webhook.recovery_held.v1';
 const EVIDENCE_ACTION='webhook.recovery_evidence.v1';
@@ -16,10 +17,7 @@ export function captureRecoveryFence(){
   if(startupStamp!==undefined&&startupStamp!==signature)throw Error('WEBHOOK_RECOVERY_RESTART_REQUIRED');
   const mode=process.env.ASAAS_WEBHOOK_RECOVERY_MODE||'';
   if(!['','off','review_only'].includes(mode))throw Error('WEBHOOK_RECOVERY_MODE_INVALID');
-  if(mode==='review_only'&&(process.env.NODE_ENV!=='production'||
-    process.env.RAILWAY_PROJECT_ID!=='2bb90c8e-eb65-43ee-826b-f93750f0499c'||
-    process.env.RAILWAY_ENVIRONMENT_ID!=='15545eee-bc02-4b70-afc4-19a5db9e6f46'||
-    process.env.RAILWAY_SERVICE_ID!=='9f1c7705-f2f9-48cf-b957-8f63a6bba4db'))throw Error('WEBHOOK_RECOVERY_STAGING_REQUIRED');
+  if(mode==='review_only'&&(process.env.NODE_ENV!=='production'||!isApprovedStagingIdentity(process.env)))throw Error('WEBHOOK_RECOVERY_STAGING_REQUIRED');
   return {signature,reviewOnly:mode==='review_only'};
 }
 export function initializeWebhookRecoveryMode(){const fence=captureRecoveryFence();startupStamp=fence.signature;return fence;}
