@@ -67,9 +67,16 @@ const ATTEMPTS_STORAGE_KEY = "l4ckos:stock-checkout-attempts:v1";
 const TERMINAL_ATTEMPT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_TERMINAL_ATTEMPTS = 40;
 const REPLACEABLE_STATUSES = new Set(["failed", "expired", "cancelled"]);
+const OPEN_STATUSES = new Set<StockAttemptRecord["status"]>(["pending", "reserved", "creating", "ambiguous"]);
 
 function fail(code: string): never {
   throw new Error(code);
+}
+
+/** Stable backend error code (`error.data.appError.code`). Message text is never interpreted. */
+export function appErrorCodeOf(error: unknown): string {
+  const code = (error as { data?: { appError?: { code?: unknown } | null } | null } | null)?.data?.appError?.code;
+  return typeof code === "string" ? code : "";
 }
 
 export function resolveStockVariant(
@@ -220,7 +227,21 @@ export function createStockCheckoutClient(input: {
         attemptId = getOrCreateStockAttemptId({ storage: input.storage, items, createId: input.createId ?? (() => globalThis.crypto.randomUUID()), now });
       }
       const request = stockCheckoutRequestV1Schema.parse({ attemptId, items, ...(delivery ? { delivery } : {}) });
-      const response = stockCheckoutResponseV1Schema.parse(await input.transport.create(request));
+      let raw: unknown;
+      try {
+        raw = await input.transport.create(request);
+      } catch (error) {
+        const code = appErrorCodeOf(error);
+        // Definitive contract outcomes are recorded so the next call can never resend a dead attemptId.
+        if (code === "CHECKOUT_ATTEMPT_EXPIRED") {
+          // Reservation expired before reaching the provider: this attemptId must not be retried.
+          saveStockAttemptStatus({ storage: input.storage, items, attemptId, status: "expired", now: input.now?.(), canStartNewAttempt: true });
+        } else if (code === "PAYMENT_UNDER_ANALYSIS") {
+          saveStockAttemptStatus({ storage: input.storage, items, attemptId, status: "ambiguous", now: input.now?.(), canStartNewAttempt: false });
+        }
+        throw error;
+      }
+      const response = stockCheckoutResponseV1Schema.parse(raw);
       const status: StockAttemptRecord["status"] = response.status === "reconciliation_required" ? "ambiguous" : response.status;
       saveStockAttemptStatus({ storage: input.storage, items, attemptId, status, now: input.now?.(), canStartNewAttempt: false });
       return response;
@@ -231,9 +252,14 @@ export function createStockCheckoutClient(input: {
       const attemptId = findStoredStockAttemptId({ storage: input.storage, items, now: input.now?.() });
       if (!attemptId) {
         if (!input.transport.resumeLatest) return fail("STOCK_ATTEMPT_NOT_FOUND_LOCALLY");
+        // Owner-scoped on the server. Only an attempt still in flight may block a new one: a settled or
+        // dead attempt (paid/failed/expired/cancelled) belongs to an older purchase and must never be
+        // shown as pending, confirm this cart, or clear it.
         const latest = await input.transport.resumeLatest();
-        if (latest === null) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
-        return stockAttemptResumeV1Schema.parse(latest);
+        if (latest == null) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
+        const parsed = stockAttemptResumeV1Schema.parse(latest);
+        if (!OPEN_STATUSES.has(parsed.status)) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
+        return parsed;
       }
       const response = stockAttemptResumeV1Schema.parse(await input.transport.resume(attemptId));
       if (response.attemptId !== attemptId) return fail("STOCK_ATTEMPT_CORRELATION_MISMATCH");
@@ -260,8 +286,6 @@ export function createStockCheckoutClient(input: {
     },
   };
 }
-
-const OPEN_STATUSES = new Set<StockAttemptRecord["status"]>(["pending", "reserved", "creating", "ambiguous"]);
 
 /**
  * Attempts this browser started that are not known to be settled (no `paid`, no definitive terminal state).

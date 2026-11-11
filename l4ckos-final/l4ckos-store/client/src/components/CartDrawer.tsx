@@ -29,12 +29,21 @@ export default function CartDrawer() {
       if (event.key === "Escape") closeCartDrawer();
       if (event.key !== "Tab") return;
       // Keep Tab/Shift+Tab inside the open dialog.
-      const focusable = Array.from(
-        drawerRef.current?.querySelectorAll<HTMLElement>("a[href], button:not([disabled]):not([tabindex='-1'])") ?? [],
-      );
+      // A visible cookie banner stays reachable by keyboard: it is part of the trap, after the drawer.
+      const selector = "a[href], button:not([disabled]):not([tabindex='-1'])";
+      const focusable = [
+        ...Array.from(drawerRef.current?.querySelectorAll<HTMLElement>(selector) ?? []),
+        ...Array.from(document.querySelectorAll<HTMLElement>("[data-l4-cookie-banner] a[href], [data-l4-cookie-banner] button:not([disabled])")),
+      ];
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
+      // Focus was lost (e.g. the banner was dismissed while focused): bring it back into the dialog.
+      if (!(document.activeElement instanceof HTMLElement) || !focusable.includes(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();

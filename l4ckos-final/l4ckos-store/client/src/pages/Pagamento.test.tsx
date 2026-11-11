@@ -256,3 +256,117 @@ describe("Pagamento — order recovery", () => {
     expect(screen.queryByText("Pagamento aprovado")).toBeNull();
   });
 });
+
+describe("Pagamento — resume safety with a full cart (localStorage lost / other device)", () => {
+  const notFound = () => Promise.reject(Object.assign(new Error("nf"), { data: { code: "NOT_FOUND" } }));
+  beforeEach(() => {
+    setTrpc("utils.stockCheckout.resumeLatest.fetch", () => resumeLatest());
+    resume.mockImplementation(notFound);
+  });
+
+  it("consults the backend first: an open attempt of the same user blocks a second charge and create is never called", async () => {
+    resumeLatest.mockResolvedValue(resumeBody({ attemptId: "attempt-0000000000000077", status: "pending" }));
+    const user = mountPagamento();
+    const status = await screen.findByRole("status");
+    expect(status.getAttribute("data-stock-status")).toBe("pending");
+    expect(within(status).getByRole("link", { name: "Continuar pagamento" })).toBeTruthy();
+    await fillCheckout(user);
+    expect(finalize().disabled).toBe(true);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("a settled older order from resumeLatest is not shown as pending, does not confirm and does not clear the cart", async () => {
+    resumeLatest.mockResolvedValue(resumeBody({ status: "paid", checkoutUrl: undefined }));
+    const user = mountPagamento();
+    await waitFor(() => expect(resumeLatest).toHaveBeenCalled());
+    await fillCheckout(user);
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+    expect(screen.queryByText("Pagamento aprovado")).toBeNull();
+    expect(screen.queryByText("Aguardando confirmação do pagamento")).toBeNull();
+    expect(window.localStorage.getItem("loja-escoteira:cart")).not.toBeNull();
+  });
+
+  it("cancelled/expired older attempts do not block the user from buying again", async () => {
+    resumeLatest.mockResolvedValue(resumeBody({ status: "cancelled", canStartNewAttempt: true, checkoutUrl: undefined }));
+    const user = mountPagamento();
+    await waitFor(() => expect(resumeLatest).toHaveBeenCalled());
+    await fillCheckout(user);
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+  });
+
+  it("a network error while asking the backend is not a definitive 'no attempt': checkout stays blocked and offers to re-check", async () => {
+    resumeLatest.mockRejectedValue(new TypeError("Failed to fetch"));
+    const user = mountPagamento();
+    expect(await screen.findByText(/Não foi possível consultar esta tentativa/)).toBeTruthy();
+    await fillCheckout(user);
+    expect(finalize().disabled).toBe(true);
+    expect(create).not.toHaveBeenCalled();
+    resumeLatest.mockResolvedValue(null);
+    await user.click(screen.getByRole("button", { name: "Consultar status" }));
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+  });
+
+  it("does not allow starting an attempt while the backend is still being consulted", async () => {
+    let release: (value: unknown) => void = () => {};
+    resumeLatest.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const user = mountPagamento();
+    await fillCheckout(user);
+    expect(finalize().disabled).toBe(true);
+    await act(async () => { release(null); });
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+    expect(create).not.toHaveBeenCalled();
+    void user;
+  });
+
+  it("survives a reload: the stored attempt is resumed from the backend, not recreated", async () => {
+    resume.mockImplementation(echo({ status: "pending" }));
+    mountPagamento({ attempt: { status: "pending" } });
+    const status = await screen.findByRole("status");
+    expect(status.getAttribute("data-stock-status")).toBe("pending");
+    expect(resume).toHaveBeenCalledWith({ attemptId: ATTEMPT });
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pagamento — stable error codes", () => {
+  const codeError = (code: string, trpc = "CONFLICT") => Object.assign(new Error("texto qualquer"), { data: { code: trpc, appError: { code } } });
+
+  it("CHECKOUT_ATTEMPT_EXPIRED: the next click uses a NEW attemptId", async () => {
+    create.mockRejectedValueOnce(codeError("CHECKOUT_ATTEMPT_EXPIRED"))
+      .mockImplementation(async (request: { attemptId: string }) => ({ attemptId: request.attemptId, orderId: "502", status: "pending", amountCents: 9990, replayed: false }));
+    resume.mockRejectedValue(Object.assign(new Error("nf"), { data: { code: "NOT_FOUND" } }));
+    const user = mountPagamento();
+    await fillCheckout(user);
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+    await user.click(finalize());
+    expect(await screen.findByText(/A reserva expirou/)).toBeTruthy();
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+    await user.click(finalize());
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create.mock.calls[1][0].attemptId).not.toBe(create.mock.calls[0][0].attemptId);
+  });
+
+  it("PAYMENT_UNDER_ANALYSIS keeps the button blocked until the backend reconciles, even if the re-query finds nothing", async () => {
+    create.mockRejectedValue(codeError("PAYMENT_UNDER_ANALYSIS"));
+    resume.mockRejectedValue(Object.assign(new Error("nf"), { data: { code: "NOT_FOUND" } }));
+    const user = mountPagamento();
+    await fillCheckout(user);
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+    await user.click(finalize());
+    expect(await screen.findByText(/O pagamento está em análise/)).toBeTruthy();
+    await waitFor(() => expect(resume).toHaveBeenCalled());
+    await waitFor(() => expect(finalize().disabled).toBe(true));
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores message text: a 'STOCK_UNAVAILABLE' message without data.appError.code is treated as an unknown outcome", async () => {
+    create.mockRejectedValue(new Error("STOCK_UNAVAILABLE"));
+    resume.mockRejectedValue(Object.assign(new Error("nf"), { data: { code: "NOT_FOUND" } }));
+    const user = mountPagamento();
+    await fillCheckout(user);
+    await waitFor(() => expect(finalize().disabled).toBe(false));
+    await user.click(finalize());
+    expect(await screen.findByText(/Falha de conexão/)).toBeTruthy();
+    expect(screen.queryByText(/acabou de ficar indisponível/)).toBeNull();
+  });
+});

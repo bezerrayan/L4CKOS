@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import "./CookiePreferences.css";
 
 const CONSENT_KEY = "l4ckos:cookie-preferences";
+/** CSS variable other fixed layers (CartDrawer) use to stay clear of the visible banner. */
+export const COOKIE_BANNER_OFFSET_VAR = "--l4-cookie-banner-offset";
 const POLICY_VERSION = "2026-06-24";
 
 type StoredCookiePreferences = {
@@ -83,6 +85,33 @@ export default function CookiePreferences() {
   const [savedMessage, setSavedMessage] = useState("");
   const panelRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const bannerRef = useRef<HTMLElement | null>(null);
+  const bannerShown = visible && !panelOpen;
+
+  // Publish the banner's occupied height so fixed layers (the cart drawer) end above it
+  // instead of being covered. Cleared as soon as the banner is gone. No consent is touched.
+  useEffect(() => {
+    const root = document.documentElement;
+    const banner = bannerRef.current;
+    if (!bannerShown || !banner) {
+      root.style.removeProperty(COOKIE_BANNER_OFFSET_VAR);
+      return;
+    }
+    const publish = () => {
+      const top = banner.getBoundingClientRect().top;
+      const occupied = Math.max(0, Math.ceil(window.innerHeight - top));
+      root.style.setProperty(COOKIE_BANNER_OFFSET_VAR, `${occupied}px`);
+    };
+    publish();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(publish) : null;
+    observer?.observe(banner);
+    window.addEventListener("resize", publish);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", publish);
+      root.style.removeProperty(COOKIE_BANNER_OFFSET_VAR);
+    };
+  }, [bannerShown]);
 
   useEffect(() => {
     setVisible(!readStoredPreferences());
@@ -149,7 +178,7 @@ export default function CookiePreferences() {
   return (
     <>
       {visible && !panelOpen ? (
-        <section className="l4-cookie-banner" aria-labelledby="cookie-banner-title">
+        <section ref={bannerRef} className="l4-cookie-banner" data-l4-cookie-banner aria-labelledby="cookie-banner-title">
           <div>
             <h2 id="cookie-banner-title">COOKIES ESSENCIAIS</h2>
             <p>
