@@ -329,7 +329,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
         supportsIdempotencyKey: true,
         async createPayment(input) {
           providerCalls.push(input);
-          return { paymentId: "pay-synthetic-1", checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
+          return { paymentId: `pay-synthetic-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
         },
       },
     });
