@@ -6,6 +6,7 @@ import { PreorderInfo, CheckoutPreorderNotice } from "../components/PreorderInfo
  */
 import { Link } from "react-router-dom";
 import { useCart } from "../contexts/CartContext";
+import { DropQuotaNotice } from "../components/DropQuotaNotice";
 import { formatPrice } from "../lib/utils";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -102,6 +103,8 @@ function PagamentoContent() {
     clearCart,
     hasUnavailableItems,
     revalidateCart,
+    dropQuotaBlocked,
+    canIncreaseQuantity,
   } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
@@ -566,6 +569,10 @@ function PagamentoContent() {
       );
       return;
     }
+    if (dropQuotaBlocked) {
+      setPaymentError("A sacola excede o limite de compra de um drop exclusivo ou exige acesso. Revise a sacola antes de continuar.");
+      return;
+    }
 
     if (paymentData || createAsaasCharge.isPending || stockAttemptPending) {
       return;
@@ -797,7 +804,7 @@ function PagamentoContent() {
                         <div className="l4-checkout-item-controls">
                           <button type="button" onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions, item.variant?.variantId)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} /></button>
                           <span>{item.quantity}</span>
-                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
+                          <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)} disabled={!canIncreaseQuantity(item.product.id)} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} /></button>
                           <button type="button" className="l4-checkout-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)} aria-label={`Remover ${item.product.name}`}><Trash2 size={16} /></button>
                         </div>
                       </div>
@@ -913,10 +920,11 @@ function PagamentoContent() {
             </section>
 
             <section className="l4-checkout-finish">
+              <DropQuotaNotice />
               <CheckoutPreorderNotice items={cart.items} />
               {isMobile && cart.items.filter(item=>item.product.salesMode==='PREORDER').map(item=><PreorderInfo key={getItemKey(item.product.id,item.selectedOptions,item.variant?.variantId)} product={item.product} compact />)}
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={!isCatalogReady || hasUnavailableItems || !hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || stockConsulting || stockUnderAnalysis || stockCheckoutBlocked}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
+              <button type="button" onClick={() => void handleCheckout()} disabled={!isCatalogReady || hasUnavailableItems || dropQuotaBlocked || !hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || stockConsulting || stockUnderAnalysis || stockCheckoutBlocked}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
               {hasUnavailableItems && !stockCheckoutBlocked ? (
                 <p className="is-error" role="alert">
                   Um item da sacola não está disponível na quantidade escolhida (estoque ou capacidade da pré-venda). Ajuste as quantidades.
@@ -1039,6 +1047,7 @@ function PagamentoContent() {
                           onClick={() =>
                             updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)
                           }
+                          disabled={!canIncreaseQuantity(item.product.id)}
                         >
                           +
                         </button>
@@ -1126,6 +1135,7 @@ function PagamentoContent() {
                             onClick={() =>
                               updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)
                             }
+                            disabled={!canIncreaseQuantity(item.product.id)}
                           >
                             +
                           </button>

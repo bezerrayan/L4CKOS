@@ -1,4 +1,5 @@
 import { PreorderInfo, MixedShippingNotice } from "./PreorderInfo";
+import { DropQuotaNotice } from "./DropQuotaNotice";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
@@ -25,6 +26,8 @@ export default function CartDrawer() {
     closeCartDrawer,
     hasUnavailableItems,
     isCatalogReady,
+    dropQuotaBlocked,
+    canIncreaseQuantity,
   } = useCart();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
@@ -115,6 +118,7 @@ export default function CartDrawer() {
           <>
             <div className="l4-cart-drawer-items">
               <MixedShippingNotice items={cart.items} />
+              <DropQuotaNotice />
             {hasUnavailableItems ? (
                 <p className="l4-preorder" role="alert">
                   Não foi possível confirmar a combinação ou disponibilidade de um item. Remova-o e selecione novamente na página do produto.
@@ -140,7 +144,7 @@ export default function CartDrawer() {
                       <div className="l4-cart-drawer-quantity" aria-label={`Quantidade de ${item.product.name}`}>
                         <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.selectedOptions, item.variant?.variantId)} aria-label="Diminuir quantidade"><Minus size={14} /></button>
                         <span>{item.quantity}</span>
-                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)} aria-label="Aumentar quantidade"><Plus size={14} /></button>
+                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)} aria-label="Aumentar quantidade" disabled={!canIncreaseQuantity(item.product.id)} title={canIncreaseQuantity(item.product.id) ? undefined : "Limite do drop atingido"}><Plus size={14} /></button>
                       </div>
                       <button type="button" className="l4-cart-drawer-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions, item.variant?.variantId)} aria-label={`Remover ${item.product.name}`}>
                         <Trash2 size={16} />
@@ -155,8 +159,8 @@ export default function CartDrawer() {
               <div className="l4-cart-drawer-subtotal"><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p>Frete e prazo de transporte consultados no checkout. Fabricação e preparação não estão incluídas nesse prazo.</p>
               <button type="button" className="l4-cart-drawer-checkout" onClick={() => goTo("/checkout")}
-                disabled={hasUnavailableItems || !isCatalogReady}
-              >Finalizar compra</button>
+                disabled={hasUnavailableItems || dropQuotaBlocked || !isCatalogReady}
+              >{!hasUnavailableItems && dropQuotaBlocked ? "Revise o limite do drop" : "Finalizar compra"}</button>
               <Link to="/carrinho" onClick={closeCartDrawer}>Ver sacola completa</Link>
             </footer>
           </>

@@ -105,7 +105,7 @@ export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { addToCart, closeCartDrawer, preorderAdditionalLimit, cart } = useCart();
+  const { addToCart, closeCartDrawer, preorderAdditionalLimit, cart, dropQuota } = useCart();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const { showToast } = useToast();
 
@@ -304,7 +304,11 @@ export default function ProductDetail() {
     : product.stock;
   // Units already in the cart for this product count against the SERVER-reported remaining units (a hint; the server re-checks at checkout).
   const inCartUnits = cart.items.filter(item => item.product.id === product.id).reduce((sum, item) => sum + item.quantity, 0);
-  const quotaLeft = dropView?.exclusive && dropView.viewer.status === "unlocked" ? Math.max(0, (dropView.viewer.unitsRemaining ?? 0) - inCartUnits) : Infinity;
+  // The authorisation is ONE quota per drop: units of every product/size of the same drop in the cart count against it.
+  const dropInCartUnits = dropView?.exclusive
+    ? Math.max(inCartUnits, dropQuota.groups.find(group => group.dropId === dropView.drop.id)?.requested ?? 0)
+    : inCartUnits;
+  const quotaLeft = dropView?.exclusive && dropView.viewer.status === "unlocked" ? Math.max(0, (dropView.viewer.unitsRemaining ?? 0) - dropInCartUnits) : Infinity;
   const quotaCap = Number.isFinite(quotaLeft) ? Math.max(1, quotaLeft) : 99;
   const quantityLimit = Math.min(quotaCap, product.salesMode === "PREORDER"
     ? Math.max(1, Math.min(preorderLimit ?? 99, 99))
@@ -676,7 +680,7 @@ export default function ProductDetail() {
             ) : null}
           </div>
 
-          {dropView?.exclusive ? (exclusiveBlocked ? <ExclusiveAccessPanel view={dropView} productId={product.id} /> : <ExclusiveUnlockedNotice view={dropView} inCartUnits={inCartUnits} />) : null}
+          {dropView?.exclusive ? (exclusiveBlocked ? <ExclusiveAccessPanel view={dropView} productId={product.id} /> : <ExclusiveUnlockedNotice view={dropView} inCartUnits={inCartUnits} dropInCartUnits={dropInCartUnits} />) : null}
           {quotaUsedUpByCart && !exclusiveBlocked ? <p role="status" className="l4-xd-state">Sua sacola já usa todas as unidades da autorização. <Link to="/carrinho">Ver sacola</Link></p> : null}
           {!dropQuery.isLoading && !exclusiveBlocked && !quotaUsedUpByCart && (
           <div className="l4-detail-actions">

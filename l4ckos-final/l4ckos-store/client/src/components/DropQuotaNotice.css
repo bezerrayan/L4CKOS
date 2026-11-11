@@ -1,0 +1,7 @@
+.l4-dropquota { background: #151515; border: 1px solid rgba(230, 214, 194, 0.25); border-radius: 6px; color: #d4d4d4; padding: 10px 12px; margin: 10px 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.l4-dropquota p { margin: 0; }
+.l4-dropquota strong { display: block; margin-bottom: 3px; color: #E6D6C2; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.l4-dropquota--warning { border-color: rgba(248, 113, 113, 0.55); background: rgba(127, 29, 29, 0.18); }
+.l4-dropquota--warning strong { color: #fca5a5; }
+.l4-dropquota-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.l4-dropquota-links a { color: #E6D6C2; text-decoration: underline; }

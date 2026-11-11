@@ -1,4 +1,5 @@
 import { PreorderInfo, MixedShippingNotice } from "../components/PreorderInfo";
+import { DropQuotaNotice } from "../components/DropQuotaNotice";
 ﻿import { Link } from "react-router-dom";
 import { ShoppingBag } from "lucide-react";
 import EmptyState from "../components/EmptyState";
@@ -16,6 +17,8 @@ export default function Carrinho() {
     updateQuantity,
     hasUnavailableItems,
     isCatalogReady,
+    dropQuotaBlocked,
+    canIncreaseQuantity,
   } = useCart();
 
   const getItemKey = (productId: number, selectedOptions?: Record<string, string>, variantId?: number) => {
@@ -65,6 +68,7 @@ export default function Carrinho() {
         <div style={{ ...styles.layout, gridTemplateColumns: isMobile ? "1fr" : "1fr 340px" }}>
           <div style={styles.itemsList}>
             <MixedShippingNotice items={cart.items} />
+            <DropQuotaNotice />
             {hasUnavailableItems ? (
               <p role="alert" style={{ color: "#fca5a5", margin: 0 }}>
                 Não foi possível confirmar a combinação ou disponibilidade de um item. Remova-o e selecione novamente na página do produto.
@@ -126,8 +130,10 @@ export default function Carrinho() {
                       </button>
                       <span style={styles.qtyValue}>{item.quantity}</span>
                       <button
-                        style={styles.qtyButton}
+                        style={{ ...styles.qtyButton, ...(canIncreaseQuantity(item.product.id) ? {} : { opacity: 0.4, cursor: "not-allowed" }) }}
                         onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions, item.variant?.variantId)}
+                        disabled={!canIncreaseQuantity(item.product.id)}
+                        title={canIncreaseQuantity(item.product.id) ? undefined : "Limite do drop atingido"}
                       >
                         +
                       </button>
@@ -157,14 +163,14 @@ export default function Carrinho() {
               <div style={styles.summaryRow}><span>Itens</span><strong>{cart.itemCount}</strong></div>
               <div style={styles.summaryRow}><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p style={styles.summaryHint}>Frete, cupom e pagamento na próxima etapa.</p>
-              {hasUnavailableItems || !isCatalogReady ? (
+              {hasUnavailableItems || dropQuotaBlocked || !isCatalogReady ? (
                 <button
                   type="button"
                   disabled
                   style={{ ...styles.checkoutButton, border: 0, opacity: 0.55 }}
                 >
                   {isCatalogReady
-                    ? (cart.items.some(item => item.product.salesMode === "PREORDER") ? "Pré-venda indisponível" : "Item indisponível")
+                    ? (!hasUnavailableItems && dropQuotaBlocked ? "Revise o limite do drop" : cart.items.some(item => item.product.salesMode === "PREORDER") ? "Pré-venda indisponível" : "Item indisponível")
                     : "Atualizando disponibilidade…"}
                 </button>
               ) : (
@@ -184,7 +190,7 @@ export default function Carrinho() {
             <p style={styles.mobileCheckoutLabel}>Subtotal</p>
             <p style={styles.mobileCheckoutValue}>{formatPrice(cart.total)}</p>
           </div>
-          {hasUnavailableItems || !isCatalogReady ? (
+          {hasUnavailableItems || dropQuotaBlocked || !isCatalogReady ? (
             <button
               type="button"
               disabled
@@ -195,7 +201,7 @@ export default function Carrinho() {
               }}
             >
               {isCatalogReady
-                ? (cart.items.some(item => item.product.salesMode === "PREORDER") ? "Pré-venda indisponível" : "Item indisponível")
+                ? (!hasUnavailableItems && dropQuotaBlocked ? "Revise o limite do drop" : cart.items.some(item => item.product.salesMode === "PREORDER") ? "Pré-venda indisponível" : "Item indisponível")
                 : "Atualizando disponibilidade…"}
             </button>
           ) : (

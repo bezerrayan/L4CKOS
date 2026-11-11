@@ -4,7 +4,7 @@ import { trpc } from "../lib/trpc";
  * Fornece: items, addToCart, removeFromCart, clearCart, updateQuantity, total
  */
 
-import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect,
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useMemo,
   useRef,
 } from "react";
 import type { CartItem, Cart, SelectedOptions, CartVariant, SellableVariantCatalog } from "../types/cart";
@@ -13,6 +13,7 @@ import { calculateCartTotal, calculateItemCount } from "../types/cart";
 import { trackStoreEvent } from "../lib/analytics";
 import { resolveCartVariant } from "../utils/cartVariantIdentity";
 import { productPriceFromCents } from "../utils/money";
+import { additionalUnitsAllowed, computeDropQuota, type DropGroup, type DropViewInput } from "../utils/dropQuota";
 import {
   batchAcceptsSales,
   batchRemainingCapacity,
@@ -34,7 +35,15 @@ type CartContextType = {
   preorderAdditionalLimit: (product: Product) => number | null;
   hasUnavailableItems: boolean;
   revalidateCart: () => Promise<boolean>;
+  /** Exclusive-drop limits derived from the server view; empty when unknown. The checkout remains the definitive gate. */
+  dropQuota: { groups: DropGroup[]; byProduct: Record<number, DropGroup> };
+  /** True only when the server data already proves checkout would refuse (over limit, no access, window closed). */
+  dropQuotaBlocked: boolean;
+  /** False when a KNOWN drop limit leaves no room for one more unit of this line's product. */
+  canIncreaseQuantity: (productId: number) => boolean;
 };
+
+const DROP_VIEW_REFRESH_MS = 30_000;
 
 // ============= CRIAR CONTEXTO =============
 
@@ -66,6 +75,34 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [variantCatalogs, setVariantCatalogs] = useState<Record<number, SellableVariantCatalog>>({});
   const [variantCatalogsLoading, setVariantCatalogsLoading] = useState(false);
   const variantProductIdsKey = Array.from(new Set(items.map(item => item.product.id))).sort((a, b) => a - b).join(",");
+  // Exclusive-drop views per product (viewer-specific). Keyed by account so a login/logout/expiry never reuses another state.
+  const me = trpc.auth.me.useQuery(undefined, { retry: false, staleTime: 30_000 });
+  const viewerKey = String((me?.data as { id?: number } | null | undefined)?.id ?? "anon");
+  const [dropViews, setDropViews] = useState<Record<number, DropViewInput>>({});
+  const fetchDropViews = useCallback(async (productIds: number[]) => {
+    const entries = await Promise.all(productIds.map(async productId => {
+      try {
+        const view = await trpcUtils.exclusiveDrops.forProduct.fetch({ productId }, { staleTime: 0 });
+        return [productId, (view ?? null) as DropViewInput | null] as const;
+      } catch {
+        return [productId, null] as const; // unknown: no cap is invented
+      }
+    }));
+    const views: Record<number, DropViewInput> = {};
+    for (const [productId, view] of entries) if (view) views[productId] = view;
+    return views;
+  }, [trpcUtils]);
+  useEffect(() => {
+    const productIds = variantProductIdsKey ? variantProductIdsKey.split(",").map(Number) : [];
+    if (productIds.length === 0) { setDropViews({}); return; }
+    let current = true;
+    const refresh = () => { void fetchDropViews(productIds).then(views => { if (current) setDropViews(views); }); };
+    refresh();
+    const timer = window.setInterval(refresh, DROP_VIEW_REFRESH_MS);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    return () => { current = false; window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, [fetchDropViews, variantProductIdsKey, viewerKey]);
 
   useEffect(() => {
     const productIds = variantProductIdsKey ? variantProductIdsKey.split(",").map(Number) : [];
@@ -206,6 +243,25 @@ export function CartProvider({ children }: { children: ReactNode }) {
       );
     });
   const hasUnavailableItems = unavailable(currentItems);
+  const dropQuota = useMemo(
+    () => computeDropQuota(currentItems.map(item => ({ productId: item.product.id, quantity: item.quantity })), dropViews),
+    [currentItems, dropViews],
+  );
+  const dropQuotaBlocked = dropQuota.groups.some(group => group.blocking);
+  const canIncreaseQuantity = useCallback(
+    (productId: number) => additionalUnitsAllowed(dropQuota.byProduct[productId]) !== 0,
+    [dropQuota],
+  );
+  /** Units still allowed for a product (cart lines + a product not yet in the cart), or null when no cap is known. */
+  const dropAdditionalFor = (productId: number, lines: CartItem[]): number | null => {
+    const view = dropViews[productId] ?? (trpcUtils.exclusiveDrops.forProduct.getData({ productId }) as DropViewInput | undefined);
+    const lineViews = { ...dropViews, ...(view ? { [productId]: view } : {}) };
+    const quota = computeDropQuota(
+      [...lines.map(item => ({ productId: item.product.id, quantity: item.quantity })), { productId, quantity: 0 }],
+      lineViews,
+    );
+    return additionalUnitsAllowed(quota.byProduct[productId]);
+  };
   const revalidateCart = async () => {
     const result = await catalog.refetch();
     if (!result.isSuccess) return false;
@@ -217,6 +273,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const freshVariants: Record<number, SellableVariantCatalog> = {};
     for (const [productId, variantCatalog] of entries) if (variantCatalog) freshVariants[productId] = variantCatalog;
     setVariantCatalogs(freshVariants);
+    setDropViews(await fetchDropViews(ids));
     const refreshed = refreshItems(itemsRef.current, result.data, freshVariants);
     itemsRef.current = refreshed;
     setItems(refreshed);
@@ -256,6 +313,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       if (variantCatalogs[product.id] && !variantCatalogs[product.id].publicPurchaseAllowed) return false;
       if (variant && product.salesMode !== "PREORDER" &&
         (variant.availableUnits === null || quantity > variant.availableUnits)) return false;
+      // Known exclusive-drop cap (shared by every product of the drop). Unknown cap: the server decides at checkout.
+      const dropAdditional = dropAdditionalFor(product.id, itemsRef.current);
+      if (dropAdditional !== null && quantity > dropAdditional) return false;
       if (product.salesMode === "PREORDER") {
         if (!batchAcceptsSales(product.productionBatch)) return false;
         const remaining = batchRemainingCapacity(product.productionBatch);
@@ -320,7 +380,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setIsCartDrawerOpen(true);
       return true;
     },
-    [currentItems, catalog.data, catalog.isSuccess, catalog.isFetching, variantCatalogs]
+    [currentItems, catalog.data, catalog.isSuccess, catalog.isFetching, variantCatalogs, dropViews]
   );
 
   // 📌 Remover produto do carrinho
@@ -385,6 +445,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
             )
           : target?.variant ? Math.max(0, Math.min(stockMaximum, stockMaximum - otherQuantity)) : Math.max(0, Math.min(stockMaximum, stockMaximum - otherQuantity));
 
+      // Increases are clamped to the KNOWN drop cap (units may always be reduced, even while over the limit).
+      const dropAdditional = target && quantity > target.quantity ? dropAdditionalFor(productId, itemsRef.current) : null;
+      const dropMaximum = target && dropAdditional !== null ? target.quantity + dropAdditional : Infinity;
       const next = itemsRef.current.map(item =>
         item.product.id === productId &&
         (variantId !== undefined
@@ -397,6 +460,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
               quantity: Math.min(
                 quantity,
                 maximum,
+                dropMaximum,
                 item.product.salesMode === "PREORDER" ? 99 : quantity
               ),
             }
@@ -405,7 +469,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       itemsRef.current = next;
       setItems(next);
     },
-    [removeFromCart, currentItems, preorderAdditionalLimit]
+    [removeFromCart, currentItems, preorderAdditionalLimit, dropViews]
   );
 
   // 📌 Limpar carrinho
@@ -447,6 +511,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     preorderAdditionalLimit,
     hasUnavailableItems,
     revalidateCart,
+    dropQuota,
+    dropQuotaBlocked,
+    canIncreaseQuantity,
   };
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

@@ -127,7 +127,7 @@ export default function ExclusiveAccessPanel({ view, productId }: { view: Exclus
 }
 
 /** Shown above the purchase buttons once the viewer is unlocked and may buy. */
-export function ExclusiveUnlockedNotice({ view, inCartUnits = 0 }: { view: Exclusive; inCartUnits?: number }) {
+export function ExclusiveUnlockedNotice({ view, inCartUnits = 0, dropInCartUnits = inCartUnits }: { view: Exclusive; inCartUnits?: number; dropInCartUnits?: number }) {
   const remaining = view.viewer.unitsRemaining ?? 0;
   const { unitLimit, unitsReserved, unitsConsumed } = view.viewer;
   return (
@@ -145,6 +145,7 @@ export function ExclusiveUnlockedNotice({ view, inCartUnits = 0 }: { view: Exclu
             </dl>
           ) : null}
           {inCartUnits > 0 ? <p className="l4-xd-state l4-xd-note">Você já tem {inCartUnits} {inCartUnits === 1 ? "unidade" : "unidades"} deste produto na sacola.</p> : null}
+          {dropInCartUnits > inCartUnits ? <p className="l4-xd-state l4-xd-note">Somando todos os produtos deste drop, há {dropInCartUnits} {dropInCartUnits === 1 ? "unidade" : "unidades"} na sacola; o limite é compartilhado. A disponibilidade é confirmada ao finalizar o pedido.</p> : null}
         </>
       ) : null}
     </section>
