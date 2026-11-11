@@ -4,6 +4,7 @@ import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import { useCart } from "../contexts/CartContext";
 import { formatPrice } from "../lib/utils";
 import camisaFallback from "../images/camisa.png";
+import { cartBlockingIssues, evaluateCartLine } from "../stock/availability";
 import "./CartDrawer.css";
 
 function formatSelectedOptions(options?: Record<string, string>) {
@@ -16,19 +17,37 @@ export default function CartDrawer() {
   const navigate = useNavigate();
   const { cart, updateQuantity, removeFromCart, isCartDrawerOpen, closeCartDrawer } = useCart();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!isCartDrawerOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButtonRef.current?.focus();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeCartDrawer();
+      if (event.key !== "Tab") return;
+      // Keep Tab/Shift+Tab inside the open dialog.
+      const focusable = Array.from(
+        drawerRef.current?.querySelectorAll<HTMLElement>("a[href], button:not([disabled]):not([tabindex='-1'])") ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
+      opener?.focus();
     };
   }, [closeCartDrawer, isCartDrawerOpen]);
 
@@ -40,7 +59,7 @@ export default function CartDrawer() {
   return (
     <div className={`l4-cart-drawer-layer ${isCartDrawerOpen ? "is-open" : ""}`} aria-hidden={!isCartDrawerOpen}>
       <button type="button" className="l4-cart-drawer-backdrop" onClick={closeCartDrawer} tabIndex={-1} aria-label="Fechar sacola" />
-      <aside className="l4-cart-drawer" role="dialog" aria-modal="true" aria-label="Sacola de compras">
+      <aside ref={drawerRef} className="l4-cart-drawer" role="dialog" aria-modal="true" aria-label="Sacola de compras">
         <header className="l4-cart-drawer-header">
           <div>
             <span className="l4-cart-drawer-eyebrow">Sua seleção</span>
@@ -61,8 +80,10 @@ export default function CartDrawer() {
         ) : (
           <>
             <div className="l4-cart-drawer-items">
-              {cart.items.map(item => (
-                <article key={`${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
+              {cart.items.map(item => {
+                const line = evaluateCartLine(item);
+                return (
+                <article key={`${item.product.id}-${item.variantId ?? "legacy"}-${JSON.stringify(item.selectedOptions || {})}`} className="l4-cart-drawer-item">
                   <img
                     className="l4-product-media-surface l4-product-media-surface--thumb l4-product-media-image"
                     src={item.product.imageThumbnail || item.product.image}
@@ -78,23 +99,26 @@ export default function CartDrawer() {
                     <span>{formatPrice(item.product.price)} cada</span>
                     <div className="l4-cart-drawer-item-actions">
                       <div className="l4-cart-drawer-quantity" aria-label={`Quantidade de ${item.product.name}`}>
-                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.selectedOptions)} aria-label="Diminuir quantidade"><Minus size={14} /></button>
-                        <span>{item.quantity}</span>
-                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} aria-label="Aumentar quantidade"><Plus size={14} /></button>
+                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.selectedOptions)} aria-label={`Diminuir quantidade de ${item.product.name}`}><Minus size={14} aria-hidden="true" /></button>
+                        <span aria-live="polite">{item.quantity}</span>
+                        <button type="button" onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)} disabled={item.quantity >= line.maxQuantity} aria-label={`Aumentar quantidade de ${item.product.name}`}><Plus size={14} aria-hidden="true" /></button>
                       </div>
                       <button type="button" className="l4-cart-drawer-remove" onClick={() => removeFromCart(item.product.id, item.selectedOptions)} aria-label={`Remover ${item.product.name}`}>
                         <Trash2 size={16} />
                       </button>
                     </div>
+                    {line.state !== "ok" ? <p className="l4-cart-drawer-stock-note" role="alert">{line.message}</p> : null}
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
 
             <footer className="l4-cart-drawer-footer">
               <div className="l4-cart-drawer-subtotal"><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p>Frete e prazo calculados no checkout.</p>
-              <button type="button" className="l4-cart-drawer-checkout" onClick={() => goTo("/checkout")}>Finalizar compra</button>
+              <button type="button" className="l4-cart-drawer-checkout" onClick={() => goTo("/checkout")} disabled={cartBlockingIssues(cart.items).length > 0} aria-describedby={cartBlockingIssues(cart.items).length > 0 ? "cart-drawer-blocked" : undefined}>Finalizar compra</button>
+              {cartBlockingIssues(cart.items).length > 0 ? <p id="cart-drawer-blocked" className="l4-cart-drawer-stock-note">Ajuste os itens sinalizados para continuar.</p> : null}
               <Link to="/carrinho" onClick={closeCartDrawer}>Ver sacola completa</Link>
             </footer>
           </>

@@ -2188,7 +2188,7 @@ export default function Admin() {
                             <div style={styles.orderSecondaryText}>
                               {(row.items ?? [])
                                 .slice(0, 1)
-                                .map(item => item.productName || `Produto #${item.productId}`)
+                                .map(item => `${item.productName || `Produto #${item.productId}`}${item.sizeSnapshot || item.colorSnapshot ? ` · ${[item.sizeSnapshot, item.colorSnapshot].filter(Boolean).join(" / ")}` : ""}`)
                                 .join(", ")}
                             </div>
                           ) : null}

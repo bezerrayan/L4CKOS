@@ -14,6 +14,7 @@ export type AdminOrderView = {
   paymentConfirmationSource?: string | null;
   paymentConfirmedAt?: Date | string | null;
   paymentConfirmedBy?: number | null;
+  stockPaymentId?: string | null;
   totalPrice?: number | string | null;
   trackingCode?: string | null;
   createdAt?: Date | string | null;
@@ -32,6 +33,10 @@ export type AdminOrderView = {
     productId?: number | null;
     productName?: string | null;
     quantity?: number | string | null;
+    skuSnapshot?: string | null;
+    sizeSnapshot?: string | null;
+    colorSnapshot?: string | null;
+    unitPriceCents?: number | string | null;
   }> | null;
 };
 
@@ -170,6 +175,7 @@ export function OrderDetailPanel({
                 : "Confirmação recebida pelo webhook validado do Asaas"}
             </span>
             <span style={styles.secondaryText}>{formatDateTime(order.paymentConfirmedAt)}</span>
+            {order.stockPaymentId ? <span style={styles.secondaryText}>Referência STOCK: {order.stockPaymentId}</span> : null}
           </div>
         ) : (
           <div style={styles.paymentPending}>
@@ -220,8 +226,8 @@ export function OrderDetailPanel({
           <div style={styles.itemsList}>
             {items.map((item, index) => (
               <div key={`${order.id}-${item.productId}-${index}`} style={styles.itemRow}>
-                <span style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</span>
-                <span style={styles.secondaryText}>Quantidade: {item.quantity}</span>
+                <span style={styles.itemName}>{item.productName || `Produto #${item.productId}`}{item.sizeSnapshot || item.colorSnapshot ? ` · ${[item.sizeSnapshot, item.colorSnapshot].filter(Boolean).join(" / ")}` : ""}</span>
+                <span style={styles.secondaryText}>Quantidade: {item.quantity}{item.skuSnapshot ? ` · SKU ${item.skuSnapshot}` : ""}{item.unitPriceCents != null ? ` · ${formatPrice(Number(item.unitPriceCents) / 100)} un.` : ""}</span>
               </div>
             ))}
           </div>

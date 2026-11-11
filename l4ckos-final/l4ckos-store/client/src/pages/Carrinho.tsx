@@ -6,10 +6,15 @@ import { formatPrice } from "../lib/utils";
 import type { CSSProperties } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import camisaFallback from "../images/camisa.png";
+import { cartBlockingIssues, evaluateCartLine } from "../stock/availability";
+import { useCartCatalogSync } from "../hooks/useCartCatalogSync";
 
 export default function Carrinho() {
   const isMobile = useIsMobile();
   const { cart, removeFromCart, updateQuantity } = useCart();
+  useCartCatalogSync();
+  const blockingIssues = cartBlockingIssues(cart.items);
+  const checkoutBlocked = blockingIssues.length > 0;
 
   const getItemKey = (productId: number, selectedOptions?: Record<string, string>) => {
     if (!selectedOptions) return `${productId}`;
@@ -55,9 +60,11 @@ export default function Carrinho() {
       ) : (
         <div style={{ ...styles.layout, gridTemplateColumns: isMobile ? "1fr" : "1fr 340px" }}>
           <div style={styles.itemsList}>
-            {cart.items.map((item) => (
+            {cart.items.map((item) => {
+              const line = evaluateCartLine(item);
+              return (
               <div
-                key={getItemKey(item.product.id, item.selectedOptions)}
+                key={`${getItemKey(item.product.id, item.selectedOptions)}-${item.variantId ?? "legacy"}`}
                 style={{
                   ...styles.itemCard,
                   gridTemplateColumns: isMobile ? "64px 1fr auto" : "80px 1fr auto auto",
@@ -84,6 +91,7 @@ export default function Carrinho() {
                     <p style={styles.itemMeta}>{formatSelectedOptions(item.selectedOptions)}</p>
                   ) : null}
                   <p style={styles.itemUnitPrice}>{formatPrice(item.product.price)} / unidade</p>
+                  {line.state !== "ok" ? <p style={styles.stockNote} role="alert">{line.message}</p> : null}
                 </div>
 
                 <div
@@ -99,24 +107,31 @@ export default function Carrinho() {
                   <div style={styles.qtyActionRow}>
                     <div style={styles.qtyWrap}>
                       <button
+                        type="button"
                         style={styles.qtyButton}
                         onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1), item.selectedOptions)}
+                        disabled={item.quantity <= 1}
+                        aria-label={`Diminuir quantidade de ${item.product.name}`}
                       >
                         -
                       </button>
-                      <span style={styles.qtyValue}>{item.quantity}</span>
+                      <span style={styles.qtyValue} aria-live="polite" aria-label={`Quantidade: ${item.quantity}`}>{item.quantity}</span>
                       <button
-                        style={styles.qtyButton}
+                        type="button"
+                        style={{ ...styles.qtyButton, opacity: item.quantity >= line.maxQuantity ? 0.4 : 1 }}
                         onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.selectedOptions)}
+                        disabled={item.quantity >= line.maxQuantity}
+                        aria-label={`Aumentar quantidade de ${item.product.name}`}
                       >
                         +
                       </button>
                     </div>
                     <button
+                      type="button"
                       style={styles.removeIconButton}
                       onClick={() => removeFromCart(item.product.id, item.selectedOptions)}
                       title="Remover item"
-                      aria-label="Remover item"
+                      aria-label={`Remover ${item.product.name}`}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -128,7 +143,8 @@ export default function Carrinho() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {!isMobile ? (
@@ -137,7 +153,12 @@ export default function Carrinho() {
               <div style={styles.summaryRow}><span>Itens</span><strong>{cart.itemCount}</strong></div>
               <div style={styles.summaryRow}><span>Subtotal</span><strong>{formatPrice(cart.total)}</strong></div>
               <p style={styles.summaryHint}>Frete, cupom e pagamento na próxima etapa.</p>
-              <Link to="/checkout" style={styles.checkoutButton}>Finalizar compra</Link>
+              {checkoutBlocked ? (
+                <button type="button" disabled style={{ ...styles.checkoutButton, opacity: 0.5, cursor: "not-allowed", border: "none" }} aria-describedby="cart-blocked-note">Finalizar compra</button>
+              ) : (
+                <Link to="/checkout" style={styles.checkoutButton}>Finalizar compra</Link>
+              )}
+              {checkoutBlocked ? <p id="cart-blocked-note" style={styles.stockNote} role="alert">Ajuste os itens sinalizados para continuar.</p> : null}
               <Link to="/produtos" style={styles.continueLink}>Continuar comprando</Link>
             </aside>
           ) : null}
@@ -150,7 +171,11 @@ export default function Carrinho() {
             <p style={styles.mobileCheckoutLabel}>Subtotal</p>
             <p style={styles.mobileCheckoutValue}>{formatPrice(cart.total)}</p>
           </div>
-          <Link to="/checkout" style={styles.mobileCheckoutButton}>Finalizar compra</Link>
+          {checkoutBlocked ? (
+            <button type="button" disabled style={{ ...styles.mobileCheckoutButton, opacity: 0.5, border: "none" }}>Ajuste os itens</button>
+          ) : (
+            <Link to="/checkout" style={styles.mobileCheckoutButton}>Finalizar compra</Link>
+          )}
         </div>
       ) : null}
     </div>
@@ -216,6 +241,12 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     color: "#a1a1aa",
   },
+  stockNote: {
+    margin: "6px 0 0 0",
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#f87171",
+  },
   itemUnitPrice: {
     margin: "4px 0 0 0",
     fontSize: 12,
@@ -240,8 +271,8 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
   },
   qtyButton: {
-    width: 30,
-    height: 30,
+    width: 40,
+    height: 40,
     border: "none",
     background: "#181818",
     color: "#f0ede8",
@@ -266,7 +297,7 @@ const styles: Record<string, CSSProperties> = {
     background: "transparent",
     color: "#ef4444",
     cursor: "pointer",
-    padding: 4,
+    padding: 12,
     lineHeight: 0,
     borderRadius: 6,
   },
