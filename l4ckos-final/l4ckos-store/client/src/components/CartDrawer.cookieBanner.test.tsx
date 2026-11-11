@@ -1,16 +1,22 @@
 // @vitest-environment jsdom
 import "../test/setupDom";
 import { readFileSync } from "node:fs";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../lib/trpc", async () => await import("../test/fakeTrpc"));
 import { CartProvider, useCart } from "../contexts/CartContext";
 import { cartItem, seedCart } from "../test/fixtures";
+import { resetTrpc } from "../test/fakeTrpc";
+import { serveCatalog } from "../test/v6Catalog";
 import CartDrawer from "./CartDrawer";
 import CookiePreferences, { COOKIE_BANNER_OFFSET_VAR } from "./CookiePreferences";
 
 const CONSENT_KEY = "l4ckos:cookie-preferences";
+
+beforeEach(() => { resetTrpc(); serveCatalog(); });
 
 function OpenDrawer() {
   const { openCartDrawer } = useCart();
@@ -51,7 +57,7 @@ afterEach(() => {
 describe("cookie banner + CartDrawer (first visit)", () => {
   it("keeps the banner visible while the drawer is open and does not decide for the user", async () => {
     await setup();
-    expect(screen.getByRole("region", { name: "COOKIES ESSENCIAIS" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "AVISO SOBRE COOKIES" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Finalizar compra" })).toBeTruthy();
     expect(window.localStorage.getItem(CONSENT_KEY)).toBeNull();
   });
@@ -64,10 +70,11 @@ describe("cookie banner + CartDrawer (first visit)", () => {
 
   it("the checkout button works with the banner showing and still does not record consent", async () => {
     const user = await setup();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Finalizar compra" }) as HTMLButtonElement).disabled).toBe(false));
     await user.click(screen.getByRole("button", { name: "Finalizar compra" }));
     expect(screen.getByText("pagina de checkout")).toBeTruthy();
     expect(window.localStorage.getItem(CONSENT_KEY)).toBeNull();
-    expect(screen.getByRole("region", { name: "COOKIES ESSENCIAIS" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "AVISO SOBRE COOKIES" })).toBeTruthy();
   });
 
   it("clears the offset and stores consent only after the user clicks ENTENDI", async () => {
@@ -75,14 +82,14 @@ describe("cookie banner + CartDrawer (first visit)", () => {
     const user = await setup();
     expect(offset()).toBe("180px");
     await user.click(screen.getByRole("button", { name: "ENTENDI" }));
-    expect(screen.queryByRole("region", { name: "COOKIES ESSENCIAIS" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "AVISO SOBRE COOKIES" })).toBeNull();
     expect(offset()).toBe("");
     expect(JSON.parse(window.localStorage.getItem(CONSENT_KEY) || "null")).toMatchObject({ status: "essential-only" });
   });
 
   it("publishes no offset when consent already exists", async () => {
     await setup({ consented: true });
-    expect(screen.queryByRole("region", { name: "COOKIES ESSENCIAIS" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "AVISO SOBRE COOKIES" })).toBeNull();
     expect(offset()).toBe("");
   });
 
@@ -106,7 +113,7 @@ describe("cookie banner + CartDrawer (first visit)", () => {
     await user.tab({ shift: true });
     expect(document.activeElement?.textContent?.trim()).toBe("ENTENDI");
     await user.keyboard("{Enter}");
-    expect(screen.queryByRole("region", { name: "COOKIES ESSENCIAIS" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "AVISO SOBRE COOKIES" })).toBeNull();
   });
 
   it("after the banner is dismissed, the next Tab returns focus to the drawer instead of the page", async () => {

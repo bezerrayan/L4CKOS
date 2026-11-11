@@ -164,7 +164,7 @@ export default function Carrinho() {
                   style={{ ...styles.checkoutButton, border: 0, opacity: 0.55 }}
                 >
                   {isCatalogReady
-                    ? "Pré-venda indisponível"
+                    ? (cart.items.some(item => item.product.salesMode === "PREORDER") ? "Pré-venda indisponível" : "Item indisponível")
                     : "Atualizando disponibilidade…"}
                 </button>
               ) : (
@@ -195,7 +195,7 @@ export default function Carrinho() {
               }}
             >
               {isCatalogReady
-                ? "Pré-venda indisponível"
+                ? (cart.items.some(item => item.product.salesMode === "PREORDER") ? "Pré-venda indisponível" : "Item indisponível")
                 : "Atualizando disponibilidade…"}
             </button>
           ) : (
