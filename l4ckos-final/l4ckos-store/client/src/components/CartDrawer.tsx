@@ -17,19 +17,37 @@ export default function CartDrawer() {
   const navigate = useNavigate();
   const { cart, updateQuantity, removeFromCart, isCartDrawerOpen, closeCartDrawer } = useCart();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!isCartDrawerOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButtonRef.current?.focus();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeCartDrawer();
+      if (event.key !== "Tab") return;
+      // Keep Tab/Shift+Tab inside the open dialog.
+      const focusable = Array.from(
+        drawerRef.current?.querySelectorAll<HTMLElement>("a[href], button:not([disabled]):not([tabindex='-1'])") ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
+      opener?.focus();
     };
   }, [closeCartDrawer, isCartDrawerOpen]);
 
@@ -41,7 +59,7 @@ export default function CartDrawer() {
   return (
     <div className={`l4-cart-drawer-layer ${isCartDrawerOpen ? "is-open" : ""}`} aria-hidden={!isCartDrawerOpen}>
       <button type="button" className="l4-cart-drawer-backdrop" onClick={closeCartDrawer} tabIndex={-1} aria-label="Fechar sacola" />
-      <aside className="l4-cart-drawer" role="dialog" aria-modal="true" aria-label="Sacola de compras">
+      <aside ref={drawerRef} className="l4-cart-drawer" role="dialog" aria-modal="true" aria-label="Sacola de compras">
         <header className="l4-cart-drawer-header">
           <div>
             <span className="l4-cart-drawer-eyebrow">Sua seleção</span>
