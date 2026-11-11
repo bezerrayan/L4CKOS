@@ -30,6 +30,7 @@ import { Heart } from "lucide-react";
 import "./ProductDetail.css";
 
 import { DEFAULT_COLORS, DEFAULT_SIZES } from "@shared/catalogOptions";
+import { sortSizeLabels } from "../lib/sizeOrder";
 const COLOR_HEX_BY_NAME: Record<string, string> = {
   preto: "#1a1a1a",
   branco: "#ffffff",
@@ -281,9 +282,9 @@ export default function ProductDetail() {
     hex: COLOR_HEX_BY_NAME[name.toLowerCase()] ?? "#d1d5db",
   }));
   const sizeOptions = hasVariants
-    ? Array.from(new Set(publicVariants
+    ? sortSizeLabels(Array.from(new Set(publicVariants
         .filter(variant => !selectedColor || variant.color === selectedColor)
-        .map(variant => variant.size)))
+        .map(variant => variant.size))), product.optionSizes ?? [])
     : (product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES);
   const selectedVariant = hasVariants && selectedColor && selectedSize
     ? publicVariants.find(variant => variant.color === selectedColor && variant.size === selectedSize)

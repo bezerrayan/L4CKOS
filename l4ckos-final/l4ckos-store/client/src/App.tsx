@@ -160,7 +160,7 @@ function AppRoutes() {
 
       {!isCheckoutRoute && !isAdminRoute ? <Footer /> : null}
       {!isAdminRoute ? <CartDrawer /> : null}
-      <CookiePreferences adminLayout={location.pathname === "/gestao" && isAdmin} />
+      <CookiePreferences adminLayout={isAdminRoute && isAdmin} />
     </>
   );
 }
