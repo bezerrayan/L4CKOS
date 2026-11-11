@@ -1,10 +1,12 @@
 import { PreorderInfo, MixedShippingNotice } from "./PreorderInfo";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import { useCart } from "../contexts/CartContext";
 import { formatPrice } from "../lib/utils";
 import camisaFallback from "../images/camisa.png";
+import { inertOutside } from "../lib/inertBackground";
+import { COOKIE_BANNER_ATTR, COOKIE_BANNER_EVENT } from "./CookiePreferences";
 import "./CartDrawer.css";
 
 function formatSelectedOptions(options?: Record<string, string>) {
@@ -25,19 +27,61 @@ export default function CartDrawer() {
     isCatalogReady,
   } = useCart();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  // A pending cookie banner lives outside this dialog. aria-modal would hide it from assistive tech while
+  // keyboard focus can still reach it, so the dialog is only declared modal when no banner is pending.
+  const [bannerPending, setBannerPending] = useState(() => typeof document !== "undefined" && document.documentElement.hasAttribute(COOKIE_BANNER_ATTR));
+  useEffect(() => {
+    const sync = () => setBannerPending(document.documentElement.hasAttribute(COOKIE_BANNER_ATTR));
+    sync();
+    window.addEventListener(COOKIE_BANNER_EVENT, sync);
+    return () => window.removeEventListener(COOKIE_BANNER_EVENT, sync);
+  }, []);
+
+  // The page behind the drawer is inert (not just visually covered); the drawer and a pending banner stay usable.
+  useEffect(() => {
+    if (!isCartDrawerOpen) return;
+    return inertOutside([layerRef.current, document.querySelector("[data-l4-cookie-banner]")]);
+  }, [isCartDrawerOpen, bannerPending]);
 
   useEffect(() => {
     if (!isCartDrawerOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButtonRef.current?.focus();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeCartDrawer();
+      if (event.key !== "Tab") return;
+      // Keep Tab/Shift+Tab inside the open dialog. A visible cookie banner stays reachable: it is part of the trap, after the drawer.
+      const selector = "a[href], button:not([disabled]):not([tabindex='-1'])";
+      const focusable = [
+        ...Array.from(drawerRef.current?.querySelectorAll<HTMLElement>(selector) ?? []),
+        ...Array.from(document.querySelectorAll<HTMLElement>("[data-l4-cookie-banner] a[href], [data-l4-cookie-banner] button:not([disabled])")),
+      ];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      // Focus was lost (e.g. the banner was dismissed while focused): bring it back into the dialog.
+      if (!(document.activeElement instanceof HTMLElement) || !focusable.includes(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
+      opener?.focus();
     };
   }, [closeCartDrawer, isCartDrawerOpen]);
 
@@ -47,9 +91,9 @@ export default function CartDrawer() {
   };
 
   return (
-    <div className={`l4-cart-drawer-layer ${isCartDrawerOpen ? "is-open" : ""}`} aria-hidden={!isCartDrawerOpen}>
+    <div ref={layerRef} className={`l4-cart-drawer-layer ${isCartDrawerOpen ? "is-open" : ""}`} aria-hidden={!isCartDrawerOpen}>
       <button type="button" className="l4-cart-drawer-backdrop" onClick={closeCartDrawer} tabIndex={-1} aria-label="Fechar sacola" />
-      <aside className="l4-cart-drawer" role="dialog" aria-modal="true" aria-label="Sacola de compras">
+      <aside ref={drawerRef} className="l4-cart-drawer" role="dialog" aria-modal={bannerPending ? undefined : true} aria-label="Sacola de compras">
         <header className="l4-cart-drawer-header">
           <div>
             <span className="l4-cart-drawer-eyebrow">Sua seleção</span>

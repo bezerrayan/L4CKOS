@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getCartItems, addToCart, removeFromCartByUser, clearCart, getProductById } from "../db";
+import { assertCanAddToServerCart } from "../exclusive/checkoutGuard";
 
 export const cartRouter = router({
   // Listar itens do carrinho do usuário autenticado
@@ -30,6 +31,8 @@ export const cartRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      // Exclusive products need an unlocked, in-quota authorization even to enter the server cart (checkout re-verifies).
+      await assertCanAddToServerCart({ userId: ctx.user.id, productId: input.productId, quantity: input.quantity });
       await addToCart(ctx.user.id, input.productId, input.quantity);
       return { success: true };
     }),

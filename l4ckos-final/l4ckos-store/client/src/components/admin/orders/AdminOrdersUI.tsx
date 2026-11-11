@@ -23,6 +23,7 @@ export type AdminOrderView = {
   paymentConfirmedAt?: Date | string | null;
   paymentConfirmedBy?: number | null;
   paymentConfirmationReference?: string | null;
+  stockPaymentId?: string | null;
   totalPrice?: number | string | null;
   trackingCode?: string | null;
   createdAt?: Date | string | null;
@@ -51,6 +52,10 @@ export type AdminOrderView = {
     productionBatchNameAtPurchase?: string | null;
     productionStatus?: string | null;
     status?: string | null;
+    skuSnapshot?: string | null;
+    sizeSnapshot?: string | null;
+    colorSnapshot?: string | null;
+    unitPriceCents?: number | string | null;
   }> | null;
 };
 
@@ -205,6 +210,7 @@ export function OrderDetailPanel({
                     : "Origem da confirmação não informada"}
             </span>
             <span style={styles.secondaryText}>{formatDateTime(order.paymentConfirmedAt)}</span>
+            {order.stockPaymentId ? <span style={styles.secondaryText}>Referência STOCK: {order.stockPaymentId}</span> : null}
           </div>
         ) : (
           <div style={styles.paymentPending}>
@@ -252,10 +258,11 @@ export function OrderDetailPanel({
                 <span style={styles.itemDescription}>
                   <span style={styles.itemName}>{item.productName || `Produto #${item.productId}`}</span>
                   <span style={styles.secondaryText}>
-                    {[item.variantName, item.color, item.size].filter(Boolean).join(" · ") || "Variante não informada"}
+                    {[item.variantName, item.color ?? item.colorSnapshot, item.size ?? item.sizeSnapshot].filter(Boolean).join(" · ") || "Variante não informada"}
                     {item.salesModeAtPurchase === "PREORDER" && item.productionBatchNameAtPurchase ? ` · Pré-venda: ${item.productionBatchNameAtPurchase}` : ""}
                   </span>
                   {item.status && reservationStateLabels[item.status] ? <span className="admin-reservation-state">Reserva: {reservationStateLabels[item.status]}</span> : null}
+                  {item.skuSnapshot ? <span style={styles.secondaryText}>SKU {item.skuSnapshot}</span> : null}
                   {item.productPrice !== undefined && item.productPrice !== null ? <span style={styles.secondaryText}>Valor unitário {formatPrice(Number(item.productPrice) / 100)}</span> : null}
                 </span>
                 <span style={styles.itemQuantity}>Qtd. {item.quantity}</span>

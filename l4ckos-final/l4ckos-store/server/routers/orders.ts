@@ -19,6 +19,7 @@ import {
 import { createAsaasChargeForOrder } from "../services/asaas";
 import { quoteShippingDetailed } from "../services/shippingService";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
+import { assertNoExclusiveInLegacyCheckout } from "../exclusive/checkoutGuard";
 
 import { securityLog } from "../_core/security";
 import { PublicCheckoutDisabledError, PublicStoreClosedError, assertPublicCheckoutEnabled, publicCheckoutDisabledTrpcError, publicStoreClosedTrpcError } from "../_core/publicStore";
@@ -264,6 +265,8 @@ export const ordersRouter = router({
       try {
         assertCheckoutMethodEnabled(input.method);
         assertPublicCheckoutEnabled();
+        // Exclusive-drop products can only be bought through the STOCK checkout (with a valid individual authorization).
+        await assertNoExclusiveInLegacyCheckout(input.items.map(item => item.productId));
         if (!process.env.DATABASE_URL) throw new CheckoutError("CHECKOUT_DATABASE_REQUIRED");
         const connection = await createConnection({ uri: process.env.DATABASE_URL, timezone: "Z", socketPath: process.env.L4CKOS_LOCAL_MYSQL_SOCKET });
         const prepared = await (async () => {

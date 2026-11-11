@@ -8,6 +8,7 @@ export type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 type AsaasRequestInit = {
   method?: "GET" | "POST";
   body?: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 type AsaasCustomerResponse = {
@@ -43,12 +44,12 @@ async function asaasRequest<T>(path: string, init: AsaasRequestInit = {}) {
   const response = await fetch(`${apiUrl}${path}`, {
     method: init.method ?? "GET",
     redirect: "error",
-    signal: AbortSignal.timeout(15000),
     headers: {
       "Content-Type": "application/json",
       access_token: apiKey,
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
+    signal: init.signal ?? AbortSignal.timeout(15000),
   });
 
   const data = (await response.json()) as {
@@ -81,6 +82,7 @@ export async function createAsaasChargeForOrder(input: {
   };
   description: string;
   dueDate?: string;
+  signal?: AbortSignal;
 }) {
   assertCheckoutMethodEnabled(input.method);
   const document = normalizeBuyerDocument(input.customer.cpfCnpj);
@@ -88,6 +90,7 @@ export async function createAsaasChargeForOrder(input: {
   const silent = sandboxSilenceRequired();
   const customer = await asaasRequest<AsaasCustomerResponse>("/customers", {
     method: "POST",
+    signal: input.signal,
     body: {
       name: input.customer.name,
       cpfCnpj: document,
@@ -101,6 +104,7 @@ export async function createAsaasChargeForOrder(input: {
 
   const payment = await asaasRequest<AsaasPaymentResponse>("/payments", {
     method: "POST",
+    signal: input.signal,
     body: {
       customer: customer.id,
       billingType: getAsaasBillingType(input.method),
@@ -115,7 +119,7 @@ export async function createAsaasChargeForOrder(input: {
   let pixCopyPaste = payment.pixCopyPaste ?? null;
 
   if (input.method === "PIX" && (!pixQrCode || !pixCopyPaste) && payment.id) {
-    const pixData = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${payment.id}/pixQrCode`);
+    const pixData = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${payment.id}/pixQrCode`, { signal: input.signal });
     pixQrCode = pixQrCode || pixData.encodedImage || null;
     pixCopyPaste = pixCopyPaste || pixData.payload || null;
   }

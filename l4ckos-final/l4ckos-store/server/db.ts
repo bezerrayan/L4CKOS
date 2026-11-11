@@ -3,7 +3,9 @@ import { readShippingSnapshot } from "./database/orderShippingSnapshot";
 import { createVariantOptionKey, normalizeVariantLabel } from "./database/productVariantIdentity";
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import type { Pool } from "mysql2/promise";
 import { createHash, randomUUID } from "node:crypto";
+import { createMysqlConnectionOptions } from "./database/mysqlTls.mjs";
 import {
   InsertUser,
   users,
@@ -52,6 +54,19 @@ import { getSellableVariantIds } from "./database/productVariantAvailability";
 import { buildManagerSyncSnapshot, saoPauloMidnightUtc, type ManagerSyncIdentity } from "./services/managerSyncSnapshot";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+
+/** Explicitly gated fixture injection for disposable local STOCK integration tests only. */
+export function setStockLocalHarnessDb(db: ReturnType<typeof drizzle> | null) {
+  const host = process.env.STOCK_MYSQL_HOST ?? "";
+  if (
+    process.env.STOCK_LOCAL_HARNESS !== "true" ||
+    !/^(127\.0\.0\.1|localhost|::1)$/.test(host) ||
+    process.env.STOCK_MYSQL_DATABASE !== "l4ckos_stock_test"
+  ) {
+    throw new Error("STOCK DB injection is restricted to the disposable loopback harness");
+  }
+  _db = db;
+}
 
 type OrderShippingSnapshotInput = {
   recipient: string;
@@ -145,13 +160,24 @@ export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
   if (scoped) return scoped;
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _db = drizzle({ connection: createMysqlConnectionOptions(process.env.DATABASE_URL) });
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
     }
   }
   return _db;
+}
+
+/** Returns the same mysql2 pool used by Drizzle for transaction-oriented STOCK code. */
+export async function getMysqlPool(): Promise<Pool | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const client = (db as unknown as { $client?: Pool }).$client;
+  if (!client || typeof client.getConnection !== "function") {
+    throw new Error("MYSQL_POOL_UNAVAILABLE");
+  }
+  return client;
 }
 
 function hashWebhookPayload(payload: unknown) {
@@ -463,13 +489,15 @@ function normalizeProductImageRow(row: any) {
 }
 
 function normalizeProductVariantRow(row: any) {
+  const isActive = Number(row.isActive) === 1;
   return {
     ...row,
     id: Number(row.id),
     productId: Number(row.productId),
     price: row.price === null || row.price === undefined ? null : Number(row.price),
     stock: Number(row.stock ?? 0),
-    isActive: Number(row.isActive ?? 0),
+    isActive: isActive ? 1 : 0,
+    active: isActive,
   };
 }
 
@@ -932,9 +960,14 @@ export async function moderateProductReview(input: {
   return { success: true } as const;
 }
 
-function getDatabaseErrorMessage(error: unknown) {
+function getDatabaseErrorMessage(error: unknown, seen = new Set<unknown>()): string {
+  if (seen.has(error)) return "";
+  seen.add(error);
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return message;
+  const cause = typeof error === "object" && error !== null && "cause" in error
+    ? getDatabaseErrorMessage((error as { cause?: unknown }).cause, seen)
+    : "";
+  return `${message} ${cause}`.trim();
 }
 
 function isMissingDatabaseObjectError(error: unknown) {
@@ -1342,6 +1375,11 @@ export async function getOrderReservationItems(orderId: number) {
       id: stockReservations.id,
       orderId: stockReservations.orderId,
       productId: stockReservations.productId,
+      variantId: stockReservations.variantId,
+      skuSnapshot: stockReservations.skuSnapshot,
+      sizeSnapshot: stockReservations.sizeSnapshot,
+      colorSnapshot: stockReservations.colorSnapshot,
+      unitPriceCents: stockReservations.unitPriceCents,
       quantity: stockReservations.quantity,
       status: stockReservations.status,
       expiresAt: stockReservations.expiresAt,
@@ -1443,6 +1481,11 @@ export async function reserveStockForOrder(input: {
         throw new Error("Stock reservation does not match its order item.");
       }
       const variants = await tx.select().from(productVariants).where(eq(productVariants.productId, item.productId)).orderBy(productVariants.id).for("update");
+      // Single writer per inventory: a product with an active STOCK V1 variant reserves ONLY through the STOCK checkout,
+      // so the legacy per-order reservation can never oversell the same variant concurrently.
+      if (variants.some(row => Number(row.isActive) === 1)) {
+        throw new Error("Produto com variante STOCK ativa não pode usar a reserva legada por produto.");
+      }
       const variant = item.variantId === undefined ? null : variants.find(row => row.id === item.variantId);
       if (variants.length > 0 && !item.variantId) throw new Error("Variant ID required for this product.");
       if (item.variantId !== undefined && !variant) throw new Error("Variant does not belong to this product.");
@@ -1490,6 +1533,28 @@ export async function reserveStockForOrder(input: {
       });
     }
   });
+}
+
+function managerSyncIso(
+  value:
+    | Date
+    | string
+    | null
+    | undefined,
+) {
+  if (!value) {
+    return null;
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.toISOString();
+  }
+
+  return new Date(
+    value,
+  ).toISOString();
 }
 
 export async function getAllOrders() {
@@ -1574,6 +1639,9 @@ export async function markOrderPaid(
     const order = current[0];
     if (!order) {
       throw new Error("Order not found");
+    }
+    if (order.stockAttemptId) {
+      throw new Error("STOCK_PAYMENT_OWNER_REQUIRED");
     }
 
     if (order.status === "cancelled") {

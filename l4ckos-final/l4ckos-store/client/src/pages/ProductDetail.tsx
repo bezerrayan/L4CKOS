@@ -14,6 +14,8 @@ import type { CSSProperties } from "react";
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { trpc } from "../lib/trpc";
+import ExclusiveAccessPanel, { ExclusiveUnlockedNotice } from "../components/exclusive/ExclusiveAccessPanel";
+import { canPurchaseExclusive } from "../../../shared/exclusiveDropsV1";
 import camisaFallback from "../images/camisa.png";
 import { getCategoryLabel } from "../lib/productCategories";
 import { resolveCatalogImageUrl, retryImageWithVersion } from "../lib/images";
@@ -102,7 +104,7 @@ export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { addToCart, closeCartDrawer, preorderAdditionalLimit } = useCart();
+  const { addToCart, closeCartDrawer, preorderAdditionalLimit, cart } = useCart();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const { showToast } = useToast();
 
@@ -136,6 +138,18 @@ export default function ProductDetail() {
   const sellableVariantCatalog = sellableVariantsQuery.data?.productId === productId
     ? sellableVariantsQuery.data
     : undefined;
+  // Exclusive-drop status of this product for the viewer. The SERVER enforces it at cart/checkout; this only drives the UI.
+  const dropQuery = trpc.exclusiveDrops.forProduct.useQuery({ productId: productId ?? 0 }, {
+    enabled: Boolean(productId),
+    retry: false,
+    // The status changes outside this page (admin decision): re-read it when the customer comes back, and poll gently while waiting.
+    refetchOnWindowFocus: true,
+    refetchInterval: (query: { state: { data?: unknown } }) => {
+      const data = query.state.data as { exclusive?: boolean; viewer?: { status?: string } } | undefined;
+      return data?.exclusive && data.viewer?.status === "pending" ? 30_000 : false;
+    },
+  });
+  const dropView = dropQuery.data;
   const product = productQuery.data
     ? {
         id: productQuery.data.id,
@@ -287,9 +301,17 @@ export default function ProductDetail() {
   const stockQuantityLimit = hasVariants
     ? selectedVariant?.availableUnits ?? 99
     : product.stock;
-  const quantityLimit = product.salesMode === "PREORDER"
+  // Units already in the cart for this product count against the SERVER-reported remaining units (a hint; the server re-checks at checkout).
+  const inCartUnits = cart.items.filter(item => item.product.id === product.id).reduce((sum, item) => sum + item.quantity, 0);
+  const quotaLeft = dropView?.exclusive && dropView.viewer.status === "unlocked" ? Math.max(0, (dropView.viewer.unitsRemaining ?? 0) - inCartUnits) : Infinity;
+  const quotaCap = Number.isFinite(quotaLeft) ? Math.max(1, quotaLeft) : 99;
+  const quantityLimit = Math.min(quotaCap, product.salesMode === "PREORDER"
     ? Math.max(1, Math.min(preorderLimit ?? 99, 99))
-    : Math.max(1, Math.min(stockQuantityLimit, 99));
+    : Math.max(1, Math.min(stockQuantityLimit, 99)));
+  // Purchase controls stay hidden while the exclusivity is being checked and whenever the viewer cannot buy.
+  const exclusiveBlocked = Boolean(dropView?.exclusive && !canPurchaseExclusive(dropView));
+  const quotaUsedUpByCart = Number.isFinite(quotaLeft) && quotaLeft <= 0;
+  const purchaseLocked = dropQuery.isLoading || exclusiveBlocked || quotaUsedUpByCart;
   const canAddToCart = Boolean(selectedColor && selectedSize && available);
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
@@ -300,6 +322,7 @@ export default function ProductDetail() {
   if (!selectedSize) missingSelections.push("tamanho");
 
   const handleAddToCart = () => {
+    if (purchaseLocked) return;
     if (!available) {
       showToast({
         message: "Este produto está Indisponível no momento.",
@@ -347,6 +370,7 @@ export default function ProductDetail() {
   };
 
   const handleBuyNow = () => {
+    if (purchaseLocked) return;
     if (!available) {
       showToast({ message: "Este produto está indisponível no momento.", duration: 3500 });
       return;
@@ -648,6 +672,9 @@ export default function ProductDetail() {
             ) : null}
           </div>
 
+          {dropView?.exclusive ? (exclusiveBlocked ? <ExclusiveAccessPanel view={dropView} productId={product.id} /> : <ExclusiveUnlockedNotice view={dropView} inCartUnits={inCartUnits} />) : null}
+          {quotaUsedUpByCart && !exclusiveBlocked ? <p role="status" className="l4-xd-state">Sua sacola já usa todas as unidades da autorização. <Link to="/carrinho">Ver sacola</Link></p> : null}
+          {!dropQuery.isLoading && !exclusiveBlocked && !quotaUsedUpByCart && (
           <div className="l4-detail-actions">
             <button
               onClick={handleBuyNow}
@@ -664,6 +691,7 @@ export default function ProductDetail() {
               Adicionar à sacola
             </button>
           </div>
+          )}
 
           {showSelectionWarning && !canAddToCart && (
             <p style={styles.selectionWarning as CSSProperties}>

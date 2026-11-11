@@ -7,6 +7,7 @@ import { createAsaasWebhookInboundGate, resolveAsaasWebhookInboundEnabled } from
 ﻿import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
+import type { RowDataPacket } from "mysql2/promise";
 import net from "net";
 import path from "node:path";
 import helmet from "helmet";
@@ -15,7 +16,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { imageProxyHandler } from "./imageProxy";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
-import { createContext } from "./context";
+import { configureStockCheckoutRuntimeForServer, createContext } from "./context";
 import { serveStatic } from "./static";
 import { ENV, validateEnvOnStartup } from "./env";
 import { securityLog } from "./security";
@@ -32,11 +33,15 @@ import shippingRoutes from "../routes/shippingRoutes";
 import waitlistRoutes from "../routes/waitlist.routes";
 import contactRoutes from "../routes/contact.routes";
 import emailRoutes from "../routes/email.routes";
-import { getBackupPayload } from "../db";
+import { getBackupPayload, getMysqlPool } from "../db";
 import { createBackupFile } from "../database/backupFiles";
+import { assertApprovedMysqlTlsCa } from "../database/mysqlTls.mjs";
 import { asaasWebhookHandler } from "../controllers/paymentController";
 import { createStagingMaintenanceMiddleware } from "./stagingMaintenance";
 import managerSyncRoutes from "../routes/managerSyncRoutes";
+import { createStockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
+import { createConfiguredStockAsaasProvider } from "../stock/configuredStockAsaasProvider";
+import { startStockReservationExpiryScheduler } from "../stock/stockReservationExpiryScheduler";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -177,6 +182,7 @@ async function listenWithRetry(
 }
 
 async function startServer() {
+  assertApprovedMysqlTlsCa();
   initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
   const recoveryWorkers = prepareRecoveryWorkerStartup(process.env, {
     startAsaasWebhookRecovery: () => startWebhookRecovery(processWebhookEnvelope),
@@ -185,6 +191,31 @@ async function startServer() {
   const asaasWebhookInboundEnabled = resolveAsaasWebhookInboundEnabled(process.env);
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
+
+  if (process.env.STOCK_RUNTIME_ENABLED === "true") {
+    if (process.env.STOCK_DATABASE_ENV !== "staging" || !process.env.STOCK_EXPECTED_DATABASE?.trim()) {
+      throw new Error("STOCK_STAGING_DATABASE_IDENTITY_REQUIRED");
+    }
+    const pool = await getMysqlPool();
+    if (!pool) throw new Error("STOCK_RUNTIME_DATABASE_UNAVAILABLE");
+    const [identityRows] = await pool.execute<Array<RowDataPacket & { databaseName: string | null; version: string }>>(
+      "SELECT DATABASE() AS databaseName, VERSION() AS version",
+    );
+    const identity = identityRows[0];
+    if (identity?.databaseName !== process.env.STOCK_EXPECTED_DATABASE || !identity.version.startsWith("9.7.2")) {
+      throw new Error("STOCK_STAGING_DATABASE_IDENTITY_MISMATCH");
+    }
+    const runtime = createStockCheckoutRuntime({
+      pool,
+      provider: createConfiguredStockAsaasProvider(),
+      checkoutEnabled: process.env.STOCK_CHECKOUT_ENABLED === "true",
+    });
+    configureStockCheckoutRuntimeForServer(runtime);
+    startStockReservationExpiryScheduler(
+      () => runtime.expireReservations(100),
+      { onError: error => securityLog("error", "stock.reservation_expiry_failed", { reason: error instanceof Error ? error.message : "unknown" }) },
+    );
+  }
 
   const app = express();
   const server = createServer(app);

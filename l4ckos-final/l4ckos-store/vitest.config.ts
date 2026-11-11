@@ -13,9 +13,10 @@ export default defineConfig({
       "@assets": path.resolve(templateRoot, "attached_assets"),
     },
   },
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    include: ["server/**/*.test.ts", "server/**/*.spec.ts", "client/src/**/*.test.ts", "client/src/**/*.test.tsx"],
     // The offline financial-recovery packager is not part of this storefront
     // candidate; its implementation and supporting kernels are not in this base.
     exclude: ["server/database/restrictedFinancialRecoveryPackaging.test.ts"],

@@ -1,0 +1,26 @@
+.l4-xd-panel { margin: 18px 0; padding: 18px; border: 1px solid #2c2c2c; border-left: 4px solid #e8002a; background: #0d0d0d; color: #f0ede8; display: grid; gap: 12px; }
+.l4-xd-head { display: grid; gap: 8px; }
+.l4-xd-badge { justify-self: start; padding: 4px 10px; background: #e8002a; color: #fff; font: 700 11px "Space Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
+.l4-xd-name { font-size: 18px; letter-spacing: .02em; }
+.l4-xd-period { margin: 0; display: grid; gap: 4px; font-size: 13px; color: #c8c1ba; }
+.l4-xd-period div { display: flex; flex-wrap: wrap; gap: 6px; }
+.l4-xd-period dt { color: #9d958d; }
+.l4-xd-period dt::after { content: ":"; }
+.l4-xd-period dd { margin: 0; color: #f0ede8; }
+.l4-xd-state { margin: 0; font-size: 14px; line-height: 1.5; color: #e6e1db; }
+.l4-xd-pending { border: 1px dashed #5a5a5a; padding: 12px; text-align: center; font-weight: 700; }
+.l4-xd-error { margin: 0; padding: 10px 12px; border: 1px solid #e8002a; color: #ffb3bf; background: #1d0a0e; font-size: 13px; }
+.l4-xd-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 20px; border: 1px solid #e8002a; background: #e8002a; color: #fff; font: 700 13px "Space Mono", monospace; letter-spacing: .1em; text-transform: uppercase; text-decoration: none; cursor: pointer; }
+.l4-xd-btn:disabled, .l4-xd-btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.l4-xd-btn:focus-visible, .l4-xd-code input:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.l4-xd-code { display: grid; gap: 8px; }
+.l4-xd-code label { font-size: 12px; color: #c8c1ba; }
+.l4-xd-code input { min-height: 48px; padding: 0 14px; border: 1px solid #3a3a3a; background: #080808; color: #fff; font: 700 15px "Space Mono", monospace; letter-spacing: .08em; text-transform: uppercase; width: 100%; box-sizing: border-box; }
+.l4-xd-unlocked { border-left-color: #2f9e44; }
+@media (max-width: 480px) { .l4-xd-panel { padding: 14px; margin-left: 0; margin-right: 0; } .l4-xd-btn { width: 100%; } }
+.l4-xd-quota { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.l4-xd-quota div { padding: 8px; border: 1px solid #2c2c2c; display: grid; gap: 2px; }
+.l4-xd-quota dt { font-size: 11px; color: #9d958d; }
+.l4-xd-quota dd { margin: 0; font: 700 18px "Space Mono", monospace; }
+.l4-xd-note { color: #c8c1ba; font-size: 13px; }
+@media (max-width: 480px) { .l4-xd-quota { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -136,13 +136,15 @@ export const productVariants = mysqlTable("productVariants", {
   sku: varchar("sku", { length: 120 }),
   price: int("price"),
   stock: int("stock").default(0).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  /** Canonical STOCK variant identity; legacy rows require backfill before DDL rollout. */
   size: varchar("size", { length: 60 }),
   color: varchar("color", { length: 60 }),
+  reservedStock: int("reservedStock").default(0).notNull(),
+  // Match STOCK 0027's fail-closed default: legacy/unreviewed variants stay inactive.
+  isActive: int("isActive").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   optionKey: varchar("optionKey", { length: 191 }),
-  // Existing rows stay inactive until their color/size identity is reviewed.
-  isActive: tinyint("isActive").default(0).notNull(),
 }, table => [
   uniqueIndex("productVariants_product_option_unique").on(table.productId, table.optionKey),
   index("productVariants_productId_idx").on(table.productId),
@@ -171,6 +173,12 @@ export const orders = mysqlTable("orders", {
   // Existing canonical physical columns, not a new migration.
   checkoutAttemptId: varchar("checkoutAttemptId", { length: 64 }).unique(),
   checkoutFingerprint: varchar("checkoutFingerprint", { length: 64 }),
+  /** STOCK projection key; nullable for pre-existing and legacy orders. */
+  stockAttemptId: varchar("stockAttemptId", { length: 120 }).unique(),
+  /** Payment correlation mirrored from the authoritative STOCK attempt. */
+  stockPaymentId: varchar("stockPaymentId", { length: 120 }).unique(),
+  /** Delivery option captured together with the STOCK order address snapshot. */
+  shippingOptionId: varchar("shippingOptionId", { length: 120 }),
   shippingRecipient: varchar("shippingRecipient", { length: 255 }),
   shippingZipCode: varchar("shippingZipCode", { length: 20 }),
   shippingStreet: varchar("shippingStreet", { length: 255 }),
@@ -208,6 +216,10 @@ export const orderItems = mysqlTable("orderItems", {
   quantity: int("quantity").notNull(),
   unitPrice: int("unitPrice").notNull(), // snapshot unitário em centavos inteiros
   totalPrice: int("totalPrice"), // total histórico da linha; não recalcular
+  /** STOCK V1 snapshots (nullable; legacy rows keep sku/size/color above). */
+  skuSnapshot: varchar("skuSnapshot", { length: 120 }),
+  sizeSnapshot: varchar("sizeSnapshot", { length: 60 }),
+  colorSnapshot: varchar("colorSnapshot", { length: 60 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("orderItems_batch_order").on(table.productionBatchId,table.orderId)]);
 
@@ -498,14 +510,26 @@ export const stockReservations = mysqlTable("stockReservations", {
   orderId: int("orderId").notNull(),
   userId: int("userId").notNull(),
   productId: int("productId").notNull(),
+  /** STOCK-only correlation; nullable for legacy reservation rows. */
+  attemptId: varchar("attemptId", { length: 120 }),
   variantId: int("variantId"),
   orderItemId: int("orderItemId"),
+  skuSnapshot: varchar("skuSnapshot", { length: 120 }),
+  sizeSnapshot: varchar("sizeSnapshot", { length: 60 }),
+  colorSnapshot: varchar("colorSnapshot", { length: 60 }),
+  unitPriceCents: int("unitPriceCents"),
   quantity: int("quantity").notNull(),
   status: mysqlEnum("status", ["active", "consumed", "released", "expired", "restocked"]).default("active").notNull(),
   expiresAt: timestamp("expiresAt").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => ({
+  attemptVariantUnique: uniqueIndex("stockReservations_attempt_variant_unique").on(table.attemptId, table.variantId),
+  orderIdx: index("stockReservations_order_idx").on(table.orderId),
+  userProductIdx: index("stockReservations_user_product_idx").on(table.userId, table.productId),
+  variantStatusIdx: index("stockReservations_variant_status_idx").on(table.variantId, table.status),
+  attemptStatusIdx: index("stockReservations_attempt_status_idx").on(table.attemptId, table.status),
+}));
 
 export type StockReservation = typeof stockReservations.$inferSelect;
 export type InsertStockReservation = typeof stockReservations.$inferInsert;

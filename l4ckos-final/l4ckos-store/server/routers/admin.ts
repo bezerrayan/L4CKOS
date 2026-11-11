@@ -553,6 +553,21 @@ export const adminRouter = router({
       if (!currentOrder) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Pedido não encontrado." });
       }
+      if (currentOrder.stockAttemptId && input.status && ["pending", "cancelled"].includes(input.status)) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Pedidos STOCK só podem ser cancelados ou reabertos pelo fluxo financeiro reconciliado.",
+        });
+      }
+      if (
+        currentOrder.stockAttemptId && input.status && ["processing", "shipped", "delivered"].includes(input.status)
+        && !(currentOrder.shippingRecipient && currentOrder.shippingZipCode && currentOrder.shippingStreet && currentOrder.shippingNumber && currentOrder.shippingNeighborhood && currentOrder.shippingCity && currentOrder.shippingState)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "O pedido STOCK não possui endereço persistido completo para expedição.",
+        });
+      }
       if (
         input.status
         && ["paid", "processing", "shipped", "delivered"].includes(input.status)
@@ -631,6 +646,12 @@ export const adminRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Não é possível confirmar o pagamento de um pedido cancelado.",
+        });
+      }
+      if (currentOrder.stockAttemptId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "A confirmação de pagamentos STOCK é feita exclusivamente pelo webhook financeiro validado.",
         });
       }
 

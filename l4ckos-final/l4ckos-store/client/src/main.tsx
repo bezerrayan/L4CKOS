@@ -6,6 +6,7 @@ import superjson from "superjson";
 import { trpc } from "./lib/trpc";
 import { apiUrl } from "./const";
 import { csrfFetch, getCsrfToken } from "./lib/csrf";
+import { fetchWithTimeout, withDeadline } from "./lib/fetchWithTimeout";
 // Providers
 import { CartProvider } from "./contexts/CartContext";
 import { FavoritesProvider } from "./contexts/FavoritesContext";
@@ -51,9 +52,10 @@ const trpcClient = trpc.createClient({
         async fetch(url, options) {
           const method = options?.method || "GET";
           if (!["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) {
-            await getCsrfToken();
+            await withDeadline(getCsrfToken());
           }
-          return csrfFetch(url, {
+          // Silent server: abort (unknown outcome, STOCK flow re-queries) instead of freezing checkout.
+          return fetchWithTimeout(csrfFetch, String(url), {
             ...options,
             credentials: "include",
           });

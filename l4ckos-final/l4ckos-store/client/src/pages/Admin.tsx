@@ -1,6 +1,7 @@
 import "../components/admin/AdminStage1.css";
 import "../components/admin/AdminOperationsLayout.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
+import AdminExclusiveDrops from "../components/admin/exclusive/AdminExclusiveDrops";
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
@@ -68,6 +69,7 @@ type Section =
   | "orders"
   | "reviews"
   | "coupons"
+  | "drops"
   | "reports"
   | "audit"
   | "backup"
@@ -81,6 +83,7 @@ const adminSectionPaths: Record<Section, string> = {
   batches: "/gestao/lotes",
   promos: "/gestao/promocoes",
   coupons: "/gestao/cupons",
+  drops: "/gestao/drops",
   reviews: "/gestao/avaliacoes",
   reports: "/gestao/relatorios",
   audit: "/gestao/auditoria",
@@ -95,6 +98,7 @@ function adminSectionFromPath(pathname: string): Section {
   if (pathname.startsWith("/gestao/lotes")) return "batches";
   if (pathname.startsWith("/gestao/promocoes")) return "promos";
   if (pathname.startsWith("/gestao/cupons")) return "coupons";
+  if (pathname.startsWith("/gestao/drops")) return "drops";
   if (pathname.startsWith("/gestao/avaliacoes")) return "reviews";
   if (pathname.startsWith("/gestao/relatorios")) return "reports";
   if (pathname.startsWith("/gestao/auditoria")) return "audit";
@@ -399,7 +403,7 @@ export default function Admin() {
   const sectionNav = [
     { heading: "Visão geral", items: [{ key: "overview", label: "Dashboard / KPIs" }] },
     { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "batches", label: "Lotes / Pré-venda" }] },
-    { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "reviews", label: "Avaliações" }] },
+    { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "drops", label: "Drops exclusivos" }, { key: "reviews", label: "Avaliações" }] },
     { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
   ] as const;
   const sectionHeader = {
@@ -410,6 +414,7 @@ export default function Admin() {
     batches: { title: "Lotes e pré-venda", subtitle: "Acompanhe a capacidade e os prazos de produção." },
     promos: { title: "Promoções", subtitle: "Organize os destaques comerciais da loja." },
     coupons: { title: "Cupons", subtitle: "Gerencie regras promocionais e validade." },
+    drops: { title: "Drops exclusivos", subtitle: "Aprove acessos, defina cotas e acompanhe a utilização de cada drop." },
     reviews: { title: "Avaliações", subtitle: "Modere avaliações enviadas pelos clientes." },
     reports: { title: "Relatórios", subtitle: "Consulte indicadores e resultados da operação." },
     audit: { title: "Auditoria", subtitle: "Consulte o histórico de ações administrativas." },
@@ -1380,6 +1385,8 @@ export default function Admin() {
           </div>
         </AdminSurface>
       )}
+
+      {section === "drops" && <AdminExclusiveDrops />}
 
       {section === "reports" && (
         <AdminSurface title="Relatórios" description="Resumo operacional de pedidos criados no período selecionado.">
