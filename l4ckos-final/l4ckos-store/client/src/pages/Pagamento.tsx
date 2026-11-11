@@ -774,7 +774,7 @@ export default function Pagamento() {
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
               <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || stockCheckoutBlocked || catalogBlocksNewAttempt}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
               {!hasCompleteCheckoutData && !paymentData && !stockPaymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
-              {catalogBlocksNewAttempt ? <ul className="l4-checkout-validation-note is-error" role="alert">{catalogIssues.map(issue => <li key={issue}>{issue}</li>)}</ul> : null}
+              {catalogBlocksNewAttempt ? catalogIssues.map(issue => <p key={issue} className="l4-checkout-validation-note is-error" role="alert">{issue}</p>) : null}
               {stockCartInvalid ? <p className="l4-checkout-validation-note is-error" role="alert">O carrinho inclui item sem variante STOCK válida. Volte ao produto e selecione tamanho e cor.</p> : null}
               {stockResumeError ? <p className="l4-checkout-validation-note is-error" role="alert">{stockResumeError} <button type="button" onClick={() => void refreshStockAttempt()}>Consultar status</button></p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
