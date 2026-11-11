@@ -44,7 +44,7 @@ export function financialEnvelope(payload: unknown) {
   return { ...body, id, sourcePayloadHash: createHash("sha256").update(JSON.stringify(payload ?? null)).digest("hex") };
 }
 const reply = (status: number, code: string): WebhookReply => ({ status, body: { handled: false, code } });
-const digest = (payload: string) => {
+export const digest = (payload: string) => {
   const envelope = JSON.parse(payload);
   delete envelope.sourcePayloadHash;
   return createHash('sha256').update(canonical(envelope)).digest('hex');

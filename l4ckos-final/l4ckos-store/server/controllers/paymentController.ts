@@ -5,6 +5,7 @@ import { verifyAsaasCustomerNotifications } from "../services/asaasService";
 import { validatePaymentBinding, validatePaymentObservationBinding, recordTrustedPaymentReceipt, recordSelectedBoletoReview } from "../payments/paymentRecord";
 import { enqueuePaymentApproved, deliverPaymentNotifications } from "../payments/paymentNotificationOutbox";
 import { receiveWebhook, type WebhookReply } from "../payments/webhookInbox";
+import { attestAuthenticatedIngress, hasVerifiedIngressProvenance } from "../payments/ingressProvenance";
 import { afterWebhookCommit, webhookDb } from "../database/webhookTransaction";
 import {assertNoRecoveryHold} from '../payments/webhookRecovery';
 import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
@@ -367,6 +368,8 @@ export function createAsaasWebhookHandler(resolveStockRuntime: () => StockChecko
 
     // The durable inbox keeps the V6 recovery guarantees; the STOCK owner resolver travels with the processor.
     const deliveryHeaders = req.headers as Record<string, string | string[] | undefined>;
+    // Provenance for later internal replays of this (now authenticated) event; best effort, never blocks the delivery.
+    await attestAuthenticatedIngress(req.body);
     const outcome = await receiveWebhook(req.body, payload => processWebhookEnvelope(payload, resolveStockRuntime, deliveryHeaders));
     res.status(outcome.status).json(outcome.body);
   } catch {
@@ -507,15 +510,22 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
 
       // The STOCK owner re-verifies the provider token from the ORIGINAL delivery headers. A stored envelope replayed by
       // recovery has none, so it can never be authenticated here: fail closed (retryable) and wait for an authenticated redelivery.
+      const baseBoundary = createAsaasStockWebhookBoundary();
+      let boundary = baseBoundary;
       if (!req.headers) {
-        securityLog("warn", "payment.asaas_stock_replay_requires_authenticated_delivery", { requestIp: req.ip || "unknown", orderId, event });
-        res.status(503).json({ handled: false, reason: "stock_replay_requires_authenticated_delivery" });
-        return;
+        // Internal replay of a stored envelope: accepted only with verified ingress provenance (HMAC written at an authenticated
+        // HTTP delivery, recomputed here with the current token over the stored envelope). Otherwise fail closed and wait for redelivery.
+        if (!(await hasVerifiedIngressProvenance(payload))) {
+          securityLog("warn", "payment.asaas_stock_replay_requires_authenticated_delivery", { requestIp: req.ip || "unknown", orderId, event });
+          res.status(503).json({ handled: false, reason: "stock_replay_requires_authenticated_delivery" });
+          return;
+        }
+        boundary = { ...baseBoundary, verifySignature: async () => true };
       }
       const result = await runtime.receiveWebhook({
         rawBody: JSON.stringify(payload),
-        headers: req.headers as Record<string, string | string[] | undefined>,
-        boundary: createAsaasStockWebhookBoundary(),
+        headers: (req.headers ?? {}) as Record<string, string | string[] | undefined>,
+        boundary,
       });
       if (result === "conflict") {
         securityLog("warn", "payment.asaas_stock_event_conflict_acknowledged", { requestIp: req.ip || "unknown", orderId, event, paymentId });

@@ -12,7 +12,8 @@ import { appRouter } from "../routers";
 import { getOrderById, getOrderByIdAndUser, setStockLocalHarnessDb } from "../db";
 import { ENV } from "../_core/env";
 import { configureStockCheckoutRuntimeForLocalHarness, createContext } from "../_core/context";
-import { asaasWebhookHandler, createAsaasWebhookHandler } from "../controllers/paymentController";
+import { asaasWebhookHandler, createAsaasWebhookHandler, processWebhookEnvelope } from "../controllers/paymentController";
+import { attestAuthenticatedIngress } from "../payments/ingressProvenance";
 import { sdk } from "../_core/sdk";
 import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "./stockCheckoutRuntime";
@@ -336,6 +337,44 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     expect(retried.status).toBe(200);
     const [recoveredOrder] = await pool.execute<(Record<string, unknown> & { status: string; paymentStatus: string })[]>("SELECT status, paymentStatus FROM orders WHERE stockAttemptId = ?", [request.attemptId]);
     expect(recoveredOrder[0]).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+  });
+
+  it("internal replay of a stored STOCK event needs verified ingress provenance: unauthenticated, tampered or token-rotated events are never processed", async () => {
+    const owner = httpClient("owner-81");
+    const created = await owner.stockCheckout.create.mutate({ attemptId: "stock-replay-attempt-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery });
+    const body = (value: number) => ({ id: "evt-replay-paid-1", event: "PAYMENT_RECEIVED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value, currency: "BRL" } });
+    const attemptStatus = async () => ((await pool.execute<(Record<string, unknown> & { status: string })[]>("SELECT status FROM stockCheckoutAttempts WHERE attemptId = 'stock-replay-attempt-0001'"))[0][0]?.status);
+    const ledger = async () => Number(((await pool.execute<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockWebhookEvents"))[0][0])?.n);
+
+    // 1. Nothing was attested at an authenticated delivery: a bare DB envelope is NOT accepted.
+    const bare = await processWebhookEnvelope(body(129));
+    expect(bare.status).toBe(503);
+    expect(bare.body).toMatchObject({ reason: "stock_replay_requires_authenticated_delivery" });
+    expect([await attemptStatus(), await ledger()]).toEqual(["reserved", 0]);
+
+    // 2. Provenance for a DIFFERENT envelope (other amount) does not vouch for this one.
+    expect(await attestAuthenticatedIngress(body(1))).toBe(true);
+    expect((await processWebhookEnvelope(body(129))).status).toBe(503);
+    expect(await attemptStatus()).toBe("reserved");
+
+    // 3. Provenance written under another token does not verify after rotation.
+    vi.stubEnv("ASAAS_WEBHOOK_TOKEN", "some-other-synthetic-token");
+    expect(await attestAuthenticatedIngress(body(129))).toBe(true);
+    vi.stubEnv("ASAAS_WEBHOOK_TOKEN", syntheticWebhookToken);
+    expect((await processWebhookEnvelope(body(129))).status).toBe(503);
+    expect(await attemptStatus()).toBe("reserved");
+
+    // 4. A MAC written at an authenticated delivery (current token) over exactly this envelope: replay is processed once.
+    expect(await attestAuthenticatedIngress(body(129))).toBe(true);
+    const replayed = await processWebhookEnvelope(body(129));
+    expect(replayed.status).toBe(200);
+    expect([await attemptStatus(), await ledger()]).toEqual(["paid", 1]);
+    expect((await processWebhookEnvelope(body(129))).status).toBe(200); // duplicate acknowledged, ledger unchanged
+    expect(await ledger()).toBe(1);
+
+    // 5. Without a configured token nothing can be verified.
+    vi.stubEnv("ASAAS_WEBHOOK_TOKEN", "");
+    expect((await processWebhookEnvelope({ ...body(129), id: "evt-replay-other" })).status).toBe(503);
   });
 
   it("keeps the public gate ahead of all MySQL and provider work", async () => {
