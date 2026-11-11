@@ -20,6 +20,8 @@ import { csrfFetch } from "../lib/csrf";
 import { trackStoreEvent } from "../lib/analytics";
 import { ProductReviews } from "../components/reviews/ProductReviews";
 import { resolveStockVariant, type StockCatalogVariant } from "../stock/stockCheckoutClient";
+import { mapCatalogVariants } from "../stock/catalogVariants";
+import { clampQuantity, isColorPurchasable, isSizePurchasable, MAX_LINE_QUANTITY } from "../stock/availability";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -131,21 +133,7 @@ export default function ProductDetail() {
         optionSizes: parseJsonList((productQuery.data as any).optionSizes),
         sizeType: String((productQuery.data as any).sizeType ?? "alpha"),
         variantCatalogPresent: Array.isArray((productQuery.data as any).variants) && (productQuery.data as any).variants.length > 0,
-        variants: (Array.isArray((productQuery.data as any).variants) ? (productQuery.data as any).variants : [])
-          .filter((variant: any) => Number.isSafeInteger(Number(variant?.id)) && Number(variant.id) > 0 &&
-            Number(variant.productId) === Number(productQuery.data.id) &&
-            typeof variant.size === "string" && variant.size.trim() &&
-            typeof variant.color === "string" && variant.color.trim())
-          .map((variant: any) => ({
-            id: Number(variant.id),
-            productId: Number(variant.productId),
-            sku: typeof variant.sku === "string" ? variant.sku : null,
-            size: variant.size.trim(),
-            color: variant.color.trim(),
-            active: variant.isActive === true || Number(variant.isActive) === 1,
-            stock: Number(variant.stock ?? 0),
-            price: variant.price == null ? null : Number(variant.price),
-          })),
+        variants: mapCatalogVariants((productQuery.data as any).variants, productQuery.data.id),
         images:
           Array.isArray((productQuery.data as any).images) && (productQuery.data as any).images.length > 0
             ? ((productQuery.data as any).images as Array<any>).map((img) => ({
@@ -263,6 +251,11 @@ export default function ProductDetail() {
     ? resolveStockVariant(product.variants ?? [], product.id, selectedSize, selectedColor)
     : null;
   const displayedStock = selectedStockVariant?.stock ?? product.stock;
+  const maxQuantity = Math.min(MAX_LINE_QUANTITY, Math.max(1, displayedStock));
+  const effectiveQuantity = clampQuantity(quantity, maxQuantity);
+  const hasVariantCatalog = Boolean(product.variantCatalogPresent);
+  const isColorSoldOut = (name: string) => hasVariantCatalog && !isColorPurchasable(activeStockVariants, name, selectedSize);
+  const isSizeSoldOut = (name: string) => hasVariantCatalog && !isSizePurchasable(activeStockVariants, name, selectedColor);
   const canAddToCart = Boolean(
     selectedColor && selectedSize && displayedStock > 0 &&
     (!product.variantCatalogPresent || selectedStockVariant),
@@ -298,7 +291,7 @@ export default function ProductDetail() {
       return;
     }
 
-    addToCart(product, quantity, {
+    addToCart(product, effectiveQuantity, {
       cor: selectedColor,
       tamanho: selectedSize,
     }, selectedStockVariant?.id);
@@ -323,7 +316,7 @@ export default function ProductDetail() {
       return;
     }
 
-    addToCart(product, quantity, { cor: selectedColor, tamanho: selectedSize }, selectedStockVariant?.id);
+    addToCart(product, effectiveQuantity, { cor: selectedColor, tamanho: selectedSize }, selectedStockVariant?.id);
     setShowSelectionWarning(false);
     closeCartDrawer();
     navigate("/checkout");
@@ -347,8 +340,8 @@ export default function ProductDetail() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cep: normalizedCep,
-          itemCount: quantity,
-          subtotal: Number((product.price * quantity).toFixed(2)),
+          itemCount: effectiveQuantity,
+          subtotal: Number((product.price * effectiveQuantity).toFixed(2)),
         }),
       });
 
@@ -556,6 +549,7 @@ export default function ProductDetail() {
               {colorOptions.map((color) => (
                 (() => {
                   const isSelected = selectedColor === color.name;
+                  const soldOut = isColorSoldOut(color.name);
                   const isLightColor = ["#ffffff", "#fff", "#f5f5f5", "#d1d5db"].includes(color.hex.toLowerCase());
                   return (
                     <button
@@ -563,7 +557,8 @@ export default function ProductDetail() {
                       type="button"
                       onClick={() => { setSelectedColor(color.name); trackStoreEvent("product_option_selected", { product_id: product.id, option_type: "color" }); }}
                       aria-pressed={isSelected}
-                      aria-label={`Selecionar cor ${color.name}`}
+                      disabled={soldOut}
+                      aria-label={soldOut ? `Cor ${color.name} indisponível${selectedSize ? ` no tamanho ${selectedSize}` : ""}` : `Selecionar cor ${color.name}`}
                       style={{
                         ...styles.colorOption,
                         background: color.hex,
@@ -574,8 +569,10 @@ export default function ProductDetail() {
                           ? "0 0 0 4px rgba(232, 0, 42, 0.28), 0 0 0 7px rgba(240, 237, 232, 0.16)"
                           : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
                         transform: isSelected ? "translateY(-2px) scale(1.04)" : "none",
+                        opacity: soldOut ? 0.35 : 1,
+                        cursor: soldOut ? "not-allowed" : "pointer",
                       } as CSSProperties}
-                      title={color.name}
+                      title={soldOut ? `${color.name} (indisponível)` : color.name}
                     >
                       {isSelected && (
                         <span
@@ -613,8 +610,13 @@ export default function ProductDetail() {
                   type="button"
                   onClick={() => { setSelectedSize(size); trackStoreEvent("product_option_selected", { product_id: product.id, option_type: "size" }); }}
                   aria-pressed={selectedSize === size}
+                  disabled={isSizeSoldOut(size)}
+                  aria-label={isSizeSoldOut(size) ? `Tamanho ${size} indisponível${selectedColor ? ` na cor ${selectedColor}` : ""}` : `Tamanho ${size}`}
                   style={{
                     ...styles.sizeOption,
+                    opacity: isSizeSoldOut(size) ? 0.4 : 1,
+                    textDecoration: isSizeSoldOut(size) ? "line-through" : "none",
+                    cursor: isSizeSoldOut(size) ? "not-allowed" : "pointer",
                     background: selectedSize === size ? "#e8002a" : "#111111",
                     color: selectedSize === size ? "#ffffff" : "#f0ede8",
                     border: selectedSize === size ? "2px solid #ff4966" : styles.sizeOption.border,
@@ -635,34 +637,39 @@ export default function ProductDetail() {
 
           <div style={styles.sectionBlock as CSSProperties}>
             <h3 style={styles.sectionTitle as CSSProperties}>Quantidade</h3>
-            <div style={styles.quantityControl as CSSProperties}>
+            <div style={styles.quantityControl as CSSProperties} role="group" aria-label="Quantidade">
               <button
-                onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                type="button"
+                onClick={() => setQuantity(Math.max(1, effectiveQuantity - 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={displayedStock <= 0}
+                disabled={displayedStock <= 0 || effectiveQuantity <= 1}
+                aria-label="Diminuir quantidade"
               >
                 -
               </button>
               <input
                 type="number"
+                inputMode="numeric"
                 min="1"
-                 max={displayedStock > 0 ? displayedStock : 1}
-                value={quantity}
-                 onChange={(e) =>
-                   setQuantity(
-                     Math.min(displayedStock > 0 ? displayedStock : 1, Math.max(1, parseInt(e.target.value) || 1))
-                   )
-                 }
+                max={maxQuantity}
+                value={effectiveQuantity}
+                aria-label="Quantidade"
+                onChange={(e) => setQuantity(clampQuantity(parseInt(e.target.value) || 1, maxQuantity))}
                 style={styles.quantityInput as CSSProperties}
               />
               <button
-                onClick={() => setQuantity(Math.min(displayedStock > 0 ? displayedStock : 1, quantity + 1))}
+                type="button"
+                onClick={() => setQuantity(clampQuantity(effectiveQuantity + 1, maxQuantity))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={displayedStock <= 0}
+                disabled={displayedStock <= 0 || effectiveQuantity >= maxQuantity}
+                aria-label="Aumentar quantidade"
               >
                 +
               </button>
             </div>
+            {displayedStock > 0 && effectiveQuantity >= maxQuantity && displayedStock <= MAX_LINE_QUANTITY ? (
+              <p style={styles.selectedLabel as CSSProperties} role="status">Máximo disponível: {maxQuantity} {maxQuantity === 1 ? "unidade" : "unidades"}.</p>
+            ) : null}
           </div>
 
           <div
