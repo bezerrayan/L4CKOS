@@ -2,6 +2,7 @@ import "../components/admin/AdminStage1.css";
 import { confirmDialog, promptDialog } from "../components/admin/adminDialogs";
 import "../components/admin/AdminOperationsLayout.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
+import { AdminLogisticsPanel } from "../components/admin/logistics/AdminLogisticsPanel";
 import AdminExclusiveDrops from "../components/admin/exclusive/AdminExclusiveDrops";
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -69,6 +70,7 @@ type Section =
   | "products"
   | "promos"
   | "orders"
+  | "logistics"
   | "reviews"
   | "coupons"
   | "drops"
@@ -80,6 +82,7 @@ type Section =
 const adminSectionPaths: Record<Section, string> = {
   overview: "/gestao",
   orders: "/gestao/pedidos",
+  logistics: "/gestao/logistica",
   products: "/gestao/catalogo/produtos",
   customers: "/gestao/clientes",
   batches: "/gestao/lotes",
@@ -96,6 +99,7 @@ const adminSectionPaths: Record<Section, string> = {
 function adminSectionFromPath(pathname: string): Section {
   if (pathname.startsWith("/gestao/catalogo/produtos")) return "products";
   if (pathname.startsWith("/gestao/pedidos")) return "orders";
+  if (pathname.startsWith("/gestao/logistica")) return "logistics";
   if (pathname.startsWith("/gestao/clientes")) return "customers";
   if (pathname.startsWith("/gestao/lotes")) return "batches";
   if (pathname.startsWith("/gestao/promocoes")) return "promos";
@@ -404,13 +408,14 @@ export default function Admin() {
   const menuPanelRef = useRef<HTMLElement | null>(null);
   const sectionNav = [
     { heading: "Visão geral", items: [{ key: "overview", label: "Dashboard / KPIs" }] },
-    { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "batches", label: "Lotes / Pré-venda" }] },
+    { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "logistics", label: "Logística" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "batches", label: "Lotes / Pré-venda" }] },
     { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "drops", label: "Drops exclusivos" }, { key: "reviews", label: "Avaliações" }] },
     { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
   ] as const;
   const sectionHeader = {
     overview: { title: "Painel", subtitle: "Visão geral da operação L4CKOS." },
     orders: { title: "Pedidos", subtitle: "Acompanhe pagamento, logística e atendimento." },
+    logistics: { title: "Logística", subtitle: "Consulte produção, preparação e expedição usando os registros atuais da V6." },
     products: { title: "Produtos", subtitle: "Gerencie catálogo, variantes e disponibilidade." },
     customers: { title: "Clientes", subtitle: "Consulte os cadastros e o relacionamento com a loja." },
     batches: { title: "Lotes e pré-venda", subtitle: "Acompanhe a capacidade e os prazos de produção." },
@@ -1091,6 +1096,8 @@ export default function Admin() {
       )}
 
       {section === "batches" && <AdminBatches />}
+
+      {section === "logistics" && <AdminLogisticsPanel onOpenOrder={openOrder} />}
 
       {section === "orders" && (
         <AdminSurface
