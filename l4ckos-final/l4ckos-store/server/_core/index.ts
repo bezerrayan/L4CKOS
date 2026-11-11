@@ -43,6 +43,7 @@ import { createStockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
 import { createConfiguredStockAsaasProvider } from "../stock/configuredStockAsaasProvider";
 import { startStockReservationExpiryScheduler } from "../stock/stockReservationExpiryScheduler";
 import { assertStagingApiAccessConfiguration, createStagingApiAccessMiddleware } from "./stagingApiAccess";
+import { shouldScheduleAutomaticBackup } from "./automaticBackupStartup";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -565,7 +566,11 @@ async function startServer() {
   }
   console.log(`Server running on http://${host}:${port}/`);
 
-  scheduleDailyBackup();
+  if (shouldScheduleAutomaticBackup(process.env)) {
+    scheduleDailyBackup();
+  } else {
+    console.info("[Startup] automatic JSON backup disabled for isolated homologation; use the approved encrypted Gate 4 backup");
+  }
   if (!recoveryWorkers.config.asaasWebhookRecovery) console.info("[Startup] Asaas webhook recovery worker disabled");
   if (!recoveryWorkers.config.paymentNotifications) console.info("[Startup] payment notification recovery worker disabled");
   recoveryWorkers.start();
