@@ -17,26 +17,29 @@ import { ToastProvider } from "../contexts/ToastContext";
 import { resetTrpc, setTrpc } from "../test/fakeTrpc";
 import ProductDetail from "./ProductDetail";
 
-type Row = { id: number; size: string; color: string; active: boolean; isActive: 0 | 1; stock: number };
-const rows = (): Row[] => [
-  { id: 11, size: "M", color: "Preto", active: true, isActive: 1, stock: 3 },
-  { id: 12, size: "G", color: "Preto", active: true, isActive: 1, stock: 0 },
-  { id: 13, size: "G", color: "Branco", active: true, isActive: 1, stock: 5 },
-  { id: 14, size: "M", color: "Branco", active: false, isActive: 1, stock: 9 }, // API disagrees: `active` wins
+type Sellable = { variantId: number; color: string; size: string; price: number; availableUnits: number | null; available: true };
+// What the public `products.sellableVariants` procedure returns: only sellable rows (inactive and sold-out rows never reach the client).
+const catalog = (): Sellable[] => [
+  { variantId: 11, color: "Preto", size: "M", price: 9990, availableUnits: 3, available: true },
+  { variantId: 13, color: "Preto", size: "G", price: 9990, availableUnits: 5, available: true },
+  { variantId: 14, color: "Branco", size: "G", price: 9990, availableUnits: 5, available: true },
 ];
 
-function serve(variants: Row[]) {
+function serve(variants: Sellable[]) {
   setTrpc("products.getById.useQuery", () => ({
     isLoading: false,
     data: {
       id: 1, name: "Camiseta Built for Adventure", description: "d", price: 9990, stock: 8, category: "camisetas",
-      imageUrl: "", images: [], optionColors: "[]", optionSizes: "[]", sizeType: "alpha",
-      variants: variants.map(row => ({ ...row, productId: 1, sku: `SKU-${row.id}`, price: null })),
+      imageUrl: "", images: [], optionColors: "[]", optionSizes: "[]", sizeType: "alpha", salesMode: "STOCK", productionBatch: null,
     },
+  }));
+  setTrpc("products.sellableVariants.useQuery", () => ({
+    isLoading: false,
+    data: { productId: 1, hasVariants: true, publicPurchaseAllowed: true, variants },
   }));
 }
 
-function setup(variants = rows()) {
+function setup(variants = catalog()) {
   serve(variants);
   const user = userEvent.setup();
   render(
@@ -53,42 +56,36 @@ function setup(variants = rows()) {
 
 const cartInStorage = () => JSON.parse(window.localStorage.getItem("loja-escoteira:cart") ?? "[]");
 const color = (name: RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
-const size = (name: RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
+const size = (label: string) => screen.getByRole("button", { name: label }) as HTMLButtonElement;
 
 beforeEach(() => resetTrpc());
 
-describe("ProductDetail — variants", () => {
-  it("treats a row as sellable only when `active` is true, even if `isActive` is 1", async () => {
+describe("ProductDetail — variants (V6 UI over the server's sellable catalog)", () => {
+  it("offers only the colors and sizes the server lists as sellable", async () => {
     const user = setup();
+    expect(color(/Selecionar cor Preto/)).toBeTruthy();
+    expect(color(/Selecionar cor Branco/)).toBeTruthy();
     await user.click(color(/Selecionar cor Branco/));
-    // Branco/M has isActive=1 but active=false → M is unavailable in Branco; G (active, stock 5) is fine.
-    expect(size(/Tamanho M indisponível na cor Branco/).disabled).toBe(true);
-    expect(size(/^Tamanho G$/).disabled).toBe(false);
+    // Branco exists only in G: M (sold out / inactive on the server) is not offered at all.
+    expect(screen.queryByRole("button", { name: "M" })).toBeNull();
+    expect(size("G")).toBeTruthy();
   });
 
   it("selects size and color with aria-pressed", async () => {
     const user = setup();
     await user.click(color(/Selecionar cor Preto/));
-    await user.click(size(/^Tamanho M$/));
+    await user.click(size("M"));
     expect(color(/Selecionar cor Preto/).getAttribute("aria-pressed")).toBe("true");
-    expect(size(/^Tamanho M$/).getAttribute("aria-pressed")).toBe("true");
+    expect(size("M").getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("disables a sold-out size for the chosen color and says why", async () => {
+  it("drops a selected size that does not exist in the newly chosen color", async () => {
     const user = setup();
     await user.click(color(/Selecionar cor Preto/));
-    const sold = size(/Tamanho G indisponível na cor Preto/);
-    expect(sold.disabled).toBe(true);
-    await user.click(sold);
-    expect(sold.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("disables colors that do not exist in the chosen size", async () => {
-    const user = setup();
-    await user.click(size(/^Tamanho M$/));
-    // M exists only in Preto with stock (Branco/M is inactive).
-    expect(color(/Cor Branco indisponível no tamanho M/).disabled).toBe(true);
-    expect(color(/Selecionar cor Preto/).disabled).toBe(false);
+    await user.click(size("M"));
+    await user.click(color(/Selecionar cor Branco/));
+    expect(screen.getByText("Nenhum tamanho")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Adicionar à sacola" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("supports keyboard selection (focus + Space/Enter)", async () => {
@@ -97,24 +94,14 @@ describe("ProductDetail — variants", () => {
     preto.focus();
     await user.keyboard("[Space]");
     expect(preto.getAttribute("aria-pressed")).toBe("true");
-    size(/^Tamanho M$/).focus();
+    size("M").focus();
     await user.keyboard("{Enter}");
-    expect(size(/^Tamanho M$/).getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("skips disabled options when tabbing", async () => {
-    const user = setup();
-    await user.click(color(/Selecionar cor Preto/));
-    const sold = size(/Tamanho G indisponível/);
-    for (let i = 0; i < 30; i += 1) {
-      await user.tab();
-      expect(document.activeElement).not.toBe(sold);
-    }
+    expect(size("M").getAttribute("aria-pressed")).toBe("true");
   });
 });
 
 describe("ProductDetail — add to cart", () => {
-  it("asks for size and color before adding", async () => {
+  it("does not add anything before size and color are chosen", async () => {
     const user = setup();
     await user.click(screen.getByRole("button", { name: "Adicionar à sacola" }));
     expect(cartInStorage()).toEqual([]);
@@ -123,40 +110,51 @@ describe("ProductDetail — add to cart", () => {
   it("adds the real variantId and the chosen quantity", async () => {
     const user = setup();
     await user.click(color(/Selecionar cor Preto/));
-    await user.click(size(/^Tamanho M$/));
+    await user.click(size("M"));
     await user.click(screen.getByRole("button", { name: "Aumentar quantidade" }));
     await user.click(screen.getByRole("button", { name: "Adicionar à sacola" }));
     await waitFor(() => expect(cartInStorage()).toHaveLength(1));
-    expect(cartInStorage()[0]).toMatchObject({ variantId: 11, quantity: 2, selectedOptions: { cor: "Preto", tamanho: "M" } });
+    expect(cartInStorage()[0]).toMatchObject({ variant: { variantId: 11, color: "Preto", size: "M", priceCents: 9990, availableUnits: 3 }, quantity: 2, selectedOptions: { cor: "Preto", tamanho: "M" } });
   });
 
-  it("bounds quantity by the selected variant stock", async () => {
+  it("bounds quantity by the selected variant's available units", async () => {
     const user = setup();
     await user.click(color(/Selecionar cor Preto/));
-    await user.click(size(/^Tamanho M$/)); // stock 3
+    await user.click(size("M")); // 3 units
     const plus = screen.getByRole("button", { name: "Aumentar quantidade" }) as HTMLButtonElement;
     await user.click(plus);
     await user.click(plus);
+    await user.click(plus);
     expect((screen.getByRole("spinbutton", { name: "Quantidade" }) as HTMLInputElement).value).toBe("3");
-    expect(plus.disabled).toBe(true);
     expect(screen.getByText(/Máximo disponível: 3 unidades/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Adicionar à sacola" }));
     await waitFor(() => expect(cartInStorage()[0].quantity).toBe(3));
   });
 
-  it("clamps a typed quantity above stock", async () => {
+  it("clamps a typed quantity above the available units", async () => {
     const user = setup();
     await user.click(color(/Selecionar cor Preto/));
-    await user.click(size(/^Tamanho M$/));
+    await user.click(size("M"));
     const input = screen.getByRole("spinbutton", { name: "Quantidade" }) as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "50");
     expect(input.value).toBe("3");
   });
 
-  it("shows unavailable and disables purchase when every variant is sold out", () => {
-    setup(rows().map(row => ({ ...row, stock: 0 })));
+  it("shows unavailable and disables purchase when the server lists no sellable variant", () => {
+    setup([]);
     expect((screen.getByRole("button", { name: "Indisponível" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Adicionar à sacola" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("blocks purchase entirely when the server says public purchase is not allowed", () => {
+    serve(catalog());
+    setTrpc("products.sellableVariants.useQuery", () => ({ isLoading: false, data: { productId: 1, hasVariants: true, publicPurchaseAllowed: false, variants: [] } }));
+    render(
+      <MemoryRouter initialEntries={["/produto/1"]}>
+        <ToastProvider><CartProvider><Routes><Route path="/produto/:id" element={<ProductDetail />} /></Routes></CartProvider></ToastProvider>
+      </MemoryRouter>,
+    );
     expect((screen.getByRole("button", { name: "Adicionar à sacola" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

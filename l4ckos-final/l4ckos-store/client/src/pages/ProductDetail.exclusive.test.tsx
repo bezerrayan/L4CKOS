@@ -20,8 +20,8 @@ import type { ProductDropView, ViewerAccessView } from "../../../shared/exclusiv
 import ProductDetail from "./ProductDetail";
 
 const variants = [
-  { id: 11, size: "M", color: "Preto", active: true, isActive: 1, stock: 9 },
-  { id: 12, size: "G", color: "Preto", active: true, isActive: 1, stock: 9 },
+  { variantId: 11, size: "M", color: "Preto", price: 12900, availableUnits: 9, available: true },
+  { variantId: 12, size: "G", color: "Preto", price: 12900, availableUnits: 9, available: true },
 ];
 
 function exclusive(viewer: ViewerAccessView, drop: Record<string, unknown> = {}): ProductDropView {
@@ -41,10 +41,10 @@ function setup(drop: ProductDropView | { loading: true } | { error: true } = { e
   setTrpc("products.getById.useQuery", () => ({
     isLoading: false,
     data: {
-      id: 1, name: "Camiseta Clã XIV Bis", description: "Edição exclusiva", price: 12900, stock: 18, category: "camisetas", imageUrl: "", images: [], optionColors: "[]", optionSizes: "[]", sizeType: "alpha",
-      variants: variants.map(row => ({ ...row, productId: 1, sku: `SKU-${row.id}`, price: null })),
+      id: 1, name: "Camiseta Clã XIV Bis", description: "Edição exclusiva", price: 12900, stock: 18, category: "camisetas", imageUrl: "", images: [], optionColors: "[]", optionSizes: "[]", sizeType: "alpha", salesMode: "STOCK", productionBatch: null,
     },
   }));
+  setTrpc("products.sellableVariants.useQuery", () => ({ isLoading: false, data: { productId: 1, hasVariants: true, publicPurchaseAllowed: true, variants } }));
   setTrpc("exclusiveDrops.forProduct.useQuery", (_input: unknown, options: unknown) => {
     queryOptions(options);
     return "loading" in drop ? { data: undefined, isLoading: true, error: null }
@@ -69,9 +69,11 @@ const cartInStorage = () => JSON.parse(window.localStorage.getItem("loja-escotei
 beforeEach(() => { resetTrpc(); queryOptions.mockReset(); });
 
 describe("ProductDetail — exclusive drop states", () => {
-  it("public product: normal purchase, no drop UI", () => {
-    setup({ exclusive: false });
+  it("public product: normal purchase, no drop UI", async () => {
+    const user = setup({ exclusive: false });
     expect(add()).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Selecionar cor Preto/ }));
+    await user.click(screen.getByRole("button", { name: "M" }));
     expect(buy()).toBeTruthy();
     expect(screen.queryByText("Drop exclusivo")).toBeNull();
   });
@@ -80,7 +82,7 @@ describe("ProductDetail — exclusive drop states", () => {
     const user = setup(exclusive({ status: "none" }));
     expect(screen.getByRole("heading", { name: /Camiseta Clã XIV Bis/ })).toBeTruthy();
     expect(screen.getByText("Drop exclusivo")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Tamanho M/ })).toBeTruthy(); // sizes remain consultable
+    expect(screen.getByRole("button", { name: "M" })).toBeTruthy(); // sizes remain consultable
     expect(screen.getByRole("button", { name: "Solicitar acesso" })).toBeTruthy();
     expect(add()).toBeNull();
     expect(buy()).toBeNull();
@@ -111,7 +113,8 @@ describe("ProductDetail — exclusive drop states", () => {
     expect(screen.getByText(/até 2 unidades/)).toBeTruthy();
     expect(add()).toBeTruthy();
     const plus = screen.getByRole("button", { name: /Aumentar quantidade/ }) as HTMLButtonElement;
-    await user.click(screen.getByRole("button", { name: /Tamanho M/ }));
+    await user.click(screen.getByRole("button", { name: /Selecionar cor Preto/ }));
+    await user.click(screen.getByRole("button", { name: "M" }));
     await user.click(plus);
     await user.click(plus);
     await user.click(plus);
@@ -150,7 +153,8 @@ describe("ProductDetail — exclusive drop states", () => {
     seedCart([cartItem({ product: fixtureProduct({ variants: [variant({ id: 11, stock: 9 })] }), quantity: 2 })]);
     const user = setup(exclusive({ status: "unlocked", unitLimit: 3, unitsUsed: 0, unitsReserved: 0, unitsConsumed: 0, unitsRemaining: 3 }));
     expect(screen.getByText(/já tem 2 unidades deste produto na sacola/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: /Tamanho M/ }));
+    await user.click(screen.getByRole("button", { name: /Selecionar cor Preto/ }));
+    await user.click(screen.getByRole("button", { name: "M" }));
     const plus = screen.getByRole("button", { name: /Aumentar quantidade/ }) as HTMLButtonElement;
     expect(plus.disabled).toBe(true); // 1 is already the cap
     expect(screen.getByText(/Máximo disponível: 1 unidade/)).toBeTruthy();

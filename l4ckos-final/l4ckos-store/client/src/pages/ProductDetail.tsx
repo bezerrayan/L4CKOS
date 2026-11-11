@@ -658,11 +658,14 @@ export default function ProductDetail() {
                 aria-label="Aumentar quantidade"
                 onClick={() => setQuantity(Math.min(quantityLimit, quantity + 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={!available}
+                disabled={!available || quantity >= quantityLimit}
               >
                 +
               </button>
             </div>
+          {product.salesMode !== "PREORDER" && available && quantityLimit < 99 && quantity >= quantityLimit ? (
+              <p style={styles.helperText} role="status">Máximo disponível: {quantityLimit} {quantityLimit === 1 ? "unidade" : "unidades"}.</p>
+            ) : null}
           {product.salesMode === "PREORDER" && preorderLimit !== null ? (
               <p style={styles.helperText}>
                 {preorderLimit > 0
