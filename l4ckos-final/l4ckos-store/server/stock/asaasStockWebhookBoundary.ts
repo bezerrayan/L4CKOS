@@ -43,7 +43,7 @@ export function createAsaasStockWebhookBoundary(): StockWebhookBoundary {
       const paymentStatus = typeof payment.status === "string" ? payment.status.trim().toUpperCase() : "";
       let status: StockNormalizedWebhook["status"];
       if (PAID_EVENTS.has(eventName) && (!paymentStatus || PAID_STATUSES.has(paymentStatus))) status = "paid";
-      else if (FAILED_EVENTS.has(eventName) && (!paymentStatus || FAILED_STATUSES.has(paymentStatus))) status = "failed";
+      else if (FAILED_EVENTS.has(eventName) && FAILED_STATUSES.has(paymentStatus)) status = "failed";
       else if (PENDING_EVENTS.has(eventName) && (!paymentStatus || PENDING_STATUSES.has(paymentStatus))) status = "pending";
       else throw new Error("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
 

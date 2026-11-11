@@ -97,11 +97,12 @@ class MemoryStockStore implements StockCheckoutStore {
         attempt.status = "paid";
         return "paid";
       },
-      markReleased: async attemptId => {
+      markTerminalFailure: async (attemptId, paymentId) => {
         const attempt = this.attempts.get(attemptId)!;
-        if (attempt.status === "released") return "already-released";
-        if (attempt.status !== "reserved") return "not-pending";
+        if (attempt.status === "released") return attempt.providerState === "definitive_failure" && attempt.paymentId === paymentId ? "already-released" : "not-pending";
+        if (attempt.status !== "reserved" || attempt.providerState !== "created" || attempt.paymentId !== paymentId) return "not-pending";
         attempt.status = "released";
+        attempt.providerState = "definitive_failure";
         return "released";
       },
       expireDueReservations: async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [] }),
@@ -311,8 +312,8 @@ describe("local STOCK checkout core", () => {
   it("allows a new equivalent cart only after the earlier attempt is no longer open", async () => {
     const store = new MemoryStockStore([variant({ availableUnits: 3 })]);
     const payments = provider();
-    await createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-next-buy-00001") });
-    await store.transaction(tx => tx.markReleased("attempt-next-buy-00001"));
+    const previous = await createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-next-buy-00001") });
+    await store.transaction(tx => tx.markTerminalFailure("attempt-next-buy-00001", previous.paymentId));
     await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-next-buy-00002") })).resolves.toMatchObject({ replayed: false });
     expect(payments.calls).toBe(2);
   });

@@ -626,16 +626,21 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       return "paid";
     },
 
-    async markReleased(attemptId): Promise<"released" | "already-released" | "not-pending"> {
+    async markTerminalFailure(attemptId, paymentId): Promise<"released" | "already-released" | "not-pending"> {
       const attempt = await lockAttempt(connection, attemptId);
       if (!attempt) return "not-pending";
-      if (attempt.status === "released") return "already-released";
-      if (attempt.status !== "reserved") return "not-pending";
+      if (attempt.status === "released") {
+        return attempt.providerState === "definitive_failure" && attempt.paymentId === paymentId
+          ? "already-released"
+          : "not-pending";
+      }
+      if (attempt.status !== "reserved" || attempt.providerState !== "created" || attempt.paymentId !== paymentId) return "not-pending";
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE stockCheckoutAttempts
-            SET status = 'released', releasedAt = UTC_TIMESTAMP(3), reconciliationRequiredAt = NULL
-          WHERE attemptId = ? AND status = 'reserved'`,
-        [attemptId],
+            SET status = 'released', providerState = 'definitive_failure',
+                releasedAt = UTC_TIMESTAMP(3), reconciliationRequiredAt = NULL
+          WHERE attemptId = ? AND status = 'reserved' AND providerState = 'created' AND paymentId = ?`,
+        [attemptId, paymentId],
       );
       return result.affectedRows === 1 ? "released" : "not-pending";
     },

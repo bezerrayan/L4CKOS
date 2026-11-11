@@ -88,7 +88,8 @@ export interface StockCheckoutTransaction {
   consumeReservations(attemptId: string): Promise<void>;
   releaseReservations(attemptId: string): Promise<void>;
   markPaid(attemptId: string, paymentId: string): Promise<"paid" | "already-paid" | "not-pending">;
-  markReleased(attemptId: string): Promise<"released" | "already-released" | "not-pending">;
+  /** Called only for a signature-verified provider terminal failure event. */
+  markTerminalFailure(attemptId: string, paymentId: string): Promise<"released" | "already-released" | "not-pending">;
   expireDueReservations(batchSize: number, ownerUserId?: number): Promise<{ releasedAttemptIds: string[]; reconciliationAttemptIds: string[] }>;
 }
 
@@ -483,7 +484,7 @@ async function processStockPaymentWebhook(input: {
       if (result === "paid") await tx.consumeReservations(attempt.attemptId);
       return "processed";
     }
-    const result = await tx.markReleased(attempt.attemptId);
+    const result = await tx.markTerminalFailure(attempt.attemptId, input.paymentId);
     if (result === "not-pending") return "conflict";
     if (result === "released") await tx.releaseReservations(attempt.attemptId);
     return "processed";
@@ -502,6 +503,7 @@ export type StockNormalizedWebhook = {
   eventId: string;
   orderId: string;
   paymentId: string;
+  /** `failed` is emitted only for authenticated, allowlisted terminal failures, never transient provider errors. */
   status: "pending" | "paid" | "failed";
   amountCents: number;
   payload: unknown;

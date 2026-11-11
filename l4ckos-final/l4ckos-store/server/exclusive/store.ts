@@ -147,7 +147,7 @@ async function withTransaction<T>(
  * Units of a grant still counted against its limit, DERIVED from the STOCK attempt each claim points to:
  *  - STOCK attempt missing: the claim counts only during the short in-flight grace window;
  *  - paid, reserved, pending, ambiguous or awaiting reconciliation: counts;
- *  - released with a SAFE provider state (never started / definitive failure) and no reconciliation flag: free.
+ *  - released with a SAFE provider state (never started / signature-verified terminal failure) and no reconciliation flag: free.
  * Nothing is "released" by writing here, so cancel/expiry is idempotent and never ahead of STOCK's own reconciliation.
  */
 const COUNTED_UNITS_SQL = `

@@ -43,6 +43,29 @@ describe("Asaas STOCK webhook boundary", () => {
   });
 
   it.each([
+    ["PAYMENT_REFUSED", "REFUSED"],
+    ["PAYMENT_DELETED", "DELETED"],
+    ["PAYMENT_REPROVED", "REPROVED"],
+    ["PAYMENT_FAILED", "FAILED"],
+  ])("recognizes only the explicit terminal provider event %s as a releasable failure", (eventName, status) => {
+    const boundary = createAsaasStockWebhookBoundary();
+    const terminal = { ...event, event: eventName, payment: { ...event.payment, status } };
+    expect(boundary.decodeSignedEvent(JSON.stringify(terminal))).toMatchObject({ status: "failed" });
+  });
+
+  it.each([
+    ["PAYMENT_REFUSED", "PENDING"],
+    ["PAYMENT_DELETED", "AWAITING_PAYMENT"],
+    ["PAYMENT_REFUNDED", "REFUNDED"],
+    ["PAYMENT_OVERDUE", "OVERDUE"],
+    ["PAYMENT_REFUSED", ""],
+  ])("does not treat transient, refund or unrelated event %s as terminal failure", (eventName, status) => {
+    const boundary = createAsaasStockWebhookBoundary();
+    const nonTerminal = { ...event, event: eventName, payment: { ...event.payment, status } };
+    expect(() => boundary.decodeSignedEvent(JSON.stringify(nonTerminal))).toThrow("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
+  });
+
+  it.each([
     [{ ...event, event: "PAYMENT_RECEIVED", payment: { ...event.payment, status: "PENDING" } }, "WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING"],
     [{ ...event, payment: { ...event.payment, externalReference: undefined } }, "WEBHOOK_ORDER_REFERENCE_REQUIRED"],
     [{ ...event, payment: { ...event.payment, value: 129.901 } }, "WEBHOOK_AMOUNT_INVALID"],

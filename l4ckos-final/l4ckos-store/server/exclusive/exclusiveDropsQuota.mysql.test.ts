@@ -16,6 +16,7 @@ import { createStockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
 import { createExclusiveStore } from "./store";
 import { configureExclusiveStoreForLocalHarness } from "./runtime";
 import { canonicalizeSeedVariants } from "../stock/testing/canonicalizeSeedVariants";
+import { createAsaasStockWebhookBoundary } from "../stock/asaasStockWebhookBoundary";
 
 /**
  * Hard quota enforcement of exclusive drops at the transactional STOCK checkout (the cart is only a soft, non-financial guard),
@@ -113,15 +114,26 @@ async function unlock(session: Session, unitLimit: number) {
 const buy = (session: Session, attemptId: string, variantId: number, quantity = 1, productId = 4) =>
   session().stockCheckout.create.mutate({ attemptId, items: [{ productId, variantId, quantity }], delivery } as never);
 
-const webhook = (orderId: string, paymentId: string, amountCents: number, status: "paid" | "failed", eventId: string) =>
-  stockRuntime.receiveWebhook({
-    rawBody: "synthetic",
-    headers: { "asaas-access-token": "synthetic-local-signature" },
-    boundary: {
-      verifySignature: async () => true,
-      decodeSignedEvent: () => ({ eventId, orderId, paymentId, status, amountCents, payload: { source: "synthetic-test" } }),
-    },
+const webhook = (
+  orderId: string,
+  paymentId: string,
+  amountCents: number,
+  status: "paid" | "failed" | "pending",
+  eventId: string,
+  eventName = status === "paid" ? "PAYMENT_RECEIVED" : status === "pending" ? "PAYMENT_CREATED" : "PAYMENT_REFUSED",
+) => {
+  const paymentStatus = status === "paid" ? "RECEIVED" : status === "pending" ? "PENDING" : eventName === "PAYMENT_DELETED" ? "DELETED" : "REFUSED";
+  const rawBody = JSON.stringify({
+    id: eventId,
+    event: eventName,
+    payment: { id: paymentId, externalReference: orderId, value: amountCents / 100, currency: "BRL", status: paymentStatus },
   });
+  return stockRuntime.receiveWebhook({
+    rawBody,
+    headers: { "asaas-access-token": "synthetic-local-signature" },
+    boundary: createAsaasStockWebhookBoundary(),
+  });
+};
 
 /** Nothing observable may exist for a rejected attempt. */
 async function expectNoTrace(before: { orders: number; attempts: number; usage: number; calls: number; reserved: number }) {
@@ -188,6 +200,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
     now = new Date("2026-11-20T15:00:00.000Z");
     vi.stubEnv("PUBLIC_SITE_MODE", "store");
     vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
+    vi.stubEnv("ASAAS_WEBHOOK_TOKEN", "synthetic-local-signature");
   });
 
   afterAll(async () => {
@@ -323,7 +336,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       expect(view.exclusive && view.viewer).toMatchObject({ unitsRemaining: 1, unitsReserved: 0 });
     });
 
-    it("a failed payment releases batch capacity exactly once and a paid one keeps both capacity and quota (CURRENT policy: a refused payment keeps the drop quota held)", async () => {
+    it("a signed terminal refusal releases batch capacity and quota once; paid and late events stay protected", async () => {
       await createDrop([6]);
       await unlock(owner, 1);
       await unlock(other, 2);
@@ -331,24 +344,53 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       const b = await buy(other, "pre-paid-other-0000001", 22, 2, 6);
       expect(await batchClaimed()).toBe(3);
       await webhook(b.orderId, "pay-2", b.amountCents, "paid", "pre-paid-event-0001");
-      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "pre-fail-event-0001");
-      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "pre-fail-event-0002"); // second delivery must not release twice
+      await expect(webhook(b.orderId, "pay-2", b.amountCents, "failed", "pre-paid-late-failure-0001")).resolves.toBe("conflict");
+      expect(await viewer(other)).toMatchObject({ unitsConsumed: 2, unitsRemaining: 0 });
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "failed", "pre-fail-event-0001")).resolves.toBe("processed");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "failed", "pre-fail-event-0001")).resolves.toBe("duplicate");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "failed", "pre-fail-event-0002")).resolves.toBe("conflict");
       expect(await batchClaimed()).toBe(2); // capacity: only the paid order remains
       expect(await count("SELECT COALESCE(SUM(stock + reservedStock),0) AS n FROM productVariants WHERE productId = 6")).toBe(0);
+      const [failedAttempt] = await pool.query<any[]>("SELECT status, providerState, reconciliationRequiredAt FROM stockCheckoutAttempts WHERE attemptId = 'pre-fail-owner-0000001'");
+      expect(failedAttempt[0]).toMatchObject({ status: "released", providerState: "definitive_failure", reconciliationRequiredAt: null });
+      const [failedOrder] = await pool.query<any[]>("SELECT status, paymentStatus FROM orders WHERE stockAttemptId = 'pre-fail-owner-0000001'");
+      expect(failedOrder[0]).toMatchObject({ status: "cancelled", paymentStatus: "unconfirmed" });
       expect(await viewer(other)).toMatchObject({ unitsConsumed: 2, unitsRemaining: 0 }); // paid: consumed
-      // KNOWN GAP (backend): the refused attempt is released with providerState 'created', which COUNTED_UNITS_SQL keeps counting.
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 0, unitsConsumed: 0, unitsRemaining: 1 });
+
+      const retry = await buy(owner, "pre-retry-owner-0000001", 22, 1, 6); // different variant, same grant
+      expect(retry.status).toBe("pending");
+      expect(providerCalls).toHaveLength(3); // one payment per accepted attempt; replays/conflicts never create another
+      expect(await batchClaimed()).toBe(3);
       expect(await viewer(owner)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 });
-      expect(appCode(await caught(buy(owner, "pre-retry-owner-0000001", 21, 1, 6)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+
+      // The provider's terminal outcome is authoritative for this payment; a contradictory late approval cannot reopen it.
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "pre-late-paid-event-0001")).resolves.toBe("conflict");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "pending", "pre-late-pending-event-0001")).resolves.toBe("conflict");
+      expect(providerCalls).toHaveLength(3);
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 });
+      await webhook(retry.orderId, "pay-3", retry.amountCents, "paid", "pre-retry-paid-event-0001");
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 0, unitsConsumed: 1, unitsRemaining: 0 });
+      expect(await batchClaimed()).toBe(3);
+      expect(appCode(await caught(buy(owner, "pre-over-quota-owner-0001", 21, 1, 6)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+
+      // Refund events are outside this terminal-release allowlist and cannot restore a paid grant.
+      await expect(webhook(retry.orderId, "pay-3", retry.amountCents, "failed", "pre-refund-event-0001", "PAYMENT_REFUNDED"))
+        .rejects.toThrow("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
+      expect(await viewer(owner)).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
     });
 
-    // Desired behaviour, tracked as a backend gap: a provider-confirmed refusal/cancellation should free the customer's drop quota just as it
-    // frees stock and batch capacity. `it.fails` turns green->red when the backend is fixed, prompting to flip this into a normal test.
-    it.fails("DESIRED: a refused/cancelled payment frees the customer's drop quota so they can retry", async () => {
-      await createDrop([4]);
+    it("a signed terminal cancellation frees the quota; unpaid pending remains held", async () => {
+      await createDrop([6]);
       await unlock(owner, 1);
-      const a = await buy(owner, "gap-refused-owner-000001", 8, 1);
-      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "gap-refused-event-0001");
-      expect((await buy(owner, "gap-retry-owner-0000001", 9, 1)).status).toBe("pending");
+      const a = await buy(owner, "terminal-cancel-owner-0001", 21, 1, 6);
+      await webhook(a.orderId, "pay-1", a.amountCents, "pending", "terminal-pending-event-0001");
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 });
+      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "terminal-cancel-event-0001", "PAYMENT_DELETED");
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 0, unitsRemaining: 1 });
+      const retry = await buy(owner, "terminal-cancel-retry-0001", 22, 1, 6);
+      expect(retry.status).toBe("pending");
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 });
     });
 
     it("an expired UNSTARTED attempt frees quota and capacity; a provider-created one stays held until reconciliation", async () => {
