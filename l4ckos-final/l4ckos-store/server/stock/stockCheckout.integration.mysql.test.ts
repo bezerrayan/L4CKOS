@@ -16,6 +16,8 @@ import { asaasWebhookHandler, createAsaasWebhookHandler } from "../controllers/p
 import { sdk } from "../_core/sdk";
 import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "./stockCheckoutRuntime";
+import { createExclusiveStore } from "../exclusive/store";
+import { configureExclusiveStoreForLocalHarness } from "../exclusive/runtime";
 import { processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 
@@ -103,6 +105,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       const schema = await readFile(resolve("server/stock/fixtures/mysql8-stock-schema.sql"), "utf8");
       for (const statement of schema.split(";").map(part => part.trim()).filter(Boolean)) await pool.query(statement);
     }
+    // The integrated checkout consults the exclusive-drops guard, so the (isolated, unapplied) 0028 candidate must exist in the disposable DB.
+    const exclusiveMigration = await readFile(resolve("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql"), "utf8");
+    for (const statement of exclusiveMigration.split(";").map(part => part.trim()).filter(part => /CREATE TABLE/.test(part))) await pool.query(statement).catch(error => { if ((error as { errno?: number }).errno !== 1050) throw error; });
+    configureExclusiveStoreForLocalHarness(createExclusiveStore(pool));
     sessionTokens = {
       "owner-81": await sdk.createSessionToken("synthetic-owner-81", { name: "STOCK Customer", sessionVersion: 1 }),
       "other-82": await sdk.createSessionToken("synthetic-other-82", { name: "Other Customer", sessionVersion: 1 }),
@@ -110,6 +116,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     };
     runtime = createStockCheckoutRuntime({
       pool,
+      exclusiveStore: createExclusiveStore(pool),
       provider: {
         supportsIdempotencyKey: true,
         async createPayment(input) {
@@ -225,11 +232,11 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     );
     expect(adminOrders).toHaveLength(1);
     expect(adminOrders[0]).toMatchObject({ id: Number(created.orderId), userId: 81, status: "paid", paymentStatus: "confirmed", stockAttemptId: request.attemptId, stockPaymentId: "pay-synthetic-1", productName: "Synthetic STOCK shirt", variantId: 8, skuSnapshot: "TSHIRT-BLK-M", sizeSnapshot: "M", colorSnapshot: "Preto" });
-    const [adminItems] = await pool.execute<(Record<string, unknown> & { productId: number; variantId: number; skuSnapshot: string; sizeSnapshot: string; colorSnapshot: string; price: number; quantity: number })[]>(
-      "SELECT productId, variantId, skuSnapshot, sizeSnapshot, colorSnapshot, price, quantity FROM orderItems WHERE orderId = ?",
+    const [adminItems] = await pool.execute<(Record<string, unknown> & { productId: number; variantId: number; skuSnapshot: string; sizeSnapshot: string; colorSnapshot: string; unitPrice: number; totalPrice: number; quantity: number })[]>(
+      "SELECT productId, variantId, skuSnapshot, sizeSnapshot, colorSnapshot, unitPrice, totalPrice, quantity FROM orderItems WHERE orderId = ?",
       [created.orderId],
     );
-    expect(adminItems).toEqual([expect.objectContaining({ productId: 4, variantId: 8, skuSnapshot: "TSHIRT-BLK-M", sizeSnapshot: "M", colorSnapshot: "Preto", price: 12900, quantity: 1 })]);
+    expect(adminItems).toEqual([expect.objectContaining({ productId: 4, variantId: 8, skuSnapshot: "TSHIRT-BLK-M", sizeSnapshot: "M", colorSnapshot: "Preto", unitPrice: 12900, totalPrice: 12900, quantity: 1 })]);
     const admin = adminHttpClient("admin-83");
     const listed = await admin.admin.ordersList.query();
     const listedOrder = listed.find(order => order.id === Number(created.orderId));
@@ -306,6 +313,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     setStockLocalHarnessDb(drizzleMysql(pool));
     runtime = createStockCheckoutRuntime({
       pool,
+      exclusiveStore: createExclusiveStore(pool),
       provider: {
         supportsIdempotencyKey: true,
         async createPayment(input) {

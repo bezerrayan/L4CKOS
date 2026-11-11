@@ -71,8 +71,8 @@ apply_stock_v1: BEGIN
             NOT ((column_name IN ('status','paymentStatus') AND data_type='enum')
               OR (column_name='totalPrice' AND data_type='int')
               OR (column_name IN ('createdAt','updatedAt') AND data_type='timestamp')))
-       OR (table_name='orderItems' AND column_name IN ('quantity','price','createdAt') AND
-            NOT ((column_name IN ('quantity','price') AND data_type='int') OR (column_name='createdAt' AND data_type='timestamp')))
+       OR (table_name='orderItems' AND column_name IN ('quantity','unitPrice','createdAt') AND
+            NOT ((column_name IN ('quantity','unitPrice') AND data_type='int') OR (column_name='createdAt' AND data_type='timestamp')))
        OR (table_name='stockReservations' AND column_name IN ('quantity','status','expiresAt','createdAt','updatedAt') AND
             NOT ((column_name='quantity' AND data_type='int')
               OR (column_name='status' AND data_type='enum')
@@ -103,7 +103,7 @@ apply_stock_v1: BEGIN
           UNION ALL SELECT 'orders','createdAt' UNION ALL SELECT 'orders','updatedAt'
           UNION ALL SELECT 'orderItems','id' UNION ALL SELECT 'orderItems','orderId'
           UNION ALL SELECT 'orderItems','productId' UNION ALL SELECT 'orderItems','quantity'
-          UNION ALL SELECT 'orderItems','price' UNION ALL SELECT 'orderItems','createdAt'
+          UNION ALL SELECT 'orderItems','unitPrice' UNION ALL SELECT 'orderItems','createdAt'
           UNION ALL SELECT 'stockReservations','id' UNION ALL SELECT 'stockReservations','orderId'
           UNION ALL SELECT 'stockReservations','userId' UNION ALL SELECT 'stockReservations','productId'
           UNION ALL SELECT 'stockReservations','quantity' UNION ALL SELECT 'stockReservations','status'

@@ -122,7 +122,7 @@ function canonicalCart(items: Array<{ productId: number; variantId: number; quan
   }
   return sha256([...quantities].map(([key, quantity]) => [key, quantity]).sort(([a], [b]) => String(a).localeCompare(String(b))));
 }
-// orders.totalPrice, orderItems.price and stockReservations.unitPriceCents are
+// orders.totalPrice, orderItems.unitPrice/totalPrice and stockReservations.unitPriceCents are
 // signed MySQL INT in the frozen legacy contract. Reject overflow before any
 // order, reservation, or provider side effect.
 const MYSQL_SIGNED_INT_MAX = 2_147_483_647;

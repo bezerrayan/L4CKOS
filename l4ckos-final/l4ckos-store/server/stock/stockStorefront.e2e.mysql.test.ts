@@ -16,6 +16,8 @@ import { asaasWebhookHandler, createAsaasWebhookHandler } from "../controllers/p
 import { sdk } from "../_core/sdk";
 import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "./stockCheckoutRuntime";
+import { createExclusiveStore } from "../exclusive/store";
+import { configureExclusiveStoreForLocalHarness } from "../exclusive/runtime";
 import { processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 import { createStockCheckoutClient, type StockCartLine } from "../../client/src/stock/stockCheckoutClient";
@@ -106,6 +108,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Storefront STOCK client against 
       const schema = await readFile(resolve("server/stock/fixtures/mysql8-stock-schema.sql"), "utf8");
       for (const statement of schema.split(";").map(part => part.trim()).filter(Boolean)) await pool.query(statement);
     }
+    // The integrated checkout consults the exclusive-drops guard, so the (isolated, unapplied) 0028 candidate must exist in the disposable DB.
+    const exclusiveMigration = await readFile(resolve("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql"), "utf8");
+    for (const statement of exclusiveMigration.split(";").map(part => part.trim()).filter(part => /CREATE TABLE/.test(part))) await pool.query(statement).catch(error => { if ((error as { errno?: number }).errno !== 1050) throw error; });
+    configureExclusiveStoreForLocalHarness(createExclusiveStore(pool));
     sessionTokens = {
       "owner-81": await sdk.createSessionToken("synthetic-owner-81", { name: "STOCK Customer", sessionVersion: 1 }),
       "other-82": await sdk.createSessionToken("synthetic-other-82", { name: "Other Customer", sessionVersion: 1 }),
@@ -113,6 +119,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Storefront STOCK client against 
     };
     runtime = createStockCheckoutRuntime({
       pool,
+      exclusiveStore: createExclusiveStore(pool),
       provider: {
         supportsIdempotencyKey: true,
         async createPayment(input) {

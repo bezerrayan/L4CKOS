@@ -55,7 +55,8 @@ CREATE TABLE orderItems (
   orderId INT NOT NULL,
   productId INT NOT NULL,
   quantity INT NOT NULL,
-  price INT NOT NULL,
+  unitPrice INT NOT NULL,
+  totalPrice INT NULL,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY orderItems_orderId_idx (orderId),
@@ -85,6 +86,6 @@ INSERT INTO productVariants (id,productId,name,sku,price,stock)
 VALUES (710001,710001,'synthetic legacy variant','SYN-710001',1200,3);
 INSERT INTO orders (id,userId,status,paymentStatus,totalPrice,shippingRecipient,shippingZipCode,shippingStreet,shippingNumber,shippingCity,shippingState)
 VALUES (710001,710001,'pending','unconfirmed',1200,'Synthetic Recipient','00000-000','Synthetic Street','1','Synthetic City','SP');
-INSERT INTO orderItems (id,orderId,productId,quantity,price) VALUES (710001,710001,710001,1,1200);
+INSERT INTO orderItems (id,orderId,productId,quantity,unitPrice,totalPrice) VALUES (710001,710001,710001,1,1200,1200);
 INSERT INTO stockReservations (id,orderId,userId,productId,quantity,status,expiresAt)
 VALUES (710001,710001,710001,710001,1,'active',DATE_ADD(CURRENT_TIMESTAMP,INTERVAL 1 HOUR));

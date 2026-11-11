@@ -296,9 +296,9 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       if (header.affectedRows !== 1) throw new StockMySqlInvariantError("Checkout attempt header insert failed");
       for (const [lineNumber, item] of attempt.snapshots.entries()) {
         await connection.execute<ResultSetHeader>(
-          `INSERT INTO orderItems (orderId, productId, quantity, price, variantId, skuSnapshot, sizeSnapshot, colorSnapshot)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [orderId, item.productId, item.quantity, item.unitPriceCents, item.id, item.sku, item.size, item.color],
+          `INSERT INTO orderItems (orderId, productId, quantity, unitPrice, totalPrice, variantId, skuSnapshot, sizeSnapshot, colorSnapshot)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [orderId, item.productId, item.quantity, item.unitPriceCents, item.totalCents, item.id, item.sku, item.size, item.color],
         );
         await connection.execute<ResultSetHeader>(
           `INSERT INTO stockCheckoutItems

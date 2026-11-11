@@ -490,8 +490,14 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     expect(appCode(await caught(create(owner, "xiv-attempt-revoke-0002", 9)))).toBe("EXCLUSIVE_ACCESS_REQUIRED");
     // the open attempt is still resumable and payable (STOCK owns it)...
     expect(await owner().stockCheckout.resume.query({ attemptId: "xiv-attempt-revoke-0001" })).toMatchObject({ status: "pending", orderId: open.orderId });
-    // ...and the same-id replay is refused too, because access is no longer provable (fail closed)
-    expect(appCode(await caught(create(owner, "xiv-attempt-revoke-0001", 8)))).toBe("EXCLUSIVE_ACCESS_REQUIRED");
+    // ...and a same-id replay (atomic-quota design) returns that SAME open attempt: no second charge, no extra units, nothing new reserved.
+    const providerCallsBefore = providerCalls.length;
+    expect(await create(owner, "xiv-attempt-revoke-0001", 8)).toMatchObject({ status: "pending", orderId: open.orderId, replayed: true });
+    expect(providerCalls).toHaveLength(providerCallsBefore);
+    const [attemptCount] = await pool.query<any[]>("SELECT COUNT(*) AS n FROM stockCheckoutAttempts");
+    expect(Number(attemptCount[0].n)).toBe(1);
+    // any NEW attempt (even a different cart) is still refused: access is revoked
+    expect(appCode(await caught(create(owner, "xiv-attempt-revoke-0003", 10)))).toBe("EXCLUSIVE_ACCESS_REQUIRED");
     const view = await owner().exclusiveDrops.forProduct.query({ productId: 4 });
     expect(view.exclusive && view.viewer.status).toBe("revoked");
   });
@@ -550,7 +556,9 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     // the unstarted one is free again; the provider-created one stays held until STOCK reconciles it
     expect(await viewer()).toMatchObject({ unitsReserved: 1, unitsRemaining: 1 });
     expect(await create(owner, "xiv-attempt-sweep-0003", 10)).toMatchObject({ status: "pending" });
-    expect(appCode(await caught(create(owner, "xiv-attempt-sweep-0004", 8)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+    // a cart equivalent to an open attempt is refused as NOT_REUSABLE first (atomic-quota design); a different cart hits the quota
+    expect(appCode(await caught(create(owner, "xiv-attempt-sweep-0004", 8)))).toBe("CHECKOUT_ATTEMPT_NOT_REUSABLE");
+    expect(appCode(await caught(create(owner, "xiv-attempt-sweep-0005", 8, 2)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
   });
 
   it("the e-mail context carries recipient, drop and grant data but never a code or a hash", async () => {

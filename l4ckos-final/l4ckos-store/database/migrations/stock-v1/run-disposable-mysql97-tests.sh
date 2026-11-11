@@ -51,7 +51,7 @@ docker exec -i "$positive_name" mysql -uroot railway < "$exclusive_migration"
 docker exec -i "$positive_name" mysql -uroot railway < "$exclusive_migration"
 
 assert_sql "$positive_name" "SELECT CONCAT(status,':',paymentStatus,':',totalPrice) FROM orders WHERE id=710001" "pending:unconfirmed:1200"
-assert_sql "$positive_name" "SELECT CONCAT(quantity,':',price) FROM orderItems WHERE id=710001" "1:1200"
+assert_sql "$positive_name" "SELECT CONCAT(quantity,':',unitPrice,':',totalPrice) FROM orderItems WHERE id=710001" "1:1200:1200"
 assert_sql "$positive_name" "SELECT CONCAT(quantity,':',status) FROM stockReservations WHERE id=710001" "1:active"
 assert_sql "$positive_name" "SELECT CONCAT(isActive,':',reservedStock) FROM productVariants WHERE id=710001" "0:0"
 assert_sql "$positive_name" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='railway' AND table_name IN ('stockCheckoutAttempts','stockCheckoutItems','stockWebhookEvents')" "3"
