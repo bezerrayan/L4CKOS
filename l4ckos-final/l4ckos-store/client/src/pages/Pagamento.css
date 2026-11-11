@@ -149,3 +149,7 @@
   .l4-checkout-cep-row { grid-template-columns: minmax(0, 1fr) auto; }
   .l4-checkout-cep-row button { width: auto; }
 }
+
+/* Touch target: the coupon disclosure must be at least 44px tall on phones. */
+.l4-checkout-coupon > button { min-height: 44px; }
+.l4-checkout-back-link { display: inline-flex; align-items: center; min-height: 44px; }

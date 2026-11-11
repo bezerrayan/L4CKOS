@@ -118,6 +118,44 @@ describe("cookie banner + CartDrawer (first visit)", () => {
   });
 });
 
+describe("assistive-technology semantics (drawer + pending banner)", () => {
+  const dialog = () => screen.getByRole("dialog", { hidden: true });
+  const isInert = (el: Element | null) => Boolean(el?.closest("[inert]"));
+
+  it("does not declare aria-modal while a banner outside the dialog is pending (it would hide the banner from AT)", async () => {
+    await setup();
+    expect(dialog().getAttribute("aria-modal")).toBeNull();
+  });
+
+  it("the page behind is truly inert, while the drawer and the pending banner stay operable", async () => {
+    await setup();
+    expect(isInert(screen.getByRole("main"))).toBe(true);
+    expect(isInert(screen.getByRole("button", { name: "abrir sacola", hidden: true }))).toBe(true);
+    expect(isInert(dialog())).toBe(false);
+    expect(isInert(document.querySelector("[data-l4-cookie-banner]"))).toBe(false);
+  });
+
+  it("becomes aria-modal once the banner is decided, and the background stays inert", async () => {
+    const user = await setup();
+    await user.click(screen.getByRole("button", { name: "ENTENDI" }));
+    expect(dialog().getAttribute("aria-modal")).toBe("true");
+    expect(isInert(screen.getByRole("main"))).toBe(true);
+    expect(isInert(dialog())).toBe(false);
+  });
+
+  it("is aria-modal from the start when consent already exists", async () => {
+    await setup({ consented: true });
+    expect(dialog().getAttribute("aria-modal")).toBe("true");
+  });
+
+  it("closing the drawer restores the page (nothing stays inert) and returns focus to the opener", async () => {
+    const user = await setup({ consented: true });
+    await user.keyboard("{Escape}");
+    expect(document.querySelector("[inert]")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "abrir sacola" }));
+  });
+});
+
 describe("layout contract (CSS)", () => {
   const dir = `${process.cwd()}/client/src/components/`;
   const drawerCss = readFileSync(`${dir}CartDrawer.css`, "utf8");

@@ -10,7 +10,9 @@ import React, {
   ReactNode,
   useCallback,
   useEffect,
+  useRef,
 } from "react";
+import { useQueryClient, type Query } from "@tanstack/react-query";
 import type { User } from "../types/user";
 import { trpc } from "../lib/trpc";
 
@@ -32,12 +34,24 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 
 // ============= PROVIDER =============
 
+/** tRPC keys look like [["auth","me"], {...}]. The session query itself must survive the purge. */
+const isSessionQuery = (query: Query) => {
+  const path = Array.isArray(query.queryKey[0]) ? (query.queryKey[0] as unknown[]).join(".") : "";
+  return path === "auth.me";
+};
+
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>();
 
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
+  const identityRef = useRef<string | null | undefined>(undefined);
+  /** Drops everything fetched for the previous identity (orders, attempts, profile...). */
+  const purgeUserScopedCache = useCallback(() => {
+    queryClient.removeQueries({ predicate: query => !isSessionQuery(query) });
+  }, [queryClient]);
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: true,
@@ -45,6 +59,15 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const logoutMutation = trpc.auth.logout.useMutation();
 
   const isAuthenticated = Boolean(meQuery.data);
+
+  // Account switch (logout, or another tab signing in as someone else): never keep A's data for B.
+  useEffect(() => {
+    if (meQuery.isLoading) return;
+    const identity = meQuery.data ? String((meQuery.data as { id?: number | string }).id ?? "") : null;
+    const previous = identityRef.current;
+    identityRef.current = identity;
+    if (previous !== undefined && previous !== identity) purgeUserScopedCache();
+  }, [meQuery.data, meQuery.isLoading, purgeUserScopedCache]);
 
   useEffect(() => {
     if (!meQuery.data) {
@@ -104,10 +127,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
       } finally {
         setUserState(null);
         setError(undefined);
+        purgeUserScopedCache();
         await utils.auth.me.invalidate();
       }
     })();
-  }, [logoutMutation, utils.auth.me]);
+  }, [logoutMutation, utils.auth.me, purgeUserScopedCache]);
 
   // 📌 Definir usuário diretamente
   const setUser = useCallback((newUser: User | null) => {

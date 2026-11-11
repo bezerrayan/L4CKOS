@@ -63,7 +63,7 @@ export interface StockAttemptStorage {
   setItem(key: string, value: string): void;
 }
 
-const ATTEMPTS_STORAGE_KEY = "l4ckos:stock-checkout-attempts:v1";
+export const ATTEMPTS_STORAGE_KEY = "l4ckos:stock-checkout-attempts:v1";
 const TERMINAL_ATTEMPT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_TERMINAL_ATTEMPTS = 40;
 const REPLACEABLE_STATUSES = new Set(["failed", "expired", "cancelled"]);

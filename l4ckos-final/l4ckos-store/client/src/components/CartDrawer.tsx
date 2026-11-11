@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import { useCart } from "../contexts/CartContext";
 import { formatPrice } from "../lib/utils";
 import camisaFallback from "../images/camisa.png";
+import { inertOutside } from "../lib/inertBackground";
+import { COOKIE_BANNER_ATTR, COOKIE_BANNER_EVENT } from "./CookiePreferences";
 import { cartBlockingIssues, evaluateCartLine } from "../stock/availability";
 import "./CartDrawer.css";
 
@@ -18,6 +20,22 @@ export default function CartDrawer() {
   const { cart, updateQuantity, removeFromCart, isCartDrawerOpen, closeCartDrawer } = useCart();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  // A pending cookie banner lives outside this dialog. aria-modal would hide it from assistive tech while
+  // keyboard focus can still reach it, so the dialog is only declared modal when no banner is pending.
+  const [bannerPending, setBannerPending] = useState(() => typeof document !== "undefined" && document.documentElement.hasAttribute(COOKIE_BANNER_ATTR));
+  useEffect(() => {
+    const sync = () => setBannerPending(document.documentElement.hasAttribute(COOKIE_BANNER_ATTR));
+    sync();
+    window.addEventListener(COOKIE_BANNER_EVENT, sync);
+    return () => window.removeEventListener(COOKIE_BANNER_EVENT, sync);
+  }, []);
+
+  // The page behind the drawer is inert (not just visually covered); the drawer and a pending banner stay usable.
+  useEffect(() => {
+    if (!isCartDrawerOpen) return;
+    return inertOutside([layerRef.current, document.querySelector("[data-l4-cookie-banner]")]);
+  }, [isCartDrawerOpen, bannerPending]);
 
   useEffect(() => {
     if (!isCartDrawerOpen) return;
@@ -66,9 +84,9 @@ export default function CartDrawer() {
   };
 
   return (
-    <div className={`l4-cart-drawer-layer ${isCartDrawerOpen ? "is-open" : ""}`} aria-hidden={!isCartDrawerOpen}>
+    <div ref={layerRef} className={`l4-cart-drawer-layer ${isCartDrawerOpen ? "is-open" : ""}`} aria-hidden={!isCartDrawerOpen}>
       <button type="button" className="l4-cart-drawer-backdrop" onClick={closeCartDrawer} tabIndex={-1} aria-label="Fechar sacola" />
-      <aside ref={drawerRef} className="l4-cart-drawer" role="dialog" aria-modal="true" aria-label="Sacola de compras">
+      <aside ref={drawerRef} className="l4-cart-drawer" role="dialog" aria-modal={bannerPending ? undefined : true} aria-label="Sacola de compras">
         <header className="l4-cart-drawer-header">
           <div>
             <span className="l4-cart-drawer-eyebrow">Sua seleção</span>

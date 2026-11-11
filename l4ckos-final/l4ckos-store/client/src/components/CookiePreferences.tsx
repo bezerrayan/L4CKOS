@@ -5,6 +5,9 @@ import "./CookiePreferences.css";
 const CONSENT_KEY = "l4ckos:cookie-preferences";
 /** CSS variable other fixed layers (CartDrawer) use to stay clear of the visible banner. */
 export const COOKIE_BANNER_OFFSET_VAR = "--l4-cookie-banner-offset";
+/** Fired on window whenever the banner appears/disappears, so dialogs can adapt their semantics. */
+export const COOKIE_BANNER_EVENT = "l4ckos:cookie-banner-change";
+export const COOKIE_BANNER_ATTR = "data-l4-cookie-banner-visible";
 const POLICY_VERSION = "2026-06-24";
 
 type StoredCookiePreferences = {
@@ -95,8 +98,12 @@ export default function CookiePreferences() {
     const banner = bannerRef.current;
     if (!bannerShown || !banner) {
       root.style.removeProperty(COOKIE_BANNER_OFFSET_VAR);
+      root.removeAttribute(COOKIE_BANNER_ATTR);
+      window.dispatchEvent(new Event(COOKIE_BANNER_EVENT));
       return;
     }
+    root.setAttribute(COOKIE_BANNER_ATTR, "");
+    window.dispatchEvent(new Event(COOKIE_BANNER_EVENT));
     const publish = () => {
       const top = banner.getBoundingClientRect().top;
       const occupied = Math.max(0, Math.ceil(window.innerHeight - top));
@@ -110,6 +117,7 @@ export default function CookiePreferences() {
       observer?.disconnect();
       window.removeEventListener("resize", publish);
       root.style.removeProperty(COOKIE_BANNER_OFFSET_VAR);
+      root.removeAttribute(COOKIE_BANNER_ATTR);
     };
   }, [bannerShown]);
 
