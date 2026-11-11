@@ -34,3 +34,6 @@
 .l4-cart-drawer-empty strong { color: #f0ede8; }
 .l4-cart-drawer-empty button { max-width: 220px; margin-top: 10px; }
 @media (max-width: 480px) { .l4-cart-drawer { width: 100%; } .l4-cart-drawer-header, .l4-cart-drawer-footer { padding-left: 18px; padding-right: 18px; } .l4-cart-drawer-items { padding-left: 18px; padding-right: 18px; } }
+.l4-cart-drawer-stock-note { margin: 6px 0 0; font-size: 12px; font-weight: 700; color: #f87171; }
+.l4-cart-drawer-item-actions button:disabled, .l4-cart-drawer-checkout:disabled { opacity: .45; cursor: not-allowed; }
+.l4-cart-drawer-quantity button:focus-visible, .l4-cart-drawer-remove:focus-visible, .l4-cart-drawer-checkout:focus-visible { outline: 2px solid #f0ede8; outline-offset: 2px; }
