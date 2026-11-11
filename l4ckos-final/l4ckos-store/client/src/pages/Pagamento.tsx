@@ -16,7 +16,7 @@ import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
 import { trackStoreEvent } from "../lib/analytics";
-import { createStockCheckoutClient, stockAttemptStatusLabel, stockLinesFromCart } from "../stock/stockCheckoutClient";
+import { appErrorCodeOf, createStockCheckoutClient, stockAttemptStatusLabel, stockLinesFromCart } from "../stock/stockCheckoutClient";
 import { stockCheckoutHttpRequestV1Schema } from "../../../shared/stockCheckoutV1";
 import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } from "../stock/stockAttemptView";
 import { cartBlockingIssues } from "../stock/availability";
@@ -126,6 +126,8 @@ export default function Pagamento() {
     transport: {
       create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
       resume: attemptId => trpcUtils.stockCheckout.resume.fetch({ attemptId }),
+      // Without a local attempt ID the backend (owner-scoped) is asked before any new attempt is allowed.
+      resumeLatest: () => trpcUtils.stockCheckout.resumeLatest.fetch(),
     },
   }), [attemptStorage, stockCreate.mutateAsync, trpcUtils]);
   const clearedOrdersRef = useRef<Set<number>>(new Set());
@@ -153,6 +155,11 @@ export default function Pagamento() {
   const [paymentData, setPaymentData] = useState<ChargeResult | null>(null);
   const [stockPaymentData, setStockPaymentData] = useState<Awaited<ReturnType<typeof stockClient.resume>> | null>(null);
   const [stockResumeError, setStockResumeError] = useState("");
+  // True while the backend is being asked about an existing attempt: no new attempt may start meanwhile.
+  const [stockConsulting, setStockConsulting] = useState(false);
+  const stockConsultCountRef = useRef(0);
+  // Set by PAYMENT_UNDER_ANALYSIS: held until the backend reports the attempt is no longer ambiguous.
+  const [stockUnderAnalysis, setStockUnderAnalysis] = useState(false);
   const [couponCode, setCouponCode] = useState("");
   const [couponError, setCouponError] = useState("");
   const [couponDiscount, setCouponDiscount] = useState(0);
@@ -175,17 +182,25 @@ export default function Pagamento() {
 
   const refreshStockAttempt = async () => {
     if (!isAuthenticated || !stockCartCompatible) return;
+    stockConsultCountRef.current += 1;
+    setStockConsulting(true);
     try {
       setStockResumeError("");
       const resumed = await stockClient.resume(stockLinesFromCart(cart.items));
       setStockPaymentData(resumed);
+      if (resumed.status !== "ambiguous") setStockUnderAnalysis(false);
     } catch (error) {
-      if ((error instanceof Error && error.message === "STOCK_ATTEMPT_NOT_FOUND_LOCALLY") || isAttemptNotFound(error)) {
+      const message = error instanceof Error ? error.message : "";
+      if (message === "STOCK_ATTEMPT_NOT_FOUND_LOCALLY" || message === "STOCK_ATTEMPT_NOT_FOUND_ON_SERVER" || isAttemptNotFound(error)) {
         setStockPaymentData(null);
         setStockResumeError("");
         return;
       }
+      // Network/server failure: the outcome is unknown, not a definitive "no attempt".
       setStockResumeError("Não foi possível consultar esta tentativa. Tente consultar novamente; nenhuma nova cobrança foi iniciada.");
+    } finally {
+      stockConsultCountRef.current -= 1;
+      if (stockConsultCountRef.current === 0) setStockConsulting(false);
     }
   };
 
@@ -536,6 +551,13 @@ export default function Pagamento() {
       return;
     }
 
+    if (hasStockItems && (stockConsulting || stockUnderAnalysis) && !stockCheckoutBlocked) {
+      setPaymentError(stockUnderAnalysis
+        ? "O pagamento está em análise. Consulte o status; não inicie outra tentativa."
+        : "Estamos consultando seu pedido. Aguarde um instante antes de continuar.");
+      return;
+    }
+
     if (hasStockItems && stockCheckoutBlocked) {
       setPaymentError(stockPaymentData?.status === "ambiguous"
         ? "O resultado do pagamento está em análise. Consulte o status; não inicie outra tentativa."
@@ -627,6 +649,7 @@ export default function Pagamento() {
         const view = describeStockCheckoutError(error);
         setPaymentError(view.message);
         trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
+        if (appErrorCodeOf(error) === "PAYMENT_UNDER_ANALYSIS") setStockUnderAnalysis(true);
         if (view.outcomeUnknown) void refreshStockAttempt();
         return;
       }
@@ -790,7 +813,7 @@ export default function Pagamento() {
 
             <section className="l4-checkout-finish">
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || stockCheckoutBlocked || catalogBlocksNewAttempt}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
+              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || stockConsulting || stockUnderAnalysis || stockCheckoutBlocked || catalogBlocksNewAttempt}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
               {!hasCompleteCheckoutData && !paymentData && !stockPaymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
               {catalogBlocksNewAttempt ? catalogIssues.map(issue => <p key={issue} className="l4-checkout-validation-note is-error" role="alert">{issue}</p>) : null}
               {stockCartInvalid ? <p className="l4-checkout-validation-note is-error" role="alert">O carrinho inclui item sem variante STOCK válida. Volte ao produto e selecione tamanho e cor.</p> : null}
