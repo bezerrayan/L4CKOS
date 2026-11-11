@@ -18,6 +18,8 @@ import { getApiErrorDisplay } from "../utils/apiError";
 import { trackStoreEvent } from "../lib/analytics";
 import { createStockCheckoutClient, stockAttemptStatusLabel, stockLinesFromCart } from "../stock/stockCheckoutClient";
 import { stockCheckoutHttpRequestV1Schema } from "../../../shared/stockCheckoutV1";
+import { describeStockAttempt, describeStockCheckoutError } from "../stock/stockAttemptView";
+import { buildShippingQuoteRequest, interpretShippingQuote, sanitizeCep, SHIPPING_UNAVAILABLE_MESSAGE, type ShippingOption, type ShippingQuoteResponse } from "../lib/shippingQuote";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Pagamento.css";
@@ -33,15 +35,6 @@ type ChargeResult = {
   pixCopyPaste: string | null;
   bankSlipUrl: string | null;
   digitableLine: string | null;
-};
-
-type ShippingOption = {
-  id: string;
-  label: string;
-  description: string;
-  price: number;
-  minDays: number;
-  maxDays: number;
 };
 
 type SavedCheckoutAddress = {
@@ -64,10 +57,6 @@ const checkoutHighlights = [
   "Se precisar ajustar algo, o suporte atende pelos canais oficiais da loja.",
 ];
 
-function sanitizeCep(value: string) {
-  return value.replace(/\D/g, "").slice(0, 8);
-}
-
 function formatCep(value: string) {
   const digits = sanitizeCep(value);
   if (digits.length <= 5) return digits;
@@ -87,19 +76,6 @@ function addBusinessDays(startDate: Date, daysToAdd: number) {
   }
 
   return date;
-}
-
-function buildShippingOptions(_cep: string, _subtotal: number, _itemCount: number): ShippingOption[] {
-  return [
-    {
-      id: "local-plano-piloto",
-      label: "Entrega local - Plano Piloto",
-      description: "Agendamento local no Plano Piloto (Brasilia - DF)",
-      price: 0,
-      minDays: 1,
-      maxDays: 2,
-    },
-  ];
 }
 
 function getOrderStatusLabel(status?: string | null) {
@@ -178,6 +154,8 @@ export default function Pagamento() {
   );
   const stockCartInvalid = hasStockItems && !stockCartCompatible;
   const stockAttemptPending = stockCreate.isPending;
+  const stockView = hasStockItems && stockPaymentData ? describeStockAttempt(stockPaymentData) : null;
+  const stockCheckoutBlocked = Boolean(stockView?.blocksCheckout);
 
   const refreshStockAttempt = async () => {
     if (!isAuthenticated || !stockCartCompatible) return;
@@ -379,46 +357,30 @@ export default function Pagamento() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          cep: normalizedCep,
-          itemCount: cart.itemCount,
-          subtotal: Number((cart.total / 100).toFixed(2)),
-        }),
+        body: JSON.stringify(buildShippingQuoteRequest(normalizedCep, cart.itemCount, cart.total)),
       });
 
       if (!response.ok) {
         throw new Error("Falha ao calcular frete");
       }
 
-      const data = (await response.json()) as {
-        options?: ShippingOption[];
-        warning?: string;
-        providerError?: string;
-        source?: "melhor-envio" | "fallback-local" | "mixed";
-      };
-      const options = data.options?.length ? data.options : buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
-      setShippingOptions(options);
-      setSelectedShippingId(currentId => options.some(option => option.id === currentId) ? currentId : options[0]?.id ?? null);
-      const sanitizedProviderError = (data.providerError || "")
-        .replace(/\s*\|\s*/g, "; ")
-        .replace(/\s+/g, " ")
-        .trim();
-      const publicWarning =
-        data.warning && data.warning.includes("Melhor Envio nao retornou cotacoes")
-          ? "No momento, há apenas entrega local disponível para este CEP."
-          : data.warning || "";
-      const detailedWarning = data.warning
-        ? sanitizedProviderError && canShowTechnicalShippingError
-          ? `${data.warning} (${sanitizedProviderError})`
-          : publicWarning
-        : "";
-      setShippingError(detailedWarning);
-      trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, options_count: options.length });
+      const outcome = interpretShippingQuote((await response.json()) as ShippingQuoteResponse, { showTechnicalDetails: canShowTechnicalShippingError });
+      if (outcome.kind === "unavailable") {
+        setShippingOptions([]);
+        setSelectedShippingId(null);
+        setShippingError(outcome.error);
+        trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, options_count: 0 });
+        return;
+      }
+      setShippingOptions(outcome.options);
+      setSelectedShippingId(currentId => outcome.options.some(option => option.id === currentId) ? currentId : outcome.options[0]?.id ?? null);
+      setShippingError(outcome.notice);
+      trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, options_count: outcome.options.length });
     } catch {
-      const fallbackOptions = buildShippingOptions(normalizedCep, cart.total, cart.itemCount);
-      setShippingOptions(fallbackOptions);
-      setSelectedShippingId(fallbackOptions[0]?.id ?? null);
-      setShippingError("Não foi possível consultar o frete externo. Estamos exibindo a opção de entrega local.");
+      // Never invent a fallback option: the charged freight must come from the backend quote.
+      setShippingOptions([]);
+      setSelectedShippingId(null);
+      setShippingError(SHIPPING_UNAVAILABLE_MESSAGE);
       trackStoreEvent("shipping_quoted", { item_count: cart.itemCount, success: false });
     } finally {
       setShippingLoading(false);
@@ -535,8 +497,8 @@ export default function Pagamento() {
       return;
     }
 
-    if (hasStockItems && stockPaymentData && !stockPaymentData.canStartNewAttempt && ["creating", "pending", "ambiguous", "paid"].includes(stockPaymentData.status)) {
-      setPaymentError(stockPaymentData.status === "ambiguous"
+    if (hasStockItems && stockCheckoutBlocked) {
+      setPaymentError(stockPaymentData?.status === "ambiguous"
         ? "O resultado do pagamento está em análise. Consulte o status; não inicie outra tentativa."
         : "Já existe uma tentativa em andamento ou concluída para este carrinho.");
       return;
@@ -621,6 +583,14 @@ export default function Pagamento() {
       setPaymentData(result);
       trackStoreEvent("payment_charge_created", { method: checkoutMethod });
     } catch (error) {
+      if (hasStockItems) {
+        // The request may have reached the backend: never show a raw code, and re-query before any retry.
+        const view = describeStockCheckoutError(error);
+        setPaymentError(view.message);
+        trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
+        if (view.outcomeUnknown) void refreshStockAttempt();
+        return;
+      }
       const parsed = getApiErrorDisplay(error, "Não foi possível gerar a cobrança.");
       setPaymentError(parsed.message);
       trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
@@ -748,7 +718,7 @@ export default function Pagamento() {
 
             <section className="l4-checkout-finish">
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || Boolean(stockPaymentData && !stockPaymentData.canStartNewAttempt && ["creating", "pending", "ambiguous", "paid"].includes(stockPaymentData.status))}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
+              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || stockCheckoutBlocked}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
               {!hasCompleteCheckoutData && !paymentData && !stockPaymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
               {stockCartInvalid ? <p className="l4-checkout-validation-note is-error" role="alert">O carrinho inclui item sem variante STOCK válida. Volte ao produto e selecione tamanho e cor.</p> : null}
               {stockResumeError ? <p className="l4-checkout-validation-note is-error" role="alert">{stockResumeError} <button type="button" onClick={() => void refreshStockAttempt()}>Consultar status</button></p> : null}
@@ -764,14 +734,13 @@ export default function Pagamento() {
               {paymentData.invoiceUrl ? <a href={paymentData.invoiceUrl} target="_blank" rel="noreferrer">Abrir fatura no Asaas</a> : null}
               {paymentData.method === "BOLETO" && paymentData.bankSlipUrl ? <a href={paymentData.bankSlipUrl} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
             </section> : null}
-            {hasStockItems && stockPaymentData ? <section className="l4-checkout-charge" aria-live="polite">
-              <strong>{stockAttemptStatusLabel(stockPaymentData.status)}</strong>
+            {hasStockItems && stockPaymentData && stockView ? <section className={`l4-checkout-charge is-${stockView.tone}`} role="status" aria-live="polite" data-stock-status={stockPaymentData.status}>
+              <strong>{stockView.title}</strong>
+              <p>{stockView.message}</p>
               {stockPaymentData.orderId ? <p>Pedido #{stockPaymentData.orderId}</p> : null}
               {stockPaymentData.amountCents > 0 ? <p>Total calculado pelo servidor: {formatPrice(stockPaymentData.amountCents / 100)}</p> : null}
-              {stockPaymentData.checkoutUrl ? <a href={stockPaymentData.checkoutUrl} target="_blank" rel="noreferrer">Continuar pagamento</a> : null}
-              {stockPaymentData.status === "ambiguous" ? <p>Não tente pagar novamente. O pedido precisa de reconciliação.</p> : null}
-              {stockPaymentData.canStartNewAttempt && ["failed", "expired", "cancelled"].includes(stockPaymentData.status) ? <p>Esta tentativa terminou. Você pode iniciar uma nova tentativa.</p> : null}
-              <button type="button" onClick={() => void refreshStockAttempt()}>Atualizar status</button>
+              {stockView.canContinuePayment && stockPaymentData.checkoutUrl ? <a href={stockPaymentData.checkoutUrl} target="_blank" rel="noreferrer">Continuar pagamento</a> : null}
+              {stockView.canRefresh ? <button type="button" onClick={() => void refreshStockAttempt()}>Atualizar status</button> : null}
             </section> : null}
           </main>
         </div>
