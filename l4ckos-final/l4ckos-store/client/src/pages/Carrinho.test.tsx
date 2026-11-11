@@ -90,6 +90,18 @@ describe("Carrinho", () => {
     expect(await screen.findByText(/Resta apenas 1 unidade/)).toBeTruthy();
   });
 
+  it("enforces stock per variant, not per product: M has 1 unit, G has 5 in the same product", async () => {
+    const both = product({ stock: 6, variants: [variant({ id: 11, size: "M", stock: 1 }), variant({ id: 12, size: "G", stock: 5 })] });
+    const lineM = cartItem({ product: both, variantId: 11, quantity: 1, selectedOptions: { cor: "Preto", tamanho: "M" } });
+    const lineG = cartItem({ product: both, variantId: 12, quantity: 1, selectedOptions: { cor: "Preto", tamanho: "G" } });
+    const user = setup([lineM, lineG]);
+    const [plusM, plusG] = screen.getAllByRole("button", { name: /Aumentar quantidade/ }) as HTMLButtonElement[];
+    expect(plusM.disabled).toBe(true);
+    expect(plusG.disabled).toBe(false);
+    await user.click(plusG);
+    expect(screen.getAllByRole("button", { name: /Aumentar quantidade/ })[0]).toHaveProperty("disabled", true);
+  });
+
   it("removes a line", async () => {
     const user = setup();
     await user.click(screen.getByRole("button", { name: /Remover Camiseta/ }));
