@@ -16,6 +16,7 @@ import {
   ExclusiveDropAccessRejected,
   ExclusiveDropAccessRevoked,
 } from "../../emails/transactional/ExclusiveDropEmails.jsx";
+import { ExclusiveAccessNotification } from "../../emails/transactional/ExclusiveAccessNotification.jsx";
 import { PaymentNotFinished } from "../../emails/transactional/PaymentNotFinished.jsx";
 import { InternalNewSaleAlert } from "../../emails/transactional/InternalNewSaleAlert.jsx";
 import { InternalLowStockAlert } from "../../emails/transactional/InternalLowStockAlert.jsx";
@@ -40,6 +41,7 @@ const templateMap = {
   exclusiveDropAccessApproved: ExclusiveDropAccessApproved,
   exclusiveDropAccessRejected: ExclusiveDropAccessRejected,
   exclusiveDropAccessRevoked: ExclusiveDropAccessRevoked,
+  exclusiveAccessNotification: ExclusiveAccessNotification,
   passwordReset: PasswordReset,
   paymentNotFinished: PaymentNotFinished,
   orderCreated: OrderCreated,

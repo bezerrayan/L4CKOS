@@ -15,7 +15,8 @@ import { configureStockCheckoutRuntimeForLocalHarness, createContext } from "../
 import { sdk } from "../_core/sdk";
 import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
-import { StockProviderError } from "../stock/stockCheckout";
+import { createStockCheckout as createStockCheckoutDomain, StockProviderError, type StockCheckoutStore } from "../stock/stockCheckout";
+import { createMysqlStockCheckoutStore } from "../stock/mysqlStockCheckoutStore";
 import { createExclusiveStore, type ExclusiveDropNotifier, type NotificationEvent } from "./store";
 import { configureExclusiveStoreForLocalHarness } from "./runtime";
 import { canPurchaseExclusive } from "../../shared/exclusiveDropsV1";
@@ -41,12 +42,12 @@ function assertSyntheticTarget() {
 
 let pool: Pool;
 let httpServer: Server;
-let runtime: ReturnType<typeof createStockCheckoutRuntime>;
 let baseUrl = "";
 let providerCalls: Array<{ orderId: string }>;
 let providerMode: "ok" | "definitive" | "unknown" = "ok";
 let sessionTokens: Record<string, string>;
 let now: Date;
+let stockRuntime: ReturnType<typeof createStockCheckoutRuntime>;
 const clock = () => now;
 const at = (iso: string) => { now = new Date(iso); };
 
@@ -59,7 +60,10 @@ const third = () => client("third-84");
 const admin = () => client("admin-83");
 
 const store = () => createExclusiveStore(pool, { now: clock });
-const appCode = (error: unknown) => (error as { data?: { appError?: { code?: string } } })?.data?.appError?.code;
+const appCode = (error: unknown) => {
+  const value = error as { data?: { appError?: { code?: string } }; shape?: { data?: { appError?: { code?: string } } } };
+  return value?.data?.appError?.code ?? value?.shape?.data?.appError?.code;
+};
 const trpcCode = (error: unknown) => (error as { data?: { code?: string } })?.data?.code;
 const caught = async (promise: Promise<unknown>) => promise.then(() => null, e => e);
 
@@ -123,11 +127,12 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
       "admin-83": await sdk.createSessionToken("synthetic-admin-83", { name: "Admin", sessionVersion: 1 }),
       "third-84": await sdk.createSessionToken("synthetic-third-84", { name: "Terceiro", sessionVersion: 1 }),
     };
-    runtime = createStockCheckoutRuntime({
+    stockRuntime = createStockCheckoutRuntime({
       pool,
+      exclusiveStore: store(),
       provider: { supportsIdempotencyKey: true, async createPayment(input) { providerCalls.push(input); if (providerMode === "definitive") throw new StockProviderError("rejected by provider", true); if (providerMode === "unknown") throw new Error("socket hang up"); return { paymentId: `pay-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/checkout" }; } },
     });
-    configureStockCheckoutRuntimeForLocalHarness(runtime);
+    configureStockCheckoutRuntimeForLocalHarness(stockRuntime);
     configureExclusiveStoreForLocalHarness(createExclusiveStore(pool, { now: clock }));
     const app = express();
     app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
@@ -211,6 +216,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     const result = await create(owner, "city-noise-attempt-001", 11, 2, 5);
     expect(result).toMatchObject({ status: "pending", replayed: false });
     expect(providerCalls).toHaveLength(1);
+    await stockRuntime.receiveWebhook({
+      rawBody: "synthetic-city-noise-paid",
+      headers: { "asaas-access-token": "synthetic-local-signature" },
+      boundary: { verifySignature: async () => true, decodeSignedEvent: () => ({ eventId: "city-noise-paid-001", orderId: result.orderId, paymentId: result.paymentId, status: "paid", amountCents: result.amountCents, payload: { source: "synthetic-test" } }) },
+    });
+    const [paid] = await pool.query<any[]>("SELECT status FROM stockCheckoutAttempts WHERE attemptId = 'city-noise-attempt-001'");
+    expect(paid[0].status).toBe("paid");
   });
 
   // ---------------------------------------------------------------- request
@@ -319,7 +331,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     expect(await create(owner, "xiv-attempt-sizes-0001", 8)).toMatchObject({ status: "pending" }); // M
     expect(await create(owner, "xiv-attempt-sizes-0002", 9)).toMatchObject({ status: "pending" }); // G
     expect(await create(owner, "xiv-attempt-sizes-0003", 10)).toMatchObject({ status: "pending" }); // GG
-    const over = await caught(create(owner, "xiv-attempt-sizes-0004", 8));
+    const over = await caught(create(owner, "xiv-attempt-sizes-0004", 8, 2));
     expect(appCode(over)).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
     const view = await owner().exclusiveDrops.forProduct.query({ productId: 4 });
     expect(view.exclusive && view.viewer).toMatchObject({ status: "unlocked", unitLimit: 3, unitsUsed: 3, unitsRemaining: 0 });
@@ -331,7 +343,53 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     await unlockedGrantFor(owner, 3);
     const attempt = await owner().stockCheckout.create.mutate({ attemptId: "xiv-attempt-units-0001", items: [{ productId: 4, variantId: 8, quantity: 2 }, { productId: 4, variantId: 9, quantity: 1 }], delivery } as never);
     expect(attempt.status).toBe("pending");
+    const payment = providerCalls[0];
+    await stockRuntime.receiveWebhook({
+      rawBody: "synthetic-xiv-bis-paid",
+      headers: { "asaas-access-token": "synthetic-local-signature" },
+      boundary: { verifySignature: async () => true, decodeSignedEvent: () => ({ eventId: "xiv-bis-paid-001", orderId: attempt.orderId, paymentId: `pay-${providerCalls.indexOf(payment) + 1}`, status: "paid", amountCents: attempt.amountCents, payload: { source: "synthetic-test" } }) },
+    });
+    const [paid] = await pool.query<any[]>("SELECT status FROM stockCheckoutAttempts WHERE attemptId = 'xiv-attempt-units-0001'");
+    expect(paid[0].status).toBe("paid");
+    const [used] = await pool.query<any[]>("SELECT units FROM exclusiveGrantUsage WHERE attemptId = 'xiv-attempt-units-0001'");
+    expect(Number(used[0].units)).toBe(3);
     expect(appCode(await caught(create(owner, "xiv-attempt-units-0002", 10)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+  });
+
+  it("quota and STOCK reservation roll back together on injected failures on either side of inventory reservation", async () => {
+    await createDrop();
+    await unlockedGrantFor(owner, 3);
+    const exclusive = store();
+    const paymentProvider = { supportsIdempotencyKey: true, async createPayment() { throw new Error("provider must not be called for rollback tests"); } };
+    const request = (attemptId: string) => ({ attemptId, items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery });
+    const beforeStock = createMysqlStockCheckoutStore(pool, {
+      reserveExclusiveQuota: async (connection, claim) => {
+        await exclusive.reserveForCheckoutInTransaction(connection, claim);
+        throw new Error("injected-after-quota");
+      },
+    });
+    await expect(createStockCheckoutDomain({ enabled: true, ownerUserId: 81, store: beforeStock, provider: paymentProvider, request: request("xiv-attempt-rollback-0001") })).rejects.toThrow("injected-after-quota");
+
+    const base = createMysqlStockCheckoutStore(pool, { reserveExclusiveQuota: (connection, claim) => exclusive.reserveForCheckoutInTransaction(connection, claim) });
+    const afterStock: StockCheckoutStore = {
+      ...base,
+      transaction: work => base.transaction(tx => work(new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property === "reserveVariant") return async (...args: Parameters<typeof target.reserveVariant>) => {
+            await target.reserveVariant(...args);
+            throw new Error("injected-after-stock");
+          };
+          return Reflect.get(target, property, receiver);
+        },
+      }))),
+    };
+    await expect(createStockCheckoutDomain({ enabled: true, ownerUserId: 81, store: afterStock, provider: paymentProvider, request: request("xiv-attempt-rollback-0002") })).rejects.toThrow("injected-after-stock");
+    const [claims] = await pool.query<any[]>("SELECT COUNT(*) AS n FROM exclusiveGrantUsage");
+    const [attempts] = await pool.query<any[]>("SELECT COUNT(*) AS n FROM stockCheckoutAttempts");
+    const [variant] = await pool.query<any[]>("SELECT stock, reservedStock FROM productVariants WHERE id = 8");
+    expect(Number(claims[0].n)).toBe(0);
+    expect(Number(attempts[0].n)).toBe(0);
+    expect(variant[0]).toMatchObject({ stock: 20, reservedStock: 0 });
   });
 
   it("11. two tabs racing for the last unit: exactly one wins; a same-id replay never double-counts", async () => {
@@ -376,11 +434,11 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     expect(await blocked("xiv-attempt-quota-probe4")).toBe(true); // awaiting reconciliation: held
     await setAttempt("status = 'paid', paidAt = NOW(3), reconciliationRequiredAt = NULL");
     expect(await blocked("xiv-attempt-quota-probe5")).toBe(true); // paid: consumed, never released
-    await setAttempt("status = 'released', providerState = 'not_started', paidAt = NULL, releasedAt = NOW(3)");
+    await setAttempt("status = 'released', providerState = 'not_started', reconciliationRequiredAt = NULL, paidAt = NULL, releasedAt = NOW(3)");
     // 12. safely released (cancel / expiry of an unstarted attempt): units are free again
     expect(await create(owner, "xiv-attempt-quota-probe6", 9)).toMatchObject({ status: "pending" });
     // idempotent: reading again does not change anything
-    expect(await blocked("xiv-attempt-quota-probe7")).toBe(true);
+    expect(appCode(await caught(create(owner, "xiv-attempt-quota-probe7", 10)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
   });
 
   it("a definitive provider failure frees the units; an orphan claim frees itself after the grace window", async () => {
@@ -422,18 +480,6 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     expect(await viewer()).toMatchObject({ unitsReserved: 1, unitsConsumed: 2, unitsUsed: 3, unitsRemaining: 0 });
     const listed = await admin().exclusiveDrops.admin.listRequests.query({});
     expect(listed[0].grant).toMatchObject({ unitsReserved: 1, unitsConsumed: 2 });
-  });
-
-  it("a replay of the same attemptId never deletes the claim of the request that created it", async () => {
-    await createDrop();
-    await unlockedGrantFor(owner, 2);
-    const first = await store().reserveForCheckout({ userId: 81, attemptId: "xiv-attempt-replay-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }] });
-    const replay = await store().reserveForCheckout({ userId: 81, attemptId: "xiv-attempt-replay-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }] });
-    expect(first.claimed).toBe(true);
-    expect(replay.claimed).toBe(false); // nothing for the replay to roll back
-    await expect(store().reserveForCheckout({ userId: 81, attemptId: "xiv-attempt-replay-0001", items: [{ productId: 4, variantId: 8, quantity: 2 }] })).rejects.toMatchObject({ code: "EXCLUSIVE_QUOTA_EXCEEDED" });
-    const [claims] = await pool.query<any[]>("SELECT units FROM exclusiveGrantUsage");
-    expect(claims).toHaveLength(1);
   });
 
   it("revocation with an OPEN attempt: new attempts are blocked at once, the open attempt keeps its own STOCK lifecycle and its units stay held", async () => {
@@ -497,7 +543,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     await pool.query("UPDATE stockCheckoutAttempts SET reservationExpiresAt = '2026-01-01 00:00:00.000' WHERE attemptId IN ('xiv-attempt-sweep-0001', 'xiv-attempt-sweep-0002')");
     const viewer = async () => { const v = await owner().exclusiveDrops.forProduct.query({ productId: 4 }); return v.exclusive ? v.viewer : null; };
     expect(await viewer()).toMatchObject({ unitsReserved: 2, unitsRemaining: 0 }); // expired in time but not yet swept: still held
-    const swept = await runtime.expireReservations(50);
+    const swept = await stockRuntime.expireReservations(50);
     expect(swept.releasedAttemptIds).toContain("xiv-attempt-sweep-0002");
     expect(swept.releasedAttemptIds).not.toContain("xiv-attempt-sweep-0001");
     expect(swept.reconciliationAttemptIds).toContain("xiv-attempt-sweep-0001");
@@ -557,8 +603,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     await createDrop();
     await pool.query("RENAME TABLE exclusiveDropProducts TO exclusiveDropProducts_gone");
     try {
-      // table missing = module not installed: nothing can be exclusive (documented), so a purchase of a PUBLIC product passes...
-      expect(await create(owner, "city-noise-attempt-002", 11, 1, 5)).toMatchObject({ status: "pending" });
+      // Missing mapping means the server cannot establish whether any product is exclusive.
+      const error = await caught(create(owner, "city-noise-attempt-002", 11, 1, 5));
+      expect(appCode(error)).toBe("EXCLUSIVE_ACCESS_UNVERIFIABLE");
+      expect(providerCalls).toHaveLength(0);
     } finally {
       await pool.query("RENAME TABLE exclusiveDropProducts_gone TO exclusiveDropProducts");
     }

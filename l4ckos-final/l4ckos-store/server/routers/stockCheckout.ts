@@ -6,7 +6,8 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { StockCheckoutError } from "../stock/stockCheckout";
 import { createAppError } from "../_core/appErrors";
 import { toStockCheckoutResponseV1 } from "../stock/stockCheckoutHttpContract";
-import { withExclusiveCheckoutGuard } from "../exclusive/checkoutGuard";
+import { toTrpcError } from "../exclusive/errors";
+import { ExclusiveError } from "../exclusive/store";
 
 function mapCheckoutError(error: unknown): never {
   if (!(error instanceof StockCheckoutError)) throw error;
@@ -39,15 +40,13 @@ export const stockCheckoutRouter = router({
       assertPublicCheckoutEnabled();
       const runtime = ctx.stockCheckoutRuntime;
       if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Checkout STOCK indisponível neste runtime." });
-      // Exclusive-drop control layer: verifies access and claims units BEFORE any STOCK write (fails closed).
-      return withExclusiveCheckoutGuard({ userId: ctx.user.id, attemptId: input.attemptId, items: input.items }, async () => {
-        try {
-          const result = await runtime.checkout(input, ctx.user.id);
-          return stockCheckoutResponseV1Schema.parse(toStockCheckoutResponseV1(input.attemptId, result));
-        } catch (error) {
-          mapCheckoutError(error);
-        }
-      });
+      try {
+        const result = await runtime.checkout(input, ctx.user.id);
+        return stockCheckoutResponseV1Schema.parse(toStockCheckoutResponseV1(input.attemptId, result));
+      } catch (error) {
+        if (error instanceof ExclusiveError) throw toTrpcError(error);
+        mapCheckoutError(error);
+      }
     }),
 
   resume: protectedProcedure

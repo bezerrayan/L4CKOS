@@ -217,6 +217,22 @@ export async function sendWelcomeAccountEmail({ email, name }) {
   });
 }
 
+export async function sendExclusiveAccessNotificationEmail({ email, name, eventType, eventKey }) {
+  const validEvents = new Set(["request_received", "access_approved", "access_rejected", "access_revoked"]);
+  if (!validEvents.has(eventType)) throw new Error("Invalid exclusive access notification event");
+  if (typeof eventKey !== "string" || !/^(req|grant):[A-Za-z0-9:_-]{1,112}$/.test(eventKey)) throw new Error("Invalid exclusive notification idempotency key");
+  return sendEmail({
+    templateName: "exclusiveAccessNotification",
+    subjectKey: "exclusiveAccessNotification",
+    subjectPayload: { eventType },
+    templatePayload: { customerName: name, eventType },
+    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    to: email,
+    tags: [{ name: "category", value: "exclusive-access" }],
+    idempotencyKey: eventKey,
+  });
+}
+
 export async function sendPasswordResetEmail({ email, name, resetUrl }) {
   return sendEmail({
     templateName: "passwordReset",

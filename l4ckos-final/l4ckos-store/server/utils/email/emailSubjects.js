@@ -7,6 +7,12 @@ export const emailSubjects = {
   exclusiveDropAccessApproved: ({ dropName }) => `Seu acesso foi aprovado: ${dropName || "drop exclusivo"}`,
   exclusiveDropAccessRejected: ({ dropName }) => `Sobre o seu pedido de acesso: ${dropName || "drop exclusivo"}`,
   exclusiveDropAccessRevoked: ({ dropName }) => `Seu acesso foi encerrado: ${dropName || "drop exclusivo"}`,
+  exclusiveAccessNotification: ({ eventType }) => ({
+    request_received: "Recebemos sua solicitação de acesso",
+    access_approved: "Seu acesso ao drop exclusivo foi aprovado",
+    access_rejected: "Atualização da sua solicitação de acesso",
+    access_revoked: "Atualização do seu acesso ao drop",
+  }[eventType] || "Atualização sobre seu acesso ao drop"),
   passwordReset: "Redefina sua senha da L4CKOS",
   paymentNotFinished: ({ orderNumber }) => `O pedido #${orderNumber} ainda pode ser concluído`,
   orderCreated: ({ orderNumber }) => `Recebemos o pedido #${orderNumber}`,
