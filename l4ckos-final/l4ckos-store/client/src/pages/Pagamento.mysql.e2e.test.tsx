@@ -91,6 +91,8 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
       const schema = await readFile(resolve("server/stock/fixtures/mysql8-stock-schema.sql"), "utf8");
       for (const statement of schema.split(";").map(part => part.trim()).filter(Boolean)) await pool.query(statement);
     }
+    const exclusiveMigration = await readFile(resolve("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql"), "utf8");
+    for (const statement of exclusiveMigration.split(";").map(part => part.trim()).filter(part => /CREATE TABLE/.test(part))) await pool.query(statement);
     const [productColumns] = await pool.execute<(Record<string, unknown> & { columnName: string })[]>(
       "SELECT COLUMN_NAME AS columnName FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'products'",
     );
@@ -170,6 +172,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
     vi.unstubAllGlobals();
     configureStockCheckoutRuntimeForLocalHarness(undefined);
     if (server) await new Promise<void>(resolveClose => server.close(() => resolveClose()));
+    if (pool && process.env.STOCK_LOCAL_HARNESS === "true") {
+      await pool.query("SET FOREIGN_KEY_CHECKS = 0");
+      for (const table of ["exclusiveNotificationOutbox", "exclusiveEvents", "exclusiveRedeemAttempts", "exclusiveGrantUsage", "exclusiveGrants", "exclusiveAccessRequests", "exclusiveDropProducts", "exclusiveDrops"]) {
+        await pool.query(`DROP TABLE IF EXISTS ${table}`);
+      }
+      await pool.query("SET FOREIGN_KEY_CHECKS = 1");
+    }
     if (pool && process.env.STOCK_LOCAL_HARNESS === "true") setStockLocalHarnessDb(null);
     if (pool) await pool.end();
   });

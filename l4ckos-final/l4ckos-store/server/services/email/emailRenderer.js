@@ -10,6 +10,7 @@ import { OrderShipped } from "../../emails/transactional/OrderShipped.jsx";
 import { OrderDelivered } from "../../emails/transactional/OrderDelivered.jsx";
 import { PasswordReset } from "../../emails/transactional/PasswordReset.jsx";
 import { WelcomeAccount } from "../../emails/transactional/WelcomeAccount.jsx";
+import { ExclusiveAccessNotification } from "../../emails/transactional/ExclusiveAccessNotification.jsx";
 import { PaymentNotFinished } from "../../emails/transactional/PaymentNotFinished.jsx";
 import { InternalNewSaleAlert } from "../../emails/transactional/InternalNewSaleAlert.jsx";
 import { InternalLowStockAlert } from "../../emails/transactional/InternalLowStockAlert.jsx";
@@ -30,6 +31,7 @@ const templateMap = {
   contactConfirmation: ContactConfirmation,
   newContactInternal: NewContactInternal,
   welcomeAccount: WelcomeAccount,
+  exclusiveAccessNotification: ExclusiveAccessNotification,
   passwordReset: PasswordReset,
   paymentNotFinished: PaymentNotFinished,
   orderCreated: OrderCreated,

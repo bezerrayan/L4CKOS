@@ -1,4 +1,5 @@
 import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type { ExclusiveCheckoutClaim } from "../exclusive/store";
 import {
   StockAttemptConflictError,
   type StockAttempt,
@@ -118,7 +119,9 @@ async function activeReservations(connection: PoolConnection, attemptId: string)
   return rows.map(row => ({ variantId: asNumber(row.variantId), quantity: asNumber(row.quantity) }));
 }
 
-function createTransaction(connection: PoolConnection, reservationTtlSeconds: number): StockCheckoutTransaction {
+type ExclusiveQuotaReserver = (connection: PoolConnection, input: ExclusiveCheckoutClaim) => Promise<void>;
+
+function createTransaction(connection: PoolConnection, reservationTtlSeconds: number, reserveExclusiveQuota?: ExclusiveQuotaReserver): StockCheckoutTransaction {
   return {
     async lockOwnerForCheckout(ownerUserId): Promise<void> {
       const [rows] = await connection.execute<(RowDataPacket & { id: number })[]>(
@@ -126,6 +129,11 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         [ownerUserId],
       );
       if (!rows.length) throw new StockMySqlInvariantError("Checkout owner does not exist");
+    },
+
+    async reserveExclusiveQuota(input): Promise<void> {
+      if (!reserveExclusiveQuota) throw new StockMySqlInvariantError("Exclusive checkout guard is not composed into STOCK runtime");
+      await reserveExclusiveQuota(connection, input);
     },
 
     findAttempt: attemptId => findAttempt(connection, attemptId),
@@ -576,7 +584,7 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
 }
 
 /** Uses only the caller's already-configured pool; TLS/identity connection guards remain outside this adapter. */
-export function createMysqlStockCheckoutStore(pool: Pool, options: { reservationTtlSeconds?: number } = {}): StockCheckoutStore {
+export function createMysqlStockCheckoutStore(pool: Pool, options: { reservationTtlSeconds?: number; reserveExclusiveQuota?: ExclusiveQuotaReserver } = {}): StockCheckoutStore {
   const reservationTtlSeconds = options.reservationTtlSeconds ?? 15 * 60;
   if (!Number.isSafeInteger(reservationTtlSeconds) || reservationTtlSeconds < 60 || reservationTtlSeconds > 24 * 60 * 60) {
     throw new RangeError("reservationTtlSeconds must be between 60 and 86400");
@@ -642,7 +650,7 @@ export function createMysqlStockCheckoutStore(pool: Pool, options: { reservation
         await connection.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
         await connection.beginTransaction();
         transactionStarted = true;
-        const result = await work(createTransaction(connection, reservationTtlSeconds));
+        const result = await work(createTransaction(connection, reservationTtlSeconds, options.reserveExclusiveQuota));
         await connection.commit();
         transactionStarted = false;
         return result;

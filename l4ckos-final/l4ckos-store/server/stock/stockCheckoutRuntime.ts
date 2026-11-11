@@ -10,10 +10,14 @@ import {
   type StockWebhookBoundary,
 } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
+import { createExclusiveStore, type ExclusiveStore } from "../exclusive/store";
 
 /** Composition boundary for a future STOCK-only route; this factory does not mount or enable any route. */
-export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean }) {
-  const store = createMysqlStockCheckoutStore(input.pool);
+export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean; exclusiveStore?: ExclusiveStore }) {
+  const exclusiveStore = input.exclusiveStore ?? createExclusiveStore(input.pool);
+  const store = createMysqlStockCheckoutStore(input.pool, {
+    reserveExclusiveQuota: (connection, claim) => exclusiveStore.reserveForCheckoutInTransaction(connection, claim),
+  });
   return {
     isForDisposableLocalHarness() {
       const connection = (input.pool as unknown as { pool?: { config?: { connectionConfig?: { host?: unknown; user?: unknown; database?: unknown } } } }).pool?.config?.connectionConfig;

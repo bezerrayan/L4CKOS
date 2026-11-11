@@ -13,6 +13,7 @@ import {
   type StockCheckoutTransaction,
 } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
+import { createExclusiveStore } from "../exclusive/store";
 
 const createStockCheckout = (input: Omit<Parameters<typeof createStockCheckoutDomain>[0], "ownerUserId">) =>
   createStockCheckoutDomain({ ...input, ownerUserId: 81 });
@@ -161,7 +162,15 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
       const schema = await readFile(resolve("server/stock/fixtures/mysql8-stock-schema.sql"), "utf8");
       for (const statement of schema.split(";").map(part => part.trim()).filter(Boolean)) await pool.query(statement);
     }
-    store = createMysqlStockCheckoutStore(pool, { reservationTtlSeconds: 900 });
+    const exclusiveMigration = await readFile(resolve("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql"), "utf8");
+    const creates = exclusiveMigration.match(/CREATE TABLE IF NOT EXISTS[\s\S]*?ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;/g) ?? [];
+    if (creates.length !== 8) throw new Error("Exclusive-drop candidate schema fixture is incomplete");
+    for (const statement of creates) await pool.query(statement);
+    const exclusive = createExclusiveStore(pool);
+    store = createMysqlStockCheckoutStore(pool, {
+      reservationTtlSeconds: 900,
+      reserveExclusiveQuota: (connection, claim) => exclusive.reserveForCheckoutInTransaction(connection, claim),
+    });
   }, 30_000);
 
   beforeEach(async () => resetDatabase());
@@ -474,7 +483,11 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
     await seedReservedAttempt("mysql-expire-process-restart-01", 8);
     await pool.end();
     pool = createPool({ host, port, user, password, database, connectionLimit: 12, waitForConnections: true, queueLimit: 0 });
-    store = createMysqlStockCheckoutStore(pool, { reservationTtlSeconds: 900 });
+    const exclusive = createExclusiveStore(pool);
+    store = createMysqlStockCheckoutStore(pool, {
+      reservationTtlSeconds: 900,
+      reserveExclusiveQuota: (connection, claim) => exclusive.reserveForCheckoutInTransaction(connection, claim),
+    });
     await forceAttemptExpired("mysql-expire-process-restart-01");
     const result = await expireStockReservations(store, 1);
     expect(result.releasedAttemptIds).toEqual(["mysql-expire-process-restart-01"]);
@@ -543,7 +556,11 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
     const first = await createStockCheckout({ enabled: true, store, provider: payments, request: checkoutRequest("mysql-process-restart-0001") });
     await pool.end();
     pool = createPool({ host, port, user, password, database, connectionLimit: 12, waitForConnections: true, queueLimit: 0 });
-    store = createMysqlStockCheckoutStore(pool, { reservationTtlSeconds: 900 });
+    const exclusive = createExclusiveStore(pool);
+    store = createMysqlStockCheckoutStore(pool, {
+      reservationTtlSeconds: 900,
+      reserveExclusiveQuota: (connection, claim) => exclusive.reserveForCheckoutInTransaction(connection, claim),
+    });
     const replay = await createStockCheckout({ enabled: true, store, provider: payments, request: checkoutRequest("mysql-process-restart-0001") });
     expect(replay).toMatchObject({ orderId: first.orderId, paymentId: first.paymentId, amountCents: 12900, replayed: true });
     expect(await readInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });

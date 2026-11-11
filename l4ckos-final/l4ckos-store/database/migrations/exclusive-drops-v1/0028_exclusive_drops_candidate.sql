@@ -2,7 +2,69 @@
 -- Not part of drizzle/meta/_journal.json. DO NOT run against staging or production without the release runbook
 -- (l4ckos-release-verification) and an attested backup. Additive only: new tables, no ALTER of existing tables.
 -- Tested on disposable MySQL 9.7.2 (server/exclusive/exclusiveDrops.mysql.test.ts).
--- Requires: users(id INT), products(id INT) and, for quota derivation, the STOCK V1 tables (stockCheckoutAttempts).
+-- Requires: users(id INT), products(id INT) and STOCK V1 0027 tables/columns before any DDL starts.
+
+DELIMITER $$
+DROP PROCEDURE IF EXISTS __l4ckos_exclusive_drops_0028_preflight$$
+CREATE PROCEDURE __l4ckos_exclusive_drops_0028_preflight()
+BEGIN
+  DECLARE v_missing INT DEFAULT 0;
+  DECLARE v_non_innodb INT DEFAULT 0;
+  DECLARE v_bad_columns INT DEFAULT 0;
+  DECLARE v_attempt_key INT DEFAULT 0;
+
+  SELECT COUNT(*) INTO v_missing
+    FROM (SELECT 'users' n UNION ALL SELECT 'products' UNION ALL SELECT 'stockCheckoutAttempts') expected
+    LEFT JOIN information_schema.tables t
+      ON t.table_schema = DATABASE() AND t.table_name = expected.n AND t.table_type = 'BASE TABLE'
+   WHERE t.table_name IS NULL;
+  IF v_missing <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 blocked: apply and attest STOCK 0027 first';
+  END IF;
+
+  SELECT COUNT(*) INTO v_non_innodb
+    FROM information_schema.tables
+   WHERE table_schema = DATABASE()
+     AND table_name IN ('users','products','stockCheckoutAttempts')
+     AND engine <> 'InnoDB';
+  IF v_non_innodb <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 blocked: required parent table is not InnoDB';
+  END IF;
+
+  SELECT COUNT(*) INTO v_bad_columns
+    FROM information_schema.columns
+   WHERE table_schema = DATABASE()
+     AND ((table_name IN ('users','products') AND column_name = 'id' AND data_type <> 'int')
+       OR (table_name = 'stockCheckoutAttempts' AND column_name IN ('attemptId','ownerUserId','status','providerState','reconciliationRequiredAt')
+           AND NOT ((column_name = 'attemptId' AND data_type = 'varchar' AND character_maximum_length >= 120)
+             OR (column_name = 'ownerUserId' AND data_type = 'int')
+             OR (column_name IN ('status','providerState') AND data_type = 'enum')
+             OR (column_name = 'reconciliationRequiredAt' AND data_type IN ('timestamp','datetime')))));
+  IF v_bad_columns <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 blocked: STOCK 0027 column contract drift';
+  END IF;
+
+  SELECT COUNT(*) INTO v_missing
+    FROM (SELECT 'attemptId' n UNION ALL SELECT 'ownerUserId' UNION ALL SELECT 'status'
+          UNION ALL SELECT 'providerState' UNION ALL SELECT 'reconciliationRequiredAt') expected
+    LEFT JOIN information_schema.columns c
+      ON c.table_schema = DATABASE() AND c.table_name = 'stockCheckoutAttempts' AND c.column_name = expected.n
+   WHERE c.column_name IS NULL;
+  IF v_missing <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 blocked: STOCK 0027 columns are missing';
+  END IF;
+
+  SELECT COUNT(*) INTO v_attempt_key
+    FROM information_schema.statistics
+   WHERE table_schema = DATABASE() AND table_name = 'stockCheckoutAttempts'
+     AND column_name = 'attemptId' AND non_unique = 0;
+  IF v_attempt_key = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 blocked: STOCK attemptId is not uniquely keyed';
+  END IF;
+END$$
+CALL __l4ckos_exclusive_drops_0028_preflight()$$
+DROP PROCEDURE __l4ckos_exclusive_drops_0028_preflight$$
+DELIMITER ;
 
 CREATE TABLE IF NOT EXISTS exclusiveDrops (
   id INT NOT NULL AUTO_INCREMENT,
@@ -134,3 +196,69 @@ CREATE TABLE IF NOT EXISTS exclusiveNotificationOutbox (
   UNIQUE KEY exclusiveNotificationOutbox_key_unique (eventKey),
   KEY exclusiveNotificationOutbox_status_idx (status, createdAt)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- IF NOT EXISTS is only an idempotent DDL replay. Verify the complete table set
+-- after DDL so a partially existing/divergent schema cannot be declared ready.
+DELIMITER $$
+DROP PROCEDURE IF EXISTS __l4ckos_exclusive_drops_0028_verify$$
+CREATE PROCEDURE __l4ckos_exclusive_drops_0028_verify()
+BEGIN
+  DECLARE v_missing INT DEFAULT 0;
+  DECLARE v_non_innodb INT DEFAULT 0;
+  DECLARE v_missing_columns INT DEFAULT 0;
+  DECLARE v_missing_foreign_keys INT DEFAULT 0;
+  SELECT COUNT(*) INTO v_missing
+    FROM (SELECT 'exclusiveDrops' n UNION ALL SELECT 'exclusiveDropProducts' UNION ALL SELECT 'exclusiveAccessRequests'
+          UNION ALL SELECT 'exclusiveGrants' UNION ALL SELECT 'exclusiveGrantUsage' UNION ALL SELECT 'exclusiveRedeemAttempts'
+          UNION ALL SELECT 'exclusiveEvents' UNION ALL SELECT 'exclusiveNotificationOutbox') expected
+    LEFT JOIN information_schema.tables t
+      ON t.table_schema = DATABASE() AND t.table_name = expected.n AND t.table_type = 'BASE TABLE'
+   WHERE t.table_name IS NULL;
+  IF v_missing <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 incomplete: required table missing';
+  END IF;
+  SELECT COUNT(*) INTO v_non_innodb
+    FROM information_schema.tables
+   WHERE table_schema = DATABASE()
+     AND table_name IN ('exclusiveDrops','exclusiveDropProducts','exclusiveAccessRequests','exclusiveGrants',
+                        'exclusiveGrantUsage','exclusiveRedeemAttempts','exclusiveEvents','exclusiveNotificationOutbox')
+     AND engine <> 'InnoDB';
+  IF v_non_innodb <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 incomplete: required table is not InnoDB';
+  END IF;
+
+  SELECT COUNT(*) INTO v_missing_columns
+    FROM (
+      SELECT 'exclusiveDrops' t, 'id' c UNION ALL SELECT 'exclusiveDrops','slug' UNION ALL SELECT 'exclusiveDrops','purchaseStartsAt' UNION ALL SELECT 'exclusiveDrops','purchaseEndsAt' UNION ALL SELECT 'exclusiveDrops','requiresAuthorization' UNION ALL
+      SELECT 'exclusiveDropProducts','productId' UNION ALL SELECT 'exclusiveDropProducts','dropId' UNION ALL
+      SELECT 'exclusiveAccessRequests','dropId' UNION ALL SELECT 'exclusiveAccessRequests','userId' UNION ALL SELECT 'exclusiveAccessRequests','status' UNION ALL
+      SELECT 'exclusiveGrants','requestId' UNION ALL SELECT 'exclusiveGrants','dropId' UNION ALL SELECT 'exclusiveGrants','userId' UNION ALL SELECT 'exclusiveGrants','codeHash' UNION ALL SELECT 'exclusiveGrants','unitLimit' UNION ALL SELECT 'exclusiveGrants','unlockedAt' UNION ALL SELECT 'exclusiveGrants','revokedAt' UNION ALL
+      SELECT 'exclusiveGrantUsage','grantId' UNION ALL SELECT 'exclusiveGrantUsage','attemptId' UNION ALL SELECT 'exclusiveGrantUsage','units' UNION ALL
+      SELECT 'exclusiveRedeemAttempts','userId' UNION ALL SELECT 'exclusiveRedeemAttempts','success' UNION ALL
+      SELECT 'exclusiveEvents','dropId' UNION ALL SELECT 'exclusiveEvents','subjectUserId' UNION ALL SELECT 'exclusiveEvents','event' UNION ALL
+      SELECT 'exclusiveNotificationOutbox','eventKey' UNION ALL SELECT 'exclusiveNotificationOutbox','eventType' UNION ALL SELECT 'exclusiveNotificationOutbox','userId' UNION ALL SELECT 'exclusiveNotificationOutbox','requestId' UNION ALL SELECT 'exclusiveNotificationOutbox','status'
+    ) expected
+    LEFT JOIN information_schema.columns c
+      ON c.table_schema = DATABASE() AND c.table_name = expected.t AND c.column_name = expected.c
+   WHERE c.column_name IS NULL;
+  IF v_missing_columns <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 incomplete: required column missing';
+  END IF;
+
+  SELECT COUNT(*) INTO v_missing_foreign_keys
+    FROM (
+      SELECT 'exclusiveDropProducts_drop_fk' n UNION ALL SELECT 'exclusiveDropProducts_product_fk' UNION ALL
+      SELECT 'exclusiveAccessRequests_drop_fk' UNION ALL SELECT 'exclusiveAccessRequests_user_fk' UNION ALL
+      SELECT 'exclusiveGrants_request_fk' UNION ALL SELECT 'exclusiveGrants_drop_fk' UNION ALL SELECT 'exclusiveGrants_user_fk' UNION ALL
+      SELECT 'exclusiveGrantUsage_grant_fk'
+    ) expected
+    LEFT JOIN information_schema.referential_constraints r
+      ON r.constraint_schema = DATABASE() AND r.constraint_name = expected.n
+   WHERE r.constraint_name IS NULL;
+  IF v_missing_foreign_keys <> 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Exclusive Drops 0028 incomplete: required foreign key missing';
+  END IF;
+END$$
+CALL __l4ckos_exclusive_drops_0028_verify()$$
+DROP PROCEDURE __l4ckos_exclusive_drops_0028_verify$$
+DELIMITER ;

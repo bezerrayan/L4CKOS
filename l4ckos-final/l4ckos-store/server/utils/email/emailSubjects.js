@@ -3,6 +3,12 @@ export const emailSubjects = {
   contactConfirmation: "Recebemos sua mensagem",
   newContactInternal: ({ subject }) => `Novo contato do site: ${subject || "L4CKOS"}`,
   welcomeAccount: "Sua conta L4CKOS está pronta",
+  exclusiveAccessNotification: ({ eventType }) => ({
+    request_received: "Recebemos sua solicitação de acesso",
+    access_approved: "Seu acesso ao drop exclusivo foi aprovado",
+    access_rejected: "Atualização da sua solicitação de acesso",
+    access_revoked: "Atualização do seu acesso ao drop",
+  }[eventType] || "Atualização sobre seu acesso ao drop"),
   passwordReset: "Redefina sua senha da L4CKOS",
   paymentNotFinished: ({ orderNumber }) => `O pedido #${orderNumber} ainda pode ser concluído`,
   orderCreated: ({ orderNumber }) => `Recebemos o pedido #${orderNumber}`,

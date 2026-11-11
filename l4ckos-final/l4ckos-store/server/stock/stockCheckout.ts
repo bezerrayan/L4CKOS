@@ -49,6 +49,8 @@ export type StockAttemptResumeRecord = {
 export interface StockCheckoutTransaction {
   /** Serializes checkout creation for one authenticated owner until this transaction commits. */
   lockOwnerForCheckout(ownerUserId: number): Promise<void>;
+  /** Reserves exclusive quota on this same connection/transaction as attempt+stock. */
+  reserveExclusiveQuota?(input: { userId: number; attemptId: string; items: Array<{ productId: number; variantId: number; quantity: number }> }): Promise<void>;
   findAttempt(attemptId: string): Promise<StockAttempt | null>;
   findOpenAttemptsForOwner(ownerUserId: number): Promise<StockAttempt[]>;
   findVariant(variantId: number): Promise<StockVariant | null>;
@@ -180,6 +182,9 @@ export async function createStockCheckout(input: {
         if (existing.fingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
         if (existing.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
         if (existing.status === "paid") fail("CHECKOUT_ALREADY_PAID");
+        if (existing.providerState === "not_started") {
+          await tx.reserveExclusiveQuota?.({ userId: input.ownerUserId, attemptId: request.attemptId, items: request.items });
+        }
         return { attempt: existing, replayed: true };
       }
 
@@ -221,6 +226,10 @@ export async function createStockCheckout(input: {
 
       const amountCents = snapshots.reduce((sum, item) => sum + item.totalCents, 0);
       if (!Number.isSafeInteger(amountCents) || amountCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
+
+      // The quota ledger, STOCK attempt, and variant reservations commit or roll
+      // back together. A crash cannot leave an expiring pre-claim outside STOCK.
+      await tx.reserveExclusiveQuota?.({ userId: input.ownerUserId, attemptId: request.attemptId, items: request.items });
 
       const orderId = `stock-${sha256([request.attemptId, fingerprint]).slice(0, 32)}`;
       const attempt: StockAttempt = {

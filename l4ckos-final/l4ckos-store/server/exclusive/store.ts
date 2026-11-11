@@ -122,6 +122,7 @@ async function countedUnits(connection: Pool | PoolConnection, grantId: number, 
 }
 
 export type CheckoutItem = { productId: number; variantId?: number; quantity: number };
+export type ExclusiveCheckoutClaim = { userId: number; attemptId: string; items: CheckoutItem[]; now?: Date };
 
 export type NotificationEvent = {
   eventKey: string;
@@ -138,10 +139,10 @@ export interface ExclusiveDropNotifier {
 export function createExclusiveStore(pool: Pool, options: { now?: () => Date } = {}) {
   const clock = options.now ?? (() => new Date());
 
-  async function dropForProductIds(connection: Pool | PoolConnection, productIds: number[]): Promise<Map<number, DropRecord>> {
+  async function dropForProductIds(connection: Pool | PoolConnection, productIds: number[], lock = false): Promise<Map<number, DropRecord>> {
     if (!productIds.length) return new Map();
     const [rows] = await connection.query<Row[]>(
-      `SELECT p.productId, ${DROP_COLUMNS} FROM exclusiveDropProducts p JOIN exclusiveDrops d ON d.id = p.dropId WHERE p.productId IN (?)`,
+      `SELECT p.productId, ${DROP_COLUMNS} FROM exclusiveDropProducts p JOIN exclusiveDrops d ON d.id = p.dropId WHERE p.productId IN (?)${lock ? " FOR UPDATE" : ""}`,
       [productIds],
     );
     return new Map(rows.map(row => [Number(row.productId), toDrop(row)]));
@@ -294,76 +295,47 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
     },
 
     // ------------------------------------------------------------------ checkout guard (server-side enforcement)
-    /**
-     * Must run BEFORE the STOCK create for every checkout. Throws unless every exclusive product in `items` is covered by an
-     * unlocked, unexpired, unrevoked grant of this user, inside the purchase window, with enough units left. The claim is
-     * taken under a row lock on the grant, so two tabs can never exceed the limit. Public-only carts are a no-op.
-     * Any failure to PROVE access fails closed.
-     */
-    async reserveForCheckout(input: { userId: number; attemptId: string; items: CheckoutItem[]; now?: Date }): Promise<{ claimed: boolean }> {
-      const now = input.now ?? clock();
-      let drops: Map<number, DropRecord>;
+    /** Called by STOCK inside the same MySQL transaction that creates the attempt and reserves variants. */
+    async reserveForCheckoutInTransaction(connection: PoolConnection, input: ExclusiveCheckoutClaim): Promise<void> {
       try {
-        drops = await dropForProductIds(pool, [...new Set(input.items.map(item => item.productId))]);
-      } catch (error) {
-        if (isMissingTable(error)) return { claimed: false }; // module not installed: nothing can be exclusive
-        throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
-      }
-      if (drops.size === 0) return { claimed: false };
+        const now = input.now ?? clock();
+        const drops = await dropForProductIds(connection, [...new Set(input.items.map(item => item.productId))], true);
 
-      const unitsByDrop = new Map<number, { drop: DropRecord; units: number }>();
-      for (const item of input.items) {
-        const drop = drops.get(item.productId);
-        if (!drop) continue;
-        const entry = unitsByDrop.get(drop.id) ?? { drop, units: 0 };
-        entry.units += item.quantity;
-        unitsByDrop.set(drop.id, entry);
-      }
+        const unitsByDrop = new Map<number, { drop: DropRecord; units: number }>();
+        for (const item of input.items) {
+          const drop = drops.get(item.productId);
+          if (!drop) continue;
+          const entry = unitsByDrop.get(drop.id) ?? { drop, units: 0 };
+          entry.units += item.quantity;
+          unitsByDrop.set(drop.id, entry);
+        }
 
-      for (const { drop } of unitsByDrop.values()) {
-        if (!isPurchaseWindowOpen(drop, now)) throw new ExclusiveError(CODES.dropClosed, "Este drop não está aberto para compras.");
-      }
-      const needsGrant = [...unitsByDrop.values()].filter(entry => entry.drop.requiresAuthorization).sort((a, b) => a.drop.id - b.drop.id);
-      if (!needsGrant.length) return { claimed: false };
-
-      try {
-        await withTransaction(pool, async connection => {
-          for (const { drop, units } of needsGrant) {
-            const grant = await activeGrant(connection, drop.id, input.userId, true);
-            if (!grant || !grant.unlockedAt || grant.expiresAt.getTime() <= now.getTime()) {
-              throw new ExclusiveError(CODES.accessRequired, "Você precisa de acesso aprovado e desbloqueado para comprar este produto.");
-            }
-            const [existing] = await connection.query<Row[]>(`SELECT units FROM exclusiveGrantUsage WHERE grantId = ? AND attemptId = ?`, [grant.id, input.attemptId]);
-            if (existing[0]) {
-              // Replay of the same attempt (retry / second tab with the same id): already claimed, must be identical.
-              if (Number(existing[0].units) !== units) throw new ExclusiveError(CODES.quotaExceeded, "Esta tentativa não pode ser alterada.");
-              continue;
-            }
-            const used = await countedUnits(connection, grant.id, now);
-            if (used + units > grant.unitLimit) {
-              throw new ExclusiveError(CODES.quotaExceeded, `Limite de unidades excedido (restam ${Math.max(0, grant.unitLimit - used)}).`);
-            }
-            await connection.query(`INSERT INTO exclusiveGrantUsage (grantId, attemptId, units, createdAt) VALUES (?, ?, ?, ?)`, [grant.id, input.attemptId, units, sqlTime(now)]);
-            await event(connection, { dropId: drop.id, requestId: grant.requestId, grantId: grant.id, subjectUserId: input.userId, event: "units_claimed", details: `${units}`, at: now });
+        for (const { drop } of unitsByDrop.values()) {
+          if (!isPurchaseWindowOpen(drop, now)) throw new ExclusiveError(CODES.dropClosed, "Este drop não está aberto para compras.");
+        }
+        const needsGrant = [...unitsByDrop.values()].filter(entry => entry.drop.requiresAuthorization).sort((a, b) => a.drop.id - b.drop.id);
+        for (const { drop, units } of needsGrant) {
+          const grant = await activeGrant(connection, drop.id, input.userId, true);
+          if (!grant || !grant.unlockedAt || grant.expiresAt.getTime() <= now.getTime()) {
+            throw new ExclusiveError(CODES.accessRequired, "Você precisa de acesso aprovado e desbloqueado para comprar este produto.");
           }
-        });
+          const [existing] = await connection.query<Row[]>(`SELECT units FROM exclusiveGrantUsage WHERE grantId = ? AND attemptId = ?`, [grant.id, input.attemptId]);
+          if (existing[0]) {
+            if (Number(existing[0].units) !== units) throw new ExclusiveError(CODES.quotaExceeded, "Esta tentativa não pode ser alterada.");
+            continue;
+          }
+          const used = await countedUnits(connection, grant.id, now);
+          if (used + units > grant.unitLimit) {
+            throw new ExclusiveError(CODES.quotaExceeded, `Limite de unidades excedido (restam ${Math.max(0, grant.unitLimit - used)}).`);
+          }
+          await connection.query(`INSERT INTO exclusiveGrantUsage (grantId, attemptId, units, createdAt) VALUES (?, ?, ?, ?)`, [grant.id, input.attemptId, units, sqlTime(now)]);
+          await event(connection, { dropId: drop.id, requestId: grant.requestId, grantId: grant.id, subjectUserId: input.userId, event: "units_claimed", details: `${units}`, at: now });
+        }
       } catch (error) {
         if (error instanceof ExclusiveError) throw error;
+        // A schema/query/constraint failure means the server cannot prove the
+        // product is public or the grant is valid. The surrounding STOCK tx rolls back.
         throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
-      }
-      return { claimed: true };
-    },
-
-    /**
-     * After the STOCK create settles: drop claims whose STOCK attempt was never persisted (stock insufficient, validation, gate closed),
-     * so a failed create does not hold units. Claims with a persisted attempt are left alone: their release is derived from STOCK state.
-     */
-    async settleCheckout(attemptId: string): Promise<void> {
-      try {
-        await pool.query(
-          `DELETE u FROM exclusiveGrantUsage u LEFT JOIN stockCheckoutAttempts a ON a.attemptId = u.attemptId WHERE u.attemptId = ? AND a.attemptId IS NULL`, [attemptId]);
-      } catch (error) {
-        if (!isMissingTable(error)) throw error;
       }
     },
 
@@ -374,7 +346,7 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
       try {
         drop = (await dropForProductIds(pool, [input.productId])).get(input.productId);
       } catch (error) {
-        if (isMissingTable(error)) return;
+        if (isMissingTable(error)) throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
         throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
       }
       if (!drop) return;
@@ -395,7 +367,7 @@ export function createExclusiveStore(pool: Pool, options: { now?: () => Date } =
         if (drops.size > 0) throw new ExclusiveError(CODES.accessRequired, "Este produto só pode ser comprado pelo checkout de drops exclusivos.");
       } catch (error) {
         if (error instanceof ExclusiveError) throw error;
-        if (isMissingTable(error)) return;
+        if (isMissingTable(error)) throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
         throw new ExclusiveError(CODES.unverifiable, "Não foi possível verificar o acesso a este produto.");
       }
     },

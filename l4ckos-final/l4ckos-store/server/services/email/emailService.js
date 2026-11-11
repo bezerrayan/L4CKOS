@@ -54,7 +54,7 @@ function buildSubject(subjectKey, payload) {
   return typeof entry === "function" ? entry(payload ?? {}) : entry;
 }
 
-async function sendEmail({ templateName, subjectKey, subjectPayload, templatePayload, from, to, replyTo, tags }) {
+async function sendEmail({ templateName, subjectKey, subjectPayload, templatePayload, from, to, replyTo, tags, idempotencyKey }) {
   const client = getResendClient();
   const recipients = (Array.isArray(to) ? to : [to]).map(sanitizeText).filter(Boolean);
   if (!recipients.length) {
@@ -74,7 +74,7 @@ async function sendEmail({ templateName, subjectKey, subjectPayload, templatePay
 
   if (replyTo) payload.replyTo = replyTo;
 
-  const { data, error } = await client.emails.send(payload);
+  const { data, error } = await client.emails.send(payload, idempotencyKey ? { idempotencyKey } : undefined);
   if (error) {
     const err = new Error(error.message || "Resend request failed");
     err.name = "ResendError";
@@ -187,6 +187,22 @@ export async function sendWelcomeAccountEmail({ email, name }) {
     from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
     to: sanitizeEmail(email),
     replyTo: getDefaultReplyTo(),
+  });
+}
+
+export async function sendExclusiveAccessNotificationEmail({ email, name, eventType, eventKey }) {
+  const validEvents = new Set(["request_received", "access_approved", "access_rejected", "access_revoked"]);
+  if (!validEvents.has(eventType)) throw new Error("Invalid exclusive access notification event");
+  if (typeof eventKey !== "string" || !/^(req|grant):[A-Za-z0-9:_-]{1,112}$/.test(eventKey)) throw new Error("Invalid exclusive notification idempotency key");
+  return sendEmail({
+    templateName: "exclusiveAccessNotification",
+    subjectKey: "exclusiveAccessNotification",
+    subjectPayload: { eventType },
+    templatePayload: { customerName: name, eventType },
+    from: requireEmailConfig("NO_REPLY_EMAIL", ["EMAIL_FROM_NOREPLY", "EMAIL_FROM"]),
+    to: email,
+    tags: [{ name: "category", value: "exclusive-access" }],
+    idempotencyKey: eventKey,
   });
 }
 
