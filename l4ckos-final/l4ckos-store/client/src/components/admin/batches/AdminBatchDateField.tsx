@@ -27,13 +27,15 @@ export function AdminBatchDateField({
   onChange,
   zone,
   withTime = false,
+  required = false,
 }: {
   name: string;
   label: string;
   value: string;
   onChange: (value: string) => void;
-  zone: "UTC" | "Brasília";
+  zone: string;
   withTime?: boolean;
+  required?: boolean;
 }) {
   const dayPart = value.slice(0, 10);
   const timePart = withTime && value.length >= 16 ? value.slice(11, 16) : "00:00";
@@ -80,9 +82,20 @@ export function AdminBatchDateField({
             inputMode="numeric"
             autoComplete="off"
             placeholder="DD/MM/AAAA"
-            aria-label={`${label}, data em ${zone}`}
+            required={required}
+            aria-label={label}
             value={dateDraft}
-            onChange={event => { setDateDraft(event.target.value); commitDate(event.target.value); }}
+            onChange={event => {
+              const next = event.target.value;
+              const localDateTime = withTime ? /^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d)$/.exec(next) : null;
+              setDateDraft(next);
+              commitDate(next);
+              if (localDateTime) {
+                setDateDraft(displayDay(localDateTime[1]));
+                setTimeDraft(localDateTime[2]);
+                onChange(next);
+              }
+            }}
             onBlur={() => { if (!fromDisplay(dateDraft)) setDateDraft(displayDay(dayPart)); }}
           />
         </label>
@@ -115,12 +128,12 @@ export function AdminBatchDateField({
         </Popover>
         {withTime ? <>
           <label className="admin-batch-date__part admin-batch-date__time-part">
-            <span>Hora · UTC</span>
+            <span>Hora · {zone}</span>
             <input
               type="text"
               inputMode="numeric"
               placeholder="HH:mm"
-              aria-label={`${label}, horário UTC`}
+              aria-label={`${label}, horário em ${zone}`}
               value={timeDraft}
               onChange={event => commitTime(event.target.value)}
               onBlur={() => { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(timeDraft)) setTimeDraft(timePart); }}
@@ -133,18 +146,18 @@ export function AdminBatchDateField({
               </button>
             </PopoverTrigger>
             <PopoverContent className="admin-batch-date__popover admin-batch-date__time-popover" align="end" side="bottom" sideOffset={6} collisionPadding={12} aria-label={`Seletor de horário de ${label}`}>
-              <div className="admin-batch-date__popover-heading"><strong>Horário</strong><span>UTC · precisão de minuto</span></div>
+              <div className="admin-batch-date__popover-heading"><strong>Horário</strong><span>{zone} · precisão de minuto</span></div>
               <div className="admin-batch-time-grid">
-                <label><span>Hora</span><input type="text" inputMode="numeric" maxLength={2} role="spinbutton" aria-label="Hora UTC" aria-valuemin={0} aria-valuemax={23} aria-valuenow={Number(timePart.slice(0, 2))} value={hourDraft} onChange={event => { const next = event.target.value.replace(/\D/g, "").slice(0, 2); setHourDraft(next); if (next && Number(next) <= 23) { const time = `${next.padStart(2, "0")}:${validMinute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); } }} onBlur={() => { const hour = /^\d{1,2}$/.test(hourDraft) && Number(hourDraft) <= 23 ? hourDraft.padStart(2, "0") : timePart.slice(0, 2); setHourDraft(hour); if (selectedDay) onChange(`${dayPart}T${hour}:${validMinute}`); }} onKeyDown={event => { if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return; event.preventDefault(); const next = (Number(timePart.slice(0, 2)) + (event.key === "ArrowUp" ? 1 : 23)) % 24; const hour = String(next).padStart(2, "0"); setHourDraft(hour); const time = `${hour}:${validMinute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); }} /></label>
+                <label><span>Hora</span><input type="text" inputMode="numeric" maxLength={2} role="spinbutton" aria-label={`Hora em ${zone}`} aria-valuemin={0} aria-valuemax={23} aria-valuenow={Number(timePart.slice(0, 2))} value={hourDraft} onChange={event => { const next = event.target.value.replace(/\D/g, "").slice(0, 2); setHourDraft(next); if (next && Number(next) <= 23) { const time = `${next.padStart(2, "0")}:${validMinute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); } }} onBlur={() => { const hour = /^\d{1,2}$/.test(hourDraft) && Number(hourDraft) <= 23 ? hourDraft.padStart(2, "0") : timePart.slice(0, 2); setHourDraft(hour); if (selectedDay) onChange(`${dayPart}T${hour}:${validMinute}`); }} onKeyDown={event => { if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return; event.preventDefault(); const next = (Number(timePart.slice(0, 2)) + (event.key === "ArrowUp" ? 1 : 23)) % 24; const hour = String(next).padStart(2, "0"); setHourDraft(hour); const time = `${hour}:${validMinute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); }} /></label>
                 <span aria-hidden="true">:</span>
-                <label><span>Minuto</span><input type="text" inputMode="numeric" maxLength={2} role="spinbutton" aria-label="Minuto UTC" aria-valuemin={0} aria-valuemax={59} aria-valuenow={Number(timePart.slice(3, 5))} value={minuteDraft} onChange={event => { const next = event.target.value.replace(/\D/g, "").slice(0, 2); setMinuteDraft(next); if (next && Number(next) <= 59) { const time = `${validHour}:${next.padStart(2, "0")}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); } }} onBlur={() => { const minute = /^\d{1,2}$/.test(minuteDraft) && Number(minuteDraft) <= 59 ? minuteDraft.padStart(2, "0") : timePart.slice(3, 5); setMinuteDraft(minute); if (selectedDay) onChange(`${dayPart}T${validHour}:${minute}`); }} onKeyDown={event => { if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return; event.preventDefault(); const next = (Number(timePart.slice(3, 5)) + (event.key === "ArrowUp" ? 1 : 59)) % 60; const minute = String(next).padStart(2, "0"); setMinuteDraft(minute); const time = `${validHour}:${minute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); }} /></label>
+                <label><span>Minuto</span><input type="text" inputMode="numeric" maxLength={2} role="spinbutton" aria-label={`Minuto em ${zone}`} aria-valuemin={0} aria-valuemax={59} aria-valuenow={Number(timePart.slice(3, 5))} value={minuteDraft} onChange={event => { const next = event.target.value.replace(/\D/g, "").slice(0, 2); setMinuteDraft(next); if (next && Number(next) <= 59) { const time = `${validHour}:${next.padStart(2, "0")}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); } }} onBlur={() => { const minute = /^\d{1,2}$/.test(minuteDraft) && Number(minuteDraft) <= 59 ? minuteDraft.padStart(2, "0") : timePart.slice(3, 5); setMinuteDraft(minute); if (selectedDay) onChange(`${dayPart}T${validHour}:${minute}`); }} onKeyDown={event => { if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return; event.preventDefault(); const next = (Number(timePart.slice(3, 5)) + (event.key === "ArrowUp" ? 1 : 59)) % 60; const minute = String(next).padStart(2, "0"); setMinuteDraft(minute); const time = `${validHour}:${minute}`; setTimeDraft(time); if (selectedDay) onChange(`${dayPart}T${time}`); }} /></label>
               </div>
-              <p className="admin-batch-date__hint">A hora mantém o instante UTC informado.</p>
+              <p className="admin-batch-date__hint">A hora usa o fuso configurado para o drop.</p>
             </PopoverContent>
           </Popover>
         </> : null}
       </div>
-      <span className="admin-batch-date__zone-note">{withTime ? "Data e hora em UTC" : "Data civil de Brasília"}</span>
+      <span className="admin-batch-date__zone-note">{withTime ? `Data e hora em ${zone}` : `Data civil · ${zone}`}</span>
     </div>
   );
 }

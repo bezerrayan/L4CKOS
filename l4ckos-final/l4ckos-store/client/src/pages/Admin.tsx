@@ -60,6 +60,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
   DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+import "../components/admin/AdminDesignSystem.css";
 
 type Section =
   | "batches"
@@ -943,7 +944,6 @@ export default function Admin() {
 
   return (
     <div className="l4-admin">
-      <style>{adminCss}</style>
       <button
         ref={menuButtonRef}
         className="l4-admin-menu-trigger"
@@ -1436,52 +1436,6 @@ export default function Admin() {
     </div>
   );
 }
-
-const adminCss = `
-.l4-admin table th,
-.l4-admin table td {
-  padding: 14px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
-  vertical-align: middle;
-}
-.l4-admin table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: #101010;
-  color: #b8bec8;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-weight: 800;
-  text-align: left;
-}
-.l4-admin table td {
-  background: rgba(255,255,255,0.01);
-}
-.l4-admin table tbody tr:hover td {
-  background: rgba(239,68,68,0.045);
-}
-.l4-admin input:focus,
-.l4-admin select:focus {
-  outline: none;
-  border-color: rgba(239,68,68,0.62) !important;
-  box-shadow: 0 0 0 3px rgba(239,68,68,0.14);
-}
-.l4-admin button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.l4-admin button:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-@media (max-width: 760px) {
-  .l4-admin table th,
-  .l4-admin table td {
-    padding: 12px 10px;
-  }
-}
-`;
 
 const styles: Record<string, CSSProperties> = {
   centerCard: {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { trpc } from "../../../lib/trpc";
 import { formatDropInstant, isoToZonedLocal, zonedLocalToIso } from "../../../lib/dropTime";
+import { AdminBatchDateField } from "../batches/AdminBatchDateField";
 import "./AdminExclusiveDrops.css";
 
 type Status = "pending" | "approved" | "rejected" | "revoked";
@@ -177,10 +178,10 @@ export default function AdminExclusiveDrops() {
           <label>Slug<input value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} required pattern="[a-z0-9]+(-[a-z0-9]+)*" /></label>
           <label>Descrição<textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} maxLength={2000} /></label>
           <label>Fuso horário (todas as datas abaixo são neste fuso)<input value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })} required /></label>
-          <label>Solicitações — início<input type="datetime-local" value={form.requestStartsAt} onChange={e => setForm({ ...form, requestStartsAt: e.target.value })} /></label>
-          <label>Solicitações — fim<input type="datetime-local" value={form.requestEndsAt} onChange={e => setForm({ ...form, requestEndsAt: e.target.value })} /></label>
-          <label>Compra — início<input type="datetime-local" value={form.purchaseStartsAt} onChange={e => setForm({ ...form, purchaseStartsAt: e.target.value })} required /></label>
-          <label>Compra — fim<input type="datetime-local" value={form.purchaseEndsAt} onChange={e => setForm({ ...form, purchaseEndsAt: e.target.value })} required /></label>
+          <AdminBatchDateField name="requestStartsAt" label="Solicitações — início" value={form.requestStartsAt} onChange={value => setForm({ ...form, requestStartsAt: value })} zone={form.timezone} withTime />
+          <AdminBatchDateField name="requestEndsAt" label="Solicitações — fim" value={form.requestEndsAt} onChange={value => setForm({ ...form, requestEndsAt: value })} zone={form.timezone} withTime />
+          <AdminBatchDateField name="purchaseStartsAt" label="Compra — início" value={form.purchaseStartsAt} onChange={value => setForm({ ...form, purchaseStartsAt: value })} zone={form.timezone} withTime required />
+          <AdminBatchDateField name="purchaseEndsAt" label="Compra — fim" value={form.purchaseEndsAt} onChange={value => setForm({ ...form, purchaseEndsAt: value })} zone={form.timezone} withTime required />
           <label>IDs dos produtos (separados por vírgula)<input value={form.productIds} onChange={e => setForm({ ...form, productIds: e.target.value })} required inputMode="numeric" /></label>
           <label>Limite padrão de unidades<input type="number" min={1} max={99} value={form.defaultUnitLimit} onChange={e => setForm({ ...form, defaultUnitLimit: Number(e.target.value) })} /></label>
           <label>Situação
@@ -216,9 +217,7 @@ export default function AdminExclusiveDrops() {
           <label>Unidades autorizadas (total, qualquer combinação de tamanhos)
             <input type="number" min={1} max={99} value={approving.unitLimit} onChange={e => setApproving({ ...approving, unitLimit: Number(e.target.value) })} required />
           </label>
-          <label>Validade do acesso (fuso do drop)
-            <input type="datetime-local" value={approving.expiresAt} onChange={e => setApproving({ ...approving, expiresAt: e.target.value })} required />
-          </label>
+          <AdminBatchDateField name="expiresAt" label="Validade do acesso" value={approving.expiresAt} onChange={value => setApproving({ ...approving, expiresAt: value })} zone={dropById.get(approving.dropId)?.timezone ?? "America/Sao_Paulo"} withTime required />
           <div className="l4-axd-actions">
             <button type="submit" className="l4-axd-btn" disabled={approve.isPending}>Aprovar e gerar código</button>
             <button type="button" className="l4-axd-btn secondary" onClick={() => setApproving(null)}>Cancelar</button>
