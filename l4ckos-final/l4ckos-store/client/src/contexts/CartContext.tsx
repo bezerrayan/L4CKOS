@@ -8,12 +8,13 @@ import type { CartItem, Cart, SelectedOptions } from "../types/cart";
 import type { Product } from "../types/product";
 import { calculateCartTotal, calculateItemCount } from "../types/cart";
 import { trackStoreEvent } from "../lib/analytics";
+import { readCartItems, writeCartItems } from "../utils/cartPersistence";
 
 // ============= TIPOS =============
 
 type CartContextType = {
   cart: Cart;
-  addToCart: (product: Product, quantity: number, selectedOptions?: SelectedOptions) => void;
+  addToCart: (product: Product, quantity: number, selectedOptions?: SelectedOptions, variantId?: number) => void;
   removeFromCart: (productId: number, selectedOptions?: SelectedOptions) => void;
   updateQuantity: (productId: number, quantity: number, selectedOptions?: SelectedOptions) => void;
   clearCart: () => void;
@@ -41,8 +42,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         return [];
       }
 
-      const parsed = JSON.parse(raw) as CartItem[];
-      return Array.isArray(parsed) ? parsed : [];
+      return readCartItems(window.localStorage, CART_STORAGE_KEY);
     } catch {
       return [];
     }
@@ -68,24 +68,24 @@ export function CartProvider({ children }: { children: ReactNode }) {
   };
 
   // 📌 Adicionar produto ao carrinho
-  const addToCart = useCallback((product: Product, quantity: number = 1, selectedOptions?: SelectedOptions) => {
+  const addToCart = useCallback((product: Product, quantity: number = 1, selectedOptions?: SelectedOptions, variantId?: number) => {
     setItems((prev) => {
       const currentOptionsKey = normalizeOptions(selectedOptions);
       const existing = prev.find(
-        (item) => item.product.id === product.id && normalizeOptions(item.selectedOptions) === currentOptionsKey
+        (item) => item.product.id === product.id && item.variantId === variantId && normalizeOptions(item.selectedOptions) === currentOptionsKey
       );
       
       if (existing) {
         // Se já existe, aumenta a quantidade
         return prev.map((item) =>
-          item.product.id === product.id && normalizeOptions(item.selectedOptions) === currentOptionsKey
+          item.product.id === product.id && item.variantId === variantId && normalizeOptions(item.selectedOptions) === currentOptionsKey
             ? { ...item, quantity: item.quantity + quantity }
             : item
         );
       }
       
       // Senão, adiciona novo
-      return [...prev, { product, quantity, selectedOptions, addedAt: new Date() }];
+      return [...prev, { product, quantity, selectedOptions, variantId, addedAt: new Date() }];
     });
     trackStoreEvent("cart_item_added", { product_id: product.id, quantity });
     setIsCartDrawerOpen(true);
@@ -136,11 +136,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
     try {
       if (items.length === 0) {
-        window.localStorage.removeItem(CART_STORAGE_KEY);
+        writeCartItems(window.localStorage, CART_STORAGE_KEY, []);
         return;
       }
 
-      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items));
+      writeCartItems(window.localStorage, CART_STORAGE_KEY, items);
     } catch {
       // Ignore storage errors to avoid breaking checkout flow.
     }

@@ -16,6 +16,8 @@ import { csrfFetch } from "../lib/csrf";
 import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
 import { trackStoreEvent } from "../lib/analytics";
+import { createStockCheckoutClient, stockAttemptStatusLabel, stockLinesFromCart } from "../stock/stockCheckoutClient";
+import { stockCheckoutHttpRequestV1Schema } from "../../../shared/stockCheckoutV1";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
 import "./Pagamento.css";
@@ -123,6 +125,20 @@ export default function Pagamento() {
   const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
   const { user, isAuthenticated } = useUser();
   const createAsaasCharge = useCreateAsaasCharge();
+  const stockCreate = trpc.stockCheckout.create.useMutation();
+  const trpcUtils = trpc.useUtils();
+  const stockClient = useMemo(() => createStockCheckoutClient({
+    enabled: true,
+    // Attempt IDs are local resume handles; keep browser accounts isolated.
+    storage: {
+      getItem: key => window.localStorage.getItem(`l4ckos:user:${user?.id ?? "anonymous"}:${key}`),
+      setItem: (key, value) => window.localStorage.setItem(`l4ckos:user:${user?.id ?? "anonymous"}:${key}`, value),
+    },
+    transport: {
+      create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
+      resume: attemptId => trpcUtils.stockCheckout.resume.fetch({ attemptId }),
+    },
+  }), [stockCreate.mutateAsync, trpcUtils, user?.id]);
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const lastCepLookupRef = useRef<string | null>(null);
   const loadedSavedAddressRef = useRef(false);
@@ -146,6 +162,8 @@ export default function Pagamento() {
   const [shippingError, setShippingError] = useState("");
   const [paymentError, setPaymentError] = useState("");
   const [paymentData, setPaymentData] = useState<ChargeResult | null>(null);
+  const [stockPaymentData, setStockPaymentData] = useState<Awaited<ReturnType<typeof stockClient.resume>> | null>(null);
+  const [stockResumeError, setStockResumeError] = useState("");
   const [couponCode, setCouponCode] = useState("");
   const [couponError, setCouponError] = useState("");
   const [couponDiscount, setCouponDiscount] = useState(0);
@@ -153,6 +171,35 @@ export default function Pagamento() {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isCouponOpen, setIsCouponOpen] = useState(false);
   const canShowTechnicalShippingError = import.meta.env.DEV || user?.role === "admin";
+  const stockFlags = cart.items.map(item => item.product.variantCatalogPresent === true);
+  const hasStockItems = stockFlags.some(Boolean);
+  const stockCartCompatible = hasStockItems && stockFlags.every(Boolean) && cart.items.every(item =>
+    Number.isSafeInteger(item.variantId) && item.product.variants?.some(variant => variant.id === item.variantId && variant.productId === item.product.id && variant.active),
+  );
+  const stockCartInvalid = hasStockItems && !stockCartCompatible;
+  const stockAttemptPending = stockCreate.isPending;
+
+  const refreshStockAttempt = async () => {
+    if (!isAuthenticated || !stockCartCompatible) return;
+    try {
+      setStockResumeError("");
+      const resumed = await stockClient.resume(stockLinesFromCart(cart.items));
+      setStockPaymentData(resumed);
+    } catch (error) {
+      if (error instanceof Error && error.message === "STOCK_ATTEMPT_NOT_FOUND_LOCALLY") {
+        setStockPaymentData(null);
+        setStockResumeError("");
+        return;
+      }
+      setStockResumeError("Não foi possível consultar esta tentativa. Tente consultar novamente; nenhuma nova cobrança foi iniciada.");
+    }
+  };
+
+  useEffect(() => {
+    void refreshStockAttempt();
+  // Resume only when the authenticated cart identity changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, stockCartCompatible, cart.items.map(item => `${item.product.id}:${item.variantId}:${item.quantity}`).join("|")]);
 
   const validateCoupon = trpc.orders.validateCoupon.useMutation();
   const profileQuery = trpc.profile.get.useQuery(undefined, {
@@ -479,7 +526,19 @@ export default function Pagamento() {
   const handleCheckout = async () => {
     setPaymentError("");
 
-    if (paymentData || createAsaasCharge.isPending) {
+    if (paymentData || createAsaasCharge.isPending || stockAttemptPending) {
+      return;
+    }
+
+    if (stockCartInvalid) {
+      setPaymentError("O carrinho contém uma variante indisponível ou um item legado. Atualize a seleção antes de continuar.");
+      return;
+    }
+
+    if (hasStockItems && stockPaymentData && !stockPaymentData.canStartNewAttempt && ["creating", "pending", "ambiguous", "paid"].includes(stockPaymentData.status)) {
+      setPaymentError(stockPaymentData.status === "ambiguous"
+        ? "O resultado do pagamento está em análise. Consulte o status; não inicie outra tentativa."
+        : "Já existe uma tentativa em andamento ou concluída para este carrinho.");
       return;
     }
 
@@ -504,6 +563,33 @@ export default function Pagamento() {
     }
 
     try {
+      if (hasStockItems) {
+        if (!stockCartCompatible) {
+          setPaymentError("Revise as variantes do carrinho. Itens STOCK precisam de uma variante válida e ativa.");
+          return;
+        }
+        if (selectedShipping.id !== "local-plano-piloto") {
+          setPaymentError("Esta modalidade de entrega ainda não está disponível para pedidos STOCK.");
+          return;
+        }
+        // Price and stock stay server-authoritative; this is only a delivery snapshot.
+        await stockClient.create(stockLinesFromCart(cart.items), {
+          optionId: "local-plano-piloto",
+          address: {
+            recipient: customerName.trim(),
+            zipCode: sanitizeCep(cep),
+            street: addressStreet.trim(),
+            number: addressNumber.trim(),
+            complement: addressComplement.trim() || undefined,
+            neighborhood: addressNeighborhood.trim(),
+            city: addressCity.trim(),
+            state: addressState.trim(),
+          },
+        });
+        await refreshStockAttempt();
+        return;
+      }
+
       const result = await createAsaasCharge.mutateAsync({
         method: checkoutMethod,
         items: cart.items.map(item => ({
@@ -662,8 +748,10 @@ export default function Pagamento() {
 
             <section className="l4-checkout-finish">
               <div><span>Total do pedido</span><strong>{formatPrice(orderTotal)}</strong></div>
-              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || Boolean(paymentData)}>{createAsaasCharge.isPending ? "Gerando cobrança..." : paymentData ? "Cobrança gerada" : "Finalizar compra"}</button>
-              {!hasCompleteCheckoutData && !paymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
+              <button type="button" onClick={() => void handleCheckout()} disabled={!hasCompleteCheckoutData || createAsaasCharge.isPending || stockAttemptPending || Boolean(paymentData) || stockCartInvalid || Boolean(stockResumeError) || Boolean(stockPaymentData && !stockPaymentData.canStartNewAttempt && ["creating", "pending", "ambiguous", "paid"].includes(stockPaymentData.status))}>{stockAttemptPending || createAsaasCharge.isPending ? "Preparando checkout..." : paymentData || stockPaymentData?.status === "paid" ? "Compra em acompanhamento" : "Finalizar compra"}</button>
+              {!hasCompleteCheckoutData && !paymentData && !stockPaymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
+              {stockCartInvalid ? <p className="l4-checkout-validation-note is-error" role="alert">O carrinho inclui item sem variante STOCK válida. Volte ao produto e selecione tamanho e cor.</p> : null}
+              {stockResumeError ? <p className="l4-checkout-validation-note is-error" role="alert">{stockResumeError} <button type="button" onClick={() => void refreshStockAttempt()}>Consultar status</button></p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
               {paymentError ? <p className="is-error" aria-live="assertive">{paymentError}</p> : null}
             </section>
@@ -675,6 +763,15 @@ export default function Pagamento() {
               {paymentData.method === "BOLETO" && paymentData.digitableLine ? <><textarea readOnly value={paymentData.digitableLine} /><button type="button" onClick={() => void handleCopyText(paymentData.digitableLine)}>Copiar linha digitável</button></> : null}
               {paymentData.invoiceUrl ? <a href={paymentData.invoiceUrl} target="_blank" rel="noreferrer">Abrir fatura no Asaas</a> : null}
               {paymentData.method === "BOLETO" && paymentData.bankSlipUrl ? <a href={paymentData.bankSlipUrl} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
+            </section> : null}
+            {hasStockItems && stockPaymentData ? <section className="l4-checkout-charge" aria-live="polite">
+              <strong>{stockAttemptStatusLabel(stockPaymentData.status)}</strong>
+              {stockPaymentData.orderId ? <p>Pedido #{stockPaymentData.orderId}</p> : null}
+              {stockPaymentData.amountCents > 0 ? <p>Total calculado pelo servidor: {formatPrice(stockPaymentData.amountCents / 100)}</p> : null}
+              {stockPaymentData.checkoutUrl ? <a href={stockPaymentData.checkoutUrl} target="_blank" rel="noreferrer">Continuar pagamento</a> : null}
+              {stockPaymentData.status === "ambiguous" ? <p>Não tente pagar novamente. O pedido precisa de reconciliação.</p> : null}
+              {stockPaymentData.canStartNewAttempt && ["failed", "expired", "cancelled"].includes(stockPaymentData.status) ? <p>Esta tentativa terminou. Você pode iniciar uma nova tentativa.</p> : null}
+              <button type="button" onClick={() => void refreshStockAttempt()}>Atualizar status</button>
             </section> : null}
           </main>
         </div>

@@ -19,6 +19,7 @@ import { apiUrl } from "../const";
 import { csrfFetch } from "../lib/csrf";
 import { trackStoreEvent } from "../lib/analytics";
 import { ProductReviews } from "../components/reviews/ProductReviews";
+import { resolveStockVariant, type StockCatalogVariant } from "../stock/stockCheckoutClient";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -129,6 +130,22 @@ export default function ProductDetail() {
         optionColors: parseJsonList((productQuery.data as any).optionColors),
         optionSizes: parseJsonList((productQuery.data as any).optionSizes),
         sizeType: String((productQuery.data as any).sizeType ?? "alpha"),
+        variantCatalogPresent: Array.isArray((productQuery.data as any).variants) && (productQuery.data as any).variants.length > 0,
+        variants: (Array.isArray((productQuery.data as any).variants) ? (productQuery.data as any).variants : [])
+          .filter((variant: any) => Number.isSafeInteger(Number(variant?.id)) && Number(variant.id) > 0 &&
+            Number(variant.productId) === Number(productQuery.data.id) &&
+            typeof variant.size === "string" && variant.size.trim() &&
+            typeof variant.color === "string" && variant.color.trim())
+          .map((variant: any) => ({
+            id: Number(variant.id),
+            productId: Number(variant.productId),
+            sku: typeof variant.sku === "string" ? variant.sku : null,
+            size: variant.size.trim(),
+            color: variant.color.trim(),
+            active: variant.isActive === true || Number(variant.isActive) === 1,
+            stock: Number(variant.stock ?? 0),
+            price: variant.price == null ? null : Number(variant.price),
+          })),
         images:
           Array.isArray((productQuery.data as any).images) && (productQuery.data as any).images.length > 0
             ? ((productQuery.data as any).images as Array<any>).map((img) => ({
@@ -231,12 +248,25 @@ export default function ProductDetail() {
       Array.from(activeGalleryImages.map(item => [item.imageUrl, item])),
     ).values(),
   );
-  const colorOptions = (product.optionColors?.length ? product.optionColors : DEFAULT_COLORS).map(name => ({
+  const activeStockVariants = ((product.variants ?? []) as StockCatalogVariant[]).filter(variant => variant.active);
+  const colorNames: string[] = activeStockVariants.length
+    ? [...new Set<string>(activeStockVariants.map(variant => variant.color))]
+    : (product.optionColors?.length ? product.optionColors : DEFAULT_COLORS);
+  const sizeOptions = activeStockVariants.length
+    ? [...new Set<string>(activeStockVariants.map(variant => variant.size))]
+    : (product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES);
+  const colorOptions = colorNames.map(name => ({
     name,
     hex: COLOR_HEX_BY_NAME[name.toLowerCase()] ?? "#d1d5db",
   }));
-  const sizeOptions = product.optionSizes?.length ? product.optionSizes : DEFAULT_SIZES;
-  const canAddToCart = Boolean(selectedColor && selectedSize && product.stock > 0);
+  const selectedStockVariant = selectedColor && selectedSize
+    ? resolveStockVariant(product.variants ?? [], product.id, selectedSize, selectedColor)
+    : null;
+  const displayedStock = selectedStockVariant?.stock ?? product.stock;
+  const canAddToCart = Boolean(
+    selectedColor && selectedSize && displayedStock > 0 &&
+    (!product.variantCatalogPresent || selectedStockVariant),
+  );
   const missingSelections: string[] = [];
   const formattedPrice = new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -246,7 +276,7 @@ export default function ProductDetail() {
   if (!selectedSize) missingSelections.push("tamanho");
 
   const handleAddToCart = () => {
-    if (product.stock <= 0) {
+    if (displayedStock <= 0) {
       showToast({
         message: "Este produto está Indisponível no momento.",
         duration: 3500,
@@ -263,16 +293,21 @@ export default function ProductDetail() {
       return;
     }
 
+    if (product.variantCatalogPresent && !selectedStockVariant) {
+      showToast({ message: "Esta combinação não corresponde a uma variante disponível.", duration: 3500 });
+      return;
+    }
+
     addToCart(product, quantity, {
       cor: selectedColor,
       tamanho: selectedSize,
-    });
+    }, selectedStockVariant?.id);
     setShowSelectionWarning(false);
     setQuantity(1);
   };
 
   const handleBuyNow = () => {
-    if (product.stock <= 0) {
+    if (displayedStock <= 0) {
       showToast({ message: "Este produto está indisponível no momento.", duration: 3500 });
       return;
     }
@@ -283,7 +318,12 @@ export default function ProductDetail() {
       return;
     }
 
-    addToCart(product, quantity, { cor: selectedColor, tamanho: selectedSize });
+    if (product.variantCatalogPresent && !selectedStockVariant) {
+      showToast({ message: "Esta combinação não corresponde a uma variante disponível.", duration: 3500 });
+      return;
+    }
+
+    addToCart(product, quantity, { cor: selectedColor, tamanho: selectedSize }, selectedStockVariant?.id);
     setShowSelectionWarning(false);
     closeCartDrawer();
     navigate("/checkout");
@@ -599,26 +639,26 @@ export default function ProductDetail() {
               <button
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={product.stock <= 0}
+                disabled={displayedStock <= 0}
               >
                 -
               </button>
               <input
                 type="number"
                 min="1"
-                 max={product.stock > 0 ? product.stock : 1}
+                 max={displayedStock > 0 ? displayedStock : 1}
                 value={quantity}
                  onChange={(e) =>
                    setQuantity(
-                     Math.min(product.stock > 0 ? product.stock : 1, Math.max(1, parseInt(e.target.value) || 1))
+                     Math.min(displayedStock > 0 ? displayedStock : 1, Math.max(1, parseInt(e.target.value) || 1))
                    )
                  }
                 style={styles.quantityInput as CSSProperties}
               />
               <button
-                onClick={() => setQuantity(Math.min(product.stock > 0 ? product.stock : 1, quantity + 1))}
+                onClick={() => setQuantity(Math.min(displayedStock > 0 ? displayedStock : 1, quantity + 1))}
                 style={styles.quantityBtn as CSSProperties}
-                disabled={product.stock <= 0}
+                disabled={displayedStock <= 0}
               >
                 +
               </button>
@@ -645,26 +685,26 @@ export default function ProductDetail() {
             <button
               onClick={handleBuyNow}
               style={styles.buyNowBtn as CSSProperties}
-              disabled={product.stock <= 0}
+              disabled={displayedStock <= 0}
               onMouseEnter={(e) => {
-                if (product.stock <= 0) return;
+                if (displayedStock <= 0) return;
                 const btn = e.currentTarget as HTMLElement;
                 btn.style.transform = "scale(1.02)";
                 btn.style.boxShadow = "0 12px 24px rgba(26,26,26,0.3)";
               }}
               onMouseLeave={(e) => {
-                if (product.stock <= 0) return;
+                if (displayedStock <= 0) return;
                 const btn = e.currentTarget as HTMLElement;
                 btn.style.transform = "scale(1)";
                 btn.style.boxShadow = "0 4px 12px rgba(26,26,26,0.2)";
               }}
             >
-              {product.stock > 0 ? "Comprar agora" : "Indisponível"}
+              {displayedStock > 0 ? "Comprar agora" : "Indisponível"}
             </button>
             <button
               onClick={handleAddToCart}
               style={styles.addToCartBtn as CSSProperties}
-              disabled={product.stock <= 0}
+              disabled={displayedStock <= 0}
             >
               Adicionar à sacola
             </button>
@@ -686,14 +726,14 @@ export default function ProductDetail() {
             </Link>
           </div>
 
-          {product.stock >= 0 && (
+          {displayedStock >= 0 && (
             <div style={styles.stockInfo as CSSProperties}>
               <span style={{
-                color: product.stock > 5 ? "#86efac" : product.stock > 0 ? "#facc15" : "#f87171"
+                color: displayedStock > 5 ? "#86efac" : displayedStock > 0 ? "#facc15" : "#f87171"
               }}>
-                {product.stock > 5
+                {displayedStock > 5
                   ? "Disponível para compra"
-                  : product.stock > 0
+                  : displayedStock > 0
                     ? "Estoque reduzido"
                     : "Indisponível no momento"}
               </span>
