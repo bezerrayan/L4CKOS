@@ -114,3 +114,23 @@ describe("describeStockCheckoutError", () => {
     }
   });
 });
+
+describe("describeStockCheckoutError — exclusive drops (stable codes only)", () => {
+  const coded = (code: string, trpc = "FORBIDDEN") => ({ message: "qualquer texto", data: { code: trpc, appError: { code } } });
+
+  it.each([
+    ["EXCLUSIVE_ACCESS_REQUIRED", /exclusivo e exige acesso/],
+    ["EXCLUSIVE_QUOTA_EXCEEDED", /limite de unidades/],
+    ["EXCLUSIVE_DROP_CLOSED", /não está aberto/],
+    ["EXCLUSIVE_ACCESS_UNVERIFIABLE", /Nada foi cobrado/],
+  ])("%s: friendly message, never an unknown outcome (rejected before any reservation/charge)", (code, text) => {
+    const view = describeStockCheckoutError(coded(code));
+    expect(view.message).toMatch(text);
+    expect(view.outcomeUnknown).toBe(false);
+    expect(view.message).not.toContain(code);
+  });
+
+  it("does not interpret message text as a code", () => {
+    expect(describeStockCheckoutError({ message: "EXCLUSIVE_ACCESS_REQUIRED" }).outcomeUnknown).toBe(true);
+  });
+});

@@ -22,6 +22,8 @@ import { ProductReviews } from "../components/reviews/ProductReviews";
 import { resolveStockVariant, type StockCatalogVariant } from "../stock/stockCheckoutClient";
 import { mapCatalogVariants } from "../stock/catalogVariants";
 import { clampQuantity, isColorPurchasable, isSizePurchasable, MAX_LINE_QUANTITY } from "../stock/availability";
+import ExclusiveAccessPanel, { ExclusiveUnlockedNotice } from "../components/exclusive/ExclusiveAccessPanel";
+import { canPurchaseExclusive } from "../../../shared/exclusiveDropsV1";
 
 const DEFAULT_COLORS = ["Preto", "Branco", "Azul", "Vermelho", "Verde"];
 const DEFAULT_SIZES = ["PP", "P", "M", "G", "GG", "XG"];
@@ -117,6 +119,9 @@ export default function ProductDetail() {
   const productQuery = trpc.products.getById.useQuery(productId ?? 0, {
     enabled: Boolean(productId),
   });
+  // Exclusive-drop status of this product for the viewer. The SERVER enforces it at cart/checkout; this only drives the UI.
+  const dropQuery = trpc.exclusiveDrops.forProduct.useQuery({ productId: productId ?? 0 }, { enabled: Boolean(productId), retry: false });
+  const dropView = dropQuery.data;
   const product = productQuery.data
     ? {
         id: productQuery.data.id,
@@ -253,7 +258,12 @@ export default function ProductDetail() {
   // With a variant catalog, stock comes from the variants (backend), never from a possibly stale product total.
   const variantsTotalStock = activeStockVariants.reduce((sum, variant) => sum + Math.max(0, variant.stock ?? 0), 0);
   const displayedStock = selectedStockVariant?.stock ?? (product.variantCatalogPresent ? variantsTotalStock : product.stock);
-  const maxQuantity = Math.min(MAX_LINE_QUANTITY, Math.max(1, displayedStock));
+  // Exclusive product: never offer more units than the viewer's authorization has left.
+  const quotaCap = dropView?.exclusive && dropView.viewer.status === "unlocked" ? Math.max(1, dropView.viewer.unitsRemaining ?? 1) : MAX_LINE_QUANTITY;
+  const maxQuantity = Math.min(MAX_LINE_QUANTITY, Math.max(1, displayedStock), quotaCap);
+  // Purchase controls stay hidden while the exclusivity is being checked and whenever the viewer cannot buy.
+  const exclusiveBlocked = Boolean(dropView?.exclusive && !canPurchaseExclusive(dropView));
+  const purchaseLocked = dropQuery.isLoading || exclusiveBlocked;
   const effectiveQuantity = clampQuantity(quantity, maxQuantity);
   const hasVariantCatalog = Boolean(product.variantCatalogPresent);
   const isColorSoldOut = (name: string) => hasVariantCatalog && !isColorPurchasable(activeStockVariants, name, selectedSize);
@@ -271,6 +281,7 @@ export default function ProductDetail() {
   if (!selectedSize) missingSelections.push("tamanho");
 
   const handleAddToCart = () => {
+    if (purchaseLocked) return;
     if (displayedStock <= 0) {
       showToast({
         message: "Este produto está Indisponível no momento.",
@@ -302,6 +313,7 @@ export default function ProductDetail() {
   };
 
   const handleBuyNow = () => {
+    if (purchaseLocked) return;
     if (displayedStock <= 0) {
       showToast({ message: "Este produto está indisponível no momento.", duration: 3500 });
       return;
@@ -674,6 +686,8 @@ export default function ProductDetail() {
             ) : null}
           </div>
 
+          {dropView?.exclusive ? (exclusiveBlocked ? <ExclusiveAccessPanel view={dropView} productId={product.id} /> : <ExclusiveUnlockedNotice view={dropView} />) : null}
+          {!dropQuery.isLoading && !exclusiveBlocked && (
           <div
             style={{
               ...styles.actionButtons,
@@ -718,6 +732,7 @@ export default function ProductDetail() {
               Adicionar à sacola
             </button>
           </div>
+          )}
 
           {showSelectionWarning && !canAddToCart && (
             <p style={styles.selectionWarning as CSSProperties}>
