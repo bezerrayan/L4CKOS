@@ -2699,7 +2699,7 @@ async function syncProductVariants(db: ProductDatabase, productId: number, incom
     assertVariantStockCoversReservations(item.value.name, item.value.stock, reserved);
   }
 
-  for (const item of plan.update) {
+  for (const item of resolvedUpdates) {
     await db.update(productVariants).set({
       name: item.value.name.trim(),
       sku: item.value.sku,
