@@ -108,9 +108,12 @@ STOCK/Drops em MySQL 9.7.2.
   5 GB em `/var/lib/mysql`, limite de 1 vCPU e 2 GB RAM, sem domínio público e
   sem TCP Proxy; acesso somente pela rede privada Railway.
 - `api-stock-homologation`: SHA de aplicação aprovado, 0,5 vCPU e 1 GB RAM,
-  domínio HTTPS Railway necessário ao browser, sem alias compartilhado. A API
-  deve manter checkout fechado e exigir gate server-side restrito para testes.
-  SSO do preview Vercel e CORS não protegem a chamada direta à API.
+  domínio HTTPS Railway necessário ao browser, sem alias compartilhado. MySQL
+  não recebe domínio público nem TCP Proxy. A API ainda é alcançável diretamente
+  pela internet: SSO do preview Vercel e CORS não protegem a chamada direta.
+  Portanto, manter checkout fechado e exigir gate server-side de staging para
+  compradores sintéticos; CORS deve aceitar apenas o hostname exato do Preview
+  autorizado como defesa em profundidade.
 - Custo de referência para mês inteiro no limite de CPU/RAM: aproximadamente
   US$ 60,75 em recursos (1,5 vCPU × US$ 20 + 3 GB RAM × US$ 10 + volume 5 GB ×
   US$ 0,15), mais egress/subscription; uso real de CPU é faturado por consumo,
@@ -151,16 +154,18 @@ STOCK/Drops em MySQL 9.7.2.
 
 ## Backup e restauração
 
-1. Criar o serviço 9.7.2 vazio, conferir identidade e guardar backup/snapshot
-   anterior à primeira alteração persistente.
-2. Construir/restaurar somente baseline V6 autorizado e sintético. Não clonar
-   dados financeiros ou pessoais de produção; não copiar cegamente o banco
-   persistente 8.4 atual.
-3. Testar a restauração do backup pré-migration em outra instância descartável
-   9.7.2; verificar identidade, fingerprint e contagens de fixtures.
-4. Após 0027/0028, criar backup pós-migration e testar restauração também em
-   instância descartável. Guardar checksums e relatório sanitizado.
-5. Se qualquer restauração falhar, manter checkout fechado e não avançar.
+1. Criar o serviço 9.7.2 vazio, consultar `SELECT VERSION(), DATABASE()` e
+   registrar hostname, nome de schema e fingerprint físico antes de DDL.
+2. Construir apenas baseline V6 autorizado e sintético a partir do fixture
+   auditado e da cadeia V6 `0020`–`0025`, conforme necessário. Não clonar dados
+   financeiros/pessoais de produção ou reutilizar o MySQL 8.4 persistente.
+3. Criar backup lógico do baseline e testar restauração em outra instância
+   descartável 9.7.2; validar identidade, fingerprint V6 e fixtures sintéticas.
+4. Após aprovação do backup restaurado, aplicar 0027 V6-aware e depois 0028;
+   comparar fingerprint, colunas, índices, FKs, CHECKs e tabelas antes/depois.
+5. Criar backup pós-migration e testar restauração em outra instância 9.7.2.
+   Guardar hashes e relatório sanitizado. Se falhar qualquer verificação,
+   manter checkout fechado e parar sem reparar DDL parcial automaticamente.
 
 ## Deploy e homologação — autorizações separadas
 
