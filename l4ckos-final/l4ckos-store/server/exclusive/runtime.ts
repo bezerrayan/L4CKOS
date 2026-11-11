@@ -1,5 +1,6 @@
 import type { Pool } from "mysql2/promise";
 import { getDb } from "../db";
+import { toPromisePool } from "../database/promisePool";
 import { createExclusiveStore, type ExclusiveStore } from "./store";
 
 let injected: ExclusiveStore | undefined;
@@ -19,9 +20,9 @@ let cached: { pool: Pool; store: ExclusiveStore } | undefined;
 /** The application's own MySQL pool (drizzle's client). Returns null when no database is configured. */
 export async function getExclusiveStore(): Promise<ExclusiveStore | null> {
   if (injected) return injected;
-  const db = (await getDb()) as unknown as { $client?: Pool } | null;
-  const pool = db?.$client;
-  if (!pool || typeof pool.getConnection !== "function") return null;
+  const db = (await getDb()) as unknown as { $client?: unknown } | null;
+  const pool = toPromisePool(db?.$client);
+  if (!pool) return null;
   if (cached?.pool !== pool) cached = { pool, store: createExclusiveStore(pool) };
   return cached.store;
 }

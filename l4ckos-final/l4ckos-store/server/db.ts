@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import type { Pool } from "mysql2/promise";
 import { createHash, randomUUID } from "node:crypto";
 import { createMysqlConnectionOptionsForEnvironment } from "./database/mysqlConnection.mjs";
+import { toPromisePool } from "./database/promisePool";
 import {
   InsertUser,
   users,
@@ -173,11 +174,9 @@ export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
 export async function getMysqlPool(): Promise<Pool | null> {
   const db = await getDb();
   if (!db) return null;
-  const client = (db as unknown as { $client?: Pool }).$client;
-  if (!client || typeof client.getConnection !== "function") {
-    throw new Error("MYSQL_POOL_UNAVAILABLE");
-  }
-  return client;
+  const pool = toPromisePool((db as unknown as { $client?: unknown }).$client);
+  if (!pool) throw new Error("MYSQL_POOL_UNAVAILABLE");
+  return pool;
 }
 
 function hashWebhookPayload(payload: unknown) {
