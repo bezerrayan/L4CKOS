@@ -77,6 +77,7 @@ import {
 } from "../components/admin/system/AdminSystemUI";
 import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 import { AdminReviewsPanel } from "../components/admin/reviews/AdminReviewsPanel";
+import AdminExclusiveDrops from "../components/admin/exclusive/AdminExclusiveDrops";
 
 type Section =
   | "overview"
@@ -86,6 +87,7 @@ type Section =
   | "orders"
   | "reviews"
   | "coupons"
+  | "drops"
   | "reports"
   | "audit"
   | "backup"
@@ -1078,6 +1080,7 @@ export default function Admin() {
           { key: "orders", label: "Pedidos" },
           { key: "reviews", label: "Avaliações" },
           { key: "coupons", label: "Cupons" },
+          { key: "drops", label: "Drops" },
           { key: "reports", label: "Relatórios" },
           { key: "audit", label: "Auditoria" },
           { key: "backup", label: "Backup" },
@@ -2868,6 +2871,8 @@ export default function Admin() {
           </div>
         </AdminSurface>
       )}
+
+      {section === "drops" && <AdminExclusiveDrops />}
 
       {section === "reports" && (
         <AdminSurface
