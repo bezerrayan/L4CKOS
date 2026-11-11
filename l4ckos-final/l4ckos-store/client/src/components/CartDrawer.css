@@ -1,4 +1,4 @@
-.l4-cart-drawer-layer { position: fixed; inset: 0; z-index: 120; visibility: hidden; pointer-events: none; }
+.l4-cart-drawer-layer { position: fixed; inset: 0 0 var(--l4-cookie-banner-offset, 0px) 0; z-index: 120; visibility: hidden; pointer-events: none; }
 .l4-cart-drawer-layer.is-open { visibility: visible; pointer-events: auto; }
 .l4-cart-drawer-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, .66); opacity: 0; transition: opacity .25s ease; cursor: default; }
 .l4-cart-drawer-layer.is-open .l4-cart-drawer-backdrop { opacity: 1; }
