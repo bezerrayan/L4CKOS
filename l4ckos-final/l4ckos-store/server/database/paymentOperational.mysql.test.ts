@@ -10,11 +10,12 @@ import {bootstrapReleaseDatabase} from '../../database/bootstrap/bootstrap';
 import {readReleaseContract} from '../../database/schema/artifacts';
 import {receiveWebhook,persistWebhook,recoverWebhooks} from '../payments/webhookInbox';
 import {processWebhookEnvelope,asaasWebhookHandler} from '../controllers/paymentController';
-import {deliverPaymentNotifications} from '../payments/paymentNotificationOutbox';
+import {deliverPaymentNotifications,enqueueOrderCancelled} from '../payments/paymentNotificationOutbox';
+import {inWebhookTransaction} from './webhookTransaction';
 import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
-const injected=vi.hoisted(()=>({orm:null as unknown,mail:vi.fn(async(_p:any)=>({id:'synthetic-mail'}))}));
+const injected=vi.hoisted(()=>({orm:null as unknown,mail:vi.fn(async(_p:any)=>({id:'synthetic-mail'})),cancelled:vi.fn(async(_p:any)=>({id:'synthetic-cancelled'}))}));
 vi.mock('drizzle-orm/mysql2',async original=>({...await original<typeof mysqlOrm>(),drizzle:()=>injected.orm}));
-vi.mock('../services/emailService.js',()=>({sendPaymentApprovedEmail:injected.mail,sendOrderCreatedEmail:vi.fn(async()=>({id:"synthetic-created"})),sendPaymentPendingEmail:vi.fn(async()=>({id:"synthetic-pending"})),sendInternalNewSaleAlertEmail:vi.fn(async()=>{}),sendInternalLowStockAlertEmail:vi.fn(async()=>{}),sendPaymentFailedEmail:vi.fn(async()=>{}),sendInternalPaymentFailedAlertEmail:vi.fn(async()=>{})}));
+vi.mock('../services/emailService.js',()=>({sendPaymentApprovedEmail:injected.mail,sendOrderCreatedEmail:vi.fn(async()=>({id:"synthetic-created"})),sendOrderCancelledEmail:injected.cancelled,sendPaymentPendingEmail:vi.fn(async()=>({id:"synthetic-pending"})),sendInternalNewSaleAlertEmail:vi.fn(async()=>{}),sendInternalLowStockAlertEmail:vi.fn(async()=>{}),sendPaymentFailedEmail:vi.fn(async()=>{}),sendInternalPaymentFailedAlertEmail:vi.fn(async()=>{})}));
 vi.mock('../services/asaasService',()=>({validateAsaasWebhookSignature:(h:any)=>h['asaas-access-token']==='synthetic-token',getAsaasPayment:vi.fn(async()=>{throw Error('NO_EXTERNAL_PROVIDER');}),createAsaasCheckout:vi.fn(),createAsaasCustomer:vi.fn()}));
 const socketPath=process.env.L4CKOS_LOCAL_MYSQL_SOCKET??'';
 const name='l4ckos_test_operational_'+randomUUID().replaceAll('-','').slice(0,10);
@@ -43,7 +44,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('operational checkout/inbox
   const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');pool=createPool({user:'root',socketPath,database:name,connectionLimit:8});injected.orm=actual.drizzle(pool);
  },30000);
  beforeEach(async()=>{
-  vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');injected.mail.mockReset();injected.mail.mockResolvedValue({id:'synthetic-mail'});
+  vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');injected.mail.mockReset();injected.mail.mockResolvedValue({id:'synthetic-mail'});injected.cancelled.mockReset();injected.cancelled.mockResolvedValue({id:'synthetic-cancelled'});
   for(const table of ['notificationOutbox','asaasWebhookInbox','asaasWebhookEvents','paymentEvents','payments','auditLogs','stockReservations','orderItems','orders','products','users'])await query('DELETE FROM `'+table+'`');
   await query("INSERT INTO users(id,openId,name,email) VALUES(999901,'synthetic-local','Synthetic','synthetic@example.invalid')");
   await query("INSERT INTO products(id,name,category,price,stock) VALUES(999901,'SYNTHETIC CHECKOUT','fixture',9900,10)");
@@ -124,6 +125,34 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('operational checkout/inbox
   const e=event(result.orderId);try{expect((await receiveWebhook(e,processWebhookEnvelope)).status).not.toBe(200);}finally{await query('DROP TRIGGER fixture_outbox_failure');}
   expect((await query('SELECT stock FROM products'))[0].stock).toBe(10);expect(await query('SELECT * FROM asaasWebhookEvents')).toHaveLength(0);
   expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(200);
+ });
+ it('cancel email enqueue is idempotent and retries under one MySQL lease across workers',async()=>{
+  const {result}=await buy();
+  const enqueue=()=>(injected.orm as any).transaction(async(tx:any)=>inWebhookTransaction(tx,()=>enqueueOrderCancelled(result.orderId,{total:'R$ 99,00',items:[{name:'Synthetic shirt',quantity:1}],refundStatus:'pending'}),[]));
+  await enqueue();await enqueue();
+  const [queued]=await query("SELECT id,dedupeKey,status,attempts,payload FROM notificationOutbox WHERE type='order-cancelled-email-v1'");
+  expect(queued.dedupeKey).toBe(`order-cancelled-email:v1:order:${result.orderId}`);
+  expect(queued.status).toBe('pending');expect(JSON.parse(queued.payload)).toMatchObject({orderNumber:String(result.orderId),refundStatus:'pending'});
+  expect(JSON.parse(queued.payload).customerEmail).toBeUndefined();
+
+  const transient=Object.assign(new Error('synthetic provider outage'),{statusCode:503});
+  injected.cancelled.mockRejectedValueOnce(transient);
+  expect((await deliverPaymentNotifications(1,result.orderId,'order-cancelled-email-v1')).sent).toBe(0);
+  const [failed]=await query("SELECT status,lastError,attempts FROM notificationOutbox WHERE type='order-cancelled-email-v1'");
+  expect(failed).toMatchObject({status:'failed',lastError:'PROVIDER_TEMPORARY_FAILURE',attempts:1});
+  await query("UPDATE notificationOutbox SET nextAttemptAt=NOW() WHERE type='order-cancelled-email-v1'");
+
+  let beginSend!:()=>void;const sendStarted=new Promise<void>(resolve=>{beginSend=resolve;});
+  let releaseSend!:()=>void;const holdProvider=new Promise<void>(resolve=>{releaseSend=resolve;});
+  injected.cancelled.mockImplementationOnce(async()=>{beginSend();await holdProvider;return{id:'synthetic-cancelled-retry'};});
+  const first=deliverPaymentNotifications(1,result.orderId,'order-cancelled-email-v1');await sendStarted;
+  const second=await deliverPaymentNotifications(1,result.orderId,'order-cancelled-email-v1');releaseSend();
+  expect(second.sent).toBe(0);expect((await first).sent).toBe(1);
+  expect(injected.cancelled).toHaveBeenCalledTimes(2);
+  expect(injected.cancelled.mock.calls[0][0].idempotencyKey).toBe(injected.cancelled.mock.calls[1][0].idempotencyKey);
+  expect((await deliverPaymentNotifications(1,result.orderId,'order-cancelled-email-v1')).sent).toBe(0);
+  const [sent]=await query("SELECT status,lastError,attempts FROM notificationOutbox WHERE type='order-cancelled-email-v1'");
+  expect(sent).toMatchObject({status:'sent',lastError:null,attempts:2});
  });
  it('expired reservation, cancellation, refund and out-of-order notifications do not silently change finances',async()=>{
   const {result}=await buy();await query('UPDATE stockReservations SET expiresAt=DATE_SUB(NOW(),INTERVAL 1 MINUTE)');
