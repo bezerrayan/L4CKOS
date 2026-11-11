@@ -12,7 +12,7 @@ import {
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 
 /** Composition boundary for a future STOCK-only route; this factory does not mount or enable any route. */
-export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider }) {
+export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean }) {
   const store = createMysqlStockCheckoutStore(input.pool);
   return {
     isForDisposableLocalHarness() {
@@ -23,7 +23,7 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
     },
     checkout(request: unknown, authenticatedUserId?: number) {
       // Gate check occurs before the domain can acquire a connection or invoke the provider.
-      return createStockCheckout({ enabled: isPublicCheckoutEnabled(), ownerUserId: authenticatedUserId as number, store, provider: input.provider, request });
+      return createStockCheckout({ enabled: isPublicCheckoutEnabled() && input.checkoutEnabled !== false, ownerUserId: authenticatedUserId as number, store, provider: input.provider, request });
     },
     resume(authenticatedUserId: number, attemptId: unknown) {
       // Authenticated read-only lookup is available while payment creation remains gated.

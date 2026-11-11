@@ -21,4 +21,22 @@ describe("STOCK checkout runtime boundary", () => {
     expect(getConnection).not.toHaveBeenCalled();
     expect(createPayment).not.toHaveBeenCalled();
   });
+
+  it("keeps STOCK checkout closed unless its separate runtime gate is explicitly enabled", async () => {
+    vi.stubEnv("PUBLIC_SITE_MODE", "store");
+    vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
+    const getConnection = vi.fn(() => { throw new Error("database IO must not occur"); });
+    const createPayment = vi.fn(async () => ({ paymentId: "never", checkoutUrl: "never" }));
+    const runtime = createStockCheckoutRuntime({
+      pool: { getConnection } as unknown as Pool,
+      provider: { supportsIdempotencyKey: true, createPayment },
+      checkoutEnabled: false,
+    });
+    await expect(runtime.checkout({
+      attemptId: "stock-runtime-separate-gate-01",
+      items: [{ productId: 1, variantId: 1, size: "M", color: "Preto", quantity: 1 }],
+    })).rejects.toMatchObject({ code: "PUBLIC_CHECKOUT_DISABLED" });
+    expect(getConnection).not.toHaveBeenCalled();
+    expect(createPayment).not.toHaveBeenCalled();
+  });
 });

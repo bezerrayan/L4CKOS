@@ -12,8 +12,8 @@ if [[ "$(pnpm --version)" != "10.4.1" ]]; then
   echo "Expected pnpm 10.4.1; found $(pnpm --version)." >&2
   exit 2
 fi
-if ! docker image inspect mysql:8.4.11 >/dev/null 2>&1; then
-  echo "Required local image mysql:8.4.11 is unavailable; this runner does not pull images." >&2
+if ! docker image inspect mysql:9.7.2 >/dev/null 2>&1; then
+  echo "Required local image mysql:9.7.2 is unavailable; this runner does not pull images." >&2
   exit 2
 fi
 
@@ -32,7 +32,7 @@ docker run --pull=never --detach --rm \
   --env MYSQL_DATABASE=l4ckos_stock_test \
   --env MYSQL_USER=stock_test \
   --env MYSQL_PASSWORD="$synthetic_test_password" \
-  mysql:8.4.11 >/dev/null
+  mysql:9.7.2 >/dev/null
 
 ready=0
 for _ in $(seq 1 60); do
@@ -44,7 +44,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then
-  echo "Disposable MySQL 8.4.11 did not become ready; container will be removed." >&2
+  echo "Disposable MySQL 9.7.2 did not become ready; container will be removed." >&2
   exit 2
 fi
 
@@ -61,4 +61,4 @@ STOCK_MYSQL_PASSWORD="$synthetic_test_password" \
 STOCK_MYSQL_DATABASE=l4ckos_stock_test \
 STOCK_LOCAL_HARNESS=true \
 JWT_SECRET=synthetic-stock-local-session-key-32-bytes-minimum \
-  pnpm exec vitest run --fileParallelism=false server/stock/mysqlStockCheckoutStore.mysql.test.ts server/stock/stockCheckout.integration.mysql.test.ts
+  pnpm exec vitest run --fileParallelism=false server/stock/mysqlStockCheckoutStore.mysql.test.ts server/stock/stockCheckout.integration.mysql.test.ts server/stock/stockStorefront.e2e.mysql.test.ts

@@ -5,6 +5,7 @@ export type CheckoutMethod = "PIX" | "BOLETO" | "CARD";
 type AsaasRequestInit = {
   method?: "GET" | "POST";
   body?: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 type AsaasCustomerResponse = {
@@ -54,6 +55,7 @@ async function asaasRequest<T>(path: string, init: AsaasRequestInit = {}) {
       access_token: apiKey,
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
+    signal: init.signal,
   });
 
   const data = (await response.json()) as {
@@ -86,9 +88,11 @@ export async function createAsaasChargeForOrder(input: {
   };
   description: string;
   dueDate?: string;
+  signal?: AbortSignal;
 }) {
   const customer = await asaasRequest<AsaasCustomerResponse>("/customers", {
     method: "POST",
+    signal: input.signal,
     body: {
       name: input.customer.name,
       cpfCnpj: input.customer.cpfCnpj,
@@ -98,6 +102,7 @@ export async function createAsaasChargeForOrder(input: {
 
   const payment = await asaasRequest<AsaasPaymentResponse>("/payments", {
     method: "POST",
+    signal: input.signal,
     body: {
       customer: customer.id,
       billingType: getAsaasBillingType(input.method),
@@ -112,7 +117,7 @@ export async function createAsaasChargeForOrder(input: {
   let pixCopyPaste = payment.pixCopyPaste ?? null;
 
   if (input.method === "PIX" && (!pixQrCode || !pixCopyPaste) && payment.id) {
-    const pixData = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${payment.id}/pixQrCode`);
+    const pixData = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${payment.id}/pixQrCode`, { signal: input.signal });
     pixQrCode = pixQrCode || pixData.encodedImage || null;
     pixCopyPaste = pixCopyPaste || pixData.payload || null;
   }

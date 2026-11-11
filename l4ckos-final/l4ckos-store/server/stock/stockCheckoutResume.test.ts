@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StockAttemptResumeRecord, StockCheckoutStore } from "./stockCheckout";
 import { resumeStockAttemptHttp } from "./stockCheckoutHttpContract";
-import { resumeLatestStockCheckout } from "./stockCheckout";
+import { resumeLatestStockCheckout, resumeStockCheckout } from "./stockCheckout";
 import { createStockCheckoutClient, stockAttemptStatusLabel, type StockAttemptStorage, type StockCatalogVariant } from "../../client/src/stock/stockCheckoutClient";
 import { readCartItems, writeCartItems } from "../../client/src/utils/cartPersistence";
 import type { CartItem } from "../../client/src/types/cart";
@@ -19,7 +19,9 @@ const checkoutRequest = { attemptId: "stock-resume-owner-fixture-001", items: [{
 
 function readableStore(record: StockAttemptResumeRecord | null, onRead = vi.fn()): StockCheckoutStore {
   return {
-    transaction: async () => { throw new Error("resume must not open a write transaction"); },
+    transaction: async work => work({
+      expireDueReservations: async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [] }),
+    } as never),
     async findAttemptForOwner(attemptId, ownerUserId) {
       onRead(attemptId, ownerUserId);
       return record?.attemptId === attemptId && ownerUserId === 71 ? record : null;
@@ -43,6 +45,45 @@ describe("authenticated STOCK checkout resume", () => {
     });
     await expect(resumeLatestStockCheckout({ store, authenticatedUserId: 72 })).resolves.toBeNull();
     expect(store.findLatestAttemptForOwner).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases a due not-started reservation before resume and allows a fresh attempt", async () => {
+    const record: StockAttemptResumeRecord = {
+      attemptId: "stock-expiry-resume-0001", orderId: "order-expired", status: "reserved", providerState: "not_started",
+      paymentId: null, checkoutUrl: null, amountCents: 12900,
+      reservationExpiresAt: new Date(Date.now() - 1_000).toISOString(), reservationExpired: true, reconciliationRequired: false,
+    };
+    let released = false;
+    const store: StockCheckoutStore = {
+      transaction: async work => work({
+        expireDueReservations: async () => {
+          if (!released) { released = true; return { releasedAttemptIds: [record.attemptId], reconciliationAttemptIds: [] }; }
+          return { releasedAttemptIds: [], reconciliationAttemptIds: [] };
+        },
+      } as never),
+      findAttemptForOwner: async () => ({ ...record, status: released ? "released" : "reserved" }),
+    };
+    await expect(resumeStockCheckout({ store, authenticatedUserId: 71, attemptId: record.attemptId })).resolves.toMatchObject({
+      status: "expired", canStartNewAttempt: true,
+    });
+    expect(released).toBe(true);
+  });
+
+  it("keeps expired attempts with uncertain provider outcomes reserved for reconciliation", async () => {
+    const record: StockAttemptResumeRecord = {
+      attemptId: "stock-expiry-uncertain-0001", orderId: "order-uncertain", status: "reserved", providerState: "ambiguous",
+      paymentId: null, checkoutUrl: null, amountCents: 12900,
+      reservationExpiresAt: new Date(Date.now() - 1_000).toISOString(), reservationExpired: true, reconciliationRequired: true,
+    };
+    const store: StockCheckoutStore = {
+      transaction: async work => work({
+        expireDueReservations: async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [record.attemptId] }),
+      } as never),
+      findAttemptForOwner: async () => record,
+    };
+    await expect(resumeStockCheckout({ store, authenticatedUserId: 71, attemptId: record.attemptId })).resolves.toMatchObject({
+      status: "ambiguous", canStartNewAttempt: false,
+    });
   });
 
   it("returns only the authenticated owner's pending attempt and ignores body userId", async () => {
