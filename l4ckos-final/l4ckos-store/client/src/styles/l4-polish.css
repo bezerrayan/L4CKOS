@@ -1,0 +1,137 @@
+/* L4CKOS V6 — final visual polish (auth + admin). Black / white / red. Loaded last; scoped; no layout or business changes. */
+:root {
+  --l4-red: #e8002a;
+  --l4-red-hover: #ff3d5a;
+  --l4-ink: #f0ede8;
+  --l4-field: #0b0b0b;
+  --l4-field-hover: #121212;
+  --l4-line: #303030;
+  --l4-line-strong: #515151;
+  --l4-focus-ring: 0 0 0 3px rgba(232, 0, 42, 0.32);
+}
+@keyframes l4-spin { to { transform: rotate(360deg); } }
+
+/* ---------- shared button system ---------- */
+.l4-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box;
+  min-height: 44px; padding: 0 18px; border: 1px solid transparent; border-radius: 3px; cursor: pointer;
+  font: 700 13px/1 'DM Sans', sans-serif; letter-spacing: .06em; text-transform: uppercase;
+  transition: background-color .15s ease, border-color .15s ease, transform .1s ease;
+}
+.l4-btn:active:not(:disabled) { transform: translateY(1px); }
+.l4-btn:disabled { opacity: .55; cursor: not-allowed; }
+.l4-btn:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.l4-btn--primary { background: var(--l4-red); border-color: var(--l4-red); color: #fff; }
+.l4-btn--primary:hover:not(:disabled) { background: var(--l4-red-hover); border-color: var(--l4-red-hover); }
+.l4-btn--danger { background: transparent; border-color: var(--l4-red); color: #ff8da0; }
+.l4-btn--danger:hover:not(:disabled) { background: var(--l4-red); color: #fff; }
+.l4-btn--ghost { background: transparent; border-color: var(--l4-line-strong); color: var(--l4-ink); }
+.l4-btn--ghost:hover:not(:disabled) { border-color: var(--l4-ink); }
+.l4-btn[aria-busy="true"]::before, .l4-btn.is-loading::before {
+  content: ""; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%; animation: l4-spin .7s linear infinite;
+}
+
+/* ---------- dialog (replaces window.confirm / window.prompt) ---------- */
+.l4-dialog {
+  position: fixed; inset: 0; margin: auto; max-height: calc(100vh - 32px);
+  width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--l4-line-strong); border-top: 3px solid var(--l4-red);
+  border-radius: 3px; background: #0d0d0d; color: var(--l4-ink); box-shadow: 0 24px 64px rgba(0, 0, 0, .7);
+}
+.l4-dialog::backdrop { background: rgba(0, 0, 0, .72); backdrop-filter: blur(2px); }
+.l4-dialog form { display: grid; gap: 14px; padding: 22px; }
+.l4-dialog h2 { margin: 0; font: 400 26px/1 'Bebas Neue', sans-serif; letter-spacing: .04em; color: var(--l4-ink); }
+.l4-dialog-message { margin: 0; color: #c8c1ba; font: 400 14px/1.55 'DM Sans', sans-serif; white-space: pre-line; }
+.l4-dialog-field { display: grid; gap: 6px; font: 600 12px 'DM Sans', sans-serif; color: #c8c1ba; }
+.l4-dialog-field input { min-height: 44px; padding: 8px 12px; border: 1px solid var(--l4-line); border-radius: 3px; background: var(--l4-field); color: #fff; font: 400 14px 'DM Sans', sans-serif; color-scheme: dark; }
+.l4-dialog-field input:focus-visible { outline: none; border-color: var(--l4-red); box-shadow: var(--l4-focus-ring); }
+.l4-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+@media (max-width: 480px) { .l4-dialog-actions { flex-direction: column-reverse; } .l4-dialog-actions .l4-btn { width: 100%; } }
+
+/* ---------- custom checkbox / radio (auth + admin); still real, keyboard-operable inputs ---------- */
+.l4-auth-form input[type="checkbox"], .l4-admin .l4-admin-main input[type="checkbox"], .l4-axd input[type="checkbox"],
+.l4-auth-form input[type="radio"], .l4-admin .l4-admin-main input[type="radio"], .l4-axd input[type="radio"] {
+  appearance: none; -webkit-appearance: none; flex: none; display: inline-grid; place-content: center;
+  width: 18px; height: 18px; min-height: 0 !important; margin: 0 8px 0 0; padding: 0 !important; vertical-align: middle;
+  border: 1.5px solid #5a5a5a !important; border-radius: 3px !important; background: var(--l4-field) !important; cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.l4-auth-form input[type="radio"], .l4-admin .l4-admin-main input[type="radio"], .l4-axd input[type="radio"] { border-radius: 50% !important; }
+.l4-auth-form input[type="checkbox"]::after, .l4-admin .l4-admin-main input[type="checkbox"]::after, .l4-axd input[type="checkbox"]::after {
+  content: ""; width: 10px; height: 10px; background: #fff; transform: scale(0); transition: transform .12s ease;
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0, 43% 62%);
+}
+.l4-auth-form input[type="radio"]::after, .l4-admin .l4-admin-main input[type="radio"]::after, .l4-axd input[type="radio"]::after {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: #fff; transform: scale(0); transition: transform .12s ease;
+}
+.l4-auth-form input[type="checkbox"]:checked, .l4-admin .l4-admin-main input[type="checkbox"]:checked, .l4-axd input[type="checkbox"]:checked,
+.l4-auth-form input[type="radio"]:checked, .l4-admin .l4-admin-main input[type="radio"]:checked, .l4-axd input[type="radio"]:checked {
+  background: var(--l4-red) !important; border-color: var(--l4-red) !important;
+}
+.l4-auth-form input[type="checkbox"]:checked::after, .l4-admin .l4-admin-main input[type="checkbox"]:checked::after, .l4-axd input[type="checkbox"]:checked::after,
+.l4-auth-form input[type="radio"]:checked::after, .l4-admin .l4-admin-main input[type="radio"]:checked::after, .l4-axd input[type="radio"]:checked::after { transform: scale(1); }
+.l4-auth-form input[type="checkbox"]:hover:not(:disabled), .l4-admin .l4-admin-main input[type="checkbox"]:hover:not(:disabled), .l4-axd input[type="checkbox"]:hover:not(:disabled) { border-color: #fff !important; }
+.l4-auth-form input[type="checkbox"]:focus-visible, .l4-admin .l4-admin-main input[type="checkbox"]:focus-visible, .l4-axd input[type="checkbox"]:focus-visible,
+.l4-auth-form input[type="radio"]:focus-visible, .l4-admin .l4-admin-main input[type="radio"]:focus-visible, .l4-axd input[type="radio"]:focus-visible { outline: 2px solid #fff !important; outline-offset: 2px; box-shadow: none !important; }
+.l4-auth-form input[type="checkbox"]:disabled, .l4-admin .l4-admin-main input[type="checkbox"]:disabled, .l4-axd input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- auth screens (inline-styled pages): fields, focus, primary action, feedback ---------- */
+.l4-auth-form input:not([type="checkbox"]):not([type="radio"]) {
+  box-sizing: border-box; border-radius: 3px !important; transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+.l4-auth-form input:not([type="checkbox"]):not([type="radio"]):hover:not(:disabled) { border-color: var(--l4-line-strong) !important; background-color: var(--l4-field-hover) !important; }
+.l4-auth-form input:not([type="checkbox"]):not([type="radio"]):focus-visible {
+  outline: none !important; border-color: var(--l4-red) !important; box-shadow: var(--l4-focus-ring) !important; background-color: var(--l4-field-hover) !important;
+}
+.l4-auth-form input:disabled { opacity: .6; cursor: not-allowed; }
+.l4-auth-form input[aria-invalid="true"] { border-color: var(--l4-red) !important; }
+.l4-auth-form button[type="submit"] {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px;
+  background: var(--l4-red) !important; border: 1px solid var(--l4-red) !important; color: #fff !important; border-radius: 3px !important;
+  letter-spacing: .05em; transition: background-color .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.l4-auth-form button[type="submit"]:hover:not(:disabled) { background: var(--l4-red-hover) !important; border-color: var(--l4-red-hover) !important; }
+.l4-auth-form button[type="submit"]:disabled::before {
+  content: ""; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, .4); border-top-color: #fff; border-radius: 50%; animation: l4-spin .7s linear infinite;
+}
+.l4-auth-form button:focus-visible, .l4-auth-form a:focus-visible { outline: 2px solid #fff !important; outline-offset: 3px !important; }
+.l4-auth-form [role="alert"] { border-left: 3px solid var(--l4-red) !important; }
+.l4-auth-form label { cursor: pointer; }
+.l4-auth-form label[for] { cursor: default; }
+
+/* ---------- admin: pickers, messages, tables, buttons of the Drops module (the only unstyled-by-stage1 area) ---------- */
+.l4-admin .l4-admin-main :is(input[type="date"], input[type="time"], input[type="datetime-local"])::-webkit-calendar-picker-indicator {
+  opacity: .9; padding: 4px; border-radius: 2px;
+}
+.l4-admin .l4-admin-main :is(input[type="date"], input[type="time"], input[type="datetime-local"])::-webkit-calendar-picker-indicator:hover { background: rgba(232, 0, 42, .18); }
+.l4-axd-btn { border-radius: 3px; font-family: 'DM Sans', sans-serif; letter-spacing: .04em; transition: background-color .15s ease, border-color .15s ease, transform .1s ease; }
+.l4-axd-btn:hover:not(:disabled) { background: var(--l4-red-hover); border-color: var(--l4-red-hover); }
+.l4-axd-btn.secondary:hover:not(:disabled) { background: transparent; border-color: #fff; }
+.l4-axd-btn:active:not(:disabled) { transform: translateY(1px); }
+.l4-axd input, .l4-axd select, .l4-axd textarea { border-radius: 3px; transition: border-color .15s ease, box-shadow .15s ease; }
+.l4-axd input:focus-visible, .l4-axd select:focus-visible, .l4-axd textarea:focus-visible { outline: none !important; border-color: var(--l4-red) !important; box-shadow: var(--l4-focus-ring) !important; }
+.l4-axd-ok, .l4-axd-err { border-width: 1px 1px 1px 3px; border-radius: 3px; font-size: 13px; line-height: 1.5; }
+.l4-axd-ok { background: rgba(47, 158, 68, .08); }
+.l4-axd-err { background: rgba(232, 0, 42, .08); }
+.l4-axd-form { border-radius: 3px; border-top: 3px solid var(--l4-red); }
+.l4-axd-form:focus-visible, .l4-axd-code:focus-visible, .l4-axd-history:focus-visible, .l4-axd-table-wrap:focus-visible { outline: 2px solid rgba(232, 0, 42, .55) !important; outline-offset: 2px !important; }
+.l4-axd-table-wrap { border-radius: 3px; background: #0b0b0b; }
+.l4-axd-table caption { font: 400 20px 'Bebas Neue', sans-serif; letter-spacing: .04em; padding: 12px 12px 8px; }
+.l4-axd-table th { position: sticky; top: 0; background: #111; color: #a9a29b; font: 700 11px 'DM Sans', sans-serif; letter-spacing: .1em; text-transform: uppercase; }
+.l4-axd-table tbody tr { transition: background-color .12s ease; }
+.l4-axd-table tbody tr:hover { background: rgba(255, 255, 255, .035); }
+.l4-axd-table td, .l4-axd-table th { padding: 12px; }
+.l4-axd h2 { font: 400 30px/1 'Bebas Neue', sans-serif; letter-spacing: .04em; }
+.l4-axd h3 { font: 400 22px/1 'Bebas Neue', sans-serif; letter-spacing: .04em; }
+
+/* ---------- global accessibility floor (low specificity: never overrides a module's own ring) ---------- */
+:where(a, button, [role="button"], summary, [tabindex]):focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .l4-btn, .l4-btn::before, .l4-auth-form *, .l4-axd *, .l4-dialog * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* login: the help card keeps its copy readable and turns the link into a quiet text action */
+.l4-auth-form > div:has(> a[href="/esqueci-senha"]) { flex-wrap: wrap; row-gap: 10px; }
+.l4-auth-form a[href="/esqueci-senha"] {
+  flex: 1 1 100%; font: 600 13px 'DM Sans', sans-serif !important; color: #ff8da0 !important; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255, 141, 160, .5);
+}
+.l4-auth-form a[href="/esqueci-senha"]:hover { color: #fff !important; text-decoration-color: currentColor; }

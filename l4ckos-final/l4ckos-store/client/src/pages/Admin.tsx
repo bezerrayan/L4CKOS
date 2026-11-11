@@ -1,4 +1,5 @@
 import "../components/admin/AdminStage1.css";
+import { confirmDialog, promptDialog } from "../components/admin/adminDialogs";
 import "../components/admin/AdminOperationsLayout.css";
 import { AdminBatches } from "../components/admin/batches/AdminBatches";
 import AdminExclusiveDrops from "../components/admin/exclusive/AdminExclusiveDrops";
@@ -384,7 +385,7 @@ function formatAdminAddressLine(address?: {
 }
 
 function confirmAdminAction(message: string) {
-  return window.confirm(message);
+  return confirmDialog({ message });
 }
 
 export default function Admin() {
@@ -1145,9 +1146,9 @@ export default function Admin() {
                 <div className="admin-order-detail-title"><button type="button" className="admin-order-back" onClick={() => navigateSection("orders")}>← Todos os pedidos</button><h2 id="admin-order-detail-heading">Pedido #{selectedOrder!.id}</h2></div>
                 <div className="admin-order-detail-actions">
                   <label>Atualizar logística
-                    <Select value={String(selectedOrder?.status ?? "pending")} onValueChange={value => {
+                    <Select value={String(selectedOrder?.status ?? "pending")} onValueChange={async value => {
                       const nextStatus = value as typeof orderStatuses[number];
-                      if (!confirmAdminAction(`Alterar o pedido #${selectedOrder!.id} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
+                      if (!(await confirmAdminAction(`Alterar o pedido #${selectedOrder!.id} para "${getOrderStatusLabel(nextStatus)}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`))) return;
                       updateOrderMutation.mutate({ orderId: selectedOrder!.id, status: nextStatus });
                     }}>
                     <SelectTrigger className="admin-order-select-trigger" aria-label={`Atualizar situação logística do pedido ${selectedOrder!.id}`} disabled={updateOrderMutation.isPending}><SelectValue /></SelectTrigger>
@@ -1157,8 +1158,8 @@ export default function Admin() {
                       </SelectContent>
                     </Select>
                   </label>
-                  <button type="button" className="admin-order-back" disabled={updateOrderMutation.isPending} onClick={() => {
-                    const tracking = window.prompt("Código de rastreio:", selectedOrder!.trackingCode || "");
+                  <button type="button" className="admin-order-back" disabled={updateOrderMutation.isPending} onClick={async () => {
+                    const tracking = await promptDialog({ title: "Código de rastreio", label: "Código de rastreio", message: "Informe o código de rastreio do pedido. Deixe em branco para remover.", defaultValue: selectedOrder!.trackingCode || "", confirmLabel: "Salvar" });
                     if (tracking !== null) updateOrderMutation.mutate({ orderId: selectedOrder!.id, trackingCode: tracking || null });
                   }}>Atualizar rastreio</button>
                 </div>
@@ -1215,16 +1216,16 @@ export default function Admin() {
                                 <DropdownMenuSub>
                                   <DropdownMenuSubTrigger>Atualizar logística</DropdownMenuSubTrigger>
                                   <DropdownMenuSubContent collisionPadding={16} className="admin-order-logistics-submenu">
-                                    {orderLogisticsStatuses.map(status => <DropdownMenuItem key={status} onSelect={() => {
+                                    {orderLogisticsStatuses.map(status => <DropdownMenuItem key={status} onSelect={async () => {
                                       const nextStatus = status as typeof orderStatuses[number];
-                                      if (!confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`)) return;
+                                      if (!(await confirmAdminAction(`Alterar o pedido #${row.id} para "${getOrderStatusLabel(String(nextStatus))}"?${nextStatus === "cancelled" ? " Cancelar o pedido não cancela a cobrança nem executa reembolso. Confira a situação financeira e as peças já produzidas." : ""}`))) return;
                                       updateOrderMutation.mutate({ orderId: row.id, status: nextStatus });
                                     }}>{getOrderStatusLabel(status)}{String(row.status) === status ? " · atual" : ""}</DropdownMenuItem>)}
                                   </DropdownMenuSubContent>
                                 </DropdownMenuSub>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem onSelect={() => {
-                                  const tracking = window.prompt("Código de rastreio:", row.trackingCode || "");
+                                <DropdownMenuItem onSelect={async () => {
+                                  const tracking = await promptDialog({ title: "Código de rastreio", label: "Código de rastreio", message: `Informe o código de rastreio do pedido #${row.id}. Deixe em branco para remover.`, defaultValue: row.trackingCode || "", confirmLabel: "Salvar" });
                                   if (tracking !== null) updateOrderMutation.mutate({ orderId: row.id, trackingCode: tracking || null });
                                 }}>Atualizar rastreio</DropdownMenuItem>
                               </DropdownMenuContent>
@@ -1328,7 +1329,7 @@ export default function Admin() {
             <div style={styles.inlineRow}>
               <button
                 style={styles.primaryBtn}
-                onClick={() => {
+                onClick={async () => {
                   const discountPercent = Number(launchEmailForm.discountPercent);
                   const batchSize = Number(launchEmailForm.batchSize);
                   if (!launchEmailForm.couponCode.trim()) {
@@ -1343,7 +1344,7 @@ export default function Admin() {
                     showToast({ message: "Informe um lote válido entre 1 e 100", duration: 2400 });
                     return;
                   }
-                  if (!confirmAdminAction("Confirma o envio para toda a lista de espera?")) return;
+                  if (!(await confirmAdminAction("Confirma o envio para toda a lista de espera?"))) return;
 
                   setLaunchEmailResult(null);
                   waitlistLaunchSendMutation.mutate({

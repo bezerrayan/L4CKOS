@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { confirmDialog } from "../adminDialogs";
 import { trpc } from "../../../lib/trpc";
 import {
   BATCH_TRANSITIONS,
@@ -149,13 +150,13 @@ export function AdminBatches() {
     setForm(empty);
     setFormOpen(false);
   }
-  function advance(status: BatchStatus) {
+  async function advance(status: BatchStatus) {
     if (!selected) return;
     const acknowledged =
       status === "CANCELLED"
-        ? window.confirm(
-            `Este lote possui ${detail.data?.paidOrders ?? 0} pedido(s) pago(s). A produção será interrompida. Reembolso NÃO é automático. Confirma o cancelamento e a resolução operacional dos pedidos?`
-          )
+        ? await confirmDialog({ title: "Cancelar lote", confirmLabel: "Cancelar lote", tone: "danger", message:
+            `Este lote possui ${detail.data?.paidOrders ?? 0} pedido(s) pago(s). A produção será interrompida. Reembolso NÃO é automático. Confirma o cancelamento e a resolução operacional dos pedidos?`,
+          })
         : false;
     if (status === "CANCELLED" && !acknowledged) return;
     transition.mutate({

@@ -19,6 +19,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import App from "./App";
 import "./index.css";
 import "./storefront.css";
+import "./styles/l4-polish.css";
 
 // ============= SETUP TRPC =============
 

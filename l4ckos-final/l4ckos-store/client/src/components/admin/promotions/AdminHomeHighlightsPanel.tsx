@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { confirmDialog } from "../adminDialogs";
 import { ArrowDown, ArrowUp, Check, ImagePlus, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { apiUrl } from "../../../const";
 import "./AdminHomeHighlightsPanel.css";
@@ -269,7 +270,7 @@ export function AdminHomeHighlightsPanel({
   };
 
   const remove = async (record: HomeHighlight) => {
-    if (!window.confirm(`Excluir “${record.title}”? Esta ação não pode ser desfeita.`)) return;
+    if (!(await confirmDialog({ title: "Excluir destaque", message: `Excluir “${record.title}”? Esta ação não pode ser desfeita.`, confirmLabel: "Excluir", tone: "danger" }))) return;
     setWorkingId(record.id);
     try {
       await onDelete(record.id);

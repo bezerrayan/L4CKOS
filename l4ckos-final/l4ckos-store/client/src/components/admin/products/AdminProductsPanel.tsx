@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { confirmDialog } from "../adminDialogs";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../../server/routers";
@@ -181,8 +182,8 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
 
   const startCreate = () => { setDraft(blankDraft()); setDirty(new Set()); setSelectedId(null); setPreviewColor(""); setPreviewSize(""); setMode("create"); setNotice(""); navigate("/gestao/catalogo/produtos/novo"); };
   const startEdit = (product: Product) => { setDraft(draftFrom(product)); setDirty(new Set()); setSelectedId(product.id); setPreviewColor(""); setPreviewSize(""); setMode("edit"); setNotice(""); navigate(`/gestao/catalogo/produtos/${product.id}`); };
-  const cancelEdit = () => {
-    if (dirty.size > 0 && !window.confirm("Há alterações não salvas. Sair sem salvar?")) return;
+  const cancelEdit = async () => {
+    if (dirty.size > 0 && !(await confirmDialog({ title: "Alterações não salvas", message: "Há alterações não salvas. Sair sem salvar?", confirmLabel: "Sair sem salvar", tone: "danger" }))) return;
     setMode("list"); setSelectedId(null); setDirty(new Set()); setNotice(""); navigate("/gestao/catalogo/produtos");
   };
   const change = <K extends keyof Draft>(field: K, value: Draft[K]) => {
@@ -281,7 +282,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
     };
     try {
       if (mode === "create") {
-        if (draft.variants.some(variant => variant.isActive) && !window.confirm("Há variantes marcadas para aprovação no catálogo público. Confirme que identidade, preço e estoque foram revisados.")) return;
+        if (draft.variants.some(variant => variant.isActive) && !(await confirmDialog({ title: "Confirmar", message: "Há variantes marcadas para aprovação no catálogo público. Confirme que identidade, preço e estoque foram revisados." }))) return;
         const createInput: CreateInput = {
           ...common,
           description: draft.description.trim() || undefined,
@@ -342,7 +343,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
             setNotice("Revise cor, tamanho, SKU, preço e estoque de cada variante antes de salvar.");
             return;
           }
-          if (!window.confirm("Salvar a revisão das variantes? A ativação exige identidade explícita; pedidos e reservas históricos serão preservados.")) return;
+          if (!(await confirmDialog({ title: "Confirmar", message: "Salvar a revisão das variantes? A ativação exige identidade explícita; pedidos e reservas históricos serão preservados." }))) return;
           update.variants = draft.variants.map(variant => ({
             ...(variant.id !== undefined ? { id: variant.id } : {}),
             ...(variant.name.trim() ? { name: variant.name.trim() } : {}),

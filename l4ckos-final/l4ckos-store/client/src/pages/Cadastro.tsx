@@ -194,9 +194,9 @@ export default function Cadastro() {
         </div>
 
         {/* Formulário de cadastro */}
-        <form onSubmit={handleSignUp} style={styles.form as CSSProperties}>
+        <form className="l4-auth-form" onSubmit={handleSignUp} style={styles.form as CSSProperties}>
           {showTopAlert && formError ? (
-            <div style={styles.formAlert as CSSProperties}>
+            <div role="alert" style={styles.formAlert as CSSProperties}>
               <strong style={styles.formAlertTitle as CSSProperties}>{formError.message}</strong>
               {formError.details.length > 0 ? (
                 <ul style={styles.formAlertList as CSSProperties}>
