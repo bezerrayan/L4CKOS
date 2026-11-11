@@ -17,6 +17,10 @@
 .l4-cart-drawer-item-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .l4-cart-drawer-item h3 { font: 800 14px/1.3 'DM Sans', sans-serif; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; }
 .l4-cart-drawer-item-topline strong { flex: 0 0 auto; font-size: 13px; }
+/* Pre-order note spans its own row so the title/price never share a squeezed column (375px and below). */
+.l4-cart-drawer-item-topline { flex-wrap: wrap; }
+.l4-cart-drawer-item-topline > h3 { flex: 1 1 0; min-width: 0; }
+.l4-cart-drawer-item-topline > .l4-preorder--compact { order: 3; flex: 1 1 100%; min-width: 0; }
 .l4-cart-drawer-item p, .l4-cart-drawer-item-info > span { display: block; margin-top: 5px; color: #a8a29e; font-size: 12px; line-height: 1.35; }
 .l4-cart-drawer-item-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
 .l4-cart-drawer-quantity { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid #343434; border-radius: 9px; overflow: hidden; }
