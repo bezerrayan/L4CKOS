@@ -7,7 +7,7 @@ import * as domain from "../../drizzle/schema";
 import { bootstrapReleaseDatabase } from "../../database/bootstrap/bootstrap";
 import { readReleaseContract } from "../../database/schema/artifacts";
 import auditedDDL from "./fixtures/audited-schema.json";
-import { REQUIRED_TABLES, PREORDER_TABLES, PREORDER_CAPACITY_TABLES, OPTIONAL_TABLES_V3, OPTIONAL_TABLES_V4, OPTIONAL_TABLES, TABLE_MANIFEST_VERSION, TABLE_ORDER, classifyTable } from "./tableManifest";
+import { REQUIRED_TABLES, PREORDER_TABLES, PREORDER_CAPACITY_TABLES, OPTIONAL_TABLES_V3, OPTIONAL_TABLES_V4, OPTIONAL_TABLES_V5, OPTIONAL_TABLES, STOCK_TABLES, EXCLUSIVE_DROP_TABLES, TABLE_MANIFEST_VERSION, TABLE_ORDER, classifyTable } from "./tableManifest";
 import { assertLocalRestoreTarget, backupDatabase, restoreDatabase, restoreLockName, openBackupConnection, checksum, rowsChecksum, validateArtifact, type BackupArtifact } from "./backupRestore";
 
 const enabled = process.env.L4CKOS_MYSQL_TEST === "1";
@@ -99,9 +99,11 @@ describe("backup safety and explicit manifest", () => {
     }).filter(Boolean);
     // These have reviewed SQL DDL but intentionally no Drizzle model.
     const sqlOnlyRequiredTables = new Set(["payments", "paymentEvents", "notificationOutbox"]);
+    // STOCK V1 / Exclusive Drops tables are created by reviewed raw-SQL candidates and have no Drizzle model.
+    const sqlOnlyOptionalTables = new Set<string>([...STOCK_TABLES, ...EXCLUSIVE_DROP_TABLES]);
     const expectedModels = [
       ...REQUIRED_TABLES.filter(name => !sqlOnlyRequiredTables.has(name)),
-      ...OPTIONAL_TABLES,
+      ...OPTIONAL_TABLES.filter(name => !sqlOnlyOptionalTables.has(name)),
     ].sort();
     expect([...new Set(names)].sort()).toEqual(expectedModels);
     for (const name of names) expect(classifyTable(name)).not.toBe("UNKNOWN");
@@ -113,7 +115,8 @@ describe("backup safety and explicit manifest", () => {
     expect(classifyTable("homeHighlightSettings")).toBe("OPTIONAL_PENDING_RECONCILIATION");
     expect(classifyTable("preorderBatchCapacityPolicies")).toBe("KNOWN_VERSIONED");
     expect(classifyTable("preorderCapacityReservations")).toBe("KNOWN_VERSIONED");
-    expect(TABLE_MANIFEST_VERSION).toBe(5);
+    expect(TABLE_MANIFEST_VERSION).toBe(6);
+    for (const name of ["stockCheckoutAttempts", "stockCheckoutItems", "stockWebhookEvents", "exclusiveDrops", "exclusiveGrantUsage"]) expect(classifyTable(name)).toBe("KNOWN_VERSIONED");
     const shortSchema = "l4ckos_test_short";
     const longSchema = `l4ckos_test_${"x".repeat(52)}`;
     expect(shortSchema.length).toBeLessThanOrEqual(64);
@@ -157,7 +160,7 @@ describe("backup safety and explicit manifest", () => {
       checksum: rowsChecksum([]),
       rows: [],
     }]));
-    for (const [version, optional] of [[4, OPTIONAL_TABLES_V4], [5, OPTIONAL_TABLES]] as const) {
+    for (const [version, optional] of [[4, OPTIONAL_TABLES_V4], [5, OPTIONAL_TABLES_V5], [6, OPTIONAL_TABLES]] as const) {
       const body = {
         formatVersion: 1 as const,
         createdAt: "2026-10-21T00:00:00.000Z",
@@ -232,7 +235,7 @@ describe.skipIf(!enabled)("MySQL 8.4 real isolated backup/restore", () => {
     const artifactV6 = await backupDatabase(sourceV6.connection);
     expect(Object.keys(artifactV6.tables)).toHaveLength(30);
     expect(artifactV6.tables).toHaveProperty("homeHighlightSettings");
-    expect(artifactV6.absentOptionalTables).toEqual(["preorderBatchCapacityPolicies", "preorderCapacityReservations"]);
+    expect(artifactV6.absentOptionalTables).toEqual(["preorderBatchCapacityPolicies", "preorderCapacityReservations", ...STOCK_TABLES, ...EXCLUSIVE_DROP_TABLES]);
     expect(artifactV6.tables.productVariants.rows[0]).toMatchObject({ sku: "SYNTHETIC-V6-BLUE-M", isActive: 1, color: "Blue", size: "M" });
     expect(artifactV6.tables.homeHighlightSettings.rows[0]).toMatchObject({ id: 1, displayMode: "rotate", rotationIntervalSeconds: 10 });
 

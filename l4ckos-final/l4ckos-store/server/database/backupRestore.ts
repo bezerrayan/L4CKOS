@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
-import { REQUIRED_TABLES, OPTIONAL_TABLES, OPTIONAL_TABLES_V3, OPTIONAL_TABLES_V4, TABLE_ORDER, TABLE_MANIFEST_VERSION, classifyTable } from "./tableManifest";
+import { REQUIRED_TABLES, OPTIONAL_TABLES, OPTIONAL_TABLES_V3, OPTIONAL_TABLES_V4, OPTIONAL_TABLES_V5, TABLE_ORDER, TABLE_MANIFEST_VERSION, classifyTable } from "./tableManifest";
 
 type Cell = string | number | null | { binaryHex: string };
 type Row = Record<string, Cell>;
@@ -157,7 +157,7 @@ export async function backupDatabase(connection: Connection): Promise<BackupArti
 export function validateArtifact(input: unknown): asserts input is BackupArtifact {
   if (!input || typeof input !== "object") fail("INVALID_BACKUP_FORMAT");
   const artifact = input as BackupArtifact;
-  if (artifact.formatVersion !== 1 || ![1,2,3,4,TABLE_MANIFEST_VERSION].includes(artifact.tableManifestVersion) || artifact.databaseEngine !== "MySQL" ||
+  if (artifact.formatVersion !== 1 || ![1,2,3,4,5,TABLE_MANIFEST_VERSION].includes(artifact.tableManifestVersion) || artifact.databaseEngine !== "MySQL" ||
       !/^8\.4\./.test(artifact.databaseVersion) || typeof artifact.createdAt !== "string" || !Number.isFinite(Date.parse(artifact.createdAt)) ||
       (artifact.applicationCommit !== null && !/^[a-f0-9]{40}$/.test(artifact.applicationCommit)) ||
       !artifact.tables || !Array.isArray(artifact.absentOptionalTables)) fail("INVALID_BACKUP_FORMAT");
@@ -169,7 +169,8 @@ export function validateArtifact(input: unknown): asserts input is BackupArtifac
     : artifact.tableManifestVersion === 2
       ? ["productionBatches", "productionBatchProducts", "asaasWebhookEvents"]
       : artifact.tableManifestVersion === 3 ? OPTIONAL_TABLES_V3
-        : artifact.tableManifestVersion === 4 ? OPTIONAL_TABLES_V4 : OPTIONAL_TABLES;
+        : artifact.tableManifestVersion === 4 ? OPTIONAL_TABLES_V4
+          : artifact.tableManifestVersion === 5 ? OPTIONAL_TABLES_V5 : OPTIONAL_TABLES;
   if (canonical(artifact.absentOptionalTables) !== canonical(manifestOptionalTables.filter(name => !names.includes(name)))) fail("OPTIONAL_MANIFEST_MISMATCH");
   if(artifact.tableManifestVersion<3 && names.includes('asaasWebhookInbox')) fail('INVALID_BACKUP_FORMAT');
   if(artifact.tableManifestVersion===1 && names.some(name=>['productionBatches','productionBatchProducts'].includes(name))) fail('INVALID_BACKUP_FORMAT');
