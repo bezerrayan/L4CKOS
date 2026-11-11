@@ -15,6 +15,7 @@ import { configureStockCheckoutRuntimeForLocalHarness, createContext } from "../
 import { sdk } from "../_core/sdk";
 import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
+import { StockProviderError } from "../stock/stockCheckout";
 import { createExclusiveStore, type ExclusiveDropNotifier, type NotificationEvent } from "./store";
 import { configureExclusiveStoreForLocalHarness } from "./runtime";
 import { canPurchaseExclusive } from "../../shared/exclusiveDropsV1";
@@ -42,6 +43,7 @@ let pool: Pool;
 let httpServer: Server;
 let baseUrl = "";
 let providerCalls: Array<{ orderId: string }>;
+let providerMode: "ok" | "definitive" | "unknown" = "ok";
 let sessionTokens: Record<string, string>;
 let now: Date;
 const clock = () => now;
@@ -122,7 +124,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     };
     const runtime = createStockCheckoutRuntime({
       pool,
-      provider: { supportsIdempotencyKey: true, async createPayment(input) { providerCalls.push(input); return { paymentId: `pay-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/checkout" }; } },
+      provider: { supportsIdempotencyKey: true, async createPayment(input) { providerCalls.push(input); if (providerMode === "definitive") throw new StockProviderError("rejected by provider", true); if (providerMode === "unknown") throw new Error("socket hang up"); return { paymentId: `pay-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/checkout" }; } },
     });
     configureStockCheckoutRuntimeForLocalHarness(runtime);
     configureExclusiveStoreForLocalHarness(createExclusiveStore(pool, { now: clock }));
@@ -138,6 +140,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
   beforeEach(async () => {
     await resetDatabase();
     providerCalls = [];
+    providerMode = "ok";
     at("2026-11-20T15:00:00.000Z"); // inside the purchase window (starts 12:00Z)
     vi.stubEnv("PUBLIC_SITE_MODE", "store");
     vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
@@ -146,6 +149,14 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
   afterAll(async () => {
     vi.unstubAllEnvs();
     configureExclusiveStoreForLocalHarness(undefined);
+    // The disposable database is shared with the STOCK suites: leave it exactly as the base fixture (no drops, no extra tables).
+    if (pool) {
+      await pool.query("SET FOREIGN_KEY_CHECKS = 0");
+      for (const table of ["exclusiveNotificationOutbox", "exclusiveEvents", "exclusiveRedeemAttempts", "exclusiveGrantUsage", "exclusiveGrants", "exclusiveAccessRequests", "exclusiveDropProducts", "exclusiveDrops"]) {
+        await pool.query(`DROP TABLE IF EXISTS ${table}`);
+      }
+      await pool.query("SET FOREIGN_KEY_CHECKS = 1");
+    }
     configureStockCheckoutRuntimeForLocalHarness(undefined);
     if (httpServer) await new Promise<void>(done => httpServer.close(() => done()));
     if (pool) setStockLocalHarnessDb(null);
@@ -376,6 +387,22 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Exclusive drops over STOCK V1 (M
     expect(appCode(await caught(create(owner, "xiv-attempt-orphan-0001", 9)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED"); // in flight (30s old)
     at("2026-11-20T15:03:00.000Z"); // 3.5 min later: the create that never persisted is gone
     expect(await create(owner, "xiv-attempt-orphan-0002", 9)).toMatchObject({ status: "pending" });
+  });
+
+  it("a DEFINITIVE provider failure releases the units; an UNKNOWN provider outcome keeps them until reconciliation", async () => {
+    await createDrop();
+    await unlockedGrantFor(owner, 1);
+    providerMode = "definitive";
+    await caught(create(owner, "xiv-attempt-provfail-001", 8));
+    const [released] = await pool.query<any[]>("SELECT status, providerState FROM stockCheckoutAttempts WHERE attemptId = 'xiv-attempt-provfail-001'");
+    expect(released[0]).toMatchObject({ status: "released", providerState: "definitive_failure" });
+    providerMode = "unknown";
+    // the failed attempt freed the unit, so a fresh attempt may claim it...
+    expect(appCode(await caught(create(owner, "xiv-attempt-provfail-002", 9)))).toBe("PAYMENT_UNDER_ANALYSIS");
+    // ...but the unknown outcome keeps it held: no other attempt can use that unit, and no second charge path opens
+    providerMode = "ok";
+    expect(appCode(await caught(create(owner, "xiv-attempt-provfail-003", 10)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+    expect(providerCalls).toHaveLength(2);
   });
 
   // ---------------------------------------------------------------- drop lifecycle
