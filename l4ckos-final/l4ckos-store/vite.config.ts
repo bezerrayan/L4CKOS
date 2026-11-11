@@ -158,7 +158,11 @@ export default defineConfig(({ command, mode }) => {
   if (command === "build") {
     const buildEnv = loadEnv(mode, PROJECT_ROOT, "");
     try {
-      validateBuildApiConfig({ apiUrl: buildEnv.VITE_API_URL, target: buildEnv.VITE_DEPLOY_TARGET });
+      validateBuildApiConfig({
+        apiUrl: buildEnv.VITE_API_URL,
+        target: buildEnv.VITE_DEPLOY_TARGET,
+        stagingApiAllowedOrigins: buildEnv.VITE_STAGING_API_ALLOWED_ORIGINS,
+      });
     } catch (error) {
       const code = error instanceof Error && "code" in error ? String(error.code) : "API_BUILD_CONFIG_INVALID";
       throw new Error(`[${code}] ${error instanceof Error ? error.message : "Invalid API build configuration."}`);

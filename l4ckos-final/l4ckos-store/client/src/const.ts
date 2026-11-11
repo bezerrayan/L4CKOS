@@ -4,6 +4,7 @@ import { apiEndpoint, resolveApiUrl } from "@shared/apiConfig";
 const browserOrigin = typeof window !== "undefined" ? window.location.origin : undefined;
 export const API_URL = resolveApiUrl({
   apiUrl: import.meta.env.VITE_API_URL,
+  stagingApiAllowedOrigins: import.meta.env.VITE_STAGING_API_ALLOWED_ORIGINS,
   legacyBackendUrl: import.meta.env.VITE_BACKEND_URL,
   target: import.meta.env.VITE_DEPLOY_TARGET,
   isDevelopment: import.meta.env.DEV,

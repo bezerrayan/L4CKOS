@@ -2,6 +2,7 @@ export type ApiDeploymentTarget = "staging" | "production";
 
 export type ApiConfigInput = {
   apiUrl?: string;
+  stagingApiAllowedOrigins?: string;
   legacyBackendUrl?: string;
   target?: string;
   isDevelopment?: boolean;
@@ -15,7 +16,8 @@ export class ApiConfigError extends Error {
   }
 }
 
-const STAGING_API_ORIGIN = "https://api-staging.l4ckos.com.br";
+const PRODUCTION_API_HOSTS = new Set(["api.l4ckos.com.br"]);
+const LEGACY_STAGING_API_HOSTS = new Set(["api-staging.l4ckos.com.br"]);
 const LOCAL_API_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function isLocalApiUrl(url: URL): boolean {
@@ -54,22 +56,14 @@ function isSameOriginConfig(value: string): boolean {
   return true;
 }
 
-export function validateBuildApiConfig(input: Pick<ApiConfigInput, "apiUrl" | "target">): void {
+export function validateBuildApiConfig(input: Pick<ApiConfigInput, "apiUrl" | "target" | "stagingApiAllowedOrigins">): void {
   const target = parseTarget(input.target);
   if (!target) throw new ApiConfigError("API_TARGET_REQUIRED", "Set VITE_DEPLOY_TARGET=staging or production for a release build.");
   const value = input.apiUrl?.trim();
   if (!value) throw new ApiConfigError("API_URL_REQUIRED", "VITE_API_URL is required for a release build.");
 
   if (target === "staging") {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw new ApiConfigError("STAGING_API_ORIGIN_MISMATCH", `Staging builds must set VITE_API_URL to ${STAGING_API_ORIGIN}.`);
-    }
-    if (url.origin !== STAGING_API_ORIGIN || url.pathname !== "/" || url.search || url.hash || url.username || url.password) {
-      throw new ApiConfigError("STAGING_API_ORIGIN_MISMATCH", `Staging builds must set VITE_API_URL to ${STAGING_API_ORIGIN}.`);
-    }
+    validateStagingApiConfig(value, input.stagingApiAllowedOrigins);
     return;
   }
 
@@ -78,6 +72,55 @@ export function validateBuildApiConfig(input: Pick<ApiConfigInput, "apiUrl" | "t
   if (hostname === "api-staging.l4ckos.com.br") {
     throw new ApiConfigError("PRODUCTION_API_TARGET_MISMATCH", "Production builds cannot target the staging API.");
   }
+}
+
+function validateStagingApiConfig(apiUrl: string, allowedOriginsCsv?: string): URL {
+  const allowedOrigins = (allowedOriginsCsv ?? "").split(",").map(value => value.trim()).filter(Boolean);
+  if (allowedOrigins.length === 0) {
+    throw new ApiConfigError("STAGING_API_ALLOWLIST_REQUIRED", "Staging builds require an explicit VITE_STAGING_API_ALLOWED_ORIGINS allowlist.");
+  }
+
+  const parsedAllowed = new Set<string>();
+  for (const allowedOrigin of allowedOrigins) {
+    let allowed: URL;
+    try {
+      allowed = new URL(allowedOrigin);
+    } catch {
+      throw new ApiConfigError("STAGING_API_ALLOWLIST_INVALID", "The staging API allowlist must contain HTTPS origins only.");
+    }
+    if (allowed.protocol !== "https:" || allowed.username || allowed.password || allowed.pathname !== "/" || allowed.search || allowed.hash) {
+      throw new ApiConfigError("STAGING_API_ALLOWLIST_INVALID", "The staging API allowlist must contain HTTPS origins only.");
+    }
+    const hostname = allowed.hostname.toLowerCase();
+    if (PRODUCTION_API_HOSTS.has(hostname)) {
+      throw new ApiConfigError("STAGING_API_PRODUCTION_FORBIDDEN", "Staging cannot authorize the production API host.");
+    }
+    if (LEGACY_STAGING_API_HOSTS.has(hostname)) {
+      throw new ApiConfigError("STAGING_API_LEGACY_FORBIDDEN", "The existing staging API host cannot be used by the isolated preview.");
+    }
+    parsedAllowed.add(allowed.origin);
+  }
+
+  let api: URL;
+  try {
+    api = new URL(apiUrl.trim());
+  } catch {
+    throw new ApiConfigError("STAGING_API_ORIGIN_INVALID", "Staging requires an explicit HTTPS API origin.");
+  }
+  if (api.protocol !== "https:" || api.username || api.password || api.pathname !== "/" || api.search || api.hash) {
+    throw new ApiConfigError("STAGING_API_ORIGIN_INVALID", "Staging requires an HTTPS API origin without credentials, path, query, or fragment.");
+  }
+  const hostname = api.hostname.toLowerCase();
+  if (PRODUCTION_API_HOSTS.has(hostname)) {
+    throw new ApiConfigError("STAGING_API_PRODUCTION_FORBIDDEN", "Staging cannot target the production API.");
+  }
+  if (LEGACY_STAGING_API_HOSTS.has(hostname)) {
+    throw new ApiConfigError("STAGING_API_LEGACY_FORBIDDEN", "Staging cannot fall back to the existing API service.");
+  }
+  if (!parsedAllowed.has(api.origin)) {
+    throw new ApiConfigError("STAGING_API_ORIGIN_UNAUTHORIZED", "The staging API origin is not in the explicit staging allowlist.");
+  }
+  return api;
 }
 
 export function resolveApiUrl(input: ApiConfigInput): URL {
@@ -111,8 +154,8 @@ export function resolveApiUrl(input: ApiConfigInput): URL {
     resolved = parseRemoteUrl(configured, input.isDevelopment);
   }
 
-  if (target === "staging" && resolved.origin !== STAGING_API_ORIGIN) {
-    throw new ApiConfigError("STAGING_API_ORIGIN_MISMATCH", `Staging runtime must target ${STAGING_API_ORIGIN}.`);
+  if (target === "staging") {
+    validateStagingApiConfig(configured, input.stagingApiAllowedOrigins);
   }
   if (target === "production" && resolved.hostname.toLowerCase() === "api-staging.l4ckos.com.br") {
     throw new ApiConfigError("PRODUCTION_API_TARGET_MISMATCH", "Production runtime cannot target the staging API.");

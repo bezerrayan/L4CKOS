@@ -16,13 +16,12 @@ SHA-base da candidata: `1ea69c2f858a96a5c9fcb2a06b0a94b9b548b9e0`.
 - O SHA acima é local. Antes de criar preview Git rastreável, publicá-lo na
   origem conectada mediante autorização específica e confirmar que o checkout
   remoto do SHA é idêntico ao commit local.
-- A configuração V6 atual em `shared/apiConfig.ts` fixa o destino de build
-  staging em `https://api-staging.l4ckos.com.br`. Ela não permite apontar o
-  preview a um novo serviço API isolado. Antes do preview, aprovar e implementar
-  uma origem staging adicional explicitamente permitida e testar a validação;
-  não mover nem reutilizar o hostname/alias atual, pois isso afetaria o staging
-  preservado. Até essa alteração, o build local só compila com o destino antigo
-  e não comprova isolamento do novo API.
+- O build staging requer `VITE_API_URL` e
+  `VITE_STAGING_API_ALLOWED_ORIGINS`. O valor de API precisa ser uma origem HTTPS
+  exata incluída na allowlist; não aceita caminho, credenciais, query ou
+  fragmento. A allowlist não pode incluir a API de produção nem
+  `api-staging.l4ckos.com.br`. Não há destino padrão. Configure a origem gerada
+  pelo API isolado depois de provisioná-lo e validar o serviço.
 
 ## Ordem exata de schema e migrations
 
@@ -56,6 +55,26 @@ STOCK/Drops em MySQL 9.7.2.
 
 ## Configuração mínima por serviço
 
+### Preview Vercel
+
+- `VITE_DEPLOY_TARGET=staging`.
+- `VITE_API_URL` deve ser a origem HTTPS do serviço API isolado.
+- `VITE_STAGING_API_ALLOWED_ORIGINS` deve incluir exatamente essa origem. A
+  validação bloqueia origens não listadas, API de produção e o host do serviço
+  staging atual; não há fallback. Exemplo de execução local sintética (use o
+  hostname real só após provisionamento aprovado):
+
+  ```sh
+  VITE_DEPLOY_TARGET=staging \
+  VITE_API_URL=https://stock-v1-api.example.invalid \
+  VITE_STAGING_API_ALLOWED_ORIGINS=https://stock-v1-api.example.invalid \
+  VITE_SITE_MODE=store pnpm build
+  ```
+
+  Defina as duas variáveis de origem no target Vercel Preview específico; não
+  altere Production/alias do projeto Vercel atual. Build de preview deve ter
+  SSO e origem CORS precisa ser explicitamente autorizada no API.
+
 ### API STOCK
 
 - `APP_ENV=staging`, `NODE_ENV=production`.
@@ -75,6 +94,32 @@ STOCK/Drops em MySQL 9.7.2.
 - `STAGING_DB_TLS_CA_SHA256` é o SHA-256 calculado sobre o PEM exato.
 - Exigir `rejectUnauthorized=true` e `verifyIdentity=true`; o boot STOCK também
   compara `DATABASE()` e `VERSION()` com o nome esperado e `9.7.2`.
+- Antes de liberar conexões da API, configurar no `mysqld` certificado de servidor
+  assinado pela CA staging, com SAN correspondente ao hostname privado Railway
+  efetivamente usado por `DATABASE_URL`, chave privada exclusiva e
+  `require_secure_transport=ON`. Não usar os certificados self-signed gerados
+  automaticamente pelo MySQL, pois não atendem à verificação de identidade do
+  hostname. Distribuir a CA ao API como secret e conferir SHA-256/hostname no
+  preflight.
+
+## Serviços e limites sugeridos
+
+- `mysql-stock-homologation`: imagem pública `mysql:9.7.2`, volume dedicado de
+  5 GB em `/var/lib/mysql`, limite de 1 vCPU e 2 GB RAM, sem domínio público e
+  sem TCP Proxy; acesso somente pela rede privada Railway.
+- `api-stock-homologation`: SHA de aplicação aprovado, 0,5 vCPU e 1 GB RAM,
+  domínio HTTPS Railway necessário ao browser, sem alias compartilhado. A API
+  deve manter checkout fechado e exigir gate server-side restrito para testes.
+  SSO do preview Vercel e CORS não protegem a chamada direta à API.
+- Custo de referência para mês inteiro no limite de CPU/RAM: aproximadamente
+  US$ 60,75 em recursos (1,5 vCPU × US$ 20 + 3 GB RAM × US$ 10 + volume 5 GB ×
+  US$ 0,15), mais egress/subscription; uso real de CPU é faturado por consumo,
+  e créditos/limites do plano da conta são desconhecidos. Confirmar no dashboard
+  antes de provisionar. O volume 5 GB respeita o teto Hobby documentado.
+- Depois da homologação, desligar/retirar o domínio da API, exportar evidências,
+  fazer dump final sintético se necessário, destruir a instância API, MySQL e
+  volume somente com autorização de limpeza; confirmar remoção do volume, pois
+  apagar deployment não necessariamente apaga o volume.
 
 ### Frete
 
@@ -132,8 +177,8 @@ STOCK/Drops em MySQL 9.7.2.
    backup restaurável.
 5. **Deploy:** autorização específica para publicar API do SHA rastreável e
    preview Vercel protegido do mesmo SHA, sem promover domínio existente. A
-   origem API do preview precisa ser a origem isolada aprovada, após resolver o
-   bloqueio de configuração acima.
+   origem API do preview precisa ser a origem HTTPS do serviço isolado e estar
+   incluída exatamente em `VITE_STAGING_API_ALLOWED_ORIGINS`.
 6. **Smoke sem compra:** health, verificação TLS/versão/schema, endpoint de
    webhook inválido rejeitado, catálogo e painel admin; comprovar API de compra
    fechada.
