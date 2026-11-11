@@ -6,6 +6,7 @@ import type * as mysqlOrm from "drizzle-orm/mysql2";
 import { asaasWebhookHandler, processWebhookEnvelope } from "../controllers/paymentController";
 import { financialEnvelope, processStoredWebhook, receiveWebhook, recoverWebhooks } from "../payments/webhookInbox";
 
+import { addStockColumnsToFixture } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => ({ orm: null as unknown }));
 vi.mock("drizzle-orm/mysql2", async original => ({ ...await original<typeof mysqlOrm>(), drizzle: () => injected.orm }));
 vi.mock("../services/emailService.js", () => ({
@@ -61,6 +62,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("PAYMENT_CREATED durable 
       await connection.query(definition);
     }
     await connection.query("SET FOREIGN_KEY_CHECKS=1");
+    await addStockColumnsToFixture(connection);
     await connection.query(`CREATE TABLE asaasWebhookInbox (
       eventId varchar(191) COLLATE utf8mb4_bin PRIMARY KEY, payload text,
       payloadHash varchar(64) NOT NULL,

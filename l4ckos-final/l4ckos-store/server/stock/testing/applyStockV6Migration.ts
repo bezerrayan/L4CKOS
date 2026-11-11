@@ -46,3 +46,23 @@ export async function rollbackStockV6Migration(connection: RowsQueryable, databa
     "ALTER TABLE productVariants DROP CONSTRAINT productVariants_stock_bounds_check, DROP CONSTRAINT productVariants_active_identity_check, DROP INDEX productVariants_sku_unique, DROP COLUMN reservedStock",
   ]) await connection.query(statement);
 }
+
+/**
+ * TEST SUPPORT ONLY, for hand-assembled fixture schemas (not a full V6 lineage): adds just the STOCK columns the
+ * integrated Drizzle models select, without keys/constraints/tables. The real structure is proven by the full-lineage
+ * suites (run-v6-chain-mysql97-test.sh and the V6 financial suites that apply the real candidate).
+ */
+export async function addStockColumnsToFixture(connection: RowsQueryable): Promise<void> {
+  const exists = async (table: string) => {
+    const result = (await connection.query(`SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '${table}'`)) as unknown as [Array<{ n: number | string }>] | Array<{ n: number | string }>;
+    const rows = (Array.isArray(result[0]) ? result[0] : result) as Array<{ n: number | string }>;
+    return Number(rows[0]?.n) > 0;
+  };
+  const alters: Array<[string, string]> = [
+    ["orders", "ADD COLUMN stockAttemptId VARCHAR(120) NULL, ADD COLUMN stockPaymentId VARCHAR(120) NULL, ADD COLUMN shippingOptionId VARCHAR(120) NULL"],
+    ["orderItems", "ADD COLUMN skuSnapshot VARCHAR(120) NULL, ADD COLUMN sizeSnapshot VARCHAR(60) NULL, ADD COLUMN colorSnapshot VARCHAR(60) NULL"],
+    ["stockReservations", "ADD COLUMN attemptId VARCHAR(120) NULL, ADD COLUMN skuSnapshot VARCHAR(120) NULL, ADD COLUMN sizeSnapshot VARCHAR(60) NULL, ADD COLUMN colorSnapshot VARCHAR(60) NULL, ADD COLUMN unitPriceCents INT NULL"],
+    ["productVariants", "ADD COLUMN reservedStock INT NOT NULL DEFAULT 0"],
+  ];
+  for (const [table, ddl] of alters) if (await exists(table)) await connection.query(`ALTER TABLE ${table} ${ddl}`);
+}

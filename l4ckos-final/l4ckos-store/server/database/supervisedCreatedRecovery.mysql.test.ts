@@ -11,6 +11,7 @@ import { canonical, structuralHash, readStructuralSchema } from "../../database/
 import { afterWebhookCommit } from "../database/webhookTransaction";
 import { markOrderPaid } from "../db";
 
+import { addStockColumnsToFixture } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => ({ orm: null as unknown }));
 vi.mock("drizzle-orm/mysql2", async original => ({ ...await original<typeof mysqlOrm>(), drizzle: () => injected.orm }));
 vi.mock("../services/emailService.js", () => ({
@@ -70,6 +71,8 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 supervised recove
     await connection.query(await readFile(new URL("../../database/migrations/0023_asaas_webhook_inbox.sql", import.meta.url), "utf8"));
     const contract = JSON.parse(await readFile(new URL("../../database/schema/contract-v4.json", import.meta.url), "utf8"));
     expect(structuralHash(await readStructuralSchema(connection))).toBe(contract.fingerprint);
+    // After the lineage-fingerprint check: the integrated Drizzle models also select the STOCK columns.
+    await addStockColumnsToFixture(connection);
     const orm = await vi.importActual<typeof mysqlOrm>("drizzle-orm/mysql2");
     pool = createPool({ user: "root", socketPath, database, connectionLimit: 5 });
     injected.orm = orm.drizzle(pool);

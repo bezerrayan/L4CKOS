@@ -10,6 +10,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type Connection } from "mysql2/promise";
 import type * as mysqlOrm from "drizzle-orm/mysql2";
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => {
   process.env.JWT_SECRET =
     "synthetic-local-noop-secret-with-at-least-48-characters";
@@ -17,6 +18,11 @@ const injected = vi.hoisted(() => {
   process.env.ADMIN_EMAILS = "noop-admin2@example.invalid";
   return { orm: null as unknown, provider: vi.fn(), mail: vi.fn() };
 });
+// Simulates the staging identity (RAILWAY_* stubs) against a LOCAL disposable MySQL with an injected pool: the per-environment
+// connection policy (server/database/mysqlConnection.mjs, tested on its own) is replaced here, the database stays real.
+vi.mock("../database/mysqlConnection.mjs", () => ({
+  createMysqlConnectionOptionsForEnvironment: (uri: string) => ({ uri }),
+}));
 vi.mock("drizzle-orm/mysql2", async original => ({
   ...(await original<typeof mysqlOrm>()),
   drizzle: () => injected.orm,
@@ -306,6 +312,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         applicationCommit: "a".repeat(40),
         approvedFingerprint: (await readReleaseContract()).fingerprint,
       });
+      await applyStockV6Migration(c, database);
       pool = createPool({
         socketPath: socket,
         user: "root",

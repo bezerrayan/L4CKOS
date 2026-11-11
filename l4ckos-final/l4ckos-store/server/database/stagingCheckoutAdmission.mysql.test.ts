@@ -36,6 +36,7 @@ import { RECOVERY_HOLD_ACTION } from "../payments/webhookRecovery";
 import { sdk } from "../_core/sdk";
 import { ENV } from "../_core/env";
 import { assertEmailRecipientsAllowed } from "../services/email/recipientPolicy.js";
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => ({
   orm: null as unknown,
   mail: vi.fn(async (_p: any) => ({ id: "synthetic-mail" })),
@@ -278,6 +279,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         applicationCommit: "a".repeat(40),
         approvedFingerprint: (await readReleaseContract()).fingerprint,
       });
+      await applyStockV6Migration(c, database);
       const actual =
         await vi.importActual<typeof mysqlOrm>("drizzle-orm/mysql2");
       pool = createPool({

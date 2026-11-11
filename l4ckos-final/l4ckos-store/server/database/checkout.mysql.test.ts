@@ -8,6 +8,7 @@ import { openBackupConnection, backupDatabase, restoreDatabase, assertLocalResto
 import { bootstrapArtifacts } from "../../database/schema/artifacts";
 import { readStructuralSchema, structuralHash } from "../../database/schema/fingerprint";
 import { createVariantOptionKey } from "./productVariantIdentity";
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const socketPath=process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? "/tmp/l4ckos-reconciliation-socket/mysqld.sock";
 const url=(name:string)=>`mysql://root@localhost/${name}`;
 let root:Connection;const connections:Connection[]=[];const names:string[]=[];
@@ -21,6 +22,7 @@ async function database(seed=true){
  for(const s of (await readFile(new URL("../../database/migrations/0022_preorder_manufacturing_schedule.sql",import.meta.url),"utf8")).split(/^-- l4ckos:statement-breakpoint\s*$/m).map(s=>s.trim()).filter(Boolean)) await c.query(s);
  for(const migration of ["0023_asaas_webhook_inbox.sql","0024_home_highlight_settings.sql","0025_product_variant_identity.sql"])
   for(const s of (await readFile(new URL(`../../database/migrations/${migration}`,import.meta.url),"utf8")).split(/^-- l4ckos:statement-breakpoint\s*$/m).map(s=>s.trim()).filter(Boolean)) await c.query(s);
+ await applyStockV6Migration(c,name);
  if(seed){
  await c.query("INSERT INTO users (id,openId,name) VALUES (1,'synthetic-checkout','Synthetic')");
  await c.query("INSERT INTO products (id,name,category,price,stock,imageUrl) VALUES (1,'Frozen A','fixture',8000,20,'/fixture-a.png'),(2,'Frozen B','fixture',3000,40,'/fixture-b.png')");
@@ -73,10 +75,12 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('real MySQL atomic checkout
   const c=await database();const request=input([{productId:1,quantity:2},{productId:2,variantId:1,quantity:1,size:'M',color:'Blue'}]);
   const a=adapters();const result=await checkout(c,request,a);expect(result.totalPrice).toBe(21000);
   const frozen=await rows(c,'SELECT * FROM orderItems ORDER BY id');expect(frozen[1]).toMatchObject({variantId:1,unitPrice:5000,totalPrice:5000,sku:'SYNTHETIC-SKU',size:'M',color:'Blue'});
-  await c.query("UPDATE products SET price=1,name='Changed',imageUrl='/changed'");await c.query("UPDATE productVariants SET price=2,name='Changed variant',sku='Changed',size='S',color='Green'");
+  await c.query("UPDATE products SET price=1,name='Changed',imageUrl='/changed'");await c.query("UPDATE productVariants SET price=2,name='Changed variant',sku=CONCAT('Changed-',id),size='S',color='Green'");
   expect(await rows(c,'SELECT * FROM orderItems ORDER BY id')).toEqual(frozen);
   const replay=await checkout(c,request,a);expect(replay.replayed).toBe(true);expect(replay.payment).toEqual(result.payment);expect(a.charge).toHaveBeenCalledOnce();
   const artifact=await backupDatabase(c),destination=await database(false);
+  // The restore must not alter the target schema (lineage + the applied STOCK candidate): compare with its pre-restore shape.
+  const schemaBeforeRestore=structuralHash(await readStructuralSchema(destination));
   expect(artifact.tables.homeHighlightSettings.rowCount).toBe(1);
   const destinationContents=[];
   for(const name of Object.keys(artifact.tables)){
@@ -90,7 +94,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('real MySQL atomic checkout
   for(const name of Object.keys(artifact.tables))expect(await rows(destination,`SELECT COUNT(*) n FROM \`${name}\``)).toEqual([{n:0}]);
   await restoreDatabase(destination,artifact,{url:url(destination.config.database!),socketPath});
   const restored=await backupDatabase(destination);for(const name of Object.keys(artifact.tables))expect(restored.tables[name].checksum).toBe(artifact.tables[name].checksum);
-  expect(structuralHash(await readStructuralSchema(destination))).toBe(currentContract.fingerprint);
+  expect(structuralHash(await readStructuralSchema(destination))).toBe(schemaBeforeRestore);
  });
  it.each([
   [{productId:999,quantity:1}], [{productId:2,variantId:999,quantity:1}], [{productId:1,variantId:1,quantity:1}],

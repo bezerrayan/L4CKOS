@@ -11,6 +11,7 @@ import {readReleaseContract} from '../../database/schema/artifacts';
 import {receiveWebhook,persistWebhook,recoverWebhooks} from '../payments/webhookInbox';
 import {processWebhookEnvelope,asaasWebhookHandler} from '../controllers/paymentController';
 import {deliverPaymentNotifications} from '../payments/paymentNotificationOutbox';
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected=vi.hoisted(()=>({orm:null as unknown,mail:vi.fn(async(_p:any)=>({id:'synthetic-mail'}))}));
 vi.mock('drizzle-orm/mysql2',async original=>({...await original<typeof mysqlOrm>(),drizzle:()=>injected.orm}));
 vi.mock('../services/emailService.js',()=>({sendPaymentApprovedEmail:injected.mail,sendOrderCreatedEmail:vi.fn(async()=>({id:"synthetic-created"})),sendPaymentPendingEmail:vi.fn(async()=>({id:"synthetic-pending"})),sendInternalNewSaleAlertEmail:vi.fn(async()=>{}),sendInternalLowStockAlertEmail:vi.fn(async()=>{}),sendPaymentFailedEmail:vi.fn(async()=>{}),sendInternalPaymentFailedAlertEmail:vi.fn(async()=>{})}));
@@ -38,6 +39,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('operational checkout/inbox
   await root.query(`CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   c=await openBackupConnection(`mysql://root@localhost/${name}`,socketPath);
   await bootstrapReleaseDatabase(c,{url:`mysql://root@localhost/${name}`,socketPath,applicationCommit:'a'.repeat(40),approvedFingerprint:(await readReleaseContract()).fingerprint});
+  await applyStockV6Migration(c,name);
   const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');pool=createPool({user:'root',socketPath,database:name,connectionLimit:8});injected.orm=actual.drizzle(pool);
  },30000);
  beforeEach(async()=>{
