@@ -4,6 +4,7 @@ import { sdk } from "./sdk";
 import type { StockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
 
 let localHarnessStockRuntime: StockCheckoutRuntime | undefined;
+let serverStockRuntime: StockCheckoutRuntime | undefined;
 
 function isDisposableStockHarness(): boolean {
   return process.env.NODE_ENV !== "production" &&
@@ -21,8 +22,17 @@ export function configureStockCheckoutRuntimeForLocalHarness(runtime: StockCheck
   localHarnessStockRuntime = runtime;
 }
 
+/** Runtime composition requires an explicit server flag; checkout remains separately gated. */
+export function configureStockCheckoutRuntimeForServer(runtime: StockCheckoutRuntime): void {
+  if (process.env.STOCK_RUNTIME_ENABLED !== "true") {
+    throw new Error("STOCK_RUNTIME_FLAG_REQUIRED");
+  }
+  serverStockRuntime = runtime;
+}
+
 export function getConfiguredStockCheckoutRuntime(): StockCheckoutRuntime | undefined {
-  return isDisposableStockHarness() ? localHarnessStockRuntime : undefined;
+  if (isDisposableStockHarness()) return localHarnessStockRuntime;
+  return process.env.STOCK_RUNTIME_ENABLED === "true" ? serverStockRuntime : undefined;
 }
 
 export type TrpcContext = {

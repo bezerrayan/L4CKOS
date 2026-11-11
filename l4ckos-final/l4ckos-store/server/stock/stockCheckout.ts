@@ -307,7 +307,7 @@ export async function createStockCheckout(input: {
   return { orderId: prepared.attempt.orderId, paymentId: payment.paymentId, checkoutUrl: payment.checkoutUrl, amountCents, snapshots: prepared.attempt.snapshots, replayed: prepared.replayed };
 }
 
-/** Authenticated read-only lookup. No provider, reservation, or state mutation is reachable from this function. */
+/** Formats an owner-scoped attempt after due reservations have been reconciled. */
 function resumeRecord(attempt: StockAttemptResumeRecord): import("../../shared/stockCheckoutV1").StockAttemptResumeV1 {
   let status: import("../../shared/stockCheckoutV1").StockAttemptResumeV1["status"];
   if (attempt.status === "paid") status = "paid";
@@ -339,6 +339,7 @@ export async function resumeStockCheckout(input: {
 }): Promise<import("../../shared/stockCheckoutV1").StockAttemptResumeV1> {
   if (!Number.isSafeInteger(input.authenticatedUserId) || input.authenticatedUserId <= 0) fail("AUTHENTICATION_REQUIRED");
   if (typeof input.attemptId !== "string" || !/^[A-Za-z0-9_-]{16,120}$/.test(input.attemptId)) fail("STOCK_ATTEMPT_ID_INVALID");
+  await expireOwnerReservations(input.store, input.authenticatedUserId);
   const attempt = await input.store.findAttemptForOwner(input.attemptId, input.authenticatedUserId);
   if (!attempt) fail("CHECKOUT_ATTEMPT_NOT_FOUND");
 
@@ -348,8 +349,21 @@ export async function resumeStockCheckout(input: {
 export async function resumeLatestStockCheckout(input: { store: StockCheckoutStore; authenticatedUserId: number }) {
   if (!Number.isSafeInteger(input.authenticatedUserId) || input.authenticatedUserId <= 0) fail("AUTHENTICATION_REQUIRED");
   if (!input.store.findLatestAttemptForOwner) fail("CHECKOUT_RESUME_UNAVAILABLE");
+  await expireOwnerReservations(input.store, input.authenticatedUserId);
   const attempt = await input.store.findLatestAttemptForOwner(input.authenticatedUserId);
   return attempt ? resumeRecord(attempt) : null;
+}
+
+/**
+ * Resume also advances due, definitively unstarted attempts. The store performs
+ * release and inventory accounting in one transaction; attempts whose provider
+ * outcome may exist are only marked for reconciliation and keep their stock.
+ */
+async function expireOwnerReservations(store: StockCheckoutStore, ownerUserId: number): Promise<void> {
+  for (let batch = 0; batch < 10; batch += 1) {
+    const result = await store.transaction(tx => tx.expireDueReservations(500, ownerUserId));
+    if (result.releasedAttemptIds.length + result.reconciliationAttemptIds.length < 500) return;
+  }
 }
 
 async function processStockPaymentWebhook(input: {

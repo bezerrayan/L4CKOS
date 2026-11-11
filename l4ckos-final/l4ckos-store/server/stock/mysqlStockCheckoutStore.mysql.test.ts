@@ -378,6 +378,26 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
     expect(await expireStockReservations(store, 1)).toEqual({ releasedAttemptIds: [], reconciliationAttemptIds: [] });
   });
 
+  it("coordinates simultaneous expiry workers and makes released stock sellable exactly once", async () => {
+    await seedReservedAttempt("mysql-expire-workers-stock-sale-01", 8);
+    await forceAttemptExpired("mysql-expire-workers-stock-sale-01");
+    const [workerA, workerB] = await Promise.all([
+      expireStockReservations(store, 10),
+      expireStockReservations(store, 10),
+    ]);
+    expect(workerA.releasedAttemptIds.length + workerB.releasedAttemptIds.length).toBe(1);
+    expect(await readInventory(8)).toMatchObject({ stock: 1, reservedStock: 0 });
+    const replacement = await createStockCheckout({
+      enabled: true, store, provider: provider(), request: checkoutRequest("mysql-expire-workers-new-sale-01", 8),
+    });
+    expect(replacement.replayed).toBe(false);
+    expect(await readInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+    await expect(createStockCheckoutDomain({
+      enabled: true, ownerUserId: 82, store, provider: provider(), request: checkoutRequest("mysql-expire-workers-oversell-01", 8),
+    })).rejects.toMatchObject({ code: "CHECKOUT_STOCK_INSUFFICIENT" });
+    expect(await readInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+  });
+
   it("releases this owner's expired unstarted attempt before accepting a replacement cart", async () => {
     await seedReservedAttempt("mysql-owner-expired-attempt-0001", 9);
     await forceAttemptExpired("mysql-owner-expired-attempt-0001");

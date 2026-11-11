@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import type { Pool } from "mysql2/promise";
 import { createHash } from "node:crypto";
 import { createMysqlConnectionOptions } from "./database/mysqlTls.mjs";
 import {
@@ -148,6 +149,17 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+/** Returns the same mysql2 pool used by Drizzle for transaction-oriented STOCK code. */
+export async function getMysqlPool(): Promise<Pool | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const client = (db as unknown as { $client?: Pool }).$client;
+  if (!client || typeof client.getConnection !== "function") {
+    throw new Error("MYSQL_POOL_UNAVAILABLE");
+  }
+  return client;
 }
 
 function hashWebhookPayload(payload: unknown) {
