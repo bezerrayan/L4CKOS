@@ -120,7 +120,30 @@ async function activeReservations(connection: PoolConnection, attemptId: string)
 
 function createTransaction(connection: PoolConnection, reservationTtlSeconds: number): StockCheckoutTransaction {
   return {
+    async lockOwnerForCheckout(ownerUserId): Promise<void> {
+      const [rows] = await connection.execute<(RowDataPacket & { id: number })[]>(
+        `SELECT id FROM users WHERE id = ? FOR UPDATE`,
+        [ownerUserId],
+      );
+      if (!rows.length) throw new StockMySqlInvariantError("Checkout owner does not exist");
+    },
+
     findAttempt: attemptId => findAttempt(connection, attemptId),
+
+    async findOpenAttemptsForOwner(ownerUserId): Promise<StockAttempt[]> {
+      const [rows] = await connection.execute<(RowDataPacket & { attemptId: string })[]>(
+        `SELECT attemptId FROM stockCheckoutAttempts
+          WHERE ownerUserId = ? AND status = 'reserved'
+          ORDER BY createdAt, attemptId FOR UPDATE`,
+        [ownerUserId],
+      );
+      const attempts: StockAttempt[] = [];
+      for (const row of rows) {
+        const attempt = await findAttempt(connection, row.attemptId);
+        if (attempt) attempts.push(attempt);
+      }
+      return attempts;
+    },
 
     async findVariant(variantId): Promise<StockVariant | null> {
       const [rows] = await connection.execute<(RowDataPacket & {
@@ -452,10 +475,11 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       );
     },
 
-    async expireDueReservations(batchSize): Promise<{ releasedAttemptIds: string[]; reconciliationAttemptIds: string[] }> {
+    async expireDueReservations(batchSize, ownerUserId?): Promise<{ releasedAttemptIds: string[]; reconciliationAttemptIds: string[] }> {
       if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 500) {
         throw new RangeError("batchSize must be between 1 and 500");
       }
+      const ownerFilter = ownerUserId === undefined ? "" : " AND ownerUserId = ?";
       const [dueRows] = await connection.execute<(RowDataPacket & {
         attemptId: string;
         providerState: StockAttempt["providerState"];
@@ -465,9 +489,11 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
           WHERE status = 'reserved'
             AND reservationExpiresAt <= UTC_TIMESTAMP(3)
             AND expiryReviewedAt IS NULL
+            ${ownerFilter}
           ORDER BY reservationExpiresAt, attemptId
           LIMIT ${batchSize}
           FOR UPDATE SKIP LOCKED`,
+        ownerUserId === undefined ? [] : [ownerUserId],
       );
       const releasedAttemptIds: string[] = [];
       const reconciliationAttemptIds: string[] = [];

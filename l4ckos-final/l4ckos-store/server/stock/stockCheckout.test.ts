@@ -38,7 +38,9 @@ class MemoryStockStore implements StockCheckoutStore {
       webhookEvents: structuredClone(this.webhookEvents),
     };
     const tx: StockCheckoutTransaction = {
+      lockOwnerForCheckout: async () => {},
       findAttempt: async id => this.attempts.get(id) ?? null,
+      findOpenAttemptsForOwner: async ownerUserId => [...this.attempts.values()].filter(attempt => attempt.ownerUserId === ownerUserId && attempt.status === "reserved"),
       findVariant: async id => this.variants.get(id) ?? null,
       isSkuUnique: async (sku, variantId) => ![...this.variants.values()].some(row => row.id !== variantId && row.sku.normalize("NFKC").trim().toLowerCase() === sku.normalize("NFKC").trim().toLowerCase()),
       reserveVariant: async (id, quantity) => {
@@ -283,6 +285,67 @@ describe("local STOCK checkout core", () => {
     expect(payments.calls).toBe(1); // replay returns the persisted payment correlation
     await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-replay-0001", { items: [{ productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 2 }] }) }))
       .rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_CHANGED" });
+  });
+
+  it("blocks equivalent open carts with different attemptIds under concurrent creates", async () => {
+    const store = new MemoryStockStore([variant({ availableUnits: 5 })]);
+    const payments = provider(undefined, 25800);
+    const equivalentButReordered = request("attempt-dedupe-000002", {
+      items: [
+        { productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 1 },
+        { productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 1 },
+      ],
+    });
+    const outcomes = await Promise.allSettled([
+      createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-dedupe-000001", { items: [{ productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 2 }] }) }),
+      createStockCheckout({ enabled: true, store, provider: payments, request: equivalentButReordered }),
+    ]);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(outcome => outcome.status === "rejected")).toHaveLength(1);
+    expect(outcomes.find(outcome => outcome.status === "rejected")).toMatchObject({ reason: { code: "CHECKOUT_ATTEMPT_NOT_REUSABLE" } });
+    expect(store.attempts.size).toBe(1);
+    expect(store.reserved.get(8)).toBe(2);
+    expect(payments.calls).toBe(1);
+  });
+
+  it("allows a new equivalent cart only after the earlier attempt is no longer open", async () => {
+    const store = new MemoryStockStore([variant({ availableUnits: 3 })]);
+    const payments = provider();
+    await createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-next-buy-00001") });
+    await store.transaction(tx => tx.markReleased("attempt-next-buy-00001"));
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-next-buy-00002") })).resolves.toMatchObject({ replayed: false });
+    expect(payments.calls).toBe(2);
+  });
+
+  it("does not treat a paid purchase as an open attempt for a later legitimate purchase", async () => {
+    const store = new MemoryStockStore([variant({ availableUnits: 3 })]);
+    const payments = provider();
+    const first = await createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-paid-prior-0001") });
+    await store.transaction(tx => tx.markPaid("attempt-paid-prior-0001", first.paymentId));
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-paid-next-00001") })).resolves.toMatchObject({ replayed: false });
+    expect(payments.calls).toBe(2);
+  });
+
+  it("does not reuse an open payment when the same cart changes delivery address", async () => {
+    const store = new MemoryStockStore([variant({ availableUnits: 3 })]);
+    const payments = provider();
+    const delivery = (number: string) => ({
+      optionId: "local-plano-piloto",
+      address: {
+        recipient: "Cliente de Teste", zipCode: "70000000", street: "Rua de Teste", number,
+        neighborhood: "Centro", city: "Brasília", state: "DF",
+      },
+    });
+    await createStockCheckout({
+      enabled: true, store, provider: payments,
+      request: request("attempt-address-first-001", { delivery: delivery("10") }),
+    });
+    await expect(createStockCheckout({
+      enabled: true, store, provider: payments,
+      request: request("attempt-address-next-001", { delivery: delivery("20") }),
+    })).rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_NOT_REUSABLE" });
+    expect(payments.calls).toBe(1);
+    expect(store.attempts.size).toBe(1);
   });
 
   it("does not reveal or replay an attempt owned by another authenticated user", async () => {

@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+vi.hoisted(() => {
+  process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";
+  process.env.JWT_ISSUER = "l4ckos-test";
+  process.env.JWT_AUDIENCE = "l4ckos-test-web";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+});
 import { TRPCError } from "@trpc/server";
 import cors from "cors";
 import express from "express";
@@ -8,11 +14,6 @@ import { hasForbiddenClientPaymentField } from "./controllers/paymentController"
 import { createApiCorsOptions, getAllowedOrigins, isAllowedOrigin } from "./_core/corsPolicy";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { isKnownClientRoute } from "./_core/vite";
-
-process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";
-process.env.JWT_ISSUER = "l4ckos-test";
-process.env.JWT_AUDIENCE = "l4ckos-test-web";
-process.env.ADMIN_EMAILS = "admin@example.com";
 
 vi.mock("./db", () => ({
   getOrderByAsaasCheckoutId: vi.fn(),
