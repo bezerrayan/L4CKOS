@@ -54,6 +54,13 @@ let pool: Pool;
 let httpServer: Server;
 let baseUrl = "";
 let runtime: ReturnType<typeof createStockCheckoutRuntime>;
+const SHIPPING_SECRET = "synthetic-shipping-signing-secret-at-least-32-bytes";
+let shippingQuoteCalls: Array<{ cep: string; itemCount: number; subtotal: number }> = [];
+let shippingQuoteResult: { options: Array<{ id: string; label: string; description: string; price: number; minDays: number | null; maxDays: number | null }>; source: "melhor-envio" | "fallback-local" | "mixed" | "unavailable" } = { options: [], source: "unavailable" };
+const fakeShippingQuote = async (input: { cep: string; itemCount: number; subtotal: number }) => { shippingQuoteCalls.push(input); return shippingQuoteResult; };
+// Like the real provider, a repeated idempotency key returns the SAME payment; distinct keys get distinct payments.
+const paymentIds = new Map<string, string>();
+const paymentIdFor = (key: string) => { if (!paymentIds.has(key)) paymentIds.set(key, `pay-synthetic-${paymentIds.size + 1}`); return paymentIds.get(key)!; };
 let providerCalls: Array<{ orderId: string; amountCents: number; idempotencyKey: string }>;
 let sessionTokens: Record<string, string>;
 
@@ -79,7 +86,7 @@ function adminHttpClient(session: string) {
 
 async function resetDatabase() {
   await pool.query("SET FOREIGN_KEY_CHECKS = 0");
-  for (const table of ["stockWebhookEvents", "stockReservations", "orderItems", "stockCheckoutItems", "stockCheckoutAttempts", "orders", "productVariants", "products", "userAddresses", "users"]) {
+  for (const table of ["auditLogs", "stockWebhookEvents", "stockReservations", "orderItems", "stockCheckoutItems", "stockCheckoutAttempts", "orders", "productVariants", "products", "userAddresses", "users"]) {
     await pool.query("TRUNCATE TABLE " + table);
   }
   await pool.query("SET FOREIGN_KEY_CHECKS = 1");
@@ -120,12 +127,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     runtime = createStockCheckoutRuntime({
       pool,
       exclusiveStore: createExclusiveStore(pool),
+      shipping: { secret: SHIPPING_SECRET, quote: fakeShippingQuote },
       provider: {
         supportsIdempotencyKey: true,
         async createPayment(input) {
           providerCalls.push(input);
           // unique per call (a sync push+length), so concurrent attempts never collide on the payment unique key
-          return { paymentId: `pay-synthetic-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
+          return { paymentId: paymentIdFor(input.idempotencyKey), checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
         },
       },
     });
@@ -152,6 +160,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
   beforeEach(async () => {
     await resetDatabase();
     providerCalls = [];
+    paymentIds.clear();
     vi.stubEnv("PUBLIC_SITE_MODE", "store");
     vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
     vi.stubEnv("ASAAS_WEBHOOK_TOKEN", syntheticWebhookToken);
@@ -325,11 +334,12 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     runtime = createStockCheckoutRuntime({
       pool,
       exclusiveStore: createExclusiveStore(pool),
+      shipping: { secret: SHIPPING_SECRET, quote: fakeShippingQuote },
       provider: {
         supportsIdempotencyKey: true,
         async createPayment(input) {
           providerCalls.push(input);
-          return { paymentId: `pay-synthetic-${providerCalls.length}`, checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
+          return { paymentId: paymentIdFor(input.idempotencyKey), checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
         },
       },
     });
@@ -469,6 +479,99 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       expect(await claimed()).toBe(2);
       expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
       await expect(buy("admin-83", "xiv-preorder-release-attempt-0004", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+    });
+  });
+
+  describe("carrier freight: signed quote, charged total and persisted snapshot", () => {
+    const address = { recipient: "Cliente Sintético", zipCode: "01001000", street: "Praça da Sé", number: "10", complement: "Apto 4", neighborhood: "Sé", city: "São Paulo", state: "SP" };
+    const items = [{ productId: 4, variantId: 8, quantity: 1 }];
+    const sedex = { id: "melhor-envio-1", label: "SEDEX", description: "Correios", price: 31.9, minDays: 2, maxDays: 4 };
+    const quote = async (session = "owner-81", req: Record<string, unknown> = { items, address }) => httpClient(session).stockCheckout.quoteShipping.mutate(req as never);
+    const create = (attemptId: string, delivery: Record<string, unknown>, session = "owner-81") =>
+      httpClient(session).stockCheckout.create.mutate({ attemptId, items, delivery } as never);
+    const orderRow = async (orderId: string) => ((await pool.query<any[]>("SELECT totalPrice, shippingZipCode, shippingOptionId FROM orders WHERE id = ?", [orderId]))[0])[0];
+    const ordersCount = async () => Number(((await pool.query<any[]>("SELECT COUNT(*) n FROM orders"))[0])[0].n);
+    const rejectedWith = (promise: Promise<unknown>, code: string) => expect(promise).rejects.toMatchObject({ data: { appError: { code } } });
+
+    beforeEach(() => { shippingQuoteCalls = []; shippingQuoteResult = { options: [sedex], source: "melhor-envio" }; });
+
+    it("quotes server-side from the DB catalog (the client supplies only variants and quantities) and signs the terms", async () => {
+      const result = await quote();
+      expect(result.options).toHaveLength(1);
+      expect(result.options[0]).toMatchObject({ optionId: "melhor-envio-1", priceCents: 3190, label: "SEDEX" });
+      expect(shippingQuoteCalls).toEqual([{ cep: "01001000", itemCount: 1, subtotal: 129 }]); // subtotal from variants.price, not the client
+      const [payload] = result.options[0].quoteToken.split(".");
+      expect(Buffer.from(payload, "base64url").toString()).not.toContain("Praça da Sé"); // no raw address inside the token
+      // client-supplied freight fields are rejected by the strict contract
+      await expect(quote("owner-81", { items, address, priceCents: 1 })).rejects.toMatchObject({ data: { code: "BAD_REQUEST" } });
+      await expect(quote("anonymous")).rejects.toMatchObject({ data: { code: "UNAUTHORIZED" } });
+    });
+
+    it("charges merchandise + accepted freight, persists the acceptance snapshot, and the webhook must match the TOTAL", async () => {
+      const [option] = (await quote()).options;
+      const created = await create("stock-ship-attempt-0001", { optionId: option.optionId, quoteToken: option.quoteToken, address });
+      expect(created).toMatchObject({ status: "pending", amountCents: 12900 + 3190 });
+      expect(providerCalls).toMatchObject([{ amountCents: 16090 }]);
+      expect(await orderRow(created.orderId)).toMatchObject({ totalPrice: 16090, shippingZipCode: "01001000", shippingOptionId: "melhor-envio-1" });
+      const [attempts] = await pool.query<any[]>("SELECT amountCents FROM stockCheckoutAttempts");
+      expect(Number(attempts[0].amountCents)).toBe(16090);
+      const [audit] = await pool.query<any[]>("SELECT metadata FROM auditLogs WHERE action = 'checkout.shipping_accepted.v1' AND entityId = ?", [created.orderId]);
+      expect(audit).toHaveLength(1);
+      const snapshot = JSON.parse(audit[0].metadata);
+      expect(snapshot).toMatchObject({ merchandiseCents: 12900, shipping: { method: "carrier", optionId: "melhor-envio-1", carrier: "Correios", serviceName: "SEDEX", shippingPriceCents: 3190, currency: "BRL", destinationZipCode: "01001000", itemCount: 1, merchandiseSubtotalCents: 12900, package: { heightCm: 6, widthCm: 18, lengthCm: 26, weightGrams: 300 }, address: { street: "Praça da Sé", city: "São Paulo" } } });
+      expect(snapshot.shipping.quoteReference).toMatch(/^[0-9a-f-]{36}$/);
+      expect(JSON.stringify(snapshot)).not.toContain(option.quoteToken);
+      // the provider reports only the merchandise value: refused, never marked paid
+      const wrong = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-ship-wrong", event: "PAYMENT_RECEIVED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" } }) });
+      expect(wrong.status === 200 ? (await wrong.json()).handled : false).toBe(false); // acknowledged as a conflict or refused: never processed
+      expect((await pool.query<any[]>("SELECT status FROM stockCheckoutAttempts"))[0][0].status).toBe("reserved");
+      const right = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-ship-right", event: "PAYMENT_RECEIVED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 160.9, currency: "BRL" } }) });
+      expect(right.status).toBe(200);
+      expect((await pool.query<any[]>("SELECT status FROM stockCheckoutAttempts"))[0][0].status).toBe("paid");
+    });
+
+    it("rejects tampered, wrong-option, wrong-address, changed-cart, repriced and expired quotes before anything is created", async () => {
+      const { issueStockShippingQuoteV1 } = await import("./stockShippingQuoteV1");
+      const { stockShippingCartFingerprint } = await import("./stockCheckout");
+      const [option] = (await quote()).options;
+      const ok = { optionId: option.optionId, quoteToken: option.quoteToken, address };
+      const flip = option.quoteToken.slice(0, -2) + (option.quoteToken.endsWith("AA") ? "BB" : "AA");
+      const expired = issueStockShippingQuoteV1({ secret: SHIPPING_SECRET, address, cartFingerprint: stockShippingCartFingerprint([{ variantId: 8, unitPriceCents: 12900, quantity: 1 }]), itemCount: 1, merchandiseSubtotalCents: 12900, now: new Date(Date.now() - 3_600_000), terms: { method: "carrier", optionId: "melhor-envio-1", carrier: "Correios", serviceId: "1", serviceName: "SEDEX", providerQuoteId: "melhor-envio-1", shippingPriceCents: 3190, package: { heightCm: 6, widthCm: 18, lengthCm: 26, weightGrams: 300 } } });
+      const foreign = issueStockShippingQuoteV1({ secret: "another-signing-secret-with-at-least-32-bytes!!", address, cartFingerprint: stockShippingCartFingerprint([{ variantId: 8, unitPriceCents: 12900, quantity: 1 }]), itemCount: 1, merchandiseSubtotalCents: 12900, terms: { method: "carrier", optionId: "melhor-envio-1", carrier: "Correios", serviceId: "1", serviceName: "SEDEX", providerQuoteId: "melhor-envio-1", shippingPriceCents: 1, package: { heightCm: 6, widthCm: 18, lengthCm: 26, weightGrams: 300 } } });
+      await rejectedWith(create("stock-ship-bad-0001", { ...ok, quoteToken: flip }), "SHIPPING_QUOTE_REJECTED");
+      await rejectedWith(create("stock-ship-bad-0002", { ...ok, optionId: "melhor-envio-2" }), "SHIPPING_QUOTE_REJECTED");
+      await rejectedWith(create("stock-ship-bad-0003", { ...ok, address: { ...address, street: "Rua Outra" } }), "SHIPPING_QUOTE_REJECTED");
+      await rejectedWith(create("stock-ship-bad-0004", { ...ok, quoteToken: expired.quoteToken }), "SHIPPING_QUOTE_REJECTED");
+      await rejectedWith(create("stock-ship-bad-0005", { ...ok, quoteToken: foreign.quoteToken }), "SHIPPING_QUOTE_REJECTED"); // signed with another secret, price 1 cent
+      await expect(httpClient("owner-81").stockCheckout.create.mutate({ attemptId: "stock-ship-bad-0006", items: [{ ...items[0], quantity: 2 }], delivery: ok } as never)).rejects.toMatchObject({ data: { appError: { code: "SHIPPING_QUOTE_REJECTED" } } });
+      await pool.execute("UPDATE productVariants SET price = 13900, stock = 5 WHERE id = 8");
+      await rejectedWith(create("stock-ship-bad-0007", ok), "SHIPPING_QUOTE_REJECTED");
+      await expect(create("stock-ship-bad-0008", { ...ok, priceCents: 1 })).rejects.toMatchObject({ data: { code: "BAD_REQUEST" } });
+      expect(await ordersCount()).toBe(0);
+      expect(providerCalls).toHaveLength(0);
+    });
+
+    it("carrier outage means no carrier option and no checkout; unsigned carrier delivery cannot be created", async () => {
+      shippingQuoteResult = { options: [], source: "unavailable" };
+      expect((await quote()).options).toEqual([]);
+      await rejectedWith(create("stock-ship-nosig-0001", { optionId: "melhor-envio-1", quoteToken: "x".repeat(40), address }), "SHIPPING_QUOTE_REJECTED");
+      expect(await ordersCount()).toBe(0);
+    });
+
+    it("concurrent identical submissions create one order and one charge", async () => {
+      const [option] = (await quote()).options;
+      const delivery = { optionId: option.optionId, quoteToken: option.quoteToken, address };
+      const results = await Promise.allSettled(Array.from({ length: 5 }, () => create("stock-ship-race-0001", delivery)));
+      const ok = results.filter(r => r.status === "fulfilled") as PromiseFulfilledResult<any>[];
+      expect(ok.length).toBeGreaterThanOrEqual(1);
+      for (const r of ok) expect(r.value).toMatchObject({ amountCents: 16090 });
+      expect(new Set(ok.map(r => r.value.orderId)).size).toBe(1);
+      // a concurrent duplicate may reach the provider again, but only with the SAME idempotency key (the provider dedupes it)
+      expect(new Set(providerCalls.map(call => call.idempotencyKey)).size).toBe(1);
+      expect(new Set(providerCalls.map(call => call.amountCents))).toEqual(new Set([16090]));
+      expect(await ordersCount()).toBe(1);
+      const [audit] = await pool.query<any[]>("SELECT COUNT(*) n FROM auditLogs WHERE action = 'checkout.shipping_accepted.v1' AND entityId = ?", [ok[0].value.orderId]);
+      expect(Number(audit[0].n)).toBe(1);
     });
   });
 

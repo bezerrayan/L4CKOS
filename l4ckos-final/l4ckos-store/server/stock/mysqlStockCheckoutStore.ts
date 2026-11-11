@@ -19,6 +19,7 @@ type AttemptRow = RowDataPacket & {
   paymentId: string | null;
   checkoutUrl: string | null;
   reconciliationRequiredAt: string | null;
+  amountCents?: number | string;
   providerRetryEligible?: number;
 };
 type ResumeRow = RowDataPacket & {
@@ -66,7 +67,7 @@ const asNumber = (value: number | string | bigint): number => {
 
 async function findAttempt(connection: PoolConnection, attemptId: string): Promise<StockAttempt | null> {
   const [attemptRows] = await connection.execute<AttemptRow[]>(
-    `SELECT attemptId, ownerUserId, fingerprint, orderId, status, providerState, paymentId, checkoutUrl, reconciliationRequiredAt
+    `SELECT attemptId, ownerUserId, fingerprint, orderId, status, providerState, paymentId, checkoutUrl, reconciliationRequiredAt, amountCents
        FROM stockCheckoutAttempts WHERE attemptId = ?`,
     [attemptId],
   );
@@ -87,6 +88,7 @@ async function findAttempt(connection: PoolConnection, attemptId: string): Promi
     ...(row.paymentId ? { paymentId: row.paymentId } : {}),
     ...(row.checkoutUrl ? { checkoutUrl: row.checkoutUrl } : {}),
     reconciliationRequiredAt: row.reconciliationRequiredAt,
+    amountCents: asNumber(row.amountCents as number | string),
     snapshots: itemRows.map(item => ({
       id: asNumber(item.variantId),
       productId: asNumber(item.productId),
@@ -287,7 +289,7 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
     },
 
     async createAttempt(attempt): Promise<string> {
-      const amountCents = attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+      const amountCents = attempt.amountCents ?? attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
       let orderId: string;
       try {
         const [orderResult] = await connection.execute<ResultSetHeader>(
@@ -320,6 +322,13 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         throw error;
       });
       if (header.affectedRows !== 1) throw new StockMySqlInvariantError("Checkout attempt header insert failed");
+      if (attempt.shipping) {
+        // Immutable freight acceptance, in the SAME transaction as the order. The signed bearer token is never stored.
+        await connection.execute<ResultSetHeader>(
+          `INSERT INTO auditLogs (actorUserId, actorType, action, entity, entityId, metadata) VALUES (?, 'system', 'checkout.shipping_accepted.v1', 'order', ?, ?)`,
+          [attempt.ownerUserId, orderId, JSON.stringify({ attemptId: attempt.attemptId, merchandiseCents: amountCents - attempt.shipping.shippingPriceCents, shipping: attempt.shipping })],
+        );
+      }
       for (const [lineNumber, item] of attempt.snapshots.entries()) {
         await connection.execute<ResultSetHeader>(
           // V6 order-item contract: the canonical snapshot columns (productName/variantName/sku/size/color/imageUrl) feed the
@@ -660,7 +669,7 @@ export function createMysqlStockCheckoutStore(pool: Pool, options: { reservation
         providerState: row.providerState,
         paymentId: row.paymentId,
         checkoutUrl: row.checkoutUrl,
-        amountCents: asNumber(row.amountCents),
+        amountCents: asNumber(row.amountCents as number | string),
         reservationExpiresAt: row.reservationExpiresAt,
         reservationExpired: Boolean(row.reservationExpired),
         reconciliationRequired: Boolean(row.reconciliationRequired),
@@ -687,7 +696,7 @@ export function createMysqlStockCheckoutStore(pool: Pool, options: { reservation
         providerState: row.providerState,
         paymentId: row.paymentId,
         checkoutUrl: row.checkoutUrl,
-        amountCents: asNumber(row.amountCents),
+        amountCents: asNumber(row.amountCents as number | string),
         reservationExpiresAt: row.reservationExpiresAt,
         reservationExpired: Boolean(row.reservationExpired),
         reconciliationRequired: Boolean(row.reconciliationRequired),

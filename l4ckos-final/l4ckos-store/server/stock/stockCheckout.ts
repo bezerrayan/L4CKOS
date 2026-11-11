@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { stockDeliveryV1Schema, type StockDeliveryV1 } from "../../shared/stockCheckoutV1";
 import { isLocalDeliveryCep } from "../../shared/localDeliveryTerritory";
+import type { StockShippingAcceptanceV1 } from "../../shared/stockShippingV1";
+import { StockShippingQuoteError, verifyStockShippingQuoteV1 } from "./stockShippingQuoteV1";
 
 export type StockVariant = {
   id: number;
@@ -36,6 +38,10 @@ export type StockAttempt = {
   checkoutUrl?: string;
   reservationExpiresAt?: string;
   delivery?: StockDeliveryV1;
+  /** Server-verified freight acceptance (carrier deliveries only). */
+  shipping?: StockShippingAcceptanceV1;
+  /** Authoritative amount charged: merchandise + accepted freight. Persisted rows carry it; absent only on legacy in-memory attempts. */
+  amountCents?: number;
 };
 
 export type StockAttemptResumeRecord = {
@@ -125,6 +131,22 @@ export class StockAttemptConflictError extends Error {
 function fail(code: string): never {
   throw new StockCheckoutError(code);
 }
+/** Cart facts bound into a freight quote: server-loaded variants, unit prices and aggregated quantities. */
+export function stockShippingCartFingerprint(lines: Array<{ variantId: number; unitPriceCents: number; quantity: number }>): string {
+  const aggregated = new Map<string, { variantId: number; unitPriceCents: number; quantity: number }>();
+  for (const line of lines) {
+    const key = `${line.variantId}:${line.unitPriceCents}`;
+    const previous = aggregated.get(key);
+    aggregated.set(key, { ...line, quantity: (previous?.quantity ?? 0) + line.quantity });
+  }
+  return sha256(["stock-shipping-cart-v1", [...aggregated.values()].sort((a, b) => a.variantId - b.variantId || a.unitPriceCents - b.unitPriceCents).map(l => [l.variantId, l.unitPriceCents, l.quantity])]);
+}
+
+/** Amount of a persisted attempt: the stored total, never recomputed from items alone (it includes accepted freight). */
+export function stockAttemptAmountCents(attempt: StockAttempt): number {
+  return attempt.amountCents ?? attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+}
+
 const sha256 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function canonicalCart(items: Array<{ productId: number; variantId: number; quantity: number }>): string {
   const quantities = new Map<string, number>();
@@ -165,7 +187,8 @@ function parseRequest(input: unknown): { attemptId: string; items: Array<{ produ
     };
   });
   const delivery = value.delivery === undefined ? undefined : stockDeliveryV1Schema.parse(value.delivery);
-  if (delivery && !isLocalDeliveryCep(delivery.address.zipCode)) fail("CHECKOUT_DELIVERY_UNAVAILABLE");
+  // Local scheduled delivery only inside the local territory; carrier delivery is authorized solely by a signed quote.
+  if (delivery && !("quoteToken" in delivery) && !isLocalDeliveryCep(delivery.address.zipCode)) fail("CHECKOUT_DELIVERY_UNAVAILABLE");
   return { attemptId: value.attemptId, items, ...(delivery ? { delivery } : {}) };
 }
 
@@ -175,13 +198,16 @@ export async function createStockCheckout(input: {
   store: StockCheckoutStore;
   provider: StockPaymentProvider;
   request: unknown;
+  /** Freight signing secret (>= 32 bytes). Without it carrier deliveries are unavailable (fail closed). */
+  shipping?: { secret: string };
 }): Promise<{ orderId: string; paymentId: string; checkoutUrl: string; amountCents: number; snapshots: StockSnapshot[]; replayed: boolean }> {
   // Gate is deliberately the first operation; no repository, provider, or financial IO may precede it.
   if (!input.enabled) fail("PUBLIC_CHECKOUT_DISABLED");
   if (!Number.isSafeInteger(input.ownerUserId) || input.ownerUserId <= 0) fail("AUTHENTICATION_REQUIRED");
   const request = parseRequest(input.request);
   const cartFingerprint = canonicalCart(request.items);
-  const fingerprint = sha256({ cart: cartFingerprint, delivery: request.delivery ?? null });
+  // The quote token is a bearer credential with a fresh nonce: it is verified, never part of the idempotency fingerprint.
+  const fingerprint = sha256({ cart: cartFingerprint, delivery: request.delivery ? { optionId: request.delivery.optionId, address: request.delivery.address } : null });
   let prepared: { attempt: StockAttempt; replayed: boolean };
   try {
     prepared = await input.store.transaction(async tx => {
@@ -237,7 +263,27 @@ export async function createStockCheckout(input: {
         snapshots.push({ id: variant.id, productId: variant.productId, sku: variant.sku, size: variant.size, color: variant.color, unitPriceCents: variant.unitPriceCents, quantity: item.quantity, totalCents, salesMode: variant.salesMode === "PREORDER" ? "PREORDER" : "STOCK", productionBatchId: variant.salesMode === "PREORDER" ? variant.productionBatchId ?? null : null });
       }
 
-      const amountCents = snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+      const merchandiseCents = snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+      if (!Number.isSafeInteger(merchandiseCents) || merchandiseCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
+      let shipping: StockShippingAcceptanceV1 | undefined;
+      if (request.delivery && "quoteToken" in request.delivery) {
+        if (!input.shipping?.secret) fail("CHECKOUT_DELIVERY_UNAVAILABLE");
+        try {
+          shipping = verifyStockShippingQuoteV1({
+            secret: input.shipping!.secret,
+            quoteToken: request.delivery.quoteToken,
+            optionId: request.delivery.optionId,
+            address: request.delivery.address,
+            cartFingerprint: stockShippingCartFingerprint(snapshots.map(snapshot => ({ variantId: snapshot.id, unitPriceCents: snapshot.unitPriceCents, quantity: snapshot.quantity }))),
+            itemCount: snapshots.reduce((sum, snapshot) => sum + snapshot.quantity, 0),
+            merchandiseSubtotalCents: merchandiseCents,
+          });
+        } catch (error) {
+          if (error instanceof StockShippingQuoteError) fail("CHECKOUT_SHIPPING_QUOTE_REJECTED");
+          throw error;
+        }
+      }
+      const amountCents = merchandiseCents + (shipping?.shippingPriceCents ?? 0);
       if (!Number.isSafeInteger(amountCents) || amountCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
 
       // The quota ledger, STOCK attempt, and variant reservations commit or roll
@@ -261,6 +307,8 @@ export async function createStockCheckout(input: {
       const attempt: StockAttempt = {
         attemptId: request.attemptId, ownerUserId: input.ownerUserId, fingerprint, orderId, status: "reserved", providerState: "not_started", snapshots,
         ...(request.delivery ? { delivery: request.delivery } : {}),
+        ...(shipping ? { shipping } : {}),
+        amountCents,
       };
       // The attempt header is inserted first so reservations can have a real FK; any later error rolls it back.
       attempt.orderId = await tx.createAttempt(attempt);
@@ -289,7 +337,7 @@ export async function createStockCheckout(input: {
     prepared = { attempt: raced, replayed: true };
   }
 
-  const amountCents = prepared.attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+  const amountCents = stockAttemptAmountCents(prepared.attempt);
   if (!Number.isSafeInteger(amountCents) || amountCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
   if (prepared.attempt.paymentId) {
     return { orderId: prepared.attempt.orderId, paymentId: prepared.attempt.paymentId, checkoutUrl: prepared.attempt.checkoutUrl ?? "", amountCents, snapshots: prepared.attempt.snapshots, replayed: true };
@@ -306,7 +354,7 @@ export async function createStockCheckout(input: {
   if (!providerStarted) {
     const latest = await input.store.transaction(tx => tx.findAttempt(request.attemptId));
     if (latest?.status === "reserved" && latest.paymentId) {
-      const latestAmount = latest.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+      const latestAmount = stockAttemptAmountCents(latest);
       return {
         orderId: latest.orderId,
         paymentId: latest.paymentId,
@@ -420,7 +468,8 @@ async function processStockPaymentWebhook(input: {
     if (!attempt) fail("WEBHOOK_PAYMENT_UNKNOWN");
     if (attempt.paymentId && attempt.paymentId !== input.paymentId) return "conflict";
     if (attempt.providerState === "not_started" || attempt.providerState === "definitive_failure") return "conflict";
-    const expected = attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+    // The charged total (merchandise + accepted freight), exactly as persisted with the attempt.
+    const expected = stockAttemptAmountCents(attempt);
     if (expected !== input.amountCents) fail("WEBHOOK_AMOUNT_MISMATCH");
     if (attempt.status === "paid") return input.status === "failed" ? "conflict" : "processed";
     if (attempt.status === "released") {

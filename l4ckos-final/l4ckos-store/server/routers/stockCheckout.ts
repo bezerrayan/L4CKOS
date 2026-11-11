@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { stockAttemptResumeV1Schema, stockCheckoutHttpRequestV1Schema, stockCheckoutResponseV1Schema } from "../../shared/stockCheckoutV1";
+import { stockAttemptResumeV1Schema, stockCheckoutHttpRequestV1Schema, stockCheckoutResponseV1Schema, stockShippingQuoteRequestV1Schema } from "../../shared/stockCheckoutV1";
 import {
   assertPublicCheckoutEnabled,
   PublicCheckoutDisabledError,
@@ -34,6 +34,9 @@ function mapCheckoutError(error: unknown): never {
   if (error.code === "CHECKOUT_STOCK_INSUFFICIENT" || error.code === "CHECKOUT_VARIANT_INACTIVE" || error.code === "CHECKOUT_BATCH_CAPACITY_EXCEEDED" || error.code === "CHECKOUT_BATCH_UNAVAILABLE" || error.code === "CHECKOUT_BATCH_REQUIRED") {
     throw createAppError({ trpcCode: "CONFLICT", appCode: "STOCK_UNAVAILABLE", message: "Estoque indisponível para esta variante." });
   }
+  if (error.code === "CHECKOUT_SHIPPING_QUOTE_REJECTED") {
+    throw createAppError({ trpcCode: "CONFLICT", appCode: "SHIPPING_QUOTE_REJECTED", message: "O frete escolhido não é mais válido. Recalcule o frete e tente novamente." });
+  }
   if (error.code === "CHECKOUT_ATTEMPT_EXPIRED") {
     throw createAppError({ trpcCode: "CONFLICT", appCode: "CHECKOUT_ATTEMPT_EXPIRED", message: "Esta tentativa expirou. Inicie uma nova tentativa." });
   }
@@ -50,6 +53,24 @@ function mapCheckoutError(error: unknown): never {
 }
 
 export const stockCheckoutRouter = router({
+  /** Server-signed freight options for a cart + full destination address. Prices are never client-supplied. */
+  quoteShipping: protectedProcedure
+    .input(stockShippingQuoteRequestV1Schema)
+    .mutation(async ({ ctx, input }) => {
+      assertGate();
+      const runtime = ctx.stockCheckoutRuntime;
+      if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Checkout STOCK indisponível neste runtime." });
+      try {
+        const result = await runtime.quoteShipping(input);
+        if (!result) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Frete por transportadora indisponível." });
+        return result;
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        if (error instanceof StockCheckoutError) mapCheckoutError(error);
+        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Não foi possível consultar o frete agora." });
+      }
+    }),
+
   create: protectedProcedure
     .input(stockCheckoutHttpRequestV1Schema)
     .mutation(async ({ ctx, input }) => {
