@@ -1,5 +1,6 @@
 import { batchAcceptsSales, batchHasCapacity, type BatchPreview } from "../shared/preorder";
 import { readShippingSnapshot } from "./database/orderShippingSnapshot";
+import { formatCurrency } from "./utils/email/formatCurrency.js";
 import { createVariantOptionKey, normalizeVariantLabel } from "./database/productVariantIdentity";
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -49,6 +50,7 @@ import {
 import { webhookDb, inWebhookTransaction } from "./database/webhookTransaction";
 import {assertNoRecoveryHold, assertOrderNotRecoveryHeld, assertWebhookBusinessEffectsAllowed} from './payments/webhookRecovery';
 import {confirmSelectedCheckoutStock} from './payments/selectedCheckoutStock';
+import { enqueueOrderCancelledInTransaction } from "./payments/notificationOutboxQueue";
 import {assertSelectedLedgerBinding,selectiveOrderAllowed} from './payments/stagingCheckoutAdmission';
 import { aggregateSalesReport } from "./reports/salesReport";
 import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
@@ -2232,6 +2234,22 @@ export async function updateOrderAndReserveDeliveredEmailEvents(
       // Cancellation is not a refund. Consumed stock is never automatically restocked.
       await tx.update(stockReservations).set({ status: "released" }).where(and(eq(stockReservations.orderId, orderId), eq(stockReservations.status, "active")));
       await tx.insert(auditLogs).values({ actorUserId: actorUserId ?? null, actorType: actorUserId ? "admin" : "system", action: "order.cancelled", entity: "order", entityId: String(orderId), metadata: JSON.stringify({ previousStatus: previousOrder.status, paymentConfirmed: isTrustedPaymentConfirmation(previousOrder), refundExecuted: false, reconciliationRequired: isTrustedPaymentConfirmation(previousOrder), stockPolicy: "release_active_only" }) });
+      const items = await tx.select({
+        name: sql<string>`COALESCE(${orderItems.productName}, ${products.name})`,
+        variantName: orderItems.variantName,
+        size: orderItems.size,
+        quantity: orderItems.quantity,
+        unitPrice: orderItems.unitPrice,
+      }).from(orderItems).leftJoin(products, eq(orderItems.productId, products.id)).where(eq(orderItems.orderId, orderId));
+      await enqueueOrderCancelledInTransaction(tx, orderId, {
+        total: formatCurrency(Number(previousOrder.totalPrice) / 100),
+        items: items.map(item => ({
+          name: [item.name, item.variantName, item.size].filter(Boolean).join(" ") || "Produto",
+          quantity: Number(item.quantity),
+          price: formatCurrency(Number(item.unitPrice || 0) / 100),
+        })),
+        refundStatus: isTrustedPaymentConfirmation(previousOrder) ? "pending" : "unknown",
+      });
     }
 
     if(data.status) {

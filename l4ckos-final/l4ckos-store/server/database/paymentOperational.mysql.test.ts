@@ -10,8 +10,7 @@ import {bootstrapReleaseDatabase} from '../../database/bootstrap/bootstrap';
 import {readReleaseContract} from '../../database/schema/artifacts';
 import {receiveWebhook,persistWebhook,recoverWebhooks} from '../payments/webhookInbox';
 import {processWebhookEnvelope,asaasWebhookHandler} from '../controllers/paymentController';
-import {deliverPaymentNotifications,enqueueOrderCancelled} from '../payments/paymentNotificationOutbox';
-import {inWebhookTransaction} from './webhookTransaction';
+import {deliverPaymentNotifications} from '../payments/paymentNotificationOutbox';
 import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected=vi.hoisted(()=>({orm:null as unknown,mail:vi.fn(async(_p:any)=>({id:'synthetic-mail'})),cancelled:vi.fn(async(_p:any)=>({id:'synthetic-cancelled'}))}));
 vi.mock('drizzle-orm/mysql2',async original=>({...await original<typeof mysqlOrm>(),drizzle:()=>injected.orm}));
@@ -128,12 +127,17 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('operational checkout/inbox
  });
  it('cancel email enqueue is idempotent and retries under one MySQL lease across workers',async()=>{
   const {result}=await buy();
-  const enqueue=()=>(injected.orm as any).transaction(async(tx:any)=>inWebhookTransaction(tx,()=>enqueueOrderCancelled(result.orderId,{total:'R$ 99,00',items:[{name:'Synthetic shirt',quantity:1}],refundStatus:'pending'}),[]));
-  await enqueue();await enqueue();
+  const db=await import('../db');
+  await Promise.all([
+    db.updateOrderAndReserveDeliveredEmailEvents(result.orderId,{status:'cancelled'},1),
+    db.updateOrderAndReserveDeliveredEmailEvents(result.orderId,{status:'cancelled'},1),
+  ]);
   const [queued]=await query("SELECT id,dedupeKey,status,attempts,payload FROM notificationOutbox WHERE type='order-cancelled-email-v1'");
   expect(queued.dedupeKey).toBe(`order-cancelled-email:v1:order:${result.orderId}`);
-  expect(queued.status).toBe('pending');expect(JSON.parse(queued.payload)).toMatchObject({orderNumber:String(result.orderId),refundStatus:'pending'});
+  expect(queued.status).toBe('pending');expect(JSON.parse(queued.payload)).toMatchObject({orderNumber:String(result.orderId),refundStatus:'unknown',items:[{name:'SYNTHETIC CHECKOUT',quantity:1,price:expect.stringContaining('99,00')}]});
   expect(JSON.parse(queued.payload).customerEmail).toBeUndefined();
+  expect((await query('SELECT status FROM orders WHERE id=?',[result.orderId]))[0].status).toBe('cancelled');
+  expect(Number((await query('SELECT COUNT(*) n FROM notificationOutbox WHERE type=\'order-cancelled-email-v1\''))[0].n)).toBe(1);
 
   const transient=Object.assign(new Error('synthetic provider outage'),{statusCode:503});
   injected.cancelled.mockRejectedValueOnce(transient);
@@ -153,6 +157,16 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('operational checkout/inbox
   expect((await deliverPaymentNotifications(1,result.orderId,'order-cancelled-email-v1')).sent).toBe(0);
   const [sent]=await query("SELECT status,lastError,attempts FROM notificationOutbox WHERE type='order-cancelled-email-v1'");
   expect(sent).toMatchObject({status:'sent',lastError:null,attempts:2});
+ });
+ it('cancellation status and stock release roll back when transactional outbox enqueue fails',async()=>{
+  const {result}=await buy();const db=await import('../db');
+  await query("CREATE TRIGGER fail_cancel_notification BEFORE INSERT ON notificationOutbox FOR EACH ROW BEGIN IF NEW.type='order-cancelled-email-v1' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic cancel notification failure'; END IF; END");
+  try{await expect(db.updateOrderAndReserveDeliveredEmailEvents(result.orderId,{status:'cancelled'},1)).rejects.toThrow();}
+  finally{await query('DROP TRIGGER fail_cancel_notification');}
+  expect((await query('SELECT status FROM orders WHERE id=?',[result.orderId]))[0].status).toBe('pending');
+  expect((await query('SELECT status FROM stockReservations WHERE orderId=?',[result.orderId]))[0].status).toBe('active');
+  expect(await query("SELECT * FROM notificationOutbox WHERE type='order-cancelled-email-v1'")).toHaveLength(0);
+  expect(await query("SELECT * FROM auditLogs WHERE action='order.cancelled' AND entityId=?",[String(result.orderId)])).toHaveLength(0);
  });
  it('expired reservation, cancellation, refund and out-of-order notifications do not silently change finances',async()=>{
   const {result}=await buy();await query('UPDATE stockReservations SET expiresAt=DATE_SUB(NOW(),INTERVAL 1 MINUTE)');

@@ -13,6 +13,7 @@ import {
   withRecoveryRecipient,
 } from "../services/email/recipientPolicy.js";
 import { planNotificationRetry } from "../services/email/transactionalNotificationPolicy";
+import { enqueueOrderCancelledInTransaction } from "./notificationOutboxQueue";
 import { isStagingMaintenanceEnabled } from "../_core/stagingMaintenance";
 import {
   captureRecoveryFence,
@@ -35,7 +36,6 @@ const TYPES = [
   "order-cancelled-email-v1",
 ]; // Never drains legacy reconciliation or other notification types.
 type Payload = Parameters<typeof sendPaymentApprovedEmail>[0];
-type CancelledPayload = Parameters<typeof sendOrderCancelledEmail>[0];
 export async function enqueuePaymentApproved(
   orderId: number,
   payload: Omit<Payload, "customerEmail" | "customerName">
@@ -53,21 +53,13 @@ export async function enqueuePaymentApproved(
 }
 export async function enqueueOrderCancelled(
   orderId: number,
-  payload: Omit<
-    CancelledPayload,
-    "customerEmail" | "customerName" | "orderNumber"
-  >
+  payload: Parameters<typeof enqueueOrderCancelledInTransaction>[2] = {}
 ) {
   assertWebhookBusinessEffectsAllowed();
   const db = webhookDb();
   if (!db) throw Error("PAYMENT_NOTIFICATION_TRANSACTION_REQUIRED");
   await assertOrderNotRecoveryHeld(db, orderId);
-  const body = JSON.stringify({ ...payload, orderNumber: String(orderId) });
-  if (Buffer.byteLength(body) > 16384)
-    throw Error("PAYMENT_NOTIFICATION_PAYLOAD_LIMIT");
-  const key = `order-cancelled-email:v1:order:${orderId}`;
-  await db.execute(sql`INSERT INTO notificationOutbox(dedupeKey,type,orderId,payload)
-    VALUES(${key},'order-cancelled-email-v1',${orderId},${body}) ON DUPLICATE KEY UPDATE dedupeKey=dedupeKey`);
+  await enqueueOrderCancelledInTransaction(db, orderId, payload);
 }
 /** Claim and token protect ownership; the provider key protects ambiguous retries within its 24h window. */
 export async function deliverPaymentNotifications(

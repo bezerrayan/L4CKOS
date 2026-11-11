@@ -2,6 +2,15 @@
 
 Status: preparation only. Production is prohibited without explicit authorization for the exact Railway project/service/schema and exact operation. No deployment, DDL, grant, or checkout enablement is authorized by this runbook.
 
+> **V6 staging correction (2026-11-11):** the procedure below describes the
+> frozen legacy schema path only. Do not execute its legacy
+> `0027_stock_v1_incremental.sql` against the integrated V6 schema. For the
+> isolated STOCK V1 candidate, use
+> [the V6/MySQL 9.7.2 runbook](staging/isolated-stock-v1-9.7.2-runbook.md):
+> audited V6 schema plus `0020`–`0025` baseline when building empty, then
+> `stock-v1/v6/0027_stock_v1_on_v6_lineage.sql`, then Drops `0028`. The legacy
+> 0027 is not part of that chain.
+
 ## Release preconditions
 
 1. Confirm source SHA, clean worktree, reviewed migration SHA, and intended isolated environment. Do not use the Drizzle runner, `db:push`, journal repair, or files `0008–0017` to apply STOCK.
