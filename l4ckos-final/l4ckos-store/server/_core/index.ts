@@ -36,6 +36,7 @@ import emailRoutes from "../routes/email.routes";
 import { getBackupPayload, getMysqlPool } from "../db";
 import { createBackupFile } from "../database/backupFiles";
 import { assertApprovedMysqlTlsCa } from "../database/mysqlTls.mjs";
+import { createMysqlConnectionOptionsForEnvironment } from "../database/mysqlConnection.mjs";
 import { asaasWebhookHandler } from "../controllers/paymentController";
 import { createStagingMaintenanceMiddleware } from "./stagingMaintenance";
 import managerSyncRoutes from "../routes/managerSyncRoutes";
@@ -44,6 +45,7 @@ import { createConfiguredStockAsaasProvider } from "../stock/configuredStockAsaa
 import { startStockReservationExpiryScheduler } from "../stock/stockReservationExpiryScheduler";
 import { assertStagingApiAccessConfiguration, createStagingApiAccessMiddleware } from "./stagingApiAccess";
 import { shouldScheduleAutomaticBackup } from "./automaticBackupStartup";
+import { isIsolatedHomologationIdentity } from "./railwayEnvironment";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -185,7 +187,16 @@ async function listenWithRetry(
 
 async function startServer() {
   assertStagingApiAccessConfiguration(process.env);
-  assertApprovedMysqlTlsCa();
+  if (isIsolatedHomologationIdentity(process.env)) {
+    // Validate the isolated DATABASE_URL, private hostname, CA fingerprint and
+    // strict identity-verification options before listening, without connecting.
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    if (!databaseUrl) throw new Error("DATABASE_URL_REQUIRED");
+    createMysqlConnectionOptionsForEnvironment(databaseUrl, process.env);
+  } else {
+    // Keep the approved production and legacy-staging startup behavior unchanged.
+    assertApprovedMysqlTlsCa();
+  }
   initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
   const recoveryWorkers = prepareRecoveryWorkerStartup(process.env, {
     startAsaasWebhookRecovery: () => startWebhookRecovery(processWebhookEnvelope),

@@ -90,4 +90,4 @@ STOCK_MYSQL_PASSWORD="$synthetic_test_password" \
 STOCK_MYSQL_DATABASE=l4ckos_stock_test \
 STOCK_LOCAL_HARNESS=true \
 JWT_SECRET=synthetic-stock-local-session-key-32-bytes-minimum \
-  pnpm exec vitest run --fileParallelism=false server/stock/mysqlStockCheckoutStore.mysql.test.ts server/stock/stockCheckout.integration.mysql.test.ts server/stock/stockStorefront.e2e.mysql.test.ts server/exclusive/exclusiveDrops.mysql.test.ts server/exclusive/exclusiveDropsQuota.mysql.test.ts client/src/pages/Pagamento.mysql.e2e.test.tsx "$@"
+  pnpm exec vitest run --fileParallelism=false server/stock/mysqlStockCheckoutStore.mysql.test.ts server/stock/stockCheckout.integration.mysql.test.ts server/stock/stockStorefront.e2e.mysql.test.ts server/exclusive/exclusiveDrops.mysql.test.ts server/exclusive/exclusiveDropsQuota.mysql.test.ts server/database/productVariantPrice.mysql.test.ts client/src/pages/Pagamento.mysql.e2e.test.tsx "$@"

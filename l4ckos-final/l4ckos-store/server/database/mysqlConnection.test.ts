@@ -9,12 +9,16 @@ import { MYSQL_TLS_CA_SHA256, MYSQL_TLS_HOST } from "./mysqlTls.mjs";
 
 const STAGING_PROJECT = "2bb90c8e-eb65-43ee-826b-f93750f0499c";
 const ISOLATED_STAGING_PROJECT = "66faf690-a068-40d1-b85c-cb5d8595560a";
+const ISOLATED_STAGING_ENVIRONMENT = "5335340d-311c-47e9-9713-6e5a86969c88";
+const ISOLATED_STAGING_SERVICE = "d66762a4-422a-4656-94a1-502215a27aa2";
 const STAGING_HOST = "mysql-staging.railway.internal";
+const ISOLATED_STAGING_HOST = "mysql-stock-homologation.railway.internal";
 const STAGING_CA = "-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDLVNUQUdJTkctQ0EtRk9SLVRFU1RT\n-----END CERTIFICATE-----\n";
 const STAGING_CA_SHA = createHash("sha256").update(STAGING_CA, "utf8").digest("hex");
 
 const productionUrl = `mysql://app:secret@${MYSQL_TLS_HOST}:3306/railway`;
 const stagingUrl = `mysql://app:secret@${STAGING_HOST}:3306/railway`;
+const isolatedStagingUrl = `mysql://app:secret@${ISOLATED_STAGING_HOST}:3306/railway`;
 const localUrl = "mysql://root@127.0.0.1:3306/l4ckos_stock_test";
 
 const production = { NODE_ENV: "production", APP_ENV: "production" };
@@ -25,6 +29,14 @@ const staging = {
   STAGING_DB_TLS_HOST: STAGING_HOST,
   STAGING_DB_TLS_CA_PEM: STAGING_CA,
   STAGING_DB_TLS_CA_SHA256: STAGING_CA_SHA,
+};
+const isolatedStaging = {
+  ...staging,
+  APP_ENV: "staging",
+  RAILWAY_PROJECT_ID: ISOLATED_STAGING_PROJECT,
+  RAILWAY_ENVIRONMENT_ID: ISOLATED_STAGING_ENVIRONMENT,
+  RAILWAY_SERVICE_ID: ISOLATED_STAGING_SERVICE,
+  STAGING_DB_TLS_HOST: ISOLATED_STAGING_HOST,
 };
 const local = { NODE_ENV: "test", APP_ENV: "local-test", L4CKOS_LOCAL_DB_EXCEPTION: "disposable-loopback" };
 
@@ -64,16 +76,48 @@ describe("MySQL connection policy per environment", () => {
       const { APP_ENV: _omit, ...withoutAppEnv } = staging;
       expect(resolveMysqlConnection(stagingUrl, withoutAppEnv).environment).toBe("staging");
     });
-    it("treats the isolated homologation project as staging and never production", () => {
+    it("treats the isolated homologation service identity as staging and never production", () => {
       expect(resolveDatabaseEnvironment({
         NODE_ENV: "production",
         RAILWAY_PROJECT_ID: ISOLATED_STAGING_PROJECT,
+        RAILWAY_ENVIRONMENT_ID: ISOLATED_STAGING_ENVIRONMENT,
+        RAILWAY_SERVICE_ID: ISOLATED_STAGING_SERVICE,
       })).toBe("staging");
       reject(productionUrl, {
         NODE_ENV: "production",
         APP_ENV: "production",
         RAILWAY_PROJECT_ID: ISOLATED_STAGING_PROJECT,
+        RAILWAY_ENVIRONMENT_ID: ISOLATED_STAGING_ENVIRONMENT,
+        RAILWAY_SERVICE_ID: ISOLATED_STAGING_SERVICE,
       }, "DB_ENVIRONMENT_CONFLICT");
+    });
+    it("accepts isolated TLS only for the exact private database hostname", () => {
+      const { options } = resolveMysqlConnection(isolatedStagingUrl, isolatedStaging);
+      expect(options).toMatchObject({ uri: isolatedStagingUrl, ssl: { ca: STAGING_CA, rejectUnauthorized: true, verifyIdentity: true } });
+      reject(`mysql://app:secret@mysql-staging.railway.internal:3306/railway`, isolatedStaging, "STAGING_DB_TLS_HOST_MISMATCH");
+      reject(`mysql://app:secret@mysql-stock-homologation.railway.internal.evil.example:3306/railway`, {
+        ...isolatedStaging,
+        STAGING_DB_TLS_HOST: "mysql-stock-homologation.railway.internal.evil.example",
+      }, "STAGING_DB_ISOLATED_HOST_INVALID");
+      reject(isolatedStagingUrl, { ...isolatedStaging, STAGING_DB_TLS_HOST: "mysql-staging.railway.internal" }, "STAGING_DB_TLS_HOST_MISMATCH");
+    });
+    it("rejects incomplete or swapped isolated Railway identities", () => {
+      for (const env of [
+        { NODE_ENV: "production", APP_ENV: "staging", RAILWAY_PROJECT_ID: ISOLATED_STAGING_PROJECT },
+        { ...isolatedStaging, RAILWAY_ENVIRONMENT_ID: "wrong-environment" },
+        { ...isolatedStaging, RAILWAY_SERVICE_ID: "wrong-service" },
+      ]) {
+        reject(isolatedStagingUrl, { ...env, STAGING_DB_TLS_HOST: ISOLATED_STAGING_HOST, STAGING_DB_TLS_CA_PEM: STAGING_CA, STAGING_DB_TLS_CA_SHA256: STAGING_CA_SHA }, "DB_ISOLATED_STAGING_IDENTITY_INVALID");
+      }
+    });
+    it("fails closed on missing, malformed or mismatched isolated CA configuration", () => {
+      for (const key of ["STAGING_DB_TLS_HOST", "STAGING_DB_TLS_CA_PEM", "STAGING_DB_TLS_CA_SHA256"] as const) {
+        reject(isolatedStagingUrl, { ...isolatedStaging, [key]: undefined }, "STAGING_DB_TLS_CONFIG_REQUIRED");
+        reject(isolatedStagingUrl, { ...isolatedStaging, [key]: "" }, "STAGING_DB_TLS_CONFIG_REQUIRED");
+      }
+      reject(isolatedStagingUrl, { ...isolatedStaging, STAGING_DB_TLS_CA_PEM: STAGING_CA.replace("U1lO", "AAAA") }, "STAGING_DB_TLS_CA_SHA256_MISMATCH");
+      reject(isolatedStagingUrl, { ...isolatedStaging, STAGING_DB_TLS_CA_SHA256: "not-a-hash" }, "STAGING_DB_TLS_CA_SHA256_INVALID");
+      reject(isolatedStagingUrl, { ...isolatedStaging, STAGING_DB_TLS_CA_SHA256: MYSQL_TLS_CA_SHA256 }, "STAGING_DB_MUST_NOT_USE_PRODUCTION_CA");
     });
     it("fails closed when host, CA or CA pin is missing", () => {
       for (const key of ["STAGING_DB_TLS_HOST", "STAGING_DB_TLS_CA_PEM", "STAGING_DB_TLS_CA_SHA256"] as const) {
