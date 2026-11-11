@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertVariantStockCoversReservations, planProductVariantSync } from "./db";
+import { assertVariantStockCoversReservations, planProductVariantSync, ProductCatalogValidationError, resolveVariantPriceForSave } from "./db";
 
 const existing = [
   { id: 11, name: "Camiseta preto M", sku: "CAM-PT-M", price: 8990, stock: 8, color: null, size: null, optionKey: null, isActive: 0 },
@@ -7,6 +7,18 @@ const existing = [
 ];
 
 describe("product variant reconciliation plan", () => {
+  it("snapshots the current base price only when the saved variant explicitly leaves price blank", () => {
+    expect(resolveVariantPriceForSave({ submittedPrice: null, currentPrice: 8990, basePriceCents: 12000 })).toBe(12000);
+    expect(resolveVariantPriceForSave({ submittedPrice: 8500, currentPrice: 8990, basePriceCents: 12000 })).toBe(8500);
+    expect(resolveVariantPriceForSave({ submittedPrice: undefined, currentPrice: 8990, basePriceCents: 12000 })).toBe(8990);
+  });
+
+  it("rejects inheritance without a valid representable base price", () => {
+    for (const basePriceCents of [0, -1, 2_147_483_648, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => resolveVariantPriceForSave({ submittedPrice: null, basePriceCents })).toThrow(ProductCatalogValidationError);
+    }
+  });
+
   it("updates an existing ID in place and preserves price and stock omitted from a partial patch", () => {
     const plan = planProductVariantSync(existing, [
       { id: 11, sku: "CAM-PT-M2" },

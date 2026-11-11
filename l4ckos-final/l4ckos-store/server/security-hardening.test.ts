@@ -27,6 +27,7 @@ vi.mock("./db", () => ({
   recordPaymentException: vi.fn(),
   reserveExternalCheckoutCreation: vi.fn(),
   getUserByOpenId: vi.fn(),
+  getUserByOpenIdForAuthentication: vi.fn(),
   upsertUser: vi.fn(),
   getUserById: vi.fn(),
   getUserPhoneById: vi.fn(),
@@ -231,13 +232,13 @@ describe("security hardening contracts", () => {
     });
     const req = { headers: { cookie: `app_session_id=${token}` } } as any;
 
-    vi.mocked(db.getUserByOpenId).mockResolvedValueOnce(undefined as any);
+    vi.mocked(db.getUserByOpenIdForAuthentication).mockResolvedValueOnce(undefined as any);
     await expect(sdk.authenticateRequest(req)).rejects.toThrow();
 
-    vi.mocked(db.getUserByOpenId).mockResolvedValueOnce({ id: 1, openId: "user-openid", isBlocked: 1, sessionVersion: 3 } as any);
+    vi.mocked(db.getUserByOpenIdForAuthentication).mockResolvedValueOnce({ id: 1, openId: "user-openid", isBlocked: 1, sessionVersion: 3 } as any);
     await expect(sdk.authenticateRequest(req)).rejects.toThrow();
 
-    vi.mocked(db.getUserByOpenId).mockResolvedValueOnce({ id: 1, openId: "user-openid", isBlocked: 0, sessionVersion: 4 } as any);
+    vi.mocked(db.getUserByOpenIdForAuthentication).mockResolvedValueOnce({ id: 1, openId: "user-openid", isBlocked: 0, sessionVersion: 4 } as any);
     await expect(sdk.authenticateRequest(req)).rejects.toThrow();
   });
 
@@ -349,6 +350,11 @@ describe("security hardening contracts", () => {
   it("keeps valid React Router direct routes and marks unknown routes as 404 candidates", () => {
     expect(isKnownClientRoute("/entrar")).toBe(true);
     expect(isKnownClientRoute("/gestao")).toBe(true);
+    expect(isKnownClientRoute("/gestao/logistica")).toBe(true);
+    expect(isKnownClientRoute("/gestao/pedidos")).toBe(true);
+    expect(isKnownClientRoute("/gestao/pedidos/123")).toBe(true);
+    expect(isKnownClientRoute("/gestao/catalogo/produtos/12")).toBe(true);
+    expect(isKnownClientRoute("/gestao/nao-existe")).toBe(false);
     expect(isKnownClientRoute("/produto/123")).toBe(true);
     expect(isKnownClientRoute("/meus-pedidos/123")).toBe(true);
     expect(isKnownClientRoute("/definitivamente-nao-existe")).toBe(false);

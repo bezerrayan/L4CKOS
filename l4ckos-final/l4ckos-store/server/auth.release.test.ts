@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({ user: null as any, credential: null as any }
 vi.mock("./db", async importOriginal => ({
   ...await importOriginal<typeof import("./db")>(),
   getUserByOpenId: vi.fn(async (id: string) => fixture.user?.openId === id ? fixture.user : undefined),
+  getUserByOpenIdForAuthentication: vi.fn(async (id: string) => fixture.user?.openId === id ? fixture.user : undefined),
   getUserById: vi.fn(async (id: number) => fixture.user?.id === id ? fixture.user : undefined),
   getLocalAuthCredentialByEmail: vi.fn(async (email: string) => fixture.credential?.email === email ? fixture.credential : undefined),
   upsertUser: vi.fn(async (input: any) => {

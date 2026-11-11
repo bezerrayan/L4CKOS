@@ -40,6 +40,8 @@ function getHttpStatusFromTrpcCode(code: TRPCError["code"]): number {
       return 404;
     case "TOO_MANY_REQUESTS":
       return 429;
+    case "SERVICE_UNAVAILABLE":
+      return 503;
     default:
       return 500;
   }
@@ -88,12 +90,13 @@ export function getPublicAppError(error: unknown): PublicAppError {
       : error.code;
     const details = sanitizeDetails((error as { details?: unknown }).details);
     const isInternal = error.code === "INTERNAL_SERVER_ERROR";
+    const isUnavailable = error.code === "SERVICE_UNAVAILABLE";
 
     return {
       success: false,
       code: appCode,
-      message: isInternal ? INTERNAL_ERROR_MESSAGE : error.message,
-      details: isInternal ? undefined : details,
+      message: isInternal ? INTERNAL_ERROR_MESSAGE : isUnavailable ? "Serviço temporariamente indisponível." : error.message,
+      details: isInternal || isUnavailable ? undefined : details,
       status: getHttpStatusFromTrpcCode(error.code),
     };
   }

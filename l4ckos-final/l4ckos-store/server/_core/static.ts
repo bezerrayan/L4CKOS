@@ -23,6 +23,7 @@ const CLIENT_ROUTES = [
   /^\/meus-pedidos\/[^/]+\/?$/,
   /^\/acompanhar-pedido\/?$/,
   /^\/gestao\/?$/,
+  /^\/gestao\/(?:pedidos(?:\/\d+)?|catalogo\/produtos(?:\/(?:novo|\d+))?|clientes|lotes|promocoes|cupons|drops|avaliacoes|relatorios|auditoria|backup|configuracoes|logistica)\/?$/,
   /^\/admin\/?$/,
   /^\/sobre\/?$/,
   /^\/contato\/?$/,

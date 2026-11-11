@@ -78,6 +78,22 @@ describe("admin product catalog integration", () => {
     await expect(admin.productUpdate({ id: 7, stock: 0 })).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "Estoque reservado." });
   });
 
+  it("passes a blank edited variant price to the transactional writer for a current-base snapshot", async () => {
+    dbMocks.updateProductWithCatalog.mockResolvedValue({
+      success: true,
+      variants: [{ id: 18, color: "Azul", size: "G", sku: "SKU-18", price: 12000, stock: 3, isActive: 1 }],
+    });
+    dbMocks.createAuditLog.mockResolvedValue(undefined);
+    const admin = await caller(adminUser);
+    await expect(admin.productUpdate({ id: 7, price: 12000, variants: [{ id: 18, price: null }] }))
+      .resolves.toMatchObject({ variants: [{ price: 12000 }] });
+    expect(dbMocks.updateProductWithCatalog).toHaveBeenCalledWith({
+      id: 7,
+      product: { price: 12000 },
+      variants: [{ id: 18, price: null }],
+    });
+  });
+
   it("does not report failed persistence as a successful create or write an audit entry", async () => {
     dbMocks.createProductWithCatalog.mockRejectedValue(new Error("local storage failure"));
     await expect((await caller(adminUser)).productCreate({ name: "Camiseta", category: "camisas", price: 8900, stock: 1 }))
@@ -106,5 +122,16 @@ describe("admin product catalog integration", () => {
     await expect(admin.productUpdate({ id: 7, variants: [{ color: "Preto" } as any] }))
       .rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(dbMocks.updateProductWithCatalog).not.toHaveBeenCalled();
+  });
+
+  it("rejects unrepresentable prices and returns validation errors for an invalid inherited base", async () => {
+    const admin = await caller(adminUser);
+    await expect(admin.productCreate({ name: "Produto", category: "camisas", price: 2_147_483_648 }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(admin.productCreate({
+      name: "Produto", category: "camisas", price: 0,
+      variants: [{ color: "Preto", size: "M", sku: "SKU-INVALID-BASE", price: null, stock: 1, isActive: true }],
+    })) .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(dbMocks.createProductWithCatalog).not.toHaveBeenCalled();
   });
 });

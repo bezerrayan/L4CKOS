@@ -33,6 +33,8 @@ import {
   markOrderPaid,
   getUsersWithStats,
   ProductCatalogConflictError,
+  ProductCatalogValidationError,
+  MAX_PRODUCT_PRICE_CENTS,
   restoreBackupPayload,
   updateOrderAndReserveDeliveredEmailEvents,
   setUserFlags,
@@ -76,7 +78,7 @@ const variantCreateSchema = z.object({
   size: z.string().trim().min(1).max(60),
   name: z.string().trim().min(1).max(120).optional(),
   sku: z.string().trim().min(1).max(120),
-  price: z.number().int().min(0).nullable(),
+  price: z.number().int().min(0).max(MAX_PRODUCT_PRICE_CENTS).nullable(),
   stock: z.number().int().min(0),
   isActive: z.boolean(),
 }).strict();
@@ -87,7 +89,7 @@ const variantUpdateSchema = z.object({
   color: z.string().trim().max(60).nullable().optional(),
   size: z.string().trim().max(60).nullable().optional(),
   sku: z.string().trim().max(120).nullable().optional(),
-  price: z.number().int().min(0).nullable().optional(),
+  price: z.number().int().min(0).max(MAX_PRODUCT_PRICE_CENTS).nullable().optional(),
   stock: z.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
 }).strict().superRefine((variant, ctx) => {
@@ -363,7 +365,7 @@ export const adminRouter = router({
       z.object({
         name: z.string().min(1),
         category: z.string().min(1),
-        price: z.number().positive(),
+        price: z.number().int().positive().max(MAX_PRODUCT_PRICE_CENTS),
         description: z.string().optional(),
         fullDescription: z.string().optional(),
         imageUrl: productImageUrlSchema.optional(),
@@ -403,6 +405,9 @@ export const adminRouter = router({
           variants,
         });
       } catch (error) {
+        if (error instanceof ProductCatalogValidationError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message, cause: error });
+        }
         if (error instanceof ProductCatalogConflictError) {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message, cause: error });
         }
@@ -431,7 +436,7 @@ export const adminRouter = router({
         id: z.number().int().positive(),
         name: z.string().optional(),
         category: z.string().optional(),
-        price: z.number().positive().optional(),
+        price: z.number().int().positive().max(MAX_PRODUCT_PRICE_CENTS).optional(),
         description: z.string().optional(),
         fullDescription: z.string().optional(),
         imageUrl: productImageUrlSchema.optional(),
@@ -476,6 +481,9 @@ export const adminRouter = router({
           ...(variants !== undefined ? { variants } : {}),
         });
       } catch (error) {
+        if (error instanceof ProductCatalogValidationError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message, cause: error });
+        }
         if (error instanceof ProductCatalogConflictError) {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message, cause: error });
         }

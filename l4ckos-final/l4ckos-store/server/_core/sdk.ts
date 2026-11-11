@@ -19,6 +19,13 @@ export type SessionPayload = {
   sessionVersion: number;
 };
 
+export class AuthenticationBackendUnavailableError extends Error {
+  constructor() {
+    super("Authentication backend unavailable");
+    this.name = "AuthenticationBackendUnavailableError";
+  }
+}
+
 class SDKServer {
   private parseCookies(cookieHeader: string | undefined) {
     if (!cookieHeader) {
@@ -132,7 +139,12 @@ class SDKServer {
       throw ForbiddenError("Invalid session cookie");
     }
 
-    const user = await db.getUserByOpenId(session.openId);
+    let user: User | undefined;
+    try {
+      user = await db.getUserByOpenIdForAuthentication(session.openId);
+    } catch {
+      throw new AuthenticationBackendUnavailableError();
+    }
     if (!user) {
       throw ForbiddenError("User not found");
     }
@@ -145,10 +157,14 @@ class SDKServer {
       throw ForbiddenError("Session invalidated");
     }
 
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: new Date(),
-    });
+    try {
+      await db.upsertUser({
+        openId: user.openId,
+        lastSignedIn: new Date(),
+      });
+    } catch {
+      throw new AuthenticationBackendUnavailableError();
+    }
 
     return user;
   }

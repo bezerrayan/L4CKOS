@@ -343,6 +343,14 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+/** Authentication must distinguish an absent account from an unavailable database. */
+export async function getUserByOpenIdForAuthentication(openId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("AUTH_DATABASE_UNAVAILABLE");
+  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
 export async function getUserById(userId: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -2418,6 +2426,7 @@ export type ProductVariantWrite = {
   stock?: number;
   isActive?: boolean;
 };
+export const MAX_PRODUCT_PRICE_CENTS = 2_147_483_647;
 type NormalizedProductVariantWrite = {
   id?: number;
   name: string;
@@ -2434,6 +2443,24 @@ export class ProductCatalogConflictError extends Error {
     super(message);
     this.name = "ProductCatalogConflictError";
   }
+}
+export class ProductCatalogValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProductCatalogValidationError";
+  }
+}
+export function resolveVariantPriceForSave(input: {
+  submittedPrice: number | null | undefined;
+  currentPrice?: number | null;
+  basePriceCents: number;
+}): number | null {
+  if (input.submittedPrice === undefined) return input.currentPrice ?? null;
+  if (input.submittedPrice !== null) return input.submittedPrice;
+  if (!Number.isSafeInteger(input.basePriceCents) || input.basePriceCents <= 0 || input.basePriceCents > MAX_PRODUCT_PRICE_CENTS) {
+    throw new ProductCatalogValidationError("Informe um preço base válido para herdar nas variantes.");
+  }
+  return input.basePriceCents;
 }
 export function assertVariantStockCoversReservations(variantName: string, proposedStock: number, activeReserved: number) {
   if (proposedStock < activeReserved) {
@@ -2556,7 +2583,8 @@ export function planProductVariantSync(
     }
     if (!merged.name || merged.name.length > 120) throw new ProductCatalogConflictError("O nome de exibição da variante é inválido.");
     if (!Number.isSafeInteger(merged.stock) || merged.stock < 0) throw new ProductCatalogConflictError("O estoque da variante deve ser um inteiro não negativo.");
-    if (merged.price !== null && (!Number.isSafeInteger(merged.price) || merged.price < 0)) throw new ProductCatalogConflictError("O preço da variante deve ser nulo (herdado) ou um valor em centavos não negativo.");
+    if (merged.price !== null && (!Number.isSafeInteger(merged.price) || merged.price < 0 || merged.price > MAX_PRODUCT_PRICE_CENTS)) throw new ProductCatalogValidationError("O preço da variante deve ser um valor válido em centavos.");
+    if (merged.isActive === 1 && merged.price !== null && merged.price <= 0) throw new ProductCatalogValidationError("Uma variante ativa precisa ter preço maior que zero.");
     const value: NormalizedProductVariantWrite = { ...merged, id: match?.id, color, size, optionKey, isActive };
     if (match) update.push({ id: match.id, value });
     else insert.push({ ...value, color: color!, size: size!, optionKey: optionKey! });
@@ -2620,14 +2648,39 @@ async function syncProductVariants(db: ProductDatabase, productId: number, incom
     : [];
   const referencedIds = referencedRows.map(row => Number(row.variantId));
   const plan = planProductVariantSync(existing, incoming, referencedIds);
-  if (plan.update.some(item => item.value.isActive === 1 && item.value.price === null)
-    || plan.insert.some(item => item.isActive === 1 && item.price === null)) {
-    if (!Number.isSafeInteger(basePriceCents) || basePriceCents <= 0) {
-      throw new ProductCatalogConflictError("Variantes com preço herdado exigem preço base válido no produto.");
-    }
+  const inheritedUpdateIds = new Set(incoming.filter(variant => variant.id !== undefined && variant.price === null).map(variant => variant.id!));
+  const incomingNewVariantCount = incoming.filter(variant => variant.id === undefined).length;
+  const inheritanceRequested = inheritedUpdateIds.size > 0 || (incomingNewVariantCount > 0 && plan.insert.some(item => item.price === null));
+  if (inheritanceRequested && (!Number.isSafeInteger(basePriceCents) || basePriceCents <= 0 || basePriceCents > MAX_PRODUCT_PRICE_CENTS)) {
+    throw new ProductCatalogValidationError("Informe um preço base válido para herdar nas variantes.");
   }
 
-  const stockReductions = plan.update.filter(item => item.value.stock < (existing.find(row => row.id === item.id)?.stock ?? 0));
+  // Resolve only explicit blank/null prices in this save. Omitted prices stay
+  // untouched, so a later base-price change never reprices existing variants.
+  const submittedById = new Map(incoming.filter(variant => variant.id !== undefined).map(variant => [variant.id!, variant]));
+  const resolvedUpdates = plan.update.map(item => ({
+    ...item,
+    value: {
+      ...item.value,
+      price: resolveVariantPriceForSave({
+        submittedPrice: submittedById.get(item.id)?.price,
+        currentPrice: existing.find(row => row.id === item.id)?.price,
+        basePriceCents,
+      }),
+    },
+  }));
+  let newVariantIndex = 0;
+  const resolvedInserts = plan.insert.map(item => {
+    const submitted = incoming.filter(variant => variant.id === undefined)[newVariantIndex++];
+    return { ...item, price: resolveVariantPriceForSave({ submittedPrice: submitted?.price, basePriceCents }) };
+  });
+  const unresolvedActive = resolvedUpdates.some(item => item.value.isActive === 1 && item.value.price === null)
+    || resolvedInserts.some(item => item.isActive === 1 && item.price === null);
+  if (unresolvedActive) {
+    throw new ProductCatalogValidationError("Uma variante ativa precisa de preço explícito ou herdar um preço base válido.");
+  }
+
+  const stockReductions = resolvedUpdates.filter(item => item.value.stock < (existing.find(row => row.id === item.id)?.stock ?? 0));
   const reservations = stockReductions.length ? await db.select({ variantId: stockReservations.variantId, quantity: stockReservations.quantity })
     .from(stockReservations)
     .where(and(
@@ -2641,7 +2694,7 @@ async function syncProductVariants(db: ProductDatabase, productId: number, incom
     if (reservation.variantId == null) continue;
     reservedByVariant.set(reservation.variantId, (reservedByVariant.get(reservation.variantId) ?? 0) + Number(reservation.quantity));
   }
-  for (const item of plan.update) {
+  for (const item of resolvedUpdates) {
     const reserved = reservedByVariant.get(item.id) ?? 0;
     assertVariantStockCoversReservations(item.value.name, item.value.stock, reserved);
   }
@@ -2658,7 +2711,7 @@ async function syncProductVariants(db: ProductDatabase, productId: number, incom
       isActive: item.value.isActive,
     }).where(and(eq(productVariants.id, item.id), eq(productVariants.productId, productId)));
   }
-  if (plan.insert.length) await db.insert(productVariants).values(plan.insert.map(item => ({
+  if (resolvedInserts.length) await db.insert(productVariants).values(resolvedInserts.map(item => ({
     productId,
     name: item.name.trim(),
     sku: item.sku,
@@ -2680,6 +2733,9 @@ export async function createProductWithCatalog(input: {
   images: ProductImageWrite[];
   variants: ProductVariantWrite[];
 }) {
+  if (!Number.isSafeInteger(input.product.price) || Number(input.product.price) <= 0 || Number(input.product.price) > MAX_PRODUCT_PRICE_CENTS) {
+    throw new ProductCatalogValidationError("O preço base do produto precisa ser um valor válido em centavos.");
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return db.transaction(async tx => {
@@ -2710,6 +2766,9 @@ export async function updateProductWithCatalog(input: {
   images?: ProductImageWrite[];
   variants?: ProductVariantWrite[];
 }) {
+  if (input.product.price !== undefined && (!Number.isSafeInteger(input.product.price) || Number(input.product.price) <= 0 || Number(input.product.price) > MAX_PRODUCT_PRICE_CENTS)) {
+    throw new ProductCatalogValidationError("O preço base do produto precisa ser um valor válido em centavos.");
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return db.transaction(async tx => {

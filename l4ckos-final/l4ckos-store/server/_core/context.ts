@@ -1,6 +1,7 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
-import { sdk } from "./sdk";
+import { AuthenticationBackendUnavailableError, sdk } from "./sdk";
+import { TRPCError } from "@trpc/server";
 import type { StockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
 
 let localHarnessStockRuntime: StockCheckoutRuntime | undefined;
@@ -51,6 +52,9 @@ export async function createContext(
   try {
     user = await sdk.authenticateRequest(opts.req);
   } catch (error) {
+    if (error instanceof AuthenticationBackendUnavailableError) {
+      throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Autenticação temporariamente indisponível." });
+    }
     // Authentication is optional for public procedures.
     user = null;
   }

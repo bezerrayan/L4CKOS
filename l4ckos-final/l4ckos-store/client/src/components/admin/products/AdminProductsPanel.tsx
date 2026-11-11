@@ -5,6 +5,7 @@ import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../../server/routers";
 import { PRODUCT_CATEGORIES, getCategoryLabel, normalizeCategoryValue } from "../../../lib/productCategories";
 import { generateMissingVariantOptions } from "../../../utils/productVariantDrafts";
+import { parseCurrencyToCents } from "@shared/money";
 import "./AdminProductsPanel.css";
 
 type RouterInputs = inferRouterInputs<AppRouter>;
@@ -44,11 +45,6 @@ const moneyInput = (cents: number | null | undefined) => cents == null ? "" : (N
 const optionIdentity = (value: string) => value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("pt-BR");
 const knownColorSwatches: Record<string, string> = { preto: "#171717", branco: "#f3f3f3", verde: "#39734d", azul: "#35618e", "azul-marinho": "#182e4d", cinza: "#858585", vermelho: "#dc2626", vinho: "#702938", bege: "#c4b99c", marrom: "#654a3b", amarelo: "#e2bd3f", rosa: "#d97891", roxo: "#76509a", laranja: "#de7b32" };
 const colorIdentity = (value: string) => optionIdentity(value).replace(/\s+/gu, "-");
-function parseMoney(value: string) {
-  const raw = value.trim().replace(/[^\d.,-]/g, "");
-  if (!raw) return NaN;
-  return Number(raw.includes(",") && raw.includes(".") ? raw.replace(/\./g, "").replace(",", ".") : raw.replace(",", "."));
-}
 function splitList(value: string) { return [...new Set(value.split(",").map(item => item.trim()).filter(Boolean))]; }
 function readOptions(value?: string | null) {
   if (!value) return [];
@@ -63,11 +59,12 @@ function variantMatches(expected: NonNullable<UpdateInput["variants"]>[number], 
     && Number(expected.stock) === Number(actual.stock)
     && Number(Boolean(expected.isActive)) === Number(actual.isActive);
 }
-function variantsMatch(expected: NonNullable<UpdateInput["variants"]>, actual: Product["variants"] | undefined) {
+function variantsMatch(expected: NonNullable<UpdateInput["variants"]>, actual: Product["variants"] | undefined, inheritedBasePriceCents?: number) {
   if (!actual || expected.length !== actual.length) return false;
   const remaining = [...actual];
   return expected.every(variant => {
-    const index = remaining.findIndex(candidate => variantMatches(variant, candidate));
+    const expectedPrice = variant.price ?? inheritedBasePriceCents ?? null;
+    const index = remaining.findIndex(candidate => variantMatches({ ...variant, price: expectedPrice }, candidate));
     if (index < 0) return false;
     remaining.splice(index, 1);
     return true;
@@ -251,12 +248,12 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
     if (saveInFlight.current || isSaving || isUploading) return;
     saveInFlight.current = true;
     setFieldErrors({});
-    const amount = parseMoney(draft.price);
+    const amountCents = parseCurrencyToCents(draft.price);
     const stock = Number(draft.stock);
     const errors: Record<string, string> = {};
     if (!draft.name.trim()) errors.name = "Informe o nome do produto.";
     if (!draft.category) errors.category = "Selecione uma categoria.";
-    if (!draft.price.trim() || !Number.isFinite(amount) || amount <= 0) errors.price = "Informe um preço maior que zero.";
+    if (!draft.price.trim() || !Number.isSafeInteger(amountCents) || amountCents <= 0) errors.price = "Informe um preço maior que zero, com até duas casas decimais.";
     if (!Number.isInteger(stock) || stock < 0) errors.stock = "Informe um estoque inteiro igual ou maior que zero.";
     draft.variants.forEach((variant, index) => {
       if ((mode === "create" || variant.isActive || variant.id === undefined) && !variant.color.trim()) errors[`variants.${index}.color`] = "Informe a cor desta combinação.";
@@ -264,7 +261,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
       if ((mode === "create" || variant.isActive || variant.id === undefined) && !variant.sku.trim()) errors[`variants.${index}.sku`] = "Informe um SKU único para esta combinação.";
       if (variant.sku.length > 120) errors[`variants.${index}.sku`] = "O SKU deve ter até 120 caracteres.";
       if (!Number.isInteger(Number(variant.stock)) || Number(variant.stock) < 0) errors[`variants.${index}.stock`] = "Use um estoque inteiro igual ou maior que zero.";
-      if (variant.price.trim() && (!Number.isFinite(parseMoney(variant.price)) || parseMoney(variant.price) < 0)) errors[`variants.${index}.price`] = "Informe um preço não negativo ou deixe vazio para herdar o preço base.";
+      if (variant.price.trim() && (!Number.isSafeInteger(parseCurrencyToCents(variant.price)) || parseCurrencyToCents(variant.price) < 0)) errors[`variants.${index}.price`] = "Informe um preço não negativo com até duas casas decimais, ou deixe vazio para herdar o preço base atual ao salvar.";
     });
     if (Object.keys(errors).length) {
       setFieldErrors(errors);
@@ -278,7 +275,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
     ];
     const common = {
       name: draft.name.trim(), category: normalizeCategoryValue(draft.category),
-      price: Math.round(amount * 100), stock,
+      price: amountCents, stock,
     };
     try {
       if (mode === "create") {
@@ -293,7 +290,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
           optionColors: splitList(draft.colors), optionSizes: splitList(draft.sizes), sizeType: draft.sizeType,
           images: imageList, variants: draft.variants.map(variant => ({
             ...(variant.name.trim() ? { name: variant.name.trim() } : {}), color: variant.color.trim(), size: variant.size.trim(),
-            sku: variant.sku.trim(), price: variant.price.trim() ? Math.round(parseMoney(variant.price) * 100) : null,
+            sku: variant.sku.trim(), price: variant.price.trim() ? parseCurrencyToCents(variant.price) : null,
             stock: Number(variant.stock), isActive: variant.isActive,
           })),
         };
@@ -312,7 +309,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
           const fieldsMatch = Number(persisted.price) === createInput.price
             && Number(persisted.stock) === createInput.stock
             && (result.variantCount === expectedVariants.length)
-            && variantsMatch(expectedVariants, persisted.variants);
+            && variantsMatch(expectedVariants, persisted.variants, createInput.price);
           setDraft(draftFrom(persisted));
           setNotice(fieldsMatch
             ? `Produto #${productId} criado com sucesso e confirmado na leitura do catálogo.`
@@ -339,7 +336,7 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
         if (dirty.has("imageBannerUrl")) update.imageBannerUrl = draft.imageBannerUrl;
         if (dirty.has("images")) update.images = imageList;
         if (dirty.has("variants")) {
-          if (draft.variants.some(variant => ((variant.isActive || variant.id === undefined) && (!variant.color.trim() || !variant.size.trim() || !variant.sku.trim())) || !Number.isInteger(Number(variant.stock)) || Number(variant.stock) < 0 || (variant.price.trim() && (!Number.isFinite(parseMoney(variant.price)) || parseMoney(variant.price) < 0)))) {
+          if (draft.variants.some(variant => ((variant.isActive || variant.id === undefined) && (!variant.color.trim() || !variant.size.trim() || !variant.sku.trim())) || !Number.isInteger(Number(variant.stock)) || Number(variant.stock) < 0 || (variant.price.trim() && (!Number.isSafeInteger(parseCurrencyToCents(variant.price)) || parseCurrencyToCents(variant.price) < 0)))) {
             setNotice("Revise cor, tamanho, SKU, preço e estoque de cada variante antes de salvar.");
             return;
           }
@@ -348,19 +345,20 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
             ...(variant.id !== undefined ? { id: variant.id } : {}),
             ...(variant.name.trim() ? { name: variant.name.trim() } : {}),
             color: variant.color.trim() || null, size: variant.size.trim() || null, sku: variant.sku.trim() || null,
-            price: variant.price.trim() ? Math.round(parseMoney(variant.price) * 100) : null,
+            price: variant.price.trim() ? parseCurrencyToCents(variant.price) : null,
             stock: Number(variant.stock), isActive: variant.isActive,
           }));
         }
         if (Object.keys(update).length === 1) { setNotice("Nenhuma alteração foi feita."); return; }
         const result = await onUpdate(update) as { success?: boolean; variants?: Product["variants"] };
-        if (update.variants && !variantsMatch(update.variants, result?.variants)) {
+        const effectiveBasePriceCents = dirty.has("price") ? common.price : parseCurrencyToCents(draft.price);
+        if (update.variants && !variantsMatch(update.variants, result?.variants, effectiveBasePriceCents)) {
           setNotice("A API não confirmou todas as variantes gravadas. O editor permanece aberto; recarregue o produto antes de tentar novamente.");
           return;
         }
         const refreshed = await onRefreshProducts();
         const freshProduct = refreshed?.find(product => product.id === selectedId);
-        if (update.variants && !variantsMatch(update.variants, freshProduct?.variants)) {
+        if (update.variants && !variantsMatch(update.variants, freshProduct?.variants, effectiveBasePriceCents)) {
           setNotice("A leitura nova do catálogo diverge das variantes enviadas. Nenhum sucesso foi exibido; confira os dados antes de continuar.");
           return;
         }
@@ -384,9 +382,9 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
     if (!product) return;
     const update: UpdateInput = { id: product.id };
     if (quickEdit.field === "price") {
-      const value = parseMoney(quickEdit.value);
-      if (!Number.isFinite(value) || value <= 0) { setNotice("Informe um preço maior que zero."); return; }
-      update.price = Math.round(value * 100);
+      const value = parseCurrencyToCents(quickEdit.value);
+      if (!Number.isSafeInteger(value) || value <= 0) { setNotice("Informe um preço maior que zero, com até duas casas decimais."); return; }
+      update.price = value;
     } else {
       const value = Number(quickEdit.value);
       if (!Number.isInteger(value) || value < 0) { setNotice("Informe um estoque inteiro não negativo."); return; }
@@ -406,13 +404,13 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
     { key: "outOfStock", label: "Sem estoque" }, { key: "lowStock", label: "Estoque baixo" },
     { key: "withoutImage", label: "Sem imagem" }, { key: "withVariants", label: "Com variantes" },
   ];
-  const previewBasePrice = parseMoney(draft.price);
+  const previewBasePriceCents = parseCurrencyToCents(draft.price);
   const previewVariants = draft.variants.map(variant => ({
     ...variant,
     inheritsBasePrice: !variant.price.trim(),
     previewPriceCents: variant.price.trim()
-      ? Math.round(parseMoney(variant.price) * 100)
-      : Number.isFinite(previewBasePrice) ? Math.round(previewBasePrice * 100) : null,
+      ? parseCurrencyToCents(variant.price)
+      : Number.isFinite(previewBasePriceCents) ? previewBasePriceCents : null,
   }));
   const previewColors = splitList(draft.colors).length
     ? splitList(draft.colors)
@@ -460,10 +458,10 @@ export function AdminProductsPanel({ products = [], isLoading, isFetching, isErr
       <div className="apl-editor-grid"><div className="apl-form">
         <section className="apl-section"><h4>Informações básicas</h4><div className="apl-fields"><label>Nome<input value={draft.name} aria-invalid={Boolean(fieldErrors.name)} aria-describedby={fieldErrors.name ? "apl-error-name" : undefined} onChange={event => change("name", event.target.value)} />{errorFor("name")}</label><label>Categoria<select className="apl-native-select" aria-label="Categoria" value={draft.category} aria-invalid={Boolean(fieldErrors.category)} aria-describedby={fieldErrors.category ? "apl-error-category" : undefined} onChange={event => change("category", event.target.value)}><option value="">Selecione uma categoria</option>{PRODUCT_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select>{errorFor("category")}</label><label className="apl-wide">Descrição curta<textarea value={draft.description} onChange={event => change("description", event.target.value)} rows={3} /></label></div></section>
         <section className="apl-section"><h4>Preço, estoque e opções</h4><div className="apl-fields"><label>Preço base (R$)<input inputMode="decimal" value={draft.price} aria-invalid={Boolean(fieldErrors.price)} aria-describedby={fieldErrors.price ? "apl-error-price" : undefined} onChange={event => change("price", event.target.value)} />{errorFor("price")}</label><label>Estoque agregado do produto<input type="number" min="0" step="1" value={draft.stock} readOnly={draft.variants.length > 0} aria-invalid={Boolean(fieldErrors.stock)} aria-describedby={fieldErrors.stock ? "apl-error-stock" : undefined} onChange={event => change("stock", event.target.value)} />{errorFor("stock")}</label><label>Cores disponíveis<input value={draft.colors} onChange={event => change("colors", event.target.value)} placeholder="Preto, branco" /></label><label>Tamanhos disponíveis<input value={draft.sizes} onChange={event => change("sizes", event.target.value)} placeholder="P, M, G" /></label><label>Tipo de tamanho<select className="apl-native-select" aria-label="Tipo de tamanho" value={draft.sizeType} onChange={event => change("sizeType", event.target.value as Draft["sizeType"])}><option value="alpha">Alfabético</option><option value="numeric">Numérico</option><option value="custom">Personalizado</option></select></label></div><p className="apl-hint">Produtos simples usam o estoque do produto. Em produtos com variantes, o estoque agregado é calculado pelas combinações; cada variante é a fonte de disponibilidade.</p></section>
-        <section className="apl-section"><div className="apl-gallery-head"><h4>Variantes por cor e tamanho</h4><div className="apl-variant-actions"><button className="apl-secondary" type="button" onClick={generateMissingVariants}>Gerar combinações ausentes</button><button className="apl-secondary" type="button" onClick={addVariant}>Adicionar variante</button></div></div>{draft.variants.length ? <div className="apl-variant-editor">{draft.variants.map((variant, index) => { const persisted = selectedProduct?.variants?.find(row => row.id === variant.id); return <fieldset key={variant.id ?? `new-${index}`} className={`apl-variant-card${variant.isActive ? " is-approved" : " is-inactive"}`}><legend>{variant.id ? `Variante #${variant.id}` : "Nova variante"}{variant.isActive ? " · aprovada" : " · inativa"}</legend><div className="apl-fields"><label>Cor<input value={variant.color} aria-invalid={Boolean(fieldErrors[`variants.${index}.color`])} aria-describedby={fieldErrors[`variants.${index}.color`] ? `apl-error-variants-${index}-color` : undefined} onChange={event => updateVariant(index, { color: event.target.value })} placeholder="Informe a cor" />{errorFor(`variants.${index}.color`)}</label><label>Tamanho<input value={variant.size} aria-invalid={Boolean(fieldErrors[`variants.${index}.size`])} aria-describedby={fieldErrors[`variants.${index}.size`] ? `apl-error-variants-${index}-size` : undefined} onChange={event => updateVariant(index, { size: event.target.value })} placeholder="Informe o tamanho" />{errorFor(`variants.${index}.size`)}</label><label>SKU<input value={variant.sku} aria-invalid={Boolean(fieldErrors[`variants.${index}.sku`])} aria-describedby={fieldErrors[`variants.${index}.sku`] ? `apl-error-variants-${index}-sku` : undefined} onChange={event => updateVariant(index, { sku: event.target.value })} />{errorFor(`variants.${index}.sku`)}</label><label>Preço específico (R$)<input inputMode="decimal" value={variant.price} aria-invalid={Boolean(fieldErrors[`variants.${index}.price`])} aria-describedby={fieldErrors[`variants.${index}.price`] ? `apl-error-variants-${index}-price` : undefined} onChange={event => updateVariant(index, { price: event.target.value })} placeholder="Vazio herda o preço base" />{errorFor(`variants.${index}.price`)}</label><label>Estoque<input type="number" min="0" step="1" value={variant.stock} aria-invalid={Boolean(fieldErrors[`variants.${index}.stock`])} aria-describedby={fieldErrors[`variants.${index}.stock`] ? `apl-error-variants-${index}-stock` : undefined} onChange={event => updateVariant(index, { stock: event.target.value })} />{errorFor(`variants.${index}.stock`)}</label><label className="apl-variant-active"><input type="checkbox" checked={variant.isActive} onChange={event => updateVariant(index, { isActive: event.target.checked })} /> Aprovar para catálogo público</label></div><small>{variant.isActive ? "Aprovada explicitamente; ficará visível quando houver estoque e o checkout estiver habilitado." : "Inativa: aparece nesta revisão administrativa, mas não é oferecida na loja."}</small>{persisted ? <small>Referências preservadas: {persisted.historicalOrderReferences} item(ns) de pedido · {persisted.historicalReservationReferences} reserva(s).</small> : null}</fieldset>; })}</div> : <p className="apl-hint">Nenhuma combinação cadastrada. Gere rascunhos a partir das cores e tamanhos ou adicione uma variante manualmente.</p>}<p className="apl-hint">Combinações geradas começam inativas, com estoque zero e SKU pendente. Variantes históricas inativas permanecem inalteradas até aprovação explícita.</p></section>
+        <section className="apl-section"><div className="apl-gallery-head"><h4>Variantes por cor e tamanho</h4><div className="apl-variant-actions"><button className="apl-secondary" type="button" onClick={generateMissingVariants}>Gerar combinações ausentes</button><button className="apl-secondary" type="button" onClick={addVariant}>Adicionar variante</button></div></div>{draft.variants.length ? <div className="apl-variant-editor">{draft.variants.map((variant, index) => { const persisted = selectedProduct?.variants?.find(row => row.id === variant.id); return <fieldset key={variant.id ?? `new-${index}`} className={`apl-variant-card${variant.isActive ? " is-approved" : " is-inactive"}`}><legend>{variant.id ? `Variante #${variant.id}` : "Nova variante"}{variant.isActive ? " · aprovada" : " · inativa"}</legend><div className="apl-fields"><label>Cor<input value={variant.color} aria-invalid={Boolean(fieldErrors[`variants.${index}.color`])} aria-describedby={fieldErrors[`variants.${index}.color`] ? `apl-error-variants-${index}-color` : undefined} onChange={event => updateVariant(index, { color: event.target.value })} placeholder="Informe a cor" />{errorFor(`variants.${index}.color`)}</label><label>Tamanho<input value={variant.size} aria-invalid={Boolean(fieldErrors[`variants.${index}.size`])} aria-describedby={fieldErrors[`variants.${index}.size`] ? `apl-error-variants-${index}-size` : undefined} onChange={event => updateVariant(index, { size: event.target.value })} placeholder="Informe o tamanho" />{errorFor(`variants.${index}.size`)}</label><label>SKU<input value={variant.sku} aria-invalid={Boolean(fieldErrors[`variants.${index}.sku`])} aria-describedby={fieldErrors[`variants.${index}.sku`] ? `apl-error-variants-${index}-sku` : undefined} onChange={event => updateVariant(index, { sku: event.target.value })} />{errorFor(`variants.${index}.sku`)}</label><label>Preço específico (R$)<input inputMode="decimal" value={variant.price} aria-invalid={Boolean(fieldErrors[`variants.${index}.price`])} aria-describedby={fieldErrors[`variants.${index}.price`] ? `apl-error-variants-${index}-price` : undefined} onChange={event => updateVariant(index, { price: event.target.value })} placeholder="Vazio usa o preço base ao salvar" />{errorFor(`variants.${index}.price`)}</label><label>Estoque<input type="number" min="0" step="1" value={variant.stock} aria-invalid={Boolean(fieldErrors[`variants.${index}.stock`])} aria-describedby={fieldErrors[`variants.${index}.stock`] ? `apl-error-variants-${index}-stock` : undefined} onChange={event => updateVariant(index, { stock: event.target.value })} />{errorFor(`variants.${index}.stock`)}</label><label className="apl-variant-active"><input type="checkbox" checked={variant.isActive} onChange={event => updateVariant(index, { isActive: event.target.checked })} /> Aprovar para catálogo público</label></div><small>{variant.isActive ? "Aprovada explicitamente; ficará visível quando houver estoque e o checkout estiver habilitado." : "Inativa: aparece nesta revisão administrativa, mas não é oferecida na loja."}</small>{persisted ? <small>Referências preservadas: {persisted.historicalOrderReferences} item(ns) de pedido · {persisted.historicalReservationReferences} reserva(s).</small> : null}</fieldset>; })}</div> : <p className="apl-hint">Nenhuma combinação cadastrada. Gere rascunhos a partir das cores e tamanhos ou adicione uma variante manualmente.</p>}<p className="apl-hint">Preço específico vazio grava uma cópia do preço base atual no momento de salvar; mudanças futuras no preço base não alteram esta variante. Combinações geradas começam inativas, com estoque zero e SKU pendente. Variantes históricas inativas permanecem inalteradas até aprovação explícita.</p></section>
         <section className="apl-section"><h4>Imagens</h4><div className="apl-image-main"><div className="apl-main-thumb">{draft.imageUrl ? <img src={imageSource(draft.imageThumbnailUrl || draft.imageUrl)} alt="Prévia da imagem principal" /> : <span>Sem imagem principal</span>}</div><div><strong>Imagem principal</strong><p className="apl-hint">A capa atual é usada pelo catálogo público. A remoção não está disponível no contrato; é possível substituí-la.</p><label className="apl-secondary apl-upload">{isUploading ? "Enviando…" : "Trocar imagem principal"}<input key={`cover-${fileNonce}`} type="file" accept="image/*" disabled={isUploading} onChange={event => { void addUploads(event.target.files, false); }} /></label></div></div><div className="apl-gallery-head"><strong>Galeria geral · ordem pública</strong><label className="apl-secondary apl-upload">{isUploading ? "Enviando…" : "Adicionar imagens"}<input key={`gallery-${fileNonce}`} type="file" accept="image/*" multiple disabled={isUploading} onChange={event => { void addUploads(event.target.files, true); }} /></label></div>{draft.images.length ? <ol className="apl-gallery">{draft.images.map((image, index) => <li key={`${image.imageUrl}-${index}`}><img src={image.imageThumbnailUrl || image.imageUrl} alt={image.alt || ""} /><div><strong>Imagem {index + 1}</strong><label>Cor associada<input value={image.color ?? ""} onChange={event => updateImage(index, { color: event.target.value || null })} placeholder="Opcional" /></label><label>Texto alternativo<input value={image.alt ?? ""} onChange={event => updateImage(index, { alt: event.target.value || null })} placeholder="Descrição da imagem" /></label></div><div className="apl-image-actions"><button type="button" disabled={index === 0} onClick={() => moveImage(index, -1)} aria-label={`Mover imagem ${index + 1} para cima`}>↑</button><button type="button" disabled={index === draft.images.length - 1} onClick={() => moveImage(index, 1)} aria-label={`Mover imagem ${index + 1} para baixo`}>↓</button><button type="button" className="apl-danger" onClick={() => change("images", draft.images.filter((_, at) => at !== index))}>Remover</button></div></li>)}</ol> : <p className="apl-hint">Nenhuma imagem adicional na galeria.</p>}<p className="apl-hint">A ordem é global. Ordenação independente por cor não faz parte do contrato atual; imagens por cor usam o campo de associação existente.</p></section>
         <footer className="apl-form-footer"><span className={notice.includes("com sucesso") ? "apl-success-message" : "apl-notice"} role="status" aria-live="polite">{notice || (mode === "create" ? "Preencha os campos obrigatórios para criar o produto." : "Somente os campos alterados serão enviados.")}</span><div><button type="button" className="apl-secondary" disabled={isSaving || isUploading} onClick={cancelEdit}>Cancelar</button><button type="button" className="apl-primary" disabled={isSaving || isUploading} onClick={() => { void save(); }}>{isSaving ? (mode === "create" ? "Criando…" : "Salvando…") : mode === "create" ? "Criar produto" : "Salvar alterações"}</button></div></footer>
-      </div><aside className="apl-preview" aria-label="Prévia atual do produto"><h4>Prévia da loja</h4><div className="apl-preview-image">{previewImage ? <img src={imageSource(previewImage)} alt={draft.name ? `Prévia de ${draft.name}${selectedPreviewColor ? ` na cor ${selectedPreviewColor}` : ""}` : "Imagem do produto"} /> : <span>Imagem não informada</span>}</div><span>{draft.category ? getCategoryLabel(draft.category) : "Categoria não selecionada"}</span><strong>{draft.name || "Nome do produto"}</strong><b>{selectedPreviewVariant && selectedPreviewVariant.previewPriceCents !== null && Number.isSafeInteger(selectedPreviewVariant.previewPriceCents) && selectedPreviewVariant.previewPriceCents >= 0 ? money(selectedPreviewVariant.previewPriceCents) : Number.isFinite(previewBasePrice) && previewBasePrice > 0 ? money(Math.round(previewBasePrice * 100)) : "Preço não informado"}</b><p>{draft.description || "Sem descrição curta."}</p><div className="apl-preview-control"><strong>Cores</strong><div role="group" aria-label="Prévia das cores">{previewColors.length ? previewColors.map(color => <button key={color} type="button" aria-pressed={selectedPreviewColor === color} onClick={() => setPreviewColor(color)}><i style={{ backgroundColor: knownColorSwatches[colorIdentity(color)] ?? "#555" }} aria-hidden="true" />{color}</button>) : <small>Não informadas</small>}</div></div><div className="apl-preview-control"><strong>Tamanhos</strong><div role="group" aria-label="Prévia dos tamanhos">{previewSizes.length ? previewSizes.map(size => <button key={size} type="button" aria-pressed={selectedPreviewSize === size} onClick={() => setPreviewSize(size)}>{size}</button>) : <small>Não informados</small>}</div></div><div className="apl-preview-selected" aria-live="polite">{draft.variants.length ? selectedPreviewVariant ? <><strong>{selectedPreviewVariant.color} / {selectedPreviewVariant.size}</strong><span>SKU {selectedPreviewVariant.sku || "pendente"} · estoque {selectedPreviewVariant.stock || "0"}</span><span>{selectedPreviewVariant.inheritsBasePrice ? "Preço herdado do produto" : "Preço específico da variante"}</span><b className={selectedPreviewVariant.isActive ? "is-active" : "is-inactive"}>{selectedPreviewVariant.isActive ? "Aprovada para o catálogo público" : "Inativa · visível somente na gestão"}</b></> : <strong>Combinação ainda não cadastrada</strong> : <span>Produto sem estoque por combinação; opções usam o estoque geral.</span>}</div><div className="apl-preview-variants"><div className="apl-preview-variants-heading"><strong>Revisão das combinações cadastradas</strong><span>{previewVariants.filter(variant => variant.isActive).length} aprovadas · {previewVariants.filter(variant => !variant.isActive).length} inativas</span></div>{previewVariants.length ? <ul>{previewVariants.map((variant, index) => <li key={variant.id ?? `preview-${index}`}><span><strong>{variant.color || "Cor pendente"} / {variant.size || "Tamanho pendente"}</strong><small>SKU {variant.sku || "pendente"} · Estoque {variant.stock || "0"}</small></span><span><b>{variant.previewPriceCents !== null && Number.isSafeInteger(variant.previewPriceCents) && variant.previewPriceCents >= 0 ? money(variant.previewPriceCents) : "Preço pendente"}</b><small>{variant.inheritsBasePrice ? "Herdado do produto" : "Preço específico"}</small><small className={variant.isActive ? "is-active" : "is-inactive"}>{variant.isActive ? "Aprovada" : "Inativa"}</small></span></li>)}</ul> : <p className="apl-hint">Sem combinações cadastradas. Gere rascunhos para conferir cor, tamanho, preço, estoque e aprovação.</p>}</div></aside></div>
+      </div><aside className="apl-preview" aria-label="Prévia atual do produto"><h4>Prévia da loja</h4><div className="apl-preview-image">{previewImage ? <img src={imageSource(previewImage)} alt={draft.name ? `Prévia de ${draft.name}${selectedPreviewColor ? ` na cor ${selectedPreviewColor}` : ""}` : "Imagem do produto"} /> : <span>Imagem não informada</span>}</div><span>{draft.category ? getCategoryLabel(draft.category) : "Categoria não selecionada"}</span><strong>{draft.name || "Nome do produto"}</strong><b>{selectedPreviewVariant && selectedPreviewVariant.previewPriceCents !== null && Number.isSafeInteger(selectedPreviewVariant.previewPriceCents) && selectedPreviewVariant.previewPriceCents >= 0 ? money(selectedPreviewVariant.previewPriceCents) : Number.isSafeInteger(previewBasePriceCents) && previewBasePriceCents > 0 ? money(previewBasePriceCents) : "Preço não informado"}</b><p>{draft.description || "Sem descrição curta."}</p><div className="apl-preview-control"><strong>Cores</strong><div role="group" aria-label="Prévia das cores">{previewColors.length ? previewColors.map(color => <button key={color} type="button" aria-pressed={selectedPreviewColor === color} onClick={() => setPreviewColor(color)}><i style={{ backgroundColor: knownColorSwatches[colorIdentity(color)] ?? "#555" }} aria-hidden="true" />{color}</button>) : <small>Não informadas</small>}</div></div><div className="apl-preview-control"><strong>Tamanhos</strong><div role="group" aria-label="Prévia dos tamanhos">{previewSizes.length ? previewSizes.map(size => <button key={size} type="button" aria-pressed={selectedPreviewSize === size} onClick={() => setPreviewSize(size)}>{size}</button>) : <small>Não informados</small>}</div></div><div className="apl-preview-selected" aria-live="polite">{draft.variants.length ? selectedPreviewVariant ? <><strong>{selectedPreviewVariant.color} / {selectedPreviewVariant.size}</strong><span>SKU {selectedPreviewVariant.sku || "pendente"} · estoque {selectedPreviewVariant.stock || "0"}</span><span>{selectedPreviewVariant.inheritsBasePrice ? "Preço herdado do produto" : "Preço específico da variante"}</span><b className={selectedPreviewVariant.isActive ? "is-active" : "is-inactive"}>{selectedPreviewVariant.isActive ? "Aprovada para o catálogo público" : "Inativa · visível somente na gestão"}</b></> : <strong>Combinação ainda não cadastrada</strong> : <span>Produto sem estoque por combinação; opções usam o estoque geral.</span>}</div><div className="apl-preview-variants"><div className="apl-preview-variants-heading"><strong>Revisão das combinações cadastradas</strong><span>{previewVariants.filter(variant => variant.isActive).length} aprovadas · {previewVariants.filter(variant => !variant.isActive).length} inativas</span></div>{previewVariants.length ? <ul>{previewVariants.map((variant, index) => <li key={variant.id ?? `preview-${index}`}><span><strong>{variant.color || "Cor pendente"} / {variant.size || "Tamanho pendente"}</strong><small>SKU {variant.sku || "pendente"} · Estoque {variant.stock || "0"}</small></span><span><b>{variant.previewPriceCents !== null && Number.isSafeInteger(variant.previewPriceCents) && variant.previewPriceCents >= 0 ? money(variant.previewPriceCents) : "Preço pendente"}</b><small>{variant.inheritsBasePrice ? "Herdado do produto" : "Preço específico"}</small><small className={variant.isActive ? "is-active" : "is-inactive"}>{variant.isActive ? "Aprovada" : "Inativa"}</small></span></li>)}</ul> : <p className="apl-hint">Sem combinações cadastradas. Gere rascunhos para conferir cor, tamanho, preço, estoque e aprovação.</p>}</div></aside></div>
     </section>}
   </div></AdminSurface>;
 }
