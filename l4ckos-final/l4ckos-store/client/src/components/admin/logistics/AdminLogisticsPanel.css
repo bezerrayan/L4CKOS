@@ -74,6 +74,7 @@
 .l4-logistics-table td:first-child small, .l4-logistics-table td[data-label="Andamento"] small { margin-top: 3px; color: var(--lg-muted); font-size: 10px; }
 .l4-logistics-payment { padding: 4px 7px !important; border: 1px solid !important; border-radius: 5px !important; font-size: 10px; font-weight: 650; white-space: nowrap; }
 .l4-logistics-payment--confirmed { border-color: rgb(86 190 130 / 25%) !important; color: #9be0b4 !important; background: rgb(43 128 76 / 12%) !important; }
+.l4-logistics-payment--cancelled { border-color: rgb(255 255 255 / 16%) !important; color: #a8a8a8 !important; background: rgb(255 255 255 / 5%) !important; }
 .l4-logistics-payment--pending { border-color: rgb(238 179 79 / 28%) !important; color: #f2ca7c !important; background: rgb(180 117 23 / 11%) !important; }
 .l4-logistics-stage { color: #d1cfd3; }
 .l4-logistics-muted { color: #85838a; }

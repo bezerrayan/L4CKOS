@@ -42,6 +42,7 @@ export function AdminLogisticsPanel({ onOpenOrder }: Props) {
       shipped: confirmed.filter(order => order.status === "shipped").length,
       delivered: confirmed.filter(order => order.status === "delivered").length,
       pending: all.filter(order => order.status !== "cancelled" && !isConfirmedPayment(order)).length,
+      cancelled: all.filter(order => order.status === "cancelled").length,
     };
   }, [orders.data]);
 
@@ -50,7 +51,8 @@ export function AdminLogisticsPanel({ onOpenOrder }: Props) {
   }, [summary.data?.groups]);
 
   const filteredOrders = (orders.data ?? []).filter(order => {
-    if (order.status === "cancelled") return false;
+    if (filter === "cancelled") { if (order.status !== "cancelled") return false; }
+    else if (order.status === "cancelled") return false;
     const confirmed = isConfirmedPayment(order);
     const items = order.items ?? [];
     if (filter === "payment_pending" && confirmed) return false;
@@ -75,6 +77,7 @@ export function AdminLogisticsPanel({ onOpenOrder }: Props) {
     { label: "Enviados", value: metrics.shipped, icon: Truck, tone: "dark" },
     { label: "Entregues", value: metrics.delivered, icon: PackageCheck, tone: "dark" },
     { label: "Pagamento pendente", value: metrics.pending, icon: CircleAlert, tone: "amber" },
+    { label: "Cancelados · fora da demanda", value: metrics.cancelled, icon: CircleAlert, tone: "dark" },
   ] as const;
 
   return <div className="l4-logistics">
@@ -117,8 +120,8 @@ export function AdminLogisticsPanel({ onOpenOrder }: Props) {
       </section>
 
       <section className="l4-logistics-orders" aria-labelledby="l4-logistics-orders-title">
-        <div className="l4-logistics-section-heading"><div><span className="l4-logistics-eyebrow">ACOMPANHAMENTO</span><h2 id="l4-logistics-orders-title">Pedidos</h2><p>{filteredOrders.length} pedidos não cancelados encontrados, sem exposição de endereço nesta visão.</p></div><span className="l4-logistics-count">{orders.data?.length ?? 0} registros</span></div>
-        <div className="l4-logistics-filters"><label>Buscar pedido<input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} placeholder="Nº, cliente, produto ou rastreio" /></label><label>Filtrar etapa<select value={filter} onChange={event => { setFilter(event.target.value); setPage(0); }}><option value="all">Todas as etapas</option><option value="payment_pending">Pagamento pendente</option><option value="production">Produção</option><option value="shipping">Em preparação para envio</option><option value="shipped">Enviados</option><option value="delivered">Entregues</option></select></label></div>
+        <div className="l4-logistics-section-heading"><div><span className="l4-logistics-eyebrow">ACOMPANHAMENTO</span><h2 id="l4-logistics-orders-title">Pedidos</h2><p>{filteredOrders.length} {filter === "cancelled" ? "pedidos cancelados (não contam na demanda confirmada)" : "pedidos não cancelados"} encontrados, sem exposição de endereço nesta visão.</p></div><span className="l4-logistics-count">{orders.data?.length ?? 0} registros</span></div>
+        <div className="l4-logistics-filters"><label>Buscar pedido<input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} placeholder="Nº, cliente, produto ou rastreio" /></label><label>Filtrar etapa<select value={filter} onChange={event => { setFilter(event.target.value); setPage(0); }}><option value="all">Todas as etapas</option><option value="payment_pending">Pagamento pendente</option><option value="production">Produção</option><option value="shipping">Em preparação para envio</option><option value="shipped">Enviados</option><option value="delivered">Entregues</option><option value="cancelled">Cancelados (fora da demanda)</option></select></label></div>
         {filteredOrders.length === 0 ? <AdminEmptyState title="Nenhum pedido encontrado" description="Revise a busca ou o filtro selecionado." /> : <><AdminTableWrapper className="l4-logistics-table-wrap"><table className="l4-logistics-table"><thead><tr><th>Pedido</th><th>Itens</th><th>Tipo</th><th>Pagamento</th><th>Andamento</th><th>Rastreamento</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>
           {visibleOrders.map(order => {
             const confirmed = isConfirmedPayment(order);
@@ -130,7 +133,7 @@ export function AdminLogisticsPanel({ onOpenOrder }: Props) {
               <td data-label="Pedido"><strong>#{order.id}</strong><small>{order.customerName || "Cliente"}</small></td>
               <td data-label="Itens">{items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} peças</td>
               <td data-label="Tipo">{modes.length ? modes.join(" + ") : "Não registrado"}</td>
-              <td data-label="Pagamento"><AdminStatusBadge className={confirmed ? "l4-logistics-payment l4-logistics-payment--confirmed" : "l4-logistics-payment l4-logistics-payment--pending"}>{confirmed ? "Confirmado" : "Pendente"}</AdminStatusBadge></td>
+              <td data-label="Pagamento"><AdminStatusBadge className={order.status === "cancelled" ? "l4-logistics-payment l4-logistics-payment--cancelled" : confirmed ? "l4-logistics-payment l4-logistics-payment--confirmed" : "l4-logistics-payment l4-logistics-payment--pending"}>{order.status === "cancelled" ? "Cancelado" : confirmed ? "Confirmado" : "Pendente"}</AdminStatusBadge></td>
               <td data-label="Andamento"><span className="l4-logistics-stage">{batchStatus ? batchStage[batchStatus] ?? batchStatus : orderStage[order.status] ?? order.status}</span>{shipmentEstimate ? <small>Postagem estimada: {formatDate(shipmentEstimate)}</small> : null}</td>
               <td data-label="Rastreamento">{order.trackingCode || <span className="l4-logistics-muted">Não registrado</span>}</td>
               <td data-label="Ação"><button type="button" className="l4-logistics-open-order" onClick={() => onOpenOrder(Number(order.id))} aria-label={`Abrir pedido ${order.id}`}>Ver pedido <ArrowUpRight size={15} aria-hidden="true" /></button></td>
