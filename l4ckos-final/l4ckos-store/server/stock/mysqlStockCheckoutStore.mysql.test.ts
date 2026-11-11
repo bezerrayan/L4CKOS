@@ -14,6 +14,7 @@ import {
 } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 import { createExclusiveStore } from "../exclusive/store";
+import { canonicalizeSeedVariants } from "./testing/canonicalizeSeedVariants";
 
 const createStockCheckout = (input: Omit<Parameters<typeof createStockCheckoutDomain>[0], "ownerUserId">) =>
   createStockCheckoutDomain({ ...input, ownerUserId: 81 });
@@ -41,12 +42,13 @@ async function resetDatabase() {
   }
   await pool.query("SET FOREIGN_KEY_CHECKS = 1");
   await pool.execute("INSERT INTO users (id, openId, name, email) VALUES (81, 'synthetic-owner-81', 'STOCK Customer', 'stock-customer@example.invalid'), (82, 'synthetic-other-82', 'Other Customer', 'other-customer@example.invalid')");
-  await pool.execute("INSERT INTO products (id, name) VALUES (4, 'Synthetic STOCK shirt')");
+  await pool.execute("INSERT INTO products (id, name, category, price, stock) VALUES (4, 'Synthetic STOCK shirt', 'camisetas', 12900, 0)");
   await pool.execute(
-    "INSERT INTO productVariants (id, productId, sku, size, color, price, stock, reservedStock, isActive) " +
-    "VALUES (8, 4, 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1), " +
-    "(9, 4, 'TSHIRT-BLK-G', 'G', 'Preto', 14900, 2, 0, 1)",
+    "INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) " +
+    "VALUES (8, 4, 'TSHIRT-BLK-M', 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1), " +
+    "(9, 4, 'TSHIRT-BLK-G', 'TSHIRT-BLK-G', 'G', 'Preto', 14900, 2, 0, 1)",
   );
+  await canonicalizeSeedVariants(pool);
 }
 
 const checkoutRequest = (attemptId: string, variantId = 8, quantity = 1, size = variantId === 8 ? "M" : "G") => ({
@@ -163,7 +165,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
       for (const statement of schema.split(";").map(part => part.trim()).filter(Boolean)) await pool.query(statement);
     }
     const exclusiveMigration = await readFile(resolve("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql"), "utf8");
-    const creates = exclusiveMigration.match(/CREATE TABLE IF NOT EXISTS[\s\S]*?ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;/g) ?? [];
+    const creates = exclusiveMigration.match(/CREATE TABLE IF NOT EXISTS[\s\S]*?ENGINE=InnoDB;/g) ?? [];
     if (creates.length !== 8) throw new Error("Exclusive-drop candidate schema fixture is incomplete");
     for (const statement of creates) await pool.query(statement);
     const exclusive = createExclusiveStore(pool);

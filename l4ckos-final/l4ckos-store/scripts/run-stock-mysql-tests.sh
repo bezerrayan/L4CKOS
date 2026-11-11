@@ -54,6 +54,35 @@ if [[ -z "$published_port" ]]; then
   exit 2
 fi
 
+# STOCK_SCHEMA=v6 (default): provision the AUDITED V6 physical schema + 0020..0025 + the V6-aware STOCK candidate + Drops 0028
+# in the disposable container, so the integrated app runs on the same structure the V6 line owns.
+# STOCK_SCHEMA=legacy keeps the original minimal fixture (server/stock/fixtures/mysql8-stock-schema.sql).
+if [[ "${STOCK_SCHEMA:-v6}" == "v6" ]]; then
+  work_dir="$(mktemp -d)"
+  trap 'rm -rf "$work_dir"; cleanup' EXIT INT TERM
+  python3 - "$package_dir" > "$work_dir/audited.sql" <<'PY'
+import json, sys
+tables = json.load(open(sys.argv[1] + "/server/database/fixtures/audited-schema.json"))
+print("SET FOREIGN_KEY_CHECKS=0;")
+for ddl in tables.values():
+    print(ddl.rstrip(";") + ";")
+print("SET FOREIGN_KEY_CHECKS=1;")
+PY
+  root_sql() { docker exec --interactive --env MYSQL_PWD="$synthetic_root_password" "$container_name" mysql --user=root "$@"; }
+  root_sql -e "CREATE DATABASE railway CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; ALTER DATABASE l4ckos_stock_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+  root_sql railway < "$work_dir/audited.sql"
+  for file in 0020_reconcile_asaas_webhook_events 0021_preorder_production_batches 0022_preorder_manufacturing_schedule \
+              0023_asaas_webhook_inbox 0024_home_highlight_settings 0025_product_variant_identity; do
+    root_sql railway < "database/migrations/$file.sql"
+  done
+  root_sql railway < database/migrations/stock-v1/v6/0027_stock_v1_on_v6_lineage.sql
+  root_sql railway < database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql
+  docker exec --env MYSQL_PWD="$synthetic_root_password" "$container_name" \
+    mysqldump --user=root --no-data --skip-comments --set-gtid-purged=OFF railway > "$work_dir/v6-stock.sql"
+  root_sql l4ckos_stock_test < "$work_dir/v6-stock.sql"
+  root_sql -e "DROP DATABASE railway"
+fi
+
 STOCK_MYSQL_HOST=127.0.0.1 \
 STOCK_MYSQL_PORT="$published_port" \
 STOCK_MYSQL_USER=stock_test \

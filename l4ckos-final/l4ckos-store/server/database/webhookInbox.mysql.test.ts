@@ -18,6 +18,7 @@ import { createStagingMaintenanceMiddleware } from '../_core/stagingMaintenance'
 import webhookRoutes from '../routes/webhookRoutes';
 import { TARGET } from '../../database/staging0022/policy';
 import { sql } from 'drizzle-orm';
+import { applyStockV6Migration, rollbackStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => ({ orm: null as unknown }));
 vi.mock('drizzle-orm/mysql2', async original => ({ ...await original<typeof mysqlOrm>(), drizzle: () => injected.orm }));
 vi.mock('../services/emailService.js', () => ({
@@ -62,10 +63,12 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     await bootstrapReleaseDatabase(c,{url:`mysql://root@localhost/${name}`,socketPath,applicationCommit:'a'.repeat(40),approvedFingerprint:(await readReleaseContract()).fingerprint});
     const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');
     pool=createPool({user:'root',socketPath,database:name,connectionLimit:5}); injected.orm=actual.drizzle(pool);
-    vi.stubEnv('DATABASE_URL','synthetic-present');
+    vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');
   });
   beforeEach(async()=>{
-    vi.unstubAllEnvs(); vi.stubEnv('DATABASE_URL','synthetic-present');
+    vi.unstubAllEnvs(); vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');
+    // The lineage-fingerprint test must see the pure V6 schema; every other test runs on V6 + the V6-aware STOCK candidate (idempotent).
+    if(/migrates 0023 once/i.test(expect.getState().currentTestName??''))await rollbackStockV6Migration(c,name);else await applyStockV6Migration(c,name);
     for(const table of ['asaasWebhookInbox','asaasWebhookEvents','auditLogs','stockReservations','orderItems','orders','products','users'])await c.query(`DELETE FROM ${quote(table)}`);
     await c.query("INSERT INTO users (id,openId,name) VALUES (901,'inbox-synthetic','Synthetic')");
     await c.query("INSERT INTO products (id,name,category,price,stock) VALUES (901,'Synthetic','fixture',10000,5)");
@@ -177,7 +180,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     try {const base=`http://127.0.0.1:${(server.address() as any).port}`;
       for(const alias of ['/webhook/asaas','/api/webhooks/asaas'])expect((await fetch(base+alias,{method:'POST',headers:{'content-type':'application/json','asaas-access-token':'synthetic-token'},body:JSON.stringify(event())})).status).toBe(503);
       expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);expect(await stock()).toBe(5);
-    }finally{await new Promise<void>(r=>server.close(()=>r()));vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','synthetic-present');}
+    }finally{await new Promise<void>(r=>server.close(()=>r()));vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');}
     expect((await recoverWebhooks(processWebhookEnvelope)).completed).toBe(1);expect(await stock()).toBe(4);
   });
   it('both aliases require authentication and share durable idempotency',async()=>{
@@ -192,12 +195,21 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     }finally{await new Promise<void>(r=>server.close(()=>r()));}
   });
   it('backup/restore preserves pending minimal envelope and independently resumes on restored DB',async()=>{
+    // STOCK rows (manifest v6) must round-trip together with the V6 inbox: attempt, item, event, variant identity.
+    await c.query("INSERT INTO products (id,name,category,price,stock) VALUES (902,'Variant product','fixture',10000,5)");
+    await c.query("INSERT INTO productVariants (id,productId,name,sku,price,stock,size,color,optionKey,isActive) VALUES (902,902,'M / Preto','INBOX-SKU-902',10000,5,'M','Preto','preto|m',1)");
+    await c.query("INSERT INTO stockCheckoutAttempts (attemptId,ownerUserId,fingerprint,orderId,status,providerState,amountCents,reservationExpiresAt) VALUES ('roundtrip-attempt-0001',901,REPEAT('b',64),901,'reserved','created',10000,'2030-01-01 00:00:00.000')");
+    await c.query("INSERT INTO stockCheckoutItems (attemptId,lineNumber,variantId,productId,sku,size,color,unitPriceCents,quantity,totalCents) VALUES ('roundtrip-attempt-0001',0,902,902,'INBOX-SKU-902','M','Preto',10000,1,10000)");
+    await c.query("INSERT INTO stockWebhookEvents (eventId,payloadHash) VALUES ('roundtrip-event-0001',REPEAT('c',64))");
     const e=event();await persistWebhook(e);const artifact=await backupDatabase(c);
+    expect(artifact.tableManifestVersion).toBe(6);
     expect(artifact.tables.asaasWebhookInbox.rowCount).toBe(1);
+    for(const t of ['stockCheckoutAttempts','stockCheckoutItems','stockWebhookEvents'])expect(artifact.tables[t].rowCount).toBe(1);
     const destination=name+'_restore';await root.query(`CREATE DATABASE ${quote(destination)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     const restored=await openBackupConnection(`mysql://root@localhost/${destination}`,socketPath);
     try {
       await bootstrapReleaseDatabase(restored,{url:`mysql://root@localhost/${destination}`,socketPath,applicationCommit:"a".repeat(40),approvedFingerprint:(await readReleaseContract()).fingerprint});
+      await applyStockV6Migration(restored,destination);
       // Release bootstrap seeds this singleton; restore correctly requires an empty data target.
       await restored.query('DELETE FROM homeHighlightSettings');
       await restoreDatabase(restored,artifact,{url:`mysql://root@localhost/${destination}`,socketPath});
@@ -206,7 +218,12 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
       expect((await rows(restored,'SELECT state FROM asaasWebhookInbox WHERE eventId=?',[e.id]))[0].state).toBe('processed');
       expect(Number((await rows(restored,'SELECT stock FROM products WHERE id=901'))[0].stock)).toBe(4);
       expect(await stock()).toBe(5);
-    }finally{await restored.end();await root.query(`DROP DATABASE ${quote(destination)}`);}
+      expect(Number((await rows(restored,'SELECT COUNT(*) n FROM stockCheckoutItems WHERE attemptId=?',['roundtrip-attempt-0001']))[0].n)).toBe(1);
+      expect((await rows(restored,'SELECT status, providerState, amountCents FROM stockCheckoutAttempts'))[0]).toMatchObject({status:'reserved',providerState:'created'});
+    }finally{
+      await restored.end();await root.query(`DROP DATABASE ${quote(destination)}`);
+      for(const sql of ["DELETE FROM stockCheckoutItems","DELETE FROM stockCheckoutAttempts","DELETE FROM stockWebhookEvents","DELETE FROM productVariants WHERE id=902","DELETE FROM products WHERE id=902"])await c.query(sql);
+    }
   });
   it('startup recovery drains received without HTTP redelivery or provider calls',async()=>{
     const e=event();await persistWebhook(e);const stop=startWebhookRecovery(processWebhookEnvelope);

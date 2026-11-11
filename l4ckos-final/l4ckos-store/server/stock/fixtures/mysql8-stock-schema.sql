@@ -1,6 +1,10 @@
 CREATE TABLE products (
   id INT NOT NULL AUTO_INCREMENT,
   name VARCHAR(191) NOT NULL,
+  imageUrl VARCHAR(500) NULL,
+  category VARCHAR(100) NOT NULL DEFAULT 'fixture',
+  price INT NOT NULL DEFAULT 0,
+  stock INT NOT NULL DEFAULT 0,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -78,6 +82,7 @@ CREATE TABLE orders (
 CREATE TABLE productVariants (
   id INT NOT NULL AUTO_INCREMENT,
   productId INT NOT NULL,
+  name VARCHAR(120) NOT NULL DEFAULT '',
   sku VARCHAR(120) COLLATE utf8mb4_0900_ai_ci NOT NULL,
   size VARCHAR(60) NOT NULL,
   color VARCHAR(60) NOT NULL,
@@ -101,6 +106,13 @@ CREATE TABLE orderItems (
   quantity INT NOT NULL,
   unitPrice INT NOT NULL,
   totalPrice INT NULL,
+  productName VARCHAR(255) NULL,
+  variantName VARCHAR(120) NULL,
+  sku VARCHAR(120) NULL,
+  size VARCHAR(60) NULL,
+  color VARCHAR(60) NULL,
+  imageUrl VARCHAR(500) NULL,
+  salesModeAtPurchase ENUM('STOCK','PREORDER') NOT NULL DEFAULT 'STOCK',
   variantId INT NULL,
   skuSnapshot VARCHAR(120) NULL,
   sizeSnapshot VARCHAR(60) NULL,
@@ -164,6 +176,7 @@ CREATE TABLE stockReservations (
   productId INT NOT NULL,
   attemptId VARCHAR(120) NULL,
   variantId INT NULL,
+  orderItemId INT NULL,
   skuSnapshot VARCHAR(120) NULL,
   sizeSnapshot VARCHAR(60) NULL,
   colorSnapshot VARCHAR(60) NULL,

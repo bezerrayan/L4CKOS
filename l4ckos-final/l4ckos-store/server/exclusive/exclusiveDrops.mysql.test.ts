@@ -20,6 +20,7 @@ import { createMysqlStockCheckoutStore } from "../stock/mysqlStockCheckoutStore"
 import { createExclusiveStore, type ExclusiveDropNotifier, type NotificationEvent } from "./store";
 import { configureExclusiveStoreForLocalHarness } from "./runtime";
 import { canPurchaseExclusive } from "../../shared/exclusiveDropsV1";
+import { canonicalizeSeedVariants } from "../stock/testing/canonicalizeSeedVariants";
 
 /**
  * Exclusive drops against the REAL STOCK V1 checkout, on the disposable loopback MySQL harness only.
@@ -78,11 +79,12 @@ async function resetDatabase() {
   await pool.execute(
     `INSERT INTO users (id, openId, name, email, role) VALUES (81, 'synthetic-owner-81', 'Integrante Um', 'um@example.invalid', 'user'), (82, 'synthetic-other-82', 'Outro Cliente', 'outro@example.invalid', 'user'),
        (83, 'synthetic-admin-83', 'Admin', ?, 'admin'), (84, 'synthetic-third-84', 'Terceiro', 'terceiro@example.invalid', 'user')`, [adminEmail]);
-  await pool.execute(`INSERT INTO products (id, name) VALUES (4, 'Camiseta Clã XIV Bis'), (5, 'City Noise')`);
+  await pool.execute(`INSERT INTO products (id, name, category, price, stock) VALUES (4, 'Camiseta Clã XIV Bis', 'camisetas', 12900, 0), (5, 'City Noise', 'camisetas', 9900, 0)`);
   await pool.execute(
-    `INSERT INTO productVariants (id, productId, sku, size, color, price, stock, reservedStock, isActive) VALUES
-       (8, 4, 'XIV-M', 'M', 'Preto', 12900, 20, 0, 1), (9, 4, 'XIV-G', 'G', 'Preto', 12900, 20, 0, 1), (10, 4, 'XIV-GG', 'GG', 'Preto', 12900, 20, 0, 1),
-       (11, 5, 'CN-M', 'M', 'Preto', 9900, 20, 0, 1)`);
+    `INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) VALUES
+       (8, 4, 'XIV-M', 'XIV-M', 'M', 'Preto', 12900, 20, 0, 1), (9, 4, 'XIV-G', 'XIV-G', 'G', 'Preto', 12900, 20, 0, 1), (10, 4, 'XIV-GG', 'XIV-GG', 'GG', 'Preto', 12900, 20, 0, 1),
+       (11, 5, 'CN-M', 'CN-M', 'M', 'Preto', 9900, 20, 0, 1)`);
+  await canonicalizeSeedVariants(pool);
 }
 
 const DROP_INPUT = {

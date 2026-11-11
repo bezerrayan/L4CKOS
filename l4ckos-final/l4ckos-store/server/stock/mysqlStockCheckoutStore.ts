@@ -253,9 +253,9 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       if (!identity) throw new StockMySqlInvariantError("Attempt snapshot missing during reservation projection");
       await connection.execute<ResultSetHeader>(
         `INSERT INTO stockReservations
-          (orderId, userId, productId, attemptId, variantId, skuSnapshot, sizeSnapshot, colorSnapshot, unitPriceCents, quantity, status, expiresAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? SECOND))`,
-        [identity.orderId, identity.ownerUserId, identity.productId, attemptId, variantId, identity.sku, identity.size, identity.color, identity.unitPriceCents, quantity, reservationTtlSeconds],
+          (orderId, userId, productId, attemptId, variantId, orderItemId, skuSnapshot, sizeSnapshot, colorSnapshot, unitPriceCents, quantity, status, expiresAt)
+         VALUES (?, ?, ?, ?, ?, (SELECT id FROM orderItems WHERE orderId = ? AND variantId = ? ORDER BY id LIMIT 1), ?, ?, ?, ?, ?, 'active', DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? SECOND))`,
+        [identity.orderId, identity.ownerUserId, identity.productId, attemptId, variantId, identity.orderId, variantId, identity.sku, identity.size, identity.color, identity.unitPriceCents, quantity, reservationTtlSeconds],
       );
       return true;
     },
@@ -296,9 +296,16 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       if (header.affectedRows !== 1) throw new StockMySqlInvariantError("Checkout attempt header insert failed");
       for (const [lineNumber, item] of attempt.snapshots.entries()) {
         await connection.execute<ResultSetHeader>(
-          `INSERT INTO orderItems (orderId, productId, quantity, unitPrice, totalPrice, variantId, skuSnapshot, sizeSnapshot, colorSnapshot)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [orderId, item.productId, item.quantity, item.unitPriceCents, item.totalCents, item.id, item.sku, item.size, item.color],
+          // V6 order-item contract: the canonical snapshot columns (productName/variantName/sku/size/color/imageUrl) feed the
+          // admin and customer order views; the STOCK-specific *Snapshot columns keep the attempt-level identity.
+          `INSERT INTO orderItems
+            (orderId, productId, quantity, unitPrice, totalPrice, variantId, skuSnapshot, sizeSnapshot, colorSnapshot,
+             productName, variantName, sku, size, color, imageUrl)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+             (SELECT name FROM products WHERE id = ?), (SELECT name FROM productVariants WHERE id = ?), ?, ?, ?,
+             (SELECT imageUrl FROM products WHERE id = ?))`,
+          [orderId, item.productId, item.quantity, item.unitPriceCents, item.totalCents, item.id, item.sku, item.size, item.color,
+            item.productId, item.id, item.sku, item.size, item.color, item.productId],
         );
         await connection.execute<ResultSetHeader>(
           `INSERT INTO stockCheckoutItems

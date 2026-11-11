@@ -20,6 +20,7 @@ import {
 } from "../controllers/paymentController";
 import { financialEnvelope, receiveWebhook } from "../payments/webhookInbox";
 
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => ({
   orm: null as unknown,
   mail: vi.fn(async () => ({ id: "synthetic-mail" })),
@@ -157,6 +158,8 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         applicationCommit: "a".repeat(40),
         approvedFingerprint: (await readReleaseContract()).fingerprint,
       });
+      // The integrated app also owns the STOCK V1 columns: apply the isolated V6-aware candidate to this disposable DB.
+      await applyStockV6Migration(c, database);
       const actual =
         await vi.importActual<typeof mysqlOrm>("drizzle-orm/mysql2");
       pool = createPool({
@@ -169,7 +172,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
     }, 30000);
     beforeEach(async () => {
       vi.unstubAllEnvs();
-      vi.stubEnv("DATABASE_URL", "synthetic-present");
+      vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic");
       injected.mail.mockClear();
       injected.provider.mockReset();
       injected.provider.mockImplementation(async (id: string) => ({

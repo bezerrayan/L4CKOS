@@ -1,13 +1,30 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { stockAttemptResumeV1Schema, stockCheckoutHttpRequestV1Schema, stockCheckoutResponseV1Schema } from "../../shared/stockCheckoutV1";
-import { assertPublicCheckoutEnabled } from "../_core/publicStore";
+import {
+  assertPublicCheckoutEnabled,
+  PublicCheckoutDisabledError,
+  PublicStoreClosedError,
+  publicCheckoutDisabledTrpcError,
+  publicStoreClosedTrpcError,
+} from "../_core/publicStore";
 import { protectedProcedure, router } from "../_core/trpc";
 import { StockCheckoutError } from "../stock/stockCheckout";
 import { createAppError } from "../_core/appErrors";
 import { toStockCheckoutResponseV1 } from "../stock/stockCheckoutHttpContract";
 import { toTrpcError } from "../exclusive/errors";
 import { ExclusiveError } from "../exclusive/store";
+
+/** Same public gate as the legacy routers, surfaced with the V6 FORBIDDEN codes (never an internal error). */
+function assertGate(): void {
+  try {
+    assertPublicCheckoutEnabled();
+  } catch (error) {
+    if (error instanceof PublicStoreClosedError) throw publicStoreClosedTrpcError();
+    if (error instanceof PublicCheckoutDisabledError) throw publicCheckoutDisabledTrpcError();
+    throw error;
+  }
+}
 
 function mapCheckoutError(error: unknown): never {
   if (!(error instanceof StockCheckoutError)) throw error;
@@ -37,7 +54,7 @@ export const stockCheckoutRouter = router({
     .input(stockCheckoutHttpRequestV1Schema)
     .mutation(async ({ ctx, input }) => {
       // Gate before runtime lookup, pool access, reservation writes, or provider calls.
-      assertPublicCheckoutEnabled();
+      assertGate();
       const runtime = ctx.stockCheckoutRuntime;
       if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Checkout STOCK indisponível neste runtime." });
       try {

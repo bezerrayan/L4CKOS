@@ -366,7 +366,8 @@ export function createAsaasWebhookHandler(resolveStockRuntime: () => StockChecko
     }
 
     // The durable inbox keeps the V6 recovery guarantees; the STOCK owner resolver travels with the processor.
-    const outcome = await receiveWebhook(req.body, payload => processWebhookEnvelope(payload, resolveStockRuntime));
+    const deliveryHeaders = req.headers as Record<string, string | string[] | undefined>;
+    const outcome = await receiveWebhook(req.body, payload => processWebhookEnvelope(payload, resolveStockRuntime, deliveryHeaders));
     res.status(outcome.status).json(outcome.body);
   } catch {
     sendControllerError(res, 503, "WEBHOOK_PERSISTENCE_FAILED", "Não foi possível receber a notificação.");
@@ -378,16 +379,18 @@ export function createAsaasWebhookHandler(resolveStockRuntime: () => StockChecko
 export async function processWebhookEnvelope(
   payload: unknown,
   resolveStockRuntime: () => StockCheckoutRuntime | undefined = getConfiguredStockCheckoutRuntime,
+  /** Original delivery headers. Present only for a live HTTP delivery; recovery/replay of a stored envelope has none. */
+  deliveryHeaders?: Record<string, string | string[] | undefined>,
 ): Promise<WebhookReply> {
   // Internal/admin callers must enter the same durable gate as HTTP and workers.
   const tx=webhookDb();
-  if(!tx)return receiveWebhook(payload,next => processWebhookEnvelope(next, resolveStockRuntime));
+  if(!tx)return receiveWebhook(payload,next => processWebhookEnvelope(next, resolveStockRuntime, deliveryHeaders));
   const p=payload as {id?:string};
   if(p?.id)await assertNoRecoveryHold(tx,p.id);
   let status = 500;
   let body: Record<string, unknown> = { code: "WEBHOOK_PROCESSING_FAILED" };
   const response = { status(code: number) { status = code; return this; }, json(value: Record<string, unknown>) { body = value; return this; } };
-  await processAsaasWebhook({ body: payload, ip: "inbox" } as Request, response as unknown as Response, resolveStockRuntime);
+  await processAsaasWebhook({ body: payload, ip: "inbox", headers: deliveryHeaders } as Request, response as unknown as Response, resolveStockRuntime);
   return { status, body };
 }
 async function processAsaasWebhook(req: Request, res: Response, resolveStockRuntime: () => StockCheckoutRuntime | undefined) {
@@ -502,6 +505,13 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
         return;
       }
 
+      // The STOCK owner re-verifies the provider token from the ORIGINAL delivery headers. A stored envelope replayed by
+      // recovery has none, so it can never be authenticated here: fail closed (retryable) and wait for an authenticated redelivery.
+      if (!req.headers) {
+        securityLog("warn", "payment.asaas_stock_replay_requires_authenticated_delivery", { requestIp: req.ip || "unknown", orderId, event });
+        res.status(503).json({ handled: false, reason: "stock_replay_requires_authenticated_delivery" });
+        return;
+      }
       const result = await runtime.receiveWebhook({
         rawBody: JSON.stringify(payload),
         headers: req.headers as Record<string, string | string[] | undefined>,

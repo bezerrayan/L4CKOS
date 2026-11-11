@@ -82,7 +82,7 @@ function review() {
     ASAAS_API_URL: "https://api-sandbox.asaas.com/v3",
     EMAIL_MODE: "restricted",
     STAGING_EMAIL_ALLOWLIST: "synthetic@example.invalid",
-    DATABASE_URL: "synthetic-present",
+    DATABASE_URL: "mysql://root@localhost/l4ckos_test_synthetic",
     STAGING_MAINTENANCE_MODE: "false",
   }))
     vi.stubEnv(key, value);

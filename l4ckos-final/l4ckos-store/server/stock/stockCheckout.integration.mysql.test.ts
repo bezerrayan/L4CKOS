@@ -20,6 +20,7 @@ import { createExclusiveStore } from "../exclusive/store";
 import { configureExclusiveStoreForLocalHarness } from "../exclusive/runtime";
 import { processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
+import { canonicalizeSeedVariants } from "./testing/canonicalizeSeedVariants";
 
 const database = process.env.STOCK_MYSQL_DATABASE ?? "";
 const host = process.env.STOCK_MYSQL_HOST ?? "";
@@ -83,8 +84,9 @@ async function resetDatabase() {
   await pool.query("SET FOREIGN_KEY_CHECKS = 1");
   await pool.execute("INSERT INTO users (id, openId, name, email, role) VALUES (81, 'synthetic-owner-81', 'STOCK Customer', 'stock-customer@example.invalid', 'user'), (82, 'synthetic-other-82', 'Other Customer', 'other-customer@example.invalid', 'user'), (83, 'synthetic-admin-83', 'Synthetic Admin', ?, 'admin')", [syntheticAdminEmail]);
   await pool.execute("INSERT INTO userAddresses (userId, label, recipient, zipCode, street, number, complement, neighborhood, city, state, isDefault) VALUES (81, 'Principal', 'Perfil Original', '70000000', 'Rua Original', '10', NULL, 'Centro', 'Brasília', 'DF', 1)");
-  await pool.execute("INSERT INTO products (id, name) VALUES (4, 'Synthetic STOCK shirt')");
-  await pool.execute("INSERT INTO productVariants (id, productId, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
+  await pool.execute("INSERT INTO products (id, name, category, price, stock) VALUES (4, 'Synthetic STOCK shirt', 'camisetas', 12900, 0)");
+  await pool.execute("INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
+  await canonicalizeSeedVariants(pool);
 }
 
 describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (MySQL 9.7.2 disposable only)", () => {
@@ -163,8 +165,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
 
   it("runs checkout over authenticated HTTP, accepts a signed synthetic webhook, and resumes paid state", async () => {
     const owner = httpClient("owner-81");
-    const product = await owner.products.getById.query(4);
-    expect(product.variants).toEqual([expect.objectContaining({ id: 8, productId: 4, size: "M", color: "Preto", active: true, stock: 1 })]);
+    // V6 storefront contract: variants come from the server's sellable catalog, not from the product DTO.
+    const catalog = await owner.products.sellableVariants.query(4);
+    expect(catalog).toMatchObject({ productId: 4, hasVariants: true, publicPurchaseAllowed: true });
+    expect(catalog.variants).toEqual([expect.objectContaining({ variantId: 8, size: "M", color: "Preto", available: true, availableUnits: 1, price: 12900 })]);
     const request = { attemptId: "stock-e2e-attempt-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery };
     const missingDelivery = { attemptId: request.attemptId, items: request.items };
     await expect(owner.stockCheckout.create.mutate(missingDelivery as never))
@@ -206,8 +210,11 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     expect(invalidWebhook.status).toBe(401);
     const deliver = () => fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: webhookBody });
     const [validWebhook, duplicateWebhook] = await Promise.all([deliver(), deliver()]);
-    expect(validWebhook.status).toBe(200);
-    expect(duplicateWebhook.status).toBe(200);
+    // V6 durable inbox: a CONCURRENT duplicate hits the row lock (NOWAIT) and gets a retryable 503; the provider redelivers.
+    // Exactly one delivery wins, nothing else is allowed, and the sequential redelivery is an acknowledged duplicate.
+    const concurrent = [validWebhook.status, duplicateWebhook.status].sort();
+    expect(concurrent[0] === 200 && (concurrent[1] === 200 || concurrent[1] === 503)).toBe(true);
+    expect((await deliver()).status).toBe(200);
     const [ledgerRows] = await pool.execute<(Record<string, unknown> & { count: number })[]>("SELECT COUNT(*) AS count FROM stockWebhookEvents WHERE eventId = 'evt-synthetic-paid-1'");
     expect(Number(ledgerRows[0]?.count)).toBe(1);
     const latePending = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-synthetic-late-pending", event: "PAYMENT_CREATED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "PENDING", value: 129, currency: "BRL" } }) });
@@ -249,8 +256,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       paymentStatus: "confirmed",
       shippingOptionId: "local-plano-piloto",
       shippingAddress: { recipient: "Cliente Sintético", zipCode: "70000000", street: "Rua de Teste", number: "123", complement: "Apto 4", neighborhood: "Centro", city: "Brasília", state: "DF", source: "order" },
-      items: [expect.objectContaining({ productId: 4, productName: "Synthetic STOCK shirt", variantId: 8, skuSnapshot: "TSHIRT-BLK-M", sizeSnapshot: "M", colorSnapshot: "Preto", quantity: 1 })],
+      // V6 admin DTO: ONE line per purchased item (reservations are linked through orderItemId, not listed twice).
+      items: [expect.objectContaining({ productId: 4, productName: "Synthetic STOCK shirt", sku: "TSHIRT-BLK-M", size: "M", color: "Preto", quantity: 1, productPrice: 12900, status: "purchased" })],
     });
+    expect(listedOrder?.items).toHaveLength(1);
     await expect(adminHttpClient("owner-81").admin.ordersList.query()).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
     const adminDetail = await getOrderById(Number(created.orderId));
     expect(adminDetail).toMatchObject({ shippingRecipient: "Cliente Sintético", shippingStreet: "Rua de Teste", shippingOptionId: "local-plano-piloto" });

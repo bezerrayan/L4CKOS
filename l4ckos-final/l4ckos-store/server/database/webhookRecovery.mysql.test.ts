@@ -27,10 +27,17 @@ import {inWebhookTransaction} from '../database/webhookTransaction';
 import {recordTrustedPaymentReceipt} from '../payments/paymentRecord';
 import {RECOVERY_HOLD_ACTION} from '../payments/webhookRecovery';
 import {assertEmailRecipientsAllowed} from '../services/email/recipientPolicy.js';
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
 const injected = vi.hoisted(() => ({
   orm: null as unknown,
   mail: vi.fn(async () => ({ id: "synthetic-mail" })),
   provider: vi.fn(),
+}));
+// This suite simulates the staging identity (RAILWAY_* stubs) against a LOCAL disposable MySQL with an injected ORM.
+// The environment-specific connection policy (server/database/mysqlConnection.mjs) has its own tests and, by design,
+// refuses a local database under a deployed identity; here only that policy is replaced, the database stays real.
+vi.mock("../database/mysqlConnection.mjs", () => ({
+  createMysqlConnectionOptionsForEnvironment: (uri: string) => ({ uri }),
 }));
 vi.mock("drizzle-orm/mysql2", async original => ({
   ...(await original<typeof mysqlOrm>()),
@@ -176,6 +183,8 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         applicationCommit: "a".repeat(40),
         approvedFingerprint: (await readReleaseContract()).fingerprint,
       });
+      // The integrated app also owns the STOCK V1 columns: apply the isolated V6-aware candidate to this disposable DB.
+      await applyStockV6Migration(c, database);
       const actual =
         await vi.importActual<typeof mysqlOrm>("drizzle-orm/mysql2");
       pool = createPool({
@@ -188,7 +197,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
     }, 30000);
     beforeEach(async () => {
       vi.unstubAllEnvs();
-      vi.stubEnv("DATABASE_URL", "synthetic-present");
+      vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic");
       injected.mail.mockClear();
       injected.provider.mockReset();
       injected.provider.mockImplementation(async (id: string) => ({

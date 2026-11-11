@@ -330,7 +330,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       vi.stubEnv("RAILWAY_SERVICE_ID", "9f1c7705-f2f9-48cf-b957-8f63a6bba4db");
       vi.stubEnv("ASAAS_WEBHOOK_RECOVERY_MODE", "review_only");
       vi.stubEnv("EMAIL_MODE", "restricted");
-      vi.stubEnv("DATABASE_URL", "synthetic-present");
+      vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic");
       injected.provider.mockReset();
       injected.provider.mockImplementation(async () => providerEvidence());
       injected.mail.mockReset();

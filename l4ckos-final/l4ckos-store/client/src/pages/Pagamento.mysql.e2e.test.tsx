@@ -22,6 +22,7 @@ import { trpc } from "../lib/trpc";
 import { CartProvider } from "../contexts/CartContext";
 import { seedCart, cartItem, product, variant } from "../test/fixtures";
 import Pagamento from "./Pagamento";
+import { canonicalizeSeedVariants } from "../../../server/stock/testing/canonicalizeSeedVariants";
 
 vi.mock("../contexts/UserContext", () => ({
   useUser: () => ({
@@ -72,7 +73,8 @@ async function resetDatabase() {
   await pool.query("SET FOREIGN_KEY_CHECKS = 1");
   await pool.execute("INSERT INTO users (id, openId, name, email, role) VALUES (81, 'synthetic-owner-81', 'Cliente Sintético', 'stock-customer@example.invalid', 'user')");
   await pool.execute("INSERT INTO products (id, name, price, stock, category) VALUES (4, 'Synthetic STOCK shirt', 12900, 1, 'camisetas')");
-  await pool.execute("INSERT INTO productVariants (id, productId, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
+  await pool.execute("INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
+  await canonicalizeSeedVariants(pool);
 }
 
 describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 9.7.2 (disposable only)", () => {
@@ -153,16 +155,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
     vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
     vi.stubEnv("ASAAS_WEBHOOK_TOKEN", webhookToken);
     window.localStorage.clear();
+    // V6 cart line: the variant identity travels as `variant`; the live catalog (server) confirms price/availability.
     seedCart([cartItem({
-      product: product({
-        id: 4,
-        name: "Synthetic STOCK shirt",
-        price: 129,
-        stock: 1,
-        variantCatalogPresent: true,
-        variants: [variant({ id: 8, productId: 4, stock: 1, price: 12900 })],
-      }),
-      variantId: 8,
+      product: product({ id: 4, name: "Synthetic STOCK shirt", price: 12900, stock: 1, salesMode: "STOCK" }),
+      variant: { variantId: 8, color: "Preto", size: "M", priceCents: 12900, availableUnits: 1 },
       selectedOptions: { cor: "Preto", tamanho: "M" },
     })]);
   });

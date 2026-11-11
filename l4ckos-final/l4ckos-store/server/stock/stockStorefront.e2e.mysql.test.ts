@@ -23,6 +23,7 @@ import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 import { createStockCheckoutClient, type StockCartLine } from "../../client/src/stock/stockCheckoutClient";
 import { describeStockAttempt, describeStockCheckoutError } from "../../client/src/stock/stockAttemptView";
 import { stockCheckoutHttpRequestV1Schema } from "../../shared/stockCheckoutV1";
+import { canonicalizeSeedVariants } from "./testing/canonicalizeSeedVariants";
 
 const database = process.env.STOCK_MYSQL_DATABASE ?? "";
 const host = process.env.STOCK_MYSQL_HOST ?? "";
@@ -86,8 +87,9 @@ async function resetDatabase() {
   await pool.query("SET FOREIGN_KEY_CHECKS = 1");
   await pool.execute("INSERT INTO users (id, openId, name, email, role) VALUES (81, 'synthetic-owner-81', 'STOCK Customer', 'stock-customer@example.invalid', 'user'), (82, 'synthetic-other-82', 'Other Customer', 'other-customer@example.invalid', 'user'), (83, 'synthetic-admin-83', 'Synthetic Admin', ?, 'admin')", [syntheticAdminEmail]);
   await pool.execute("INSERT INTO userAddresses (userId, label, recipient, zipCode, street, number, complement, neighborhood, city, state, isDefault) VALUES (81, 'Principal', 'Perfil Original', '70000000', 'Rua Original', '10', NULL, 'Centro', 'Brasília', 'DF', 1)");
-  await pool.execute("INSERT INTO products (id, name) VALUES (4, 'Synthetic STOCK shirt')");
-  await pool.execute("INSERT INTO productVariants (id, productId, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
+  await pool.execute("INSERT INTO products (id, name, category, price, stock) VALUES (4, 'Synthetic STOCK shirt', 'camisetas', 12900, 0)");
+  await pool.execute("INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
+  await canonicalizeSeedVariants(pool);
 }
 
 describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Storefront STOCK client against the real server (MySQL 9.7.2 disposable only)", () => {

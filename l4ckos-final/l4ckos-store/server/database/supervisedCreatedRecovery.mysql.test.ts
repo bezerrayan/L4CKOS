@@ -75,7 +75,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 supervised recove
     injected.orm = orm.drizzle(pool);
   });
   beforeEach(async () => {
-    vi.unstubAllEnvs(); vi.stubEnv("DATABASE_URL", "synthetic-present"); vi.clearAllMocks();
+    vi.unstubAllEnvs(); vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic"); vi.clearAllMocks();
     for (const table of ["notificationOutbox", "orderEmailEvents", "paymentEvents", "payments", "asaasWebhookInbox", "asaasWebhookEvents", "auditLogs", "stockReservations", "orderItems", "orders", "products", "users"])
       await query("DELETE FROM `" + table + "`");
     await query("INSERT INTO users(id,openId,name,email) VALUES(14,'synthetic-admin','Fixture Admin','admin@example.invalid')");

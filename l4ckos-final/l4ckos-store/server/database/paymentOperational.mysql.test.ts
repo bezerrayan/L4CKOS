@@ -41,7 +41,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST!=='1')('operational checkout/inbox
   const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');pool=createPool({user:'root',socketPath,database:name,connectionLimit:8});injected.orm=actual.drizzle(pool);
  },30000);
  beforeEach(async()=>{
-  vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','synthetic-present');injected.mail.mockReset();injected.mail.mockResolvedValue({id:'synthetic-mail'});
+  vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');injected.mail.mockReset();injected.mail.mockResolvedValue({id:'synthetic-mail'});
   for(const table of ['notificationOutbox','asaasWebhookInbox','asaasWebhookEvents','paymentEvents','payments','auditLogs','stockReservations','orderItems','orders','products','users'])await query('DELETE FROM `'+table+'`');
   await query("INSERT INTO users(id,openId,name,email) VALUES(999901,'synthetic-local','Synthetic','synthetic@example.invalid')");
   await query("INSERT INTO products(id,name,category,price,stock) VALUES(999901,'SYNTHETIC CHECKOUT','fixture',9900,10)");
