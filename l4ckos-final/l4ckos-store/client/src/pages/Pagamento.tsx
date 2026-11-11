@@ -110,6 +110,14 @@ export default function Pagamento() {
   const trpcUtils = trpc.useUtils();
   const attemptStorage = useMemo(() => createUserAttemptStorage(user?.id), [user?.id]);
   useCartCatalogSync();
+  const localOpenAttempt = cart.items.length === 0 && isAuthenticated ? listOpenStockAttempts(attemptStorage)[0] ?? null : null;
+  // Fallback when this browser lost its attempt ID: real, owner-scoped `stockCheckout.resumeLatest`.
+  const latestAttemptQuery = trpc.stockCheckout.resumeLatest.useQuery(undefined, {
+    enabled: cart.items.length === 0 && isAuthenticated && !localOpenAttempt,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const serverOpenAttempt = latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
   const [stockConfirmation, setStockConfirmation] = useState<{ orderId: string | number | null; amountCents: number } | null>(null);
   const stockClient = useMemo(() => createStockCheckoutClient({
     enabled: true,
@@ -632,9 +640,7 @@ export default function Pagamento() {
     );
   }
 
-  const recoverableAttempt = cart.items.length === 0 && isAuthenticated && !paymentData
-    ? listOpenStockAttempts(attemptStorage)[0] ?? null
-    : null;
+  const recoverableAttempt = !paymentData ? localOpenAttempt ?? (serverOpenAttempt ? { attemptId: serverOpenAttempt.attemptId } : null) : null;
   if (recoverableAttempt) {
     return (
       <div className="l4-checkout-page">
