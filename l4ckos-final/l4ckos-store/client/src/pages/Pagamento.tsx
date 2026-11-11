@@ -507,7 +507,19 @@ export default function Pagamento() {
     }
   };
 
+  const checkoutInFlightRef = useRef(false);
+  // Synchronous guard: a double click fires twice before React re-renders `isPending`.
   const handleCheckout = async () => {
+    if (checkoutInFlightRef.current) return;
+    checkoutInFlightRef.current = true;
+    try {
+      await runCheckout();
+    } finally {
+      checkoutInFlightRef.current = false;
+    }
+  };
+
+  const runCheckout = async () => {
     setPaymentError("");
 
     if (paymentData || createAsaasCharge.isPending || stockAttemptPending) {
