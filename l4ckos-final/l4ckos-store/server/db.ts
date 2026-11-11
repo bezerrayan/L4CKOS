@@ -38,6 +38,19 @@ import {
 let _db: ReturnType<typeof drizzle> | null = null;
 const inMemoryAsaasWebhookEvents = new Set<string>();
 
+/** Explicitly gated fixture injection for disposable local STOCK integration tests only. */
+export function setStockLocalHarnessDb(db: ReturnType<typeof drizzle> | null) {
+  const host = process.env.STOCK_MYSQL_HOST ?? "";
+  if (
+    process.env.STOCK_LOCAL_HARNESS !== "true" ||
+    !/^(127\.0\.0\.1|localhost|::1)$/.test(host) ||
+    process.env.STOCK_MYSQL_DATABASE !== "l4ckos_stock_test"
+  ) {
+    throw new Error("STOCK DB injection is restricted to the disposable loopback harness");
+  }
+  _db = db;
+}
+
 type OrderShippingSnapshotInput = {
   recipient: string;
   zipCode: string;
@@ -441,12 +454,15 @@ function normalizeProductImageRow(row: any) {
 }
 
 function normalizeProductVariantRow(row: any) {
+  const isActive = Number(row.isActive) === 1;
   return {
     ...row,
     id: Number(row.id),
     productId: Number(row.productId),
     price: row.price === null || row.price === undefined ? null : Number(row.price),
     stock: Number(row.stock ?? 0),
+    isActive: isActive ? 1 : 0,
+    active: isActive,
   };
 }
 
@@ -1229,6 +1245,11 @@ export async function getOrderReservationItems(orderId: number) {
       id: stockReservations.id,
       orderId: stockReservations.orderId,
       productId: stockReservations.productId,
+      variantId: stockReservations.variantId,
+      skuSnapshot: stockReservations.skuSnapshot,
+      sizeSnapshot: stockReservations.sizeSnapshot,
+      colorSnapshot: stockReservations.colorSnapshot,
+      unitPriceCents: stockReservations.unitPriceCents,
       quantity: stockReservations.quantity,
       status: stockReservations.status,
       expiresAt: stockReservations.expiresAt,
@@ -1282,15 +1303,29 @@ export async function reserveStockForOrder(input: {
   const expiresAt = new Date(now.getTime() + 20 * 60 * 1000);
 
   await db.transaction(async tx => {
+    // Share a serialization point with STOCK's variant reservation writer.
+    // Lock every product in stable order before touching reservation rows.
+    const productIds = [...new Set(input.items.map(item => item.productId))].sort((a, b) => a - b);
+    const lockedProducts = new Map<number, typeof products.$inferSelect>();
+    for (const productId of productIds) {
+      const rows = await tx.select().from(products).where(eq(products.id, productId)).limit(1).for("update");
+      if (!rows[0]) throw new Error(`Produto ${productId} nao encontrado.`);
+      lockedProducts.set(productId, rows[0]);
+    }
+
     await tx
       .update(stockReservations)
       .set({ status: "released" })
       .where(and(eq(stockReservations.orderId, input.orderId), eq(stockReservations.status, "active")));
 
     for (const item of input.items) {
-      const productRow = await tx.select().from(products).where(eq(products.id, item.productId)).limit(1);
-      if (productRow.length === 0) {
-        throw new Error(`Produto ${item.productId} nao encontrado.`);
+      const product = lockedProducts.get(item.productId)!;
+      const stockVariants = await tx.select({ id: productVariants.id })
+        .from(productVariants)
+        .where(and(eq(productVariants.productId, item.productId), eq(productVariants.isActive, 1)))
+        .limit(1);
+      if (stockVariants.length > 0) {
+        throw new Error("Produto com variante STOCK ativa não pode usar a reserva legada por produto.");
       }
 
       const [reservedRow] = await tx
@@ -1307,9 +1342,9 @@ export async function reserveStockForOrder(input: {
         );
 
       const reservedQty = Number(reservedRow?.total ?? 0);
-      const available = Number(productRow[0].stock ?? 0) - reservedQty;
+      const available = Number(product.stock ?? 0) - reservedQty;
       if (available < item.quantity) {
-        throw new Error(`Estoque insuficiente para ${productRow[0].name}. Disponivel: ${Math.max(0, available)}.`);
+        throw new Error(`Estoque insuficiente para ${product.name}. Disponivel: ${Math.max(0, available)}.`);
       }
 
       await tx.insert(stockReservations).values({
@@ -1776,6 +1811,9 @@ export async function markOrderPaid(
     if (!order) {
       throw new Error("Order not found");
     }
+    if (order.stockAttemptId) {
+      throw new Error("STOCK_PAYMENT_OWNER_REQUIRED");
+    }
 
     if (isTrustedPaymentConfirmation(order)) {
       return { updated: false, status: order.status, lowStockProducts: [] } as const;
@@ -2175,6 +2213,11 @@ export async function getOrdersByFilters(filters?: {
     .select({
       orderId: stockReservations.orderId,
       productId: stockReservations.productId,
+      variantId: stockReservations.variantId,
+      skuSnapshot: stockReservations.skuSnapshot,
+      sizeSnapshot: stockReservations.sizeSnapshot,
+      colorSnapshot: stockReservations.colorSnapshot,
+      unitPriceCents: stockReservations.unitPriceCents,
       quantity: stockReservations.quantity,
       productName: products.name,
     })

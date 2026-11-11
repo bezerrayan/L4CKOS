@@ -8,6 +8,7 @@ import { favoritesRouter } from "./routers/favorites";
 import { ordersRouter } from "./routers/orders";
 import { profileRouter } from "./routers/profile";
 import { adminRouter } from "./routers/admin";
+import { stockCheckoutRouter } from "./routers/stockCheckout";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import bcrypt from "bcryptjs";
@@ -568,6 +569,7 @@ export const appRouter = router({
   cart: cartRouter,
   favorites: favoritesRouter,
   orders: ordersRouter,
+  stockCheckout: stockCheckoutRouter,
   profile: profileRouter,
   admin: adminRouter,
 });

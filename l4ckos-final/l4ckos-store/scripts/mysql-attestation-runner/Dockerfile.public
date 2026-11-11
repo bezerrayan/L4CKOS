@@ -1,0 +1,15 @@
+FROM node:22.23.2-bookworm-slim AS dependencies
+
+WORKDIR /runner
+COPY scripts/mysql-attestation-runner/package.json scripts/mysql-attestation-runner/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --prod --frozen-lockfile --ignore-scripts
+
+FROM node:22.23.2-bookworm-slim
+
+ENV NODE_ENV=production
+WORKDIR /runner
+COPY --from=dependencies /runner/node_modules ./node_modules
+COPY scripts/mysql-schema-attestation-public.mjs ./scripts/mysql-schema-attestation.mjs
+
+USER node
+ENTRYPOINT ["node", "scripts/mysql-schema-attestation.mjs"]

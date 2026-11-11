@@ -387,6 +387,18 @@ export async function asaasWebhookHandler(req: Request, res: Response) {
       return;
     }
 
+    // STOCK payments require their own single-owner event dispatcher/ledger.
+    // Never let the legacy handler mark them paid or consume product-level stock.
+    if (order.stockAttemptId) {
+      securityLog("error", "payment.asaas_stock_owner_unavailable", {
+        requestIp: req.ip || "unknown",
+        orderId,
+        event,
+      });
+      res.status(503).json({ handled: false, reason: "stock_payment_owner_unavailable" });
+      return;
+    }
+
     const paidValueCents = parsePaidValueCentsFromWebhook(payload);
     if (PAID_EVENTS.has(event) && paidValueCents !== null && paidValueCents !== Number(order.totalPrice)) {
       securityLog("error", "payment.asaas_webhook_amount_mismatch", {

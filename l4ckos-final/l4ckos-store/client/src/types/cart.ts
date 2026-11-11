@@ -8,6 +8,7 @@ export type SelectedOptions = Record<string, string>;
 export type CartItem = {
   product: Product;
   quantity: number;
+  variantId?: number;
   selectedOptions?: SelectedOptions;
   addedAt: Date;
 };

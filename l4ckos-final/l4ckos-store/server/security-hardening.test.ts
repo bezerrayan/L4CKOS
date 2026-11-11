@@ -338,6 +338,40 @@ describe("security hardening contracts", () => {
     process.env.NODE_ENV = previousEnv;
   });
 
+  it("does not let the legacy Asaas webhook claim or mutate a STOCK order", async () => {
+    const db = await import("./db");
+    const { asaasWebhookHandler } = await import("./controllers/paymentController");
+    const previousToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    const previousEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.ASAAS_WEBHOOK_TOKEN = "webhook-token-123";
+
+    vi.mocked(db.getOrderById).mockClear().mockResolvedValue({
+      id: 12, userId: 1, status: "pending", totalPrice: 1000, stockAttemptId: "stock-attempt-00000012",
+    } as any);
+    vi.mocked(db.runAsaasWebhookOnce).mockClear();
+    vi.mocked(db.markOrderPaid).mockClear();
+
+    const res = createMockResponse();
+    await asaasWebhookHandler({
+      ip: "127.0.0.1",
+      headers: { "asaas-access-token": "webhook-token-123" },
+      body: {
+        id: "evt-stock-owner-check",
+        event: "PAYMENT_RECEIVED",
+        payment: { id: "pay_stock_12", externalReference: "12", value: 10, status: "RECEIVED" },
+      },
+    } as any, res as any);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({ handled: false, reason: "stock_payment_owner_unavailable" });
+    expect(db.runAsaasWebhookOnce).not.toHaveBeenCalled();
+    expect(db.markOrderPaid).not.toHaveBeenCalled();
+
+    process.env.ASAAS_WEBHOOK_TOKEN = previousToken;
+    process.env.NODE_ENV = previousEnv;
+  });
+
   it("serializes concurrent Asaas webhook attempts through the idempotency adapter", async () => {
     const db = await import("./db");
     const { asaasWebhookHandler } = await import("./controllers/paymentController");

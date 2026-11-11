@@ -1,11 +1,14 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
 import { sdk } from "./sdk";
+import type { StockCheckoutRuntime } from "../stock/stockCheckoutRuntime";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
   user: User | null;
+  /** Only injected by an isolated local harness or explicitly configured runtime. */
+  stockCheckoutRuntime?: StockCheckoutRuntime;
 };
 
 export async function createContext(

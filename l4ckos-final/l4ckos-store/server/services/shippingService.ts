@@ -1,4 +1,5 @@
 import axios from "axios";
+import { isLocalDeliveryCep } from "../../shared/localDeliveryTerritory";
 
 type ShippingOption = {
   id: string;
@@ -17,7 +18,7 @@ type QuoteInput = {
 
 export type QuoteShippingResult = {
   options: ShippingOption[];
-  source: "melhor-envio" | "fallback-local" | "mixed";
+  source: "melhor-envio" | "fallback-local" | "mixed" | "unavailable";
   warning?: string;
   providerError?: string;
 };
@@ -49,11 +50,6 @@ const DEFAULT_MELHOR_ENVIO_API_URL = "https://www.melhorenvio.com.br/api/v2";
 
 function sanitizeCep(value: string) {
   return value.replace(/\D/g, "").slice(0, 8);
-}
-
-function isPlanoPilotoArea(cep: string) {
-  // Faixa principal de Brasilia/Plano Piloto e entorno imediato
-  return /^7[0-3]\d{6}$/.test(cep);
 }
 
 function buildLocalOption(): ShippingOption {
@@ -129,13 +125,13 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
 
   const options: ShippingOption[] = [];
 
-  if (isPlanoPilotoArea(cep)) {
+  if (isLocalDeliveryCep(cep)) {
     options.push(buildLocalOption());
   }
 
   const cfg = getMelhorEnvioConfig();
   if (!cfg.token) {
-    return options.length > 0 ? options : [buildLocalOption()];
+    return options;
   }
 
   try {
@@ -171,7 +167,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
     const parsed = parseMelhorEnvioQuotes(response.data);
     return [...options, ...parsed];
   } catch {
-    return options.length > 0 ? options : [buildLocalOption()];
+    return options;
   }
 }
 
@@ -182,17 +178,16 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
   }
 
   const localOptions: ShippingOption[] = [];
-  if (isPlanoPilotoArea(cep)) {
+  if (isLocalDeliveryCep(cep)) {
     localOptions.push(buildLocalOption());
   }
 
   const cfg = getMelhorEnvioConfig();
   if (!cfg.token) {
-    const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
     return {
-      options: fallback,
-      source: "fallback-local",
-      warning: "Token do Melhor Envio ausente. Usando entrega local.",
+      options: localOptions,
+      source: localOptions.length ? "fallback-local" : "unavailable",
+      warning: localOptions.length ? "Token do Melhor Envio ausente. Usando entrega local aprovada." : "Token do Melhor Envio ausente e CEP fora da área de entrega local aprovada.",
     };
   }
 
@@ -228,12 +223,11 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
 
     const parsed = parseMelhorEnvioQuotes(response.data);
     if (parsed.length === 0) {
-      const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
       const providerError = extractMelhorEnvioItemErrors(response.data);
       return {
-        options: fallback,
-        source: "fallback-local",
-        warning: "Melhor Envio não retornou cotações para este CEP. Usando entrega local.",
+        options: localOptions,
+        source: localOptions.length ? "fallback-local" : "unavailable",
+        warning: localOptions.length ? "Melhor Envio não retornou cotações. Usando entrega local aprovada." : "Melhor Envio não retornou cotações e o CEP está fora da área de entrega local aprovada.",
         providerError: providerError || "API respondeu sem opcoes validas de frete.",
       };
     }
@@ -244,11 +238,10 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
     };
   } catch (error) {
     const providerError = extractProviderError(error);
-    const fallback = localOptions.length > 0 ? localOptions : [buildLocalOption()];
     return {
-      options: fallback,
-      source: "fallback-local",
-      warning: "Cotacao externa indisponivel. Usando entrega local.",
+      options: localOptions,
+      source: localOptions.length ? "fallback-local" : "unavailable",
+      warning: localOptions.length ? "Cotação externa indisponível. Usando entrega local aprovada." : "Cotação externa indisponível e CEP fora da área de entrega local aprovada.",
       providerError,
     };
   }
