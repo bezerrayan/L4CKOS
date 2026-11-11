@@ -250,7 +250,9 @@ export default function ProductDetail() {
   const selectedStockVariant = selectedColor && selectedSize
     ? resolveStockVariant(product.variants ?? [], product.id, selectedSize, selectedColor)
     : null;
-  const displayedStock = selectedStockVariant?.stock ?? product.stock;
+  // With a variant catalog, stock comes from the variants (backend), never from a possibly stale product total.
+  const variantsTotalStock = activeStockVariants.reduce((sum, variant) => sum + Math.max(0, variant.stock ?? 0), 0);
+  const displayedStock = selectedStockVariant?.stock ?? (product.variantCatalogPresent ? variantsTotalStock : product.stock);
   const maxQuantity = Math.min(MAX_LINE_QUANTITY, Math.max(1, displayedStock));
   const effectiveQuantity = clampQuantity(quantity, maxQuantity);
   const hasVariantCatalog = Boolean(product.variantCatalogPresent);
