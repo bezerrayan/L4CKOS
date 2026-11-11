@@ -85,7 +85,7 @@ async function resetDatabase() {
   await pool.execute("INSERT INTO productVariants (id, productId, sku, size, color, price, stock, reservedStock, isActive) VALUES (8, 4, 'TSHIRT-BLK-M', 'M', 'Preto', 12900, 1, 0, 1)");
 }
 
-describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (MySQL 8.4 disposable only)", () => {
+describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (MySQL 9.7.2 disposable only)", () => {
   beforeAll(async () => {
     assertSyntheticTarget();
     pool = createPool({ host, port, user, password, database, connectionLimit: 8 });
@@ -93,7 +93,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     const [identity] = await pool.query<(Record<string, unknown> & { version: string; dbName: string; currentUser: string })[]>(
       "SELECT VERSION() AS version, DATABASE() AS dbName, CURRENT_USER() AS currentUser",
     );
-    if (!String(identity[0]?.version).startsWith("8.4.11") || identity[0]?.dbName !== database || !String(identity[0]?.currentUser).startsWith("stock_test@")) {
+    if (!String(identity[0]?.version).startsWith("9.7.2") || identity[0]?.dbName !== database || !String(identity[0]?.currentUser).startsWith("stock_test@")) {
       throw new Error("MySQL identity/version did not match the disposable test target");
     }
     const [existingSchema] = await pool.execute<(Record<string, unknown> & { tableCount: number })[]>(

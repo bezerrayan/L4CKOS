@@ -144,14 +144,14 @@ function sendWebhook(input: StockNormalizedWebhook & { store?: StockCheckoutStor
   });
 }
 
-describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 8.4 STOCK checkout adapter (disposable database only)", () => {
+describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapter (disposable database only)", () => {
   beforeAll(async () => {
     assertSyntheticTarget();
     pool = createPool({ host, port, user, password, database, connectionLimit: 12, waitForConnections: true, queueLimit: 0 });
     const [identity] = await pool.query<(Record<string, unknown> & { version: string; dbName: string; currentUser: string })[]>(
       "SELECT VERSION() AS version, DATABASE() AS dbName, CURRENT_USER() AS currentUser",
     );
-    if (!String(identity[0]?.version).startsWith("8.4.11") || identity[0]?.dbName !== database || !String(identity[0]?.currentUser).startsWith("stock_test@")) {
+    if (!String(identity[0]?.version).startsWith("9.7.2") || identity[0]?.dbName !== database || !String(identity[0]?.currentUser).startsWith("stock_test@")) {
       throw new Error("MySQL identity/version did not match the disposable test target");
     }
     const [existingSchema] = await pool.execute<(RowDataPacket & { tableCount: number })[]>(
