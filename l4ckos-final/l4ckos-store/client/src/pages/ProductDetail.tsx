@@ -31,6 +31,7 @@ import "./ProductDetail.css";
 
 import { DEFAULT_COLORS, DEFAULT_SIZES } from "@shared/catalogOptions";
 import { sortSizeLabels } from "../lib/sizeOrder";
+import { formatStorefrontPrice } from "../utils/storefrontPrice";
 const COLOR_HEX_BY_NAME: Record<string, string> = {
   preto: "#1a1a1a",
   branco: "#ffffff",
@@ -319,10 +320,7 @@ export default function ProductDetail() {
   const purchaseLocked = dropQuery.isLoading || exclusiveBlocked || quotaUsedUpByCart;
   const canAddToCart = Boolean(selectedColor && selectedSize && available);
   const missingSelections: string[] = [];
-  const formattedPrice = new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(selectedVariant ? productPriceFromCents(selectedVariant.price) : product.price);
+  const formattedPrice = formatStorefrontPrice(selectedVariant ? productPriceFromCents(selectedVariant.price) : product.price);
   if (!selectedColor) missingSelections.push("cor");
   if (!selectedSize) missingSelections.push("tamanho");
 
@@ -550,7 +548,7 @@ export default function ProductDetail() {
           </div>
 
           <div style={styles.priceSection as CSSProperties}>
-            <p className="l4-product-price">{formattedPrice}</p>
+            <p className="l4-product-price"><span className="l4-sr-only">R$ </span>{formattedPrice}</p>
             {product.description ? <p style={styles.priceDescription as CSSProperties}>{product.description}</p> : null}
           </div>
 

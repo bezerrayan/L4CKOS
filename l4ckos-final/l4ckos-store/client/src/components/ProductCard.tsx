@@ -6,6 +6,7 @@ import { useFavorites } from "../contexts/FavoritesContext";
 import { getCategoryLabel } from "../lib/productCategories";
 import { retryImageWithVersion } from "../lib/images";
 import "./ProductCard.css";
+import { formatStorefrontPrice } from "../utils/storefrontPrice";
 import camisaFallback from "../images/camisa.png";
 
 type Props = {
@@ -18,10 +19,7 @@ export default function ProductCard({ product, showFavorite = true, imageLoading
   const location = useLocation();
   const { addToFavorites, removeFromFavorites, isFavorited } = useFavorites();
   const favorited = isFavorited(product.id);
-  const formattedPrice = new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(product.price);
+  const formattedPrice = formatStorefrontPrice(product.price);
 
   const getBadgeInfo = () => {
     if (product.salesMode === "PREORDER")
@@ -57,7 +55,7 @@ export default function ProductCard({ product, showFavorite = true, imageLoading
         <div className="l4-catalog-card-content">
           <p className="l4-catalog-card-category">{getCategoryLabel(product.category) || "L4CKOS ORIGINAL"}</p>
           <h3>{product.name}</h3>
-          <div className="l4-catalog-card-bottom"><strong>{formattedPrice}</strong><span aria-hidden="true">↗</span></div>
+          <div className="l4-catalog-card-bottom"><strong><span className="l4-sr-only">R$ </span>{formattedPrice}</strong><span aria-hidden="true">↗</span></div>
           <p className="l4-catalog-card-hint">{available ? "Ver tamanhos e detalhes" : "Indisponível no momento"}</p>
         </div>
       </Link>
