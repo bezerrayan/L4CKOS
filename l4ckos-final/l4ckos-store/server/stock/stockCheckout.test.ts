@@ -17,6 +17,7 @@ const createStockCheckout = (input: Omit<Parameters<typeof createStockCheckoutDo
 class MemoryStockStore implements StockCheckoutStore {
   variants = new Map<number, StockVariant>();
   attempts = new Map<string, StockAttempt>();
+  divergences = new Map<string, unknown>();
   reserved = new Map<number, number>();
   webhookEvents = new Map<string, string>();
   ioCount = 0;
@@ -104,6 +105,12 @@ class MemoryStockStore implements StockCheckoutStore {
         attempt.status = "released";
         attempt.providerState = "definitive_failure";
         return "released";
+      },
+      recordFinancialDivergence: async divergence => {
+        const key = `${divergence.kind}:${divergence.attemptId}:${divergence.paymentId}`;
+        if (this.divergences.has(key)) return "duplicate";
+        this.divergences.set(key, divergence);
+        return "recorded";
       },
       expireDueReservations: async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [] }),
     };

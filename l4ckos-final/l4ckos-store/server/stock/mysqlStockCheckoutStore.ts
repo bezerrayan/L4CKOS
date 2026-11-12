@@ -9,6 +9,9 @@ import {
   type StockVariant,
 } from "./stockCheckout";
 
+/** auditLogs.action of the durable manual-reconciliation evidence for a rejected financial approval. */
+export const STOCK_RECONCILIATION_ACTION = "stock.reconciliation.required";
+
 type AttemptRow = RowDataPacket & {
   attemptId: string;
   ownerUserId: number | string;
@@ -624,6 +627,47 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       );
       if (orderResult.affectedRows !== 1) throw new StockMySqlInvariantError("Administrative order projection could not be confirmed atomically");
       return "paid";
+    },
+
+    async recordFinancialDivergence(divergence): Promise<"recorded" | "duplicate"> {
+      // Serialize every financial event of this attempt so two concurrent deliveries cannot both pass the existence check.
+      await lockAttempt(connection, divergence.attemptId);
+      const correlationId = `${divergence.kind}:${divergence.attemptId}:${divergence.paymentId}`.slice(0, 191);
+      const [existing] = await connection.execute<(RowDataPacket & { id: number })[]>(
+        `SELECT id FROM auditLogs WHERE action = ? AND correlationId = ? LIMIT 1`,
+        [STOCK_RECONCILIATION_ACTION, correlationId],
+      );
+      if (existing[0]) return "duplicate";
+      const orderIdNumber = /^\d{1,10}$/.test(divergence.orderId) ? Number(divergence.orderId) : null;
+      // No payer data and no raw provider payload: identifiers, amounts and the ledger state that rejected the approval.
+      // Any failure here throws and rolls back the whole webhook transaction (the claim included), so the provider redelivers.
+      await connection.execute(
+        `INSERT INTO auditLogs (actorUserId, actorType, action, entity, entityId, orderId, event, correlationId, metadata, beforeState, afterState)
+         VALUES (NULL, 'system', ?, 'stockCheckoutAttempt', ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          STOCK_RECONCILIATION_ACTION,
+          divergence.attemptId,
+          orderIdNumber,
+          divergence.kind,
+          correlationId,
+          JSON.stringify({
+            reconciliation: "open",
+            kind: divergence.kind,
+            attemptId: divergence.attemptId,
+            orderId: divergence.orderId,
+            paymentId: divergence.paymentId,
+            providerEventId: divergence.providerEventId,
+            observedStatus: "paid",
+            observedAmountCents: divergence.observedAmountCents,
+            expectedAmountCents: divergence.expectedAmountCents,
+            attemptPaymentId: divergence.attemptPaymentId,
+            automaticReprocessing: false,
+          }),
+          JSON.stringify({ status: divergence.attemptStatus, providerState: divergence.attemptProviderState }),
+          JSON.stringify({ status: divergence.attemptStatus, providerState: divergence.attemptProviderState, reconciliation: "open" }),
+        ],
+      );
+      return "recorded";
     },
 
     async markTerminalFailure(attemptId, paymentId): Promise<"released" | "already-released" | "not-pending"> {

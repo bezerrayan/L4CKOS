@@ -57,6 +57,30 @@ export type StockAttemptResumeRecord = {
   reconciliationRequired: boolean;
 };
 
+/**
+ * A signed provider event that says "paid" for a charge the local ledger has already closed (or never issued).
+ * The local financial state stays blocked; this is only the durable, idempotent evidence for manual reconciliation.
+ * Carries identifiers and amounts only: never payer data, never the raw payload.
+ */
+export type StockFinancialDivergenceKind =
+  | "PAID_AFTER_TERMINAL_FAILURE" // signed terminal failure released the attempt, then "paid" arrived
+  | "PAID_AFTER_RELEASE" // attempt released by another path, then "paid" arrived
+  | "PAID_FOR_UNSTARTED_ATTEMPT" // no charge was ever issued for this attempt
+  | "PAID_WITH_DIFFERENT_PAYMENT_ID"; // the order was paid under a payment id that is not the attempt's
+export type StockFinancialDivergence = {
+  kind: StockFinancialDivergenceKind;
+  attemptId: string;
+  orderId: string;
+  /** Provider payment id carried by the event. */
+  paymentId: string;
+  providerEventId: string;
+  observedAmountCents: number;
+  expectedAmountCents: number | null;
+  attemptStatus: StockAttempt["status"];
+  attemptProviderState: StockAttempt["providerState"];
+  attemptPaymentId: string | null;
+};
+
 export interface StockCheckoutTransaction {
   /** Serializes checkout creation for one authenticated owner until this transaction commits. */
   lockOwnerForCheckout(ownerUserId: number): Promise<void>;
@@ -90,6 +114,11 @@ export interface StockCheckoutTransaction {
   markPaid(attemptId: string, paymentId: string): Promise<"paid" | "already-paid" | "not-pending">;
   /** Called only for a signature-verified provider terminal failure event. */
   markTerminalFailure(attemptId: string, paymentId: string): Promise<"released" | "already-released" | "not-pending">;
+  /**
+   * Durable, idempotent evidence of a rejected approval, written in the SAME transaction as the webhook claim.
+   * A failed write must throw so the delivery is not acknowledged (the provider redelivers). Never changes stock, capacity, quota or the order.
+   */
+  recordFinancialDivergence(divergence: StockFinancialDivergence): Promise<"recorded" | "duplicate">;
   expireDueReservations(batchSize: number, ownerUserId?: number): Promise<{ releasedAttemptIds: string[]; reconciliationAttemptIds: string[] }>;
 }
 
@@ -467,20 +496,39 @@ async function processStockPaymentWebhook(input: {
     if (claim !== "claimed") return claim;
     const attempt = await tx.findAttemptByOrder(input.orderId);
     if (!attempt) fail("WEBHOOK_PAYMENT_UNKNOWN");
-    if (attempt.paymentId && attempt.paymentId !== input.paymentId) return "conflict";
-    if (attempt.providerState === "not_started" || attempt.providerState === "definitive_failure") return "conflict";
+    // Only a "paid" signal can mean money moved; every other rejected transition stays a plain, non-financial conflict.
+    const rejectApproval = async (kind: StockFinancialDivergenceKind, current: StockAttempt = attempt): Promise<"conflict"> => {
+      let expectedAmountCents: number | null = null;
+      try { expectedAmountCents = stockAttemptAmountCents(current); } catch { /* legacy attempt without an authoritative amount */ }
+      await tx.recordFinancialDivergence({
+        kind, attemptId: current.attemptId, orderId: current.orderId, paymentId: input.paymentId, providerEventId: input.eventId,
+        observedAmountCents: input.amountCents, expectedAmountCents,
+        attemptStatus: current.status, attemptProviderState: current.providerState, attemptPaymentId: current.paymentId ?? null,
+      });
+      return "conflict";
+    };
+    if (attempt.paymentId && attempt.paymentId !== input.paymentId) return input.status === "paid" ? rejectApproval("PAID_WITH_DIFFERENT_PAYMENT_ID") : "conflict";
+    if (attempt.providerState === "not_started" || attempt.providerState === "definitive_failure") {
+      if (input.status !== "paid") return "conflict";
+      return rejectApproval(attempt.providerState === "not_started" ? "PAID_FOR_UNSTARTED_ATTEMPT" : attempt.status === "released" ? "PAID_AFTER_TERMINAL_FAILURE" : "PAID_AFTER_RELEASE");
+    }
     // The charged total (merchandise + accepted freight), exactly as persisted with the attempt.
     const expected = stockAttemptAmountCents(attempt);
     if (expected !== input.amountCents) fail("WEBHOOK_AMOUNT_MISMATCH");
     if (attempt.status === "paid") return input.status === "failed" ? "conflict" : "processed";
     if (attempt.status === "released") {
-      return input.status === "failed" && attempt.paymentId === input.paymentId ? "processed" : "conflict";
+      if (input.status === "failed" && attempt.paymentId === input.paymentId) return "processed";
+      return input.status === "paid" ? rejectApproval("PAID_AFTER_RELEASE") : "conflict";
     }
     if (!attempt.paymentId) await tx.recordPayment(attempt.attemptId, input.paymentId, null);
     if (input.status === "pending") return "processed";
     if (input.status === "paid") {
       const result = await tx.markPaid(attempt.attemptId, input.paymentId);
-      if (result === "not-pending") return "conflict";
+      if (result === "not-pending") {
+        // Lost a race against a terminal failure/release committed after our first (unlocked) read: classify from the fresh state.
+        const latest = (await tx.findAttemptByOrder(input.orderId)) ?? attempt;
+        return rejectApproval(latest.status === "released" && latest.providerState === "definitive_failure" ? "PAID_AFTER_TERMINAL_FAILURE" : "PAID_AFTER_RELEASE", latest);
+      }
       if (result === "paid") await tx.consumeReservations(attempt.attemptId);
       return "processed";
     }

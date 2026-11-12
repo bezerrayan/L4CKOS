@@ -64,7 +64,7 @@ const TABLES = [
   "exclusiveNotificationOutbox", "exclusiveEvents", "exclusiveRedeemAttempts", "exclusiveGrantUsage", "exclusiveGrants",
   "exclusiveAccessRequests", "exclusiveDropProducts", "exclusiveDrops", "stockWebhookEvents", "stockReservations", "orderItems",
   "stockCheckoutItems", "stockCheckoutAttempts", "orders", "productVariants", "products", "productionBatchProducts", "productionBatches",
-  "userAddresses", "users",
+  "userAddresses", "users", "auditLogs",
 ];
 
 async function resetDatabase() {
@@ -414,64 +414,251 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       expect(await viewer(other)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 });
     });
   });
-  describe("late financial approval and manual reconciliation", () => {
-    it("SAFE: a provider-created attempt held for reconciliation (expired window) is still confirmed by a later paid event, exactly once", async () => {
+  describe("late financial approval: durable, idempotent evidence for manual reconciliation", () => {
+    const RECON = "stock.reconciliation.required";
+    const cases = async () => (await pool.query<any[]>("SELECT * FROM auditLogs WHERE action = ? ORDER BY id", [RECON]))[0] as any[];
+    /** Everything financial/stock-related that a rejected approval must leave untouched. */
+    const ledger = async () => ({
+      orders: await count("SELECT COUNT(*) AS n FROM orders"),
+      confirmedOrders: await count("SELECT COUNT(*) AS n FROM orders WHERE paymentStatus = 'confirmed'"),
+      paidAttempts: await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE status = 'paid'"),
+      attempts: await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts"),
+      reservedStock: await count("SELECT COALESCE(SUM(reservedStock),0) AS n FROM productVariants"),
+      stock: await count("SELECT COALESCE(SUM(stock),0) AS n FROM productVariants"),
+      claimed: await batchClaimed(),
+      calls: providerCalls.length,
+    });
+    const failTerminally = async (orderId: string, paymentId: string, amount: number, eventId: string) =>
+      expect(await webhook(orderId, paymentId, amount, "failed", eventId)).toBe("processed");
+
+    it("SAFE: a provider-created attempt held for reconciliation (expired window) is still confirmed by a later paid event, exactly once, with no divergence", async () => {
       await createDrop([4]);
       await unlock(owner, 1);
       const a = await buy(owner, "late-held-owner-00000001", 8, 1);
       await pool.query("UPDATE stockCheckoutAttempts SET reservationExpiresAt = '2026-01-01 00:00:00.000'");
       const swept = await stockRuntime.expireReservations(50);
-      expect(swept.reconciliationAttemptIds).toContain("late-held-owner-00000001"); // flagged, NOT released
-      expect(await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE reconciliationRequiredAt IS NOT NULL")).toBe(1);
+      expect(swept.reconciliationAttemptIds).toContain("late-held-owner-00000001");
       await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "late-held-paid-event-0001")).resolves.toBe("processed");
       await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "late-held-paid-event-0001")).resolves.toBe("duplicate");
-      expect(await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE status = 'paid' AND reconciliationRequiredAt IS NULL")).toBe(1);
       expect(await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND paymentStatus = 'confirmed'")).toBe(1);
-      expect((await viewerFor(owner, 4))).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
+      expect(await viewerFor(owner, 4)).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
+      expect(await cases()).toHaveLength(0);
     });
 
-    it("a paid event AFTER a signed terminal failure is refused (no resurrection of stock, capacity, quota or order), whatever the amount", async () => {
+    it("1+2. terminal failure then signed late approval (pre-order inside a drop): ledger stays blocked and the divergence is persisted and linked", async () => {
       await createDrop([6]);
       await unlock(owner, 1);
       const a = await buy(owner, "late-after-fail-0000001", 21, 1, 6);
-      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "late-fail-event-0001");
-      const state = async () => ({
-        claimed: await batchClaimed(),
-        reserved: await count("SELECT COALESCE(SUM(reservedStock),0) AS n FROM productVariants"),
-        paidOrders: await count("SELECT COUNT(*) AS n FROM orders WHERE paymentStatus = 'confirmed'"),
-        cancelled: await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'cancelled'"),
-        calls: providerCalls.length,
-      });
-      const before = await state();
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "late-fail-event-0001");
+      const before = await ledger();
+      const viewerBefore = await viewer(owner);
       await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "late-paid-event-0001")).resolves.toBe("conflict");
-      await expect(webhook(a.orderId, "pay-1", a.amountCents - 100, "paid", "late-paid-wrong-amount-0001")).resolves.toBe("conflict"); // terminal state wins over any payload
-      expect(await state()).toEqual(before);
-      expect(await viewer(owner)).toMatchObject({ unitsReserved: 0, unitsConsumed: 0, unitsRemaining: 1 });
+      expect(await ledger()).toEqual(before); // no confirmation, no new order/payment, no stock/capacity restored
+      expect(await viewer(owner)).toEqual(viewerBefore); // quota not restored
+      const [order] = await pool.query<any[]>("SELECT status, paymentStatus FROM orders WHERE id = ?", [a.orderId]);
+      expect(order[0]).toMatchObject({ status: "cancelled", paymentStatus: "unconfirmed" });
+      const [attempt] = await pool.query<any[]>("SELECT status, providerState, reconciliationRequiredAt FROM stockCheckoutAttempts WHERE attemptId = 'late-after-fail-0000001'");
+      expect(attempt[0]).toMatchObject({ status: "released", providerState: "definitive_failure", reconciliationRequiredAt: null }); // must NOT re-hold the quota
+
+      const rows = await cases();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ actorType: "system", actorUserId: null, entity: "stockCheckoutAttempt", entityId: "late-after-fail-0000001", orderId: Number(a.orderId), event: "PAID_AFTER_TERMINAL_FAILURE" });
+      expect(rows[0].correlationId).toBe("PAID_AFTER_TERMINAL_FAILURE:late-after-fail-0000001:pay-1");
+      const details = JSON.parse(rows[0].metadata);
+      expect(details).toEqual({
+        reconciliation: "open", kind: "PAID_AFTER_TERMINAL_FAILURE", attemptId: "late-after-fail-0000001", orderId: a.orderId, paymentId: "pay-1",
+        providerEventId: "late-paid-event-0001", observedStatus: "paid", observedAmountCents: a.amountCents, expectedAmountCents: a.amountCents,
+        attemptPaymentId: "pay-1", automaticReprocessing: false,
+      });
+      expect(JSON.parse(rows[0].beforeState)).toEqual({ status: "released", providerState: "definitive_failure" });
+      expect(JSON.parse(rows[0].afterState)).toMatchObject({ reconciliation: "open" });
+      // No personal data or raw payload: neither the customer's e-mail/name/address nor a payload body is stored.
+      const stored = JSON.stringify(rows[0]);
+      for (const pii of ["example.invalid", "Cliente Sintético", "Rua de Teste", "payload", "70000000"]) expect(stored).not.toContain(pii);
+      expect(rows[0].createdAt).toBeTruthy();
     });
 
-    // CHARACTERISATION of the CURRENT record: a refused late approval leaves only a bare dedupe row (event id, payload hash, time).
-    it("CURRENT RECORD: a contradictory late approval is acknowledged but leaves no orderId/paymentId/amount nor a manual-reconciliation marker", async () => {
+    it("2b. the evidence is queryable only by an authorised admin, by order/attempt/payment", async () => {
       await createDrop([4]);
       await unlock(owner, 1);
-      const a = await buy(owner, "late-record-owner-0000001", 8, 1);
-      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "record-fail-event-0001");
-      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "record-late-paid-0001")).resolves.toBe("conflict");
-      const [events] = await pool.query<any[]>("SELECT * FROM stockWebhookEvents WHERE eventId = 'record-late-paid-0001'");
-      expect(events).toHaveLength(1);
-      expect(Object.keys(events[0]).sort()).toEqual(["eventId", "payloadHash", "receivedAt"]); // nothing links it to an order or an amount
-      const [attempt] = await pool.query<any[]>("SELECT status, providerState, reconciliationRequiredAt FROM stockCheckoutAttempts WHERE attemptId = 'late-record-owner-0000001'");
-      expect(attempt[0]).toMatchObject({ status: "released", providerState: "definitive_failure", reconciliationRequiredAt: null });
-      expect(await count("SELECT COUNT(*) AS n FROM auditLogs WHERE action LIKE '%reconcil%' OR action LIKE '%late%'")).toBe(0);
+      const a = await buy(owner, "late-query-owner-0000001", 8, 1);
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "query-fail-event-0001");
+      await webhook(a.orderId, "pay-1", a.amountCents, "paid", "query-late-paid-0001");
+      const list = await admin().admin.reconciliationCasesList.query();
+      expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({ kind: "PAID_AFTER_TERMINAL_FAILURE", orderId: a.orderId, attemptId: "late-query-owner-0000001", state: "open" });
+      expect(list[0].details).toMatchObject({ paymentId: "pay-1", providerEventId: "query-late-paid-0001", observedAmountCents: a.amountCents });
+      const forbidden = await caught(owner().admin.reconciliationCasesList.query());
+      expect((forbidden as { data?: { code?: string } })?.data?.code).toBe("FORBIDDEN");
+      const anonymous = await caught(client("not-a-session").admin.reconciliationCasesList.query());
+      expect((anonymous as { data?: { code?: string } })?.data?.code).toBe("UNAUTHORIZED");
     });
 
-    // Desired behaviour, tracked as a backend gap (customer may have been charged for an order the system cancelled).
-    it.fails("DESIRED: a late approval after a terminal failure leaves a durable marker for manual reconciliation", async () => {
+    it("3. duplicate and repeated deliveries never create a second occurrence", async () => {
       await createDrop([4]);
       await unlock(owner, 1);
-      const a = await buy(owner, "late-desired-owner-000001", 8, 1);
-      await webhook(a.orderId, "pay-1", a.amountCents, "failed", "desired-fail-event-0001");
-      await webhook(a.orderId, "pay-1", a.amountCents, "paid", "desired-late-paid-0001");
-      expect(await count("SELECT COUNT(*) AS n FROM stockCheckoutAttempts WHERE reconciliationRequiredAt IS NOT NULL")).toBe(1);
+      const a = await buy(owner, "late-dup-owner-000000001", 8, 1);
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "dup-fail-event-0001");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "dup-late-paid-0001")).resolves.toBe("conflict");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "dup-late-paid-0001")).resolves.toBe("duplicate"); // same event
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "dup-late-paid-0002")).resolves.toBe("conflict"); // another event, same charge
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "dup-late-paid-0003", "PAYMENT_CONFIRMED")).resolves.toBe("conflict");
+      expect(await cases()).toHaveLength(1);
+    });
+
+    it("3b. a payment id that is not the attempt's, or a charge never issued, is also recorded once and changes nothing", async () => {
+      await createDrop([4]);
+      await unlock(owner, 1);
+      await unlock(other, 1);
+      const a = await buy(owner, "late-mismatch-owner-0001", 8, 1);
+      const before = await ledger();
+      await expect(webhook(a.orderId, "pay-OTHER", a.amountCents, "paid", "mismatch-paid-event-001")).resolves.toBe("conflict");
+      await expect(webhook(a.orderId, "pay-OTHER", a.amountCents, "paid", "mismatch-paid-event-002")).resolves.toBe("conflict");
+      expect((await cases()).map(r => r.event)).toEqual(["PAID_WITH_DIFFERENT_PAYMENT_ID"]);
+      expect(await ledger()).toEqual(before);
+      // never issued: provider call never happened for this attempt
+      const b = await buy(other, "late-unstarted-other-0001", 9, 1);
+      await pool.query("UPDATE stockCheckoutAttempts SET providerState = 'not_started', paymentId = NULL, checkoutUrl = NULL WHERE attemptId = 'late-unstarted-other-0001'");
+      await expect(webhook(b.orderId, "pay-GHOST", b.amountCents, "paid", "unstarted-paid-event-001")).resolves.toBe("conflict");
+      expect((await cases()).map(r => r.event).sort()).toEqual(["PAID_FOR_UNSTARTED_ATTEMPT", "PAID_WITH_DIFFERENT_PAYMENT_ID"]);
+      expect(await count("SELECT COUNT(*) AS n FROM orders WHERE paymentStatus = 'confirmed'")).toBe(0);
+    });
+
+    it("4. out-of-order deliveries: pending after terminal failure is a plain conflict; failure after paid never regresses money; neither opens a case", async () => {
+      await createDrop([4]);
+      await unlock(owner, 1);
+      await unlock(other, 1);
+      const a = await buy(owner, "ooo-fail-owner-00000001", 8, 1);
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "ooo-fail-event-0001");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "pending", "ooo-late-pending-0001")).resolves.toBe("conflict");
+      const b = await buy(other, "ooo-paid-other-00000001", 9, 1);
+      await expect(webhook(b.orderId, "pay-2", b.amountCents, "paid", "ooo-paid-event-0001")).resolves.toBe("processed");
+      await expect(webhook(b.orderId, "pay-2", b.amountCents, "failed", "ooo-failure-after-paid-01")).resolves.toBe("conflict");
+      expect(await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND paymentStatus = 'confirmed'")).toBe(1);
+      expect(await viewerFor(other, 4)).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
+      expect(await cases()).toHaveLength(0);
+    });
+
+    it("5. if the evidence cannot be written the delivery is NOT acknowledged (no silent loss); redelivery records it exactly once", async () => {
+      await createDrop([4]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "late-auditfail-owner-001", 8, 1);
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "auditfail-fail-event-001");
+      const before = await ledger();
+      await pool.query("RENAME TABLE auditLogs TO auditLogs_unavailable");
+      try {
+        await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "auditfail-late-paid-001")).rejects.toThrow();
+      } finally {
+        await pool.query("RENAME TABLE auditLogs_unavailable TO auditLogs");
+      }
+      // The whole webhook transaction rolled back: the claim is gone, so the provider's retry is processed, not deduplicated.
+      expect(await count("SELECT COUNT(*) AS n FROM stockWebhookEvents WHERE eventId = 'auditfail-late-paid-001'")).toBe(0);
+      expect(await cases()).toHaveLength(0);
+      expect(await ledger()).toEqual(before);
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "auditfail-late-paid-001")).resolves.toBe("conflict");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "auditfail-late-paid-001")).resolves.toBe("duplicate");
+      expect(await cases()).toHaveLength(1);
+      expect(await ledger()).toEqual(before);
+    });
+
+    it("6+7. pending then a valid confirmation, and a normal payment, confirm exactly once and open no case", async () => {
+      await createDrop([6]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "normal-paid-owner-0000001", 21, 1, 6);
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "pending", "normal-pending-event-01")).resolves.toBe("processed");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "normal-paid-event-0001")).resolves.toBe("processed");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "normal-paid-event-0001")).resolves.toBe("duplicate");
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "normal-paid-event-0002", "PAYMENT_CONFIRMED")).resolves.toBe("processed"); // idempotent on a paid attempt
+      expect(await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND paymentStatus = 'confirmed'")).toBe(1);
+      expect(await viewer(owner)).toMatchObject({ unitsConsumed: 1, unitsReserved: 0, unitsRemaining: 0 });
+      expect(await batchClaimed()).toBe(1);
+      expect(providerCalls).toHaveLength(1);
+      expect(await cases()).toHaveLength(0);
+    });
+
+    it("8. a refund does not hand the quota or capacity back", async () => {
+      await createDrop([6]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "refund-owner-000000000001", 21, 1, 6);
+      await webhook(a.orderId, "pay-1", a.amountCents, "paid", "refund-paid-event-0001");
+      const before = await ledger();
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "failed", "refund-event-0001", "PAYMENT_REFUNDED")).rejects.toThrow("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
+      expect(await ledger()).toEqual(before);
+      expect(await viewer(owner)).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
+      expect(appCode(await caught(buy(owner, "refund-retry-owner-000001", 22, 1, 6)))).toBe("EXCLUSIVE_QUOTA_EXCEEDED");
+    });
+
+    it("9. after a legitimate terminal failure the customer can buy again, and only a later contradictory approval is recorded", async () => {
+      await createDrop([6]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "retry-first-owner-0000001", 21, 1, 6);
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "retry-fail-event-0001");
+      expect(await cases()).toHaveLength(0);
+      const retry = await buy(owner, "retry-second-owner-000001", 22, 1, 6);
+      expect(retry.status).toBe("pending");
+      expect(providerCalls).toHaveLength(2);
+      await expect(webhook(a.orderId, "pay-1", a.amountCents, "paid", "retry-late-paid-0001")).resolves.toBe("conflict");
+      expect(await cases()).toHaveLength(1);
+      expect(await viewer(owner)).toMatchObject({ unitsReserved: 1, unitsRemaining: 0 }); // the retry still holds the unit
+      await expect(webhook(retry.orderId, "pay-2", retry.amountCents, "paid", "retry-paid-event-0001")).resolves.toBe("processed");
+      expect(await viewer(owner)).toMatchObject({ unitsConsumed: 1, unitsRemaining: 0 });
+      expect(await batchClaimed()).toBe(1);
+      expect(providerCalls).toHaveLength(2); // no divergence ever started a payment
+    });
+
+    it("10. concurrent late approvals (distinct events, same charge) open exactly one case and change nothing", async () => {
+      await createDrop([6]);
+      await unlock(owner, 1);
+      const a = await buy(owner, "conc-late-owner-00000001", 21, 1, 6);
+      await failTerminally(a.orderId, "pay-1", a.amountCents, "conc-fail-event-0001");
+      const before = await ledger();
+      const results = await Promise.allSettled([
+        ...Array.from({ length: 8 }, (_, i) => webhook(a.orderId, "pay-1", a.amountCents, "paid", `conc-late-paid-${i}`)),
+        ...Array.from({ length: 4 }, () => webhook(a.orderId, "pay-1", a.amountCents, "paid", "conc-late-paid-same")),
+      ]);
+      for (const r of results) {
+        if (r.status === "fulfilled") expect(["conflict", "duplicate"]).toContain(r.value);
+        else expect(String((r.reason as Error).message)).toMatch(/deadlock|lock wait/i); // a lost lock race is retried by the provider, never half-applied
+      }
+      // Redeliver whatever lost a lock race: the final state is the same.
+      for (let i = 0; i < 8; i++) await webhook(a.orderId, "pay-1", a.amountCents, "paid", `conc-late-paid-${i}`);
+      await webhook(a.orderId, "pay-1", a.amountCents, "paid", "conc-late-paid-same");
+      expect(await cases()).toHaveLength(1);
+      expect(await ledger()).toEqual(before);
+    });
+
+    it("10b. a paid and a terminal-failure event racing on the same open attempt resolve to ONE consistent outcome", async () => {
+      await createDrop([6]);
+      await unlock(owner, 2);
+      const attempts = [] as Array<{ id: string; orderId: string; paymentId: string; amount: number }>;
+      for (let i = 0; i < 2; i++) {
+        const created = await buy(owner, `race-pair-owner-0000000${i}`, i === 0 ? 21 : 22, 1, 6);
+        attempts.push({ id: `race-pair-owner-0000000${i}`, orderId: created.orderId, paymentId: `pay-${i + 1}`, amount: created.amountCents });
+      }
+      await Promise.allSettled(attempts.flatMap((x, i) => [
+        webhook(x.orderId, x.paymentId, x.amount, "paid", `race-paid-${i}`),
+        webhook(x.orderId, x.paymentId, x.amount, "failed", `race-failed-${i}`),
+      ]));
+      for (const [i, x] of attempts.entries()) { // redeliver (a lost lock race is retried by the provider)
+        await webhook(x.orderId, x.paymentId, x.amount, "paid", `race-paid-${i}`).catch(() => undefined);
+        await webhook(x.orderId, x.paymentId, x.amount, "failed", `race-failed-${i}`).catch(() => undefined);
+      }
+      let paid = 0;
+      for (const x of attempts) {
+        const [row] = await pool.query<any[]>("SELECT a.status, o.status AS orderStatus, o.paymentStatus FROM stockCheckoutAttempts a JOIN orders o ON o.id = a.orderId WHERE a.attemptId = ?", [x.id]);
+        const recorded = (await cases()).filter(c => c.entityId === x.id).length;
+        if (row[0].status === "paid") { // paid won: order confirmed, nothing to reconcile
+          paid++;
+          expect(row[0]).toMatchObject({ orderStatus: "paid", paymentStatus: "confirmed" });
+          expect(recorded).toBe(0);
+        } else { // failure won: order never confirmed; a paid that lost the race is on record exactly once
+          expect(row[0]).toMatchObject({ status: "released", orderStatus: "cancelled", paymentStatus: "unconfirmed" });
+          expect(recorded).toBeLessThanOrEqual(1);
+        }
+      }
+      expect(await count("SELECT COUNT(*) AS n FROM orders WHERE paymentStatus = 'confirmed'")).toBe(paid);
+      expect(await batchClaimed()).toBe(paid); // capacity: only paid orders remain claimed
+      expect(providerCalls).toHaveLength(2);
     });
   });
 

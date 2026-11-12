@@ -3211,6 +3211,28 @@ export async function getAuditLogs(limit = 300) {
   }));
 }
 
+/** Open manual-reconciliation evidence for rejected financial approvals (read-only; newest first). Identifiers and amounts only. */
+export async function getStockReconciliationCases(limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(auditLogs)
+    .where(eq(auditLogs.action, "stock.reconciliation.required"))
+    .orderBy(desc(auditLogs.id))
+    .limit(Math.min(Math.max(Math.trunc(limit) || 200, 1), 1000));
+  return rows.map(item => {
+    const details = item.metadata ? (JSON.parse(item.metadata) as Record<string, unknown>) : {};
+    return {
+      id: item.id,
+      createdAt: item.createdAt,
+      kind: (details.kind as string | undefined) ?? null,
+      orderId: (details.orderId as string | undefined) ?? null,
+      attemptId: item.entityId,
+      state: (details.reconciliation as string | undefined) ?? "open",
+      details,
+    };
+  });
+}
+
 export async function getDashboardKpis() {
   const db = await getDb();
   if (!db) {

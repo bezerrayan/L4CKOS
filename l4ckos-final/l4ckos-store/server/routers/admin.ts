@@ -9,6 +9,7 @@ import {
   deleteCoupon,
   getCartItems,
   getAuditLogs,
+  getStockReconciliationCases,
   getBackupPayload,
   getCoupons,
   getPromoBanners,
@@ -1065,6 +1066,11 @@ export const adminRouter = router({
     .query(async ({ input }) => {
       return await getAuditLogs(input?.limit ?? 300);
     }),
+
+  /** Rejected financial approvals that need manual reconciliation (read-only evidence; never reprocesses a payment). */
+  reconciliationCasesList: adminProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(1000).default(200) }).optional())
+    .query(async ({ input }) => getStockReconciliationCases(input?.limit ?? 200)),
 
   backupManual: adminProcedure.mutation(async ({ ctx }) => {
     try {
