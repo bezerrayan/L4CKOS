@@ -83,6 +83,7 @@ PY
   root_sql -e "DROP DATABASE railway"
 fi
 
+set +e # keep the exit status of phase 1 (set -e would skip phase 2 and the status report)
 STOCK_MYSQL_HOST=127.0.0.1 \
 STOCK_MYSQL_PORT="$published_port" \
 STOCK_MYSQL_USER=stock_test \
@@ -91,3 +92,40 @@ STOCK_MYSQL_DATABASE=l4ckos_stock_test \
 STOCK_LOCAL_HARNESS=true \
 JWT_SECRET=synthetic-stock-local-session-key-32-bytes-minimum \
   pnpm exec vitest run --fileParallelism=false server/stock/mysqlStockCheckoutStore.mysql.test.ts server/stock/stockCheckout.integration.mysql.test.ts server/stock/stockStorefront.e2e.mysql.test.ts server/exclusive/exclusiveDrops.mysql.test.ts server/exclusive/exclusiveDropsQuota.mysql.test.ts server/database/productVariantPrice.mysql.test.ts client/src/pages/Pagamento.mysql.e2e.test.tsx "$@"
+status=$?
+# Phase 2 - least privilege: restrict the application account `stock_test` to database/staging/stock-runtime-grants.template.sql and rerun the
+# quota / late-approval / reconciliation suite through it. The harness keeps a separate privileged `stock_setup` account for seeding and inspection.
+# Any statement outside the documented grants fails the suite, so the template is proven rather than guessed.
+if [[ "$status" -eq 0 && "${STOCK_SKIP_LEAST_PRIVILEGE:-false}" != "true" ]]; then
+  synthetic_setup_password="stock-local-setup-pw-only"
+  root_sql_priv() { docker exec --interactive --env MYSQL_PWD="$synthetic_root_password" "$container_name" mysql --user=root "$@"; }
+  set -e
+  root_sql_priv -e "CREATE USER 'stock_setup'@'%' IDENTIFIED BY '$synthetic_setup_password'; GRANT ALL PRIVILEGES ON l4ckos_stock_test.* TO 'stock_setup'@'%'; REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'stock_test'@'%'"
+  # The phase-1 teardown leaves the base fixture (Drops tables dropped); recreate them exactly as the suites do (CREATE TABLE statements of 0028).
+  python3 - <<'PY' | root_sql_priv l4ckos_stock_test
+import re
+sql = open("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql", encoding="utf-8").read()
+for statement in (part.strip() for part in sql.split(";")):
+    if re.search(r"CREATE TABLE", statement):
+        print(statement + ";")
+PY
+  sed -e "s/@DB@/l4ckos_stock_test/g" -e "s/@USER@/stock_test/g" database/staging/stock-runtime-grants.template.sql | root_sql_priv
+  root_sql_priv -e "UPDATE performance_schema.setup_consumers SET ENABLED = 'YES' WHERE NAME IN ('events_statements_history_long'); UPDATE performance_schema.setup_instruments SET ENABLED = 'YES', TIMED = 'YES' WHERE NAME LIKE 'statement/sql/%'"
+  set +e
+  STOCK_MYSQL_HOST=127.0.0.1 \
+  STOCK_MYSQL_PORT="$published_port" \
+  STOCK_MYSQL_USER=stock_test \
+  STOCK_MYSQL_PASSWORD="$synthetic_test_password" \
+  STOCK_MYSQL_DATABASE=l4ckos_stock_test \
+  STOCK_SETUP_MYSQL_USER=stock_setup \
+  STOCK_SETUP_MYSQL_PASSWORD="$synthetic_setup_password" \
+  STOCK_LOCAL_HARNESS=true \
+  JWT_SECRET=synthetic-stock-local-session-key-32-bytes-minimum \
+    pnpm exec vitest run --fileParallelism=false server/exclusive/exclusiveDropsQuota.mysql.test.ts
+  status=$?
+  if [[ "$status" -ne 0 ]]; then
+    echo "--- statements rejected by MySQL during the least-privilege phase (privilege gaps appear here) ---" >&2
+    root_sql_priv -N -B -e "SELECT DISTINCT LEFT(MESSAGE_TEXT, 160) FROM performance_schema.events_statements_history_long WHERE MYSQL_ERRNO IN (1142, 1143, 1044, 1045, 1370) ORDER BY 1" >&2 || true
+  fi
+fi
+exit "$status"

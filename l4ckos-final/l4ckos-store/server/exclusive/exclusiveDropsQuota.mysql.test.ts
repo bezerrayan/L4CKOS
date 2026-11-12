@@ -35,6 +35,12 @@ const delivery = {
 const BATCH = 70;
 
 let pool: Pool;
+/**
+ * Pool the APPLICATION runtime uses (always the `stock_test` account the production guard requires).
+ * In the least-privilege phase of scripts/run-stock-mysql-tests.sh `stock_test` is restricted to database/staging/stock-runtime-grants.template.sql
+ * and the harness (`pool`: seeding, inspection, fault injection) connects as the separate privileged STOCK_SETUP_MYSQL_USER.
+ */
+let appPool: Pool;
 let httpServer: Server;
 let baseUrl = "";
 let providerCalls: Array<{ orderId: string }>;
@@ -163,11 +169,15 @@ const batchClaimed = () =>
 
 describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout (MySQL 9.7.2 disposable only)", () => {
   beforeAll(async () => {
-    if (!/^(127\.0\.0\.1|localhost|::1)$/.test(host) || database !== "l4ckos_stock_test" || user !== "stock_test" || process.env.STOCK_LOCAL_HARNESS !== "true") {
+    if (!/^(127\.0\.0\.1|localhost|::1)$/.test(host) || database !== "l4ckos_stock_test" || user !== "stock_test" || process.env.STOCK_LOCAL_HARNESS !== "true" ||
+      (process.env.STOCK_SETUP_MYSQL_USER && !/^stock_setup$/.test(process.env.STOCK_SETUP_MYSQL_USER))) {
       throw new Error("STOCK MySQL test identity is not disposable");
     }
-    pool = createPool({ host, port, user, password, database, connectionLimit: 12 });
-    setStockLocalHarnessDb(drizzleMysql(pool));
+    appPool = createPool({ host, port, user, password, database, connectionLimit: 12 });
+    pool = process.env.STOCK_SETUP_MYSQL_USER
+      ? createPool({ host, port, user: process.env.STOCK_SETUP_MYSQL_USER, password: process.env.STOCK_SETUP_MYSQL_PASSWORD ?? "", database, connectionLimit: 12 })
+      : appPool;
+    setStockLocalHarnessDb(drizzleMysql(appPool));
     const [identity] = await pool.query<any[]>("SELECT VERSION() AS version, DATABASE() AS dbName");
     if (!String(identity[0]?.version).startsWith("9.7.2") || identity[0]?.dbName !== database) throw new Error("MySQL identity mismatch");
     sessionTokens = {
@@ -177,8 +187,8 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       "third-84": await sdk.createSessionToken("synthetic-third-84", { name: "Tres", sessionVersion: 1 }),
     };
     stockRuntime = createStockCheckoutRuntime({
-      pool,
-      exclusiveStore: createExclusiveStore(pool, { now: clock }),
+      pool: appPool,
+      exclusiveStore: createExclusiveStore(appPool, { now: clock }),
       provider: {
         supportsIdempotencyKey: true,
         async createPayment(input) {
@@ -188,7 +198,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       },
     });
     configureStockCheckoutRuntimeForLocalHarness(stockRuntime);
-    configureExclusiveStoreForLocalHarness(createExclusiveStore(pool, { now: clock }));
+    configureExclusiveStoreForLocalHarness(createExclusiveStore(appPool, { now: clock }));
     const app = express();
     app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
     httpServer = createServer(app);
@@ -220,6 +230,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
     configureStockCheckoutRuntimeForLocalHarness(undefined);
     if (httpServer) await new Promise<void>(done => httpServer.close(() => done()));
     if (pool) setStockLocalHarnessDb(null);
+    if (appPool && appPool !== pool) await appPool.end();
     if (pool) await pool.end();
   });
 
