@@ -7,34 +7,10 @@ export const PUBLIC_STORE_CLOSED_MESSAGE = "A loja está temporariamente fechada
 export const PUBLIC_CHECKOUT_DISABLED_CODE = "PUBLIC_CHECKOUT_DISABLED";
 export const PUBLIC_CHECKOUT_DISABLED_MESSAGE = "O checkout está temporariamente indisponível para homologação.";
 
-export type PublicSiteMode = "store" | "coming-soon";
+export { isPublicCheckoutEnabled, isPublicStoreOpen, resolvePublicSiteMode } from "./publicStorePolicy";
+export type { PublicSiteMode } from "./publicStorePolicy";
+import { isPublicCheckoutEnabled, isPublicStoreOpen } from "./publicStorePolicy";
 type Environment = Record<string, string | undefined>;
-
-/** The backend is authoritative; the VITE_* client flags never grant commerce access. */
-export function resolvePublicSiteMode(env: Environment = process.env): PublicSiteMode {
-  const configured = String(env[PUBLIC_SITE_MODE_ENV] ?? "").trim().toLowerCase();
-
-  if (!configured) return "coming-soon";
-
-  if (configured === "store") return "store";
-  if (configured === "coming-soon") return "coming-soon";
-
-  // Unknown configuration must never open sales.
-  return "coming-soon";
-}
-
-export function isPublicStoreOpen(env: Environment = process.env): boolean {
-  return resolvePublicSiteMode(env) === "store";
-}
-
-/** Checkout is a separate capability from storefront visibility. It is closed
- * unless an operator explicitly enables it in the backend environment. */
-export function isPublicCheckoutEnabled(env: Environment = process.env): boolean {
-  if (!isPublicStoreOpen(env)) return false;
-  const configured = String(env.PUBLIC_CHECKOUT_ENABLED ?? "").trim().toLowerCase();
-  if (configured === "true") return true;
-  return false;
-}
 
 export class PublicStoreClosedError extends Error {
   readonly code = PUBLIC_STORE_CLOSED_CODE;

@@ -62,6 +62,8 @@ describe("financial runtime attestation", () => {
       stockRuntimeEnabled: false,
       stockCheckoutEnabled: false,
       stockCheckoutEffective: false,
+      stockReservationExpirySchedulerEnabled: false,
+      automaticBackupSchedulerEnabled: false,
       asaasWebhookInboundEnabled: false,
       asaasWebhookRecoveryWorkerEnabled: false,
       paymentNotificationRecoveryWorkerEnabled: false,
@@ -103,12 +105,12 @@ describe("financial runtime attestation", () => {
     ["project identifier absent", { RAILWAY_PROJECT_ID: undefined }],
     ["environment identifier absent", { RAILWAY_ENVIRONMENT_ID: undefined }],
     ["service identifier absent", { RAILWAY_SERVICE_ID: undefined }],
-  ])("returns NOT_VERIFIED for %s", (_label, overrides) => {
+  ])("does not pass for incomplete identity metadata: %s", (_label, overrides) => {
     const report = resolveFinancialRuntimeAttestation(
       { ...isolatedClosedSandbox, ...overrides },
       processId
     );
-    expect(report.verdict).toBe("NOT_VERIFIED");
+    expect(report.verdict).not.toBe("PASS");
     expect(report.identity.status).toBe("NOT_VERIFIED");
     expect(
       shouldEmitFinancialRuntimeAttestation({

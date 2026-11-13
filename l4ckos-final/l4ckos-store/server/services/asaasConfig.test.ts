@@ -1,7 +1,7 @@
 import * as checkoutPolicy from "../../shared/checkoutMethods";
 import {afterEach,describe,it,expect,vi} from 'vitest';
 import {validateAsaasWebhookSignature} from './asaasService';
-import {getAsaasConfig} from './asaasConfig';
+import {classifyAsaasRuntime,getAsaasConfig} from './asaasConfig';
 import {createAsaasChargeForOrder} from './asaas';
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();});
 function config(){vi.stubEnv('ASAAS_API_KEY','synthetic-key');vi.stubEnv('ASAAS_API_URL','https://api-sandbox.asaas.com/v3');vi.stubEnv('ASAAS_CHECKOUT_BASE_URL','');vi.stubEnv('ASAAS_ENV','sandbox');}
@@ -17,6 +17,24 @@ describe('Asaas fail-closed configuration and checkout adapter',()=>{
  it('never defaults to production when configuration is missing',()=>{config();vi.stubEnv('ASAAS_API_URL','');expect(()=>getAsaasConfig()).toThrow('ASAAS_API_URL_REQUIRED');});
  it.each(['http://api-sandbox.asaas.com/v3','https://untrusted.invalid/v3','https://api-sandbox.asaas.com/v3?token=x','https://user:secret@api-sandbox.asaas.com/v3'])('rejects untrusted or credential-bearing API endpoint %s',url=>{config();vi.stubEnv('ASAAS_API_URL',url);expect(()=>getAsaasConfig()).toThrow();});
  it('rejects production URL for staging project and inconsistent checkout origin',()=>{config();vi.stubEnv('ASAAS_ENV','');vi.stubEnv('RAILWAY_PROJECT_ID','2bb90c8e-eb65-43ee-826b-f93750f0499c');vi.stubEnv('ASAAS_API_URL','https://api.asaas.com/v3');expect(()=>getAsaasConfig()).toThrow('ASAAS_ENVIRONMENT_MISMATCH');vi.stubEnv('ASAAS_API_URL','https://api-sandbox.asaas.com/v3');vi.stubEnv('ASAAS_CHECKOUT_BASE_URL','https://www.asaas.com');expect(()=>getAsaasConfig()).toThrow('ASAAS_CHECKOUT_ENVIRONMENT_MISMATCH');});
+ it('keeps provider configuration aligned for Production and legacy staging',()=>{
+  config();
+  vi.stubEnv('APP_ENV','production');vi.stubEnv('EMAIL_ENV','');
+  vi.stubEnv('RAILWAY_PROJECT_ID','5937dcf3-18ae-4df8-83f0-5bb60ec9b8db');
+  vi.stubEnv('RAILWAY_ENVIRONMENT_ID','production-env');vi.stubEnv('RAILWAY_SERVICE_ID','production-api');
+  vi.stubEnv('ASAAS_ENV','production');vi.stubEnv('ASAAS_API_URL','https://api.asaas.com/v3');
+  vi.stubEnv('ASAAS_CHECKOUT_BASE_URL','https://www.asaas.com');
+  expect(classifyAsaasRuntime(process.env)).toMatchObject({mode:'production',consistent:true,credentialsPresent:true,issue:null});
+  expect(getAsaasConfig()).toMatchObject({apiUrl:'https://api.asaas.com/v3',checkoutBaseUrl:'https://www.asaas.com'});
+
+  vi.stubEnv('APP_ENV','');vi.stubEnv('RAILWAY_PROJECT_ID','2bb90c8e-eb65-43ee-826b-f93750f0499c');
+  vi.stubEnv('RAILWAY_ENVIRONMENT_ID','15545eee-bc02-4b70-afc4-19a5db9e6f46');
+  vi.stubEnv('RAILWAY_SERVICE_ID','9f1c7705-f2f9-48cf-b957-8f63a6bba4db');
+  vi.stubEnv('ASAAS_ENV','sandbox');vi.stubEnv('ASAAS_API_URL','https://api-sandbox.asaas.com/v3');
+  vi.stubEnv('ASAAS_CHECKOUT_BASE_URL','https://sandbox.asaas.com');
+  expect(classifyAsaasRuntime(process.env)).toMatchObject({mode:'sandbox',consistent:true,credentialsPresent:true,issue:null});
+  expect(getAsaasConfig()).toMatchObject({apiUrl:'https://api-sandbox.asaas.com/v3',checkoutBaseUrl:'https://sandbox.asaas.com'});
+ });
  it('recognizes the isolated homologation identity and rejects incomplete identity metadata',()=>{config();vi.stubEnv('APP_ENV','');vi.stubEnv('EMAIL_ENV','');vi.stubEnv('ASAAS_ENV','');vi.stubEnv('RAILWAY_PROJECT_ID','66faf690-a068-40d1-b85c-cb5d8595560a');vi.stubEnv('RAILWAY_ENVIRONMENT_ID','5335340d-311c-47e9-9713-6e5a86969c88');vi.stubEnv('RAILWAY_SERVICE_ID','d66762a4-422a-4656-94a1-502215a27aa2');vi.stubEnv('ASAAS_API_URL','https://api.asaas.com/v3');expect(()=>getAsaasConfig()).toThrow('ASAAS_ENVIRONMENT_MISMATCH');vi.stubEnv('ASAAS_API_URL','https://api-sandbox.asaas.com/v3');expect(getAsaasConfig().apiUrl).toBe('https://api-sandbox.asaas.com/v3');vi.stubEnv('RAILWAY_SERVICE_ID','unknown');expect(()=>getAsaasConfig()).toThrow('ASAAS_RAILWAY_IDENTITY_INVALID');});
  it.each(['PIX','CARD','BOLETO'] as const)('creates one customer and one %s charge with authoritative order reference and no redirect',async method=>{
   config();const calls:{url:string;body:any}[]=[];

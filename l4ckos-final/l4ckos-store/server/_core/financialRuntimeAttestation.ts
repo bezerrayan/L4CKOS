@@ -1,5 +1,6 @@
 import { resolveAsaasWebhookInboundEnabled } from "./asaasWebhookIngress";
-import { isPublicCheckoutEnabled, resolvePublicSiteMode } from "./publicStore";
+import { classifyAsaasRuntime } from "../services/asaasConfig";
+import { isPublicCheckoutEnabled, resolvePublicSiteMode } from "./publicStorePolicy";
 import { resolveRecoveryWorkerStartup } from "./recoveryWorkerStartup";
 import {
   ISOLATED_HOMOLOGATION_IDENTITY,
@@ -47,6 +48,8 @@ export type FinancialRuntimeAttestation = {
   stockRuntimeEnabled: boolean;
   stockCheckoutEnabled: boolean;
   stockCheckoutEffective: boolean;
+  stockReservationExpirySchedulerEnabled: boolean;
+  automaticBackupSchedulerEnabled: boolean;
   asaasWebhookInboundEnabled: boolean | null;
   asaasWebhookRecoveryWorkerEnabled: boolean | null;
   paymentNotificationRecoveryWorkerEnabled: boolean | null;
@@ -67,53 +70,8 @@ function resolveAsaasMode(env: RuntimeEnvironment): {
   mode: FinancialRuntimeAttestation["asaasMode"];
   consistent: boolean;
 } {
-  const apiUrl = env.ASAAS_API_URL?.trim();
-  if (!apiUrl) return { mode: "unconfigured", consistent: true };
-
-  let url: URL;
-  try {
-    url = new URL(apiUrl);
-  } catch {
-    return { mode: "invalid", consistent: false };
-  }
-  const sandbox = url.origin === "https://api-sandbox.asaas.com";
-  if (
-    !["https://api-sandbox.asaas.com", "https://api.asaas.com"].includes(
-      url.origin
-    ) ||
-    url.pathname.replace(/\/+$/, "") !== "/v3" ||
-    url.search ||
-    url.hash ||
-    url.username ||
-    url.password
-  )
-    return { mode: "invalid", consistent: false };
-
-  const mode = sandbox ? "sandbox" : "production";
-  // Keep the enum comparison aligned with getAsaasConfig: the endpoint selects
-  // the provider, while these optional fields must agree exactly when present.
-  const asaasEnv = env.ASAAS_ENV;
-  const staging =
-    isApprovedStagingIdentity(env) ||
-    env.APP_ENV === "staging" ||
-    env.EMAIL_ENV === "staging";
-  if ((staging || asaasEnv === "sandbox") && mode !== "sandbox")
-    return { mode, consistent: false };
-  if (asaasEnv === "production" && mode !== "production")
-    return { mode, consistent: false };
-  if (asaasEnv !== undefined && !["sandbox", "production"].includes(asaasEnv))
-    return { mode, consistent: false };
-
-  const expectedCheckout = sandbox
-    ? "https://sandbox.asaas.com"
-    : "https://www.asaas.com";
-  const configuredCheckout = env.ASAAS_CHECKOUT_BASE_URL?.trim().replace(
-    /\/+$/,
-    ""
-  );
-  if (configuredCheckout && configuredCheckout !== expectedCheckout)
-    return { mode, consistent: false };
-  return { mode, consistent: true };
+  const classification = classifyAsaasRuntime(env);
+  return { mode: classification.mode, consistent: classification.consistent };
 }
 
 function identityState(
@@ -196,9 +154,16 @@ export function resolveFinancialRuntimeAttestation(
     financialFlagsInvalid = true;
   }
 
+  const isolatedHomologation = isIsolatedHomologationIdentity(env);
   const publicSiteRaw = env.PUBLIC_SITE_MODE?.trim().toLowerCase();
   if (publicSiteRaw && !["store", "coming-soon"].includes(publicSiteRaw))
     financialFlagsInvalid = true;
+  if (isolatedHomologation && (
+    publicSiteRaw !== "coming-soon" ||
+    ["PUBLIC_CHECKOUT_ENABLED", "STOCK_RUNTIME_ENABLED", "STOCK_CHECKOUT_ENABLED",
+      "ASAAS_WEBHOOK_INBOUND_ENABLED", "ASAAS_WEBHOOK_RECOVERY_WORKER_ENABLED",
+      "PAYMENT_NOTIFICATION_RECOVERY_WORKER_ENABLED"].some(name => env[name] !== "false")
+  )) financialFlagsInvalid = true;
   if (
     hasInvalidBoolean(env, "PUBLIC_CHECKOUT_ENABLED") ||
     hasInvalidBoolean(env, "STOCK_RUNTIME_ENABLED") ||
@@ -208,6 +173,10 @@ export function resolveFinancialRuntimeAttestation(
   if (financialFlagsInvalid) addIssue(issues, "FINANCIAL_FLAG_INVALID");
 
   const asaas = resolveAsaasMode(env);
+  if (isolatedHomologation && !env.ASAAS_API_KEY?.trim())
+    addIssue(issues, "ASAAS_UNCONFIGURED");
+  if (isolatedHomologation && asaas.mode !== "unconfigured" && env.ASAAS_ENV !== "sandbox")
+    addIssue(issues, "ASAAS_CONFIGURATION_INVALID");
   if (asaas.mode === "production")
     addIssue(issues, "ASAAS_PRODUCTION_SELECTED");
   else if (asaas.mode === "unconfigured")
@@ -269,6 +238,8 @@ export function resolveFinancialRuntimeAttestation(
     stockRuntimeEnabled,
     stockCheckoutEnabled,
     stockCheckoutEffective: stockRuntimeEnabled && stockCheckoutEnabled,
+    stockReservationExpirySchedulerEnabled: stockRuntimeEnabled,
+    automaticBackupSchedulerEnabled: !isIsolatedHomologationIdentity(env),
     asaasWebhookInboundEnabled,
     asaasWebhookRecoveryWorkerEnabled,
     paymentNotificationRecoveryWorkerEnabled,
