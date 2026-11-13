@@ -4,6 +4,10 @@ import {initializeWebhookRecoveryMode} from '../payments/webhookRecovery';
 import { processWebhookEnvelope } from "../controllers/paymentController";
 import { prepareRecoveryWorkerStartup } from "./recoveryWorkerStartup";
 import { createAsaasWebhookInboundGate, resolveAsaasWebhookInboundEnabled } from "./asaasWebhookIngress";
+import {
+  resolveFinancialRuntimeAttestation,
+  shouldEmitFinancialRuntimeAttestation,
+} from "./financialRuntimeAttestation";
 ﻿import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -584,6 +588,11 @@ async function startServer() {
   }
   if (!recoveryWorkers.config.asaasWebhookRecovery) console.info("[Startup] Asaas webhook recovery worker disabled");
   if (!recoveryWorkers.config.paymentNotifications) console.info("[Startup] payment notification recovery worker disabled");
+  if (shouldEmitFinancialRuntimeAttestation(process.env)) {
+    securityLog("info", "financial.runtime_attestation", {
+      ...resolveFinancialRuntimeAttestation(process.env),
+    });
+  }
   recoveryWorkers.start();
 }
 
