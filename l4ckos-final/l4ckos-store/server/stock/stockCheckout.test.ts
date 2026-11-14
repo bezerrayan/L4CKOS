@@ -16,9 +16,13 @@ const createStockCheckout = (input: Omit<Parameters<typeof createStockCheckoutDo
 
 class MemoryStockStore implements StockCheckoutStore {
   variants = new Map<number, StockVariant>();
+  productNames = new Map<number, string>();
   attempts = new Map<string, StockAttempt>();
   divergences = new Map<string, unknown>();
   reserved = new Map<number, number>();
+  quotaCalls = 0;
+  expiryCalls = 0;
+  purchaseCatalogLockModes: boolean[] = [];
   webhookEvents = new Map<string, string>();
   ioCount = 0;
   private transactionTail: Promise<void> = Promise.resolve();
@@ -40,6 +44,15 @@ class MemoryStockStore implements StockCheckoutStore {
     };
     const tx: StockCheckoutTransaction = {
       lockOwnerForCheckout: async () => {},
+      reserveExclusiveQuota: async () => { this.quotaCalls++; },
+      getProductPurchaseCatalog: async (productIds, lock) => {
+        this.purchaseCatalogLockModes.push(lock);
+        return productIds.map(productId => ({
+          productId,
+          name: this.productNames.get(productId) ?? "Synthetic STOCK product",
+          skus: [...this.variants.values()].filter(row => row.productId === productId).map(row => row.sku),
+        }));
+      },
       findAttempt: async id => this.attempts.get(id) ?? null,
       findOpenAttemptsForOwner: async ownerUserId => [...this.attempts.values()].filter(attempt => attempt.ownerUserId === ownerUserId && attempt.status === "reserved"),
       findVariant: async id => this.variants.get(id) ?? null,
@@ -112,7 +125,10 @@ class MemoryStockStore implements StockCheckoutStore {
         this.divergences.set(key, divergence);
         return "recorded";
       },
-      expireDueReservations: async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [] }),
+      expireDueReservations: async () => {
+        this.expiryCalls++;
+        return { releasedAttemptIds: [], reconciliationAttemptIds: [] };
+      },
     };
     try {
       return await work(tx);
@@ -190,6 +206,48 @@ function sendWebhook(input: {
 }
 
 describe("local STOCK checkout core", () => {
+  it("keeps ordinary products purchasable through the V1 STOCK domain", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const payments = provider();
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-policy-common-001") }))
+      .resolves.toMatchObject({ replayed: false });
+    expect(store.attempts.size).toBe(1);
+    expect(payments.calls).toBe(1);
+    expect(store.purchaseCatalogLockModes).toEqual([false, true]);
+  });
+
+  it.each([
+    ["restricted product name", "Clã 14 Bis", [variant()]],
+    ["selected 14B SKU", "Synthetic STOCK product", [variant({ sku: "14B-DROP-PT-M" })]],
+    ["mixed SKUs with common selected", "Synthetic STOCK product", [variant(), variant({ id: 9, sku: "14B-DROP-BR-G", size: "G", active: true })]],
+    ["inactive 14B SKU with common selected", "Synthetic STOCK product", [variant(), variant({ id: 9, sku: "14B-DROP-BR-G", size: "G", active: false })]],
+  ] as const)("blocks V1 STOCK checkout for %s before attempt, reservation, or provider effects", async (_scenario, name, variants) => {
+    const store = new MemoryStockStore([...variants]);
+    store.productNames.set(4, name);
+    const payments = provider();
+
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request(`attempt-policy-${String(_scenario).replaceAll(" ", "-")}-001`) }))
+      .rejects.toMatchObject({ code: "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION" });
+    expect(store.attempts.size).toBe(0);
+    expect(store.reserved.size).toBe(0);
+    expect(store.expiryCalls).toBe(0);
+    expect(store.quotaCalls).toBe(0);
+    expect(payments.calls).toBe(0);
+  });
+
+  it("does not replay an existing V1 payment after current catalog becomes restricted", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const payments = provider();
+    const requestBody = request("attempt-policy-replay-001");
+    await createStockCheckout({ enabled: true, store, provider: payments, request: requestBody });
+    store.variants.set(9, variant({ id: 9, sku: "14B-DROP-BR-G", size: "G", active: false }));
+
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: requestBody }))
+      .rejects.toMatchObject({ code: "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION" });
+    expect(payments.calls).toBe(1);
+    expect(store.purchaseCatalogLockModes.at(-1)).toBe(true);
+  });
+
   it("fails closed before repository or provider IO", async () => {
     const store = new MemoryStockStore([variant()]);
     const payments = provider();

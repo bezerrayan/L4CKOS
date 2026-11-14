@@ -3,6 +3,7 @@ import { stockDeliveryV1Schema, type StockDeliveryV1 } from "../../shared/stockC
 import { isLocalDeliveryCep } from "../../shared/localDeliveryTerritory";
 import type { StockShippingAcceptanceV1 } from "../../shared/stockShippingV1";
 import { StockShippingQuoteError, verifyStockShippingQuoteV1 } from "./stockShippingQuoteV1";
+import { isRestrictedPublicPurchase } from "../database/publicPurchasePolicy";
 
 export type StockVariant = {
   id: number;
@@ -84,6 +85,8 @@ export type StockFinancialDivergence = {
 export interface StockCheckoutTransaction {
   /** Serializes checkout creation for one authenticated owner until this transaction commits. */
   lockOwnerForCheckout(ownerUserId: number): Promise<void>;
+  /** Reads/locks each parent product and all persisted SKUs in deterministic order. */
+  getProductPurchaseCatalog(productIds: number[], lock: boolean): Promise<Array<{ productId: number; name: string; skus: Array<string | null> }>>;
   /** Reserves exclusive quota on this same connection/transaction as attempt+stock. */
   reserveExclusiveQuota?(input: { userId: number; attemptId: string; items: Array<{ productId: number; variantId: number; quantity: number }> }): Promise<void>;
   findAttempt(attemptId: string): Promise<StockAttempt | null>;
@@ -160,6 +163,17 @@ export class StockAttemptConflictError extends Error {
 
 function fail(code: string): never {
   throw new StockCheckoutError(code);
+}
+
+async function assertPublicPurchaseAllowed(tx: StockCheckoutTransaction, productIds: number[], lock: boolean) {
+  const ids = [...new Set(productIds)].sort((a, b) => a - b);
+  const catalog = await tx.getProductPurchaseCatalog(ids, lock);
+  const byId = new Map(catalog.map(product => [product.productId, product]));
+  for (const productId of ids) {
+    const product = byId.get(productId);
+    if (!product) fail("CHECKOUT_VARIANT_NOT_FOUND");
+    if (isRestrictedPublicPurchase(product.name, product.skus)) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+  }
 }
 /** Cart facts bound into a freight quote: server-loaded variants, unit prices and aggregated quantities. */
 export function stockShippingCartFingerprint(lines: Array<{ variantId: number; unitPriceCents: number; quantity: number }>): string {
@@ -250,11 +264,15 @@ export async function createStockCheckout(input: {
         if (existing.fingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
         if (existing.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
         if (existing.status === "paid") fail("CHECKOUT_ALREADY_PAID");
+        await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), true);
         if (existing.providerState === "not_started") {
           await tx.reserveExclusiveQuota?.({ userId: input.ownerUserId, attemptId: request.attemptId, items: request.items });
         }
         return { attempt: existing, replayed: true };
       }
+
+      // Fail before expiry maintenance writes, and recheck under locks before quota/order/reservation writes.
+      await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), false);
 
       // Clear this owner's definitively unstarted expired reservations before
       // deciding whether a new equivalent cart is still open. Uncertain provider
@@ -271,6 +289,8 @@ export async function createStockCheckout(input: {
           quantity: item.quantity,
         }))) === cartFingerprint) fail("CHECKOUT_ATTEMPT_NOT_REUSABLE");
       }
+
+      await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), true);
 
       const variants = new Map<number, StockVariant>();
       for (const variantId of [...new Set(request.items.map(item => item.variantId))].sort((a, b) => a - b)) {
@@ -358,12 +378,17 @@ export async function createStockCheckout(input: {
     });
   } catch (error) {
     if (!(error instanceof StockAttemptConflictError)) throw error;
-    const raced = await input.store.transaction(tx => tx.findAttempt(request.attemptId));
+    const raced = await input.store.transaction(async tx => {
+      const attempt = await tx.findAttempt(request.attemptId);
+      if (!attempt) return null;
+      if (attempt.ownerUserId !== input.ownerUserId) fail("CHECKOUT_ATTEMPT_NOT_FOUND");
+      if (attempt.fingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
+      if (attempt.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
+      if (attempt.status === "paid") fail("CHECKOUT_ALREADY_PAID");
+      await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), true);
+      return attempt;
+    });
     if (!raced) throw error;
-    if (raced.ownerUserId !== input.ownerUserId) fail("CHECKOUT_ATTEMPT_NOT_FOUND");
-    if (raced.fingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
-    if (raced.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
-    if (raced.status === "paid") fail("CHECKOUT_ALREADY_PAID");
     prepared = { attempt: raced, replayed: true };
   }
 

@@ -1590,6 +1590,46 @@ export async function getAllOrders() {
   return await db.select().from(orders);
 }
 
+/** Confirmed exclusivity restriction on the legacy checkout; the code is the stable, detail-free public contract. */
+export class LegacyCheckoutProductRestrictedError extends Error {
+  readonly code = "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION";
+  constructor() {
+    super("Product requires server-side purchase authorization.");
+    this.name = "LegacyCheckoutProductRestrictedError";
+  }
+}
+
+/**
+ * Legacy checkout product gate. Applies the shared exclusivity policy to the WHOLE product behind each order line:
+ * its restricted name and every persisted SKU (active or inactive), not only the purchased line. Read-only; the
+ * authoritative repeat happens under row locks in reserveExternalCheckoutCreation.
+ * Throws (so the caller fails closed) whenever the policy cannot be evaluated.
+ */
+export async function isLegacyCheckoutOrderRestricted(orderId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Legacy checkout policy unavailable");
+  const lines = await db.select({
+    productId: orderItems.productId, productName: orderItems.productName, sku: orderItems.sku, skuSnapshot: orderItems.skuSnapshot,
+  }).from(orderItems).where(eq(orderItems.orderId, orderId));
+  const reserved = await db.select({ productId: stockReservations.productId, skuSnapshot: stockReservations.skuSnapshot })
+    .from(stockReservations).where(eq(stockReservations.orderId, orderId));
+  const productIds = Array.from(new Set([...lines.map(line => line.productId), ...reserved.map(line => line.productId)]));
+  if (!productIds.length) throw new Error("Legacy checkout policy cannot be verified: no order lines");
+  const productRows = await db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, productIds));
+  if (productRows.length !== productIds.length) throw new Error("Legacy checkout policy cannot be verified: product unavailable");
+  const variantRows = await db.select({ productId: productVariants.productId, sku: productVariants.sku })
+    .from(productVariants).where(inArray(productVariants.productId, productIds));
+  return productRows.some(product => {
+    const snapshots = [
+      ...lines.filter(line => line.productId === product.id).flatMap(line => [line.sku, line.skuSnapshot]),
+      ...reserved.filter(line => line.productId === product.id).map(line => line.skuSnapshot),
+    ];
+    const skus = [...variantRows.filter(variant => variant.productId === product.id).map(variant => variant.sku), ...snapshots];
+    return isRestrictedPublicPurchase(product.name, skus) ||
+      lines.some(line => line.productId === product.id && isRestrictedPublicPurchase(line.productName, skus));
+  });
+}
+
 /** Immutable reconciliation evidence only; no financial or fulfillment mutation. */
 export async function reserveExternalCheckoutCreation(orderId: number, userId: number) {
   const db = await getDb();
@@ -1613,8 +1653,13 @@ export async function reserveExternalCheckoutCreation(orderId: number, userId: n
         throw new Error("Legacy checkout reservation is absent, expired, or inconsistent.");
       }
       const [product] = await tx.select({ name: products.name }).from(products).where(eq(products.id, item.productId)).for("update");
-      if (!product || isRestrictedPublicPurchase(product.name, item.sku)) throw new Error("Product is not available for legacy checkout.");
+      if (!product) throw new Error("Product is not available for legacy checkout.");
       const variants = await tx.select().from(productVariants).where(eq(productVariants.productId, item.productId)).orderBy(productVariants.id).for("update");
+      // Repeat the exclusivity policy under the product/variant locks, over every persisted SKU (active or not).
+      const persistedSkus = [item.sku, item.skuSnapshot, ...variants.map(variant => variant.sku)];
+      if (isRestrictedPublicPurchase(product.name, persistedSkus) || isRestrictedPublicPurchase(item.productName, persistedSkus)) {
+        throw new LegacyCheckoutProductRestrictedError();
+      }
       if (variants.length && item.variantId === null) throw new Error("Legacy checkout variant identity is missing.");
       if (item.variantId !== null) {
         const variant = variants.find(candidate => candidate.id === item.variantId);

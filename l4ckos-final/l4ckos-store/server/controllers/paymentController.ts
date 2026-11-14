@@ -19,6 +19,7 @@ import {
   getOrderById,
   getOrderReservationItems,
   getOrderByIdAndUser,
+  isLegacyCheckoutOrderRestricted,
   markOrderPaid,
   getUserById,
   getUserPhoneById,
@@ -311,10 +312,19 @@ export async function createCheckoutHandler(req: Request, res: Response) {
       sendControllerError(res, 409, "CHECKOUT_PREORDER_DISABLED", "A pré-venda ainda não está disponível para compra.");
       return;
     }
-    if (orderItems.some(item => isRestrictedPublicPurchase(item.productName, item.sku))) {
+    // Whole-product exclusivity: name or ANY persisted SKU (active or not), not only the purchased line. If the policy
+    // cannot be evaluated this throws and the generic catch below fails closed, before any provider call.
+    if (
+      orderItems.some(item => isRestrictedPublicPurchase(item.productName, item.sku)) ||
+      await isLegacyCheckoutOrderRestricted(order.id)
+    ) {
       sendControllerError(res, 403, "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION", "Este produto exige autorização para compra.");
       return;
     }
+
+    // The transaction rechecks the whole product under its locks. Commit that claim before *any* Asaas IO
+    // (including customer verification/creation); failures below keep the durable evidence and require reconciliation.
+    await reserveExternalCheckoutCreation(order.id, userId);
 
     const { asaasCustomerId } = await ensureAsaasCustomerForUser({
       userId,
@@ -322,8 +332,6 @@ export async function createCheckoutHandler(req: Request, res: Response) {
       phone: body.phone,
     });
 
-    // A durable claim prevents concurrent calls and blind retries after ambiguous provider errors.
-    await reserveExternalCheckoutCreation(order.id, userId);
     const checkout = await createAsaasCheckout({
       name: body.checkoutName?.trim() || `Pedido #${order.id}`,
       value: Number((order.totalPrice / 100).toFixed(2)),
@@ -343,6 +351,11 @@ export async function createCheckoutHandler(req: Request, res: Response) {
   } catch (error) {
     if (error instanceof CheckoutMethodDisabledError) {
       sendControllerError(res, 400, error.code, error.message);
+      return;
+    }
+    // Restriction confirmed under the transaction locks (duck-typed: stable code, no internal detail).
+    if ((error as { code?: unknown } | null)?.code === "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION") {
+      sendControllerError(res, 403, "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION", "Este produto exige autorização para compra.");
       return;
     }
     securityLog("warn", "payment.create_checkout_failed", {

@@ -128,6 +128,29 @@ type ExclusiveQuotaReserver = (connection: PoolConnection, input: ExclusiveCheck
 
 function createTransaction(connection: PoolConnection, reservationTtlSeconds: number, reserveExclusiveQuota?: ExclusiveQuotaReserver): StockCheckoutTransaction {
   return {
+    async getProductPurchaseCatalog(productIds, lock) {
+      const ids = [...new Set(productIds)].sort((a, b) => a - b);
+      const names = new Map<number, string>();
+      for (const productId of ids) {
+        const [rows] = await connection.execute<(RowDataPacket & { id: number | string; name: string })[]>(
+          `SELECT id, name FROM products WHERE id = ?${lock ? " FOR UPDATE" : ""}`,
+          [productId],
+        );
+        if (rows[0]) names.set(asNumber(rows[0].id), String(rows[0].name));
+      }
+      const catalog: Array<{ productId: number; name: string; skus: Array<string | null> }> = [];
+      for (const productId of ids) {
+        const name = names.get(productId);
+        if (name === undefined) continue;
+        const [rows] = await connection.execute<(RowDataPacket & { sku: string | null })[]>(
+          `SELECT sku FROM productVariants WHERE productId = ? ORDER BY id${lock ? " FOR UPDATE" : ""}`,
+          [productId],
+        );
+        catalog.push({ productId, name, skus: rows.map(row => row.sku ?? null) });
+      }
+      return catalog;
+    },
+
     async lockOwnerForCheckout(ownerUserId): Promise<void> {
       const [rows] = await connection.execute<(RowDataPacket & { id: number })[]>(
         `SELECT id FROM users WHERE id = ? FOR UPDATE`,

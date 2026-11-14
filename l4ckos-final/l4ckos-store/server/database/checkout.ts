@@ -48,8 +48,8 @@ export type CheckoutVariantRow = {
 };
 export function resolveCheckoutVariant(item: CheckoutItem, productId: number, productName: string, variants: CheckoutVariantRow[]) {
   const productVariants = variants.filter(variant => Number(variant.productId) === productId);
+  if (isRestrictedPublicPurchase(productName, productVariants.map(variant => variant.sku))) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
   let variant = item.variantId === undefined ? null : variants.find(candidate => Number(candidate.id) === item.variantId) ?? null;
-  if (isRestrictedPublicPurchase(productName, variant?.sku)) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
   if (productVariants.length > 0 && item.variantId === undefined) fail("CHECKOUT_VARIANT_REQUIRED");
   if (item.variantId !== undefined && !variant) fail("CHECKOUT_VARIANT_NOT_FOUND");
   if (variant && Number(variant.productId) !== productId) fail("CHECKOUT_VARIANT_OWNERSHIP");
@@ -70,6 +70,23 @@ const cents = (value: number) => { if (!Number.isSafeInteger(value) || value < 0
 const utcTime = (value: Date | string) => value instanceof Date ? value.getTime() : Date.parse(value.replace(" ","T")+(/Z$|[+-]\d\d:\d\d$/.test(value)?"":"Z"));
 async function rows(c: Connection, sql: string, values: unknown[] = []) { return (await c.query<RowDataPacket[]>(sql, values))[0]; }
 async function insert(c: Connection, sql: string, values: unknown[]) { return (await c.query<ResultSetHeader>(sql, values))[0].insertId; }
+
+/** Rechecks current product policy under the same product-then-variant lock order as checkout snapshots. */
+async function assertCurrentCheckoutProductsAuthorized(c: Connection, items: CheckoutItem[]) {
+  const productIds = [...new Set(items.map(item => item.productId))].sort((a, b) => a - b);
+  const productNames = new Map<number, string>();
+  for (const productId of productIds) {
+    const product = (await rows(c, "SELECT name FROM products WHERE id=? FOR UPDATE", [productId]))[0];
+    if (!product) fail("CHECKOUT_PRODUCT_NOT_FOUND");
+    productNames.set(productId, String(product.name));
+  }
+  for (const productId of productIds) {
+    const variants = await rows(c, "SELECT sku FROM productVariants WHERE productId=? ORDER BY id FOR UPDATE", [productId]);
+    if (isRestrictedPublicPurchase(productNames.get(productId), variants.map(variant => variant.sku))) {
+      fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+    }
+  }
+}
 
 /** Reads authoritative catalog data, sorted locks also serialize stock claims across attempts. */
 async function snapshots(c: Connection, items: CheckoutItem[], lock: boolean): Promise<Snapshot[]> {
@@ -180,6 +197,9 @@ export async function checkout(c: Connection, input: CheckoutInput, adapters: Ch
       if (!event) fail("CHECKOUT_RECOVERY_REQUIRED");
       const saved = JSON.parse(event.metadata) as { payment: Charge; totalPrice: number; items: Snapshot[]; description: string };
       if (saved.items.some(item => item.salesModeAtPurchase === "PREORDER")) fail("CHECKOUT_PREORDER_DISABLED");
+      await c.beginTransaction(); transaction = true;
+      await assertCurrentCheckoutProductsAuthorized(c, items);
+      await c.commit(); transaction = false;
       return { orderId: Number(existing.id), ...saved, replayed: true };
     }
     const quoted = await snapshots(c, items, false);

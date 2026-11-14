@@ -44,6 +44,92 @@ describe("commercial purchase methods, independent of provider/webhook observati
   expect(order).toHaveBeenCalledOnce();expect(lines).toHaveBeenCalledWith(901);
   expect(customer).not.toHaveBeenCalled();expect(claim).not.toHaveBeenCalled();expect(ax.get).not.toHaveBeenCalled();expect(ax.post).not.toHaveBeenCalled();
  });
+ describe("legacy REST checkout: whole-product exclusivity (every persisted SKU, active or not)",()=>{
+  const prepare=()=>{
+   vi.stubEnv("NODE_ENV","test");vi.stubEnv("PUBLIC_SITE_MODE","store");vi.stubEnv("PUBLIC_CHECKOUT_ENABLED","true");
+   vi.stubEnv("APP_ENV","");vi.stubEnv("EMAIL_ENV","");vi.stubEnv("CORS_ORIGINS","https://staging.example.invalid");
+   const spies={
+    order:vi.spyOn(db,"getOrderByIdAndUser").mockResolvedValue({id:902,userId:44,status:"pending",asaasCheckoutId:null,checkoutAttemptId:null,totalPrice:500} as any),
+    lines:vi.spyOn(db,"getOrderReservationItems").mockResolvedValue([{salesModeAtPurchase:"STOCK",productName:"Camiseta comum",sku:"CAM-PT-M"}] as any),
+    user:vi.spyOn(db,"getUserById"),claim:vi.spyOn(db,"reserveExternalCheckoutCreation"),mark:vi.spyOn(db,"setOrderAsaasCheckoutId"),
+   };
+   const req={authUser:{id:44},body:{orderId:902,redirectUrl:"https://staging.example.invalid/return",billingTypes:["PIX"]},ip:"local"};
+   let status=0,body:any;const res={status(n:number){status=n;return this;},json(v:unknown){body=v;return this;}};
+   return {spies,run:async()=>{await createCheckoutHandler(req as any,res as any);return {status,code:body?.error?.code??body?.code,body};}};
+  };
+  const noSideEffects=(s:ReturnType<typeof prepare>["spies"])=>{
+   expect(s.user).not.toHaveBeenCalled();expect(s.claim).not.toHaveBeenCalled();expect(s.mark).not.toHaveBeenCalled();
+   expect(ax.get).not.toHaveBeenCalled();expect(ax.post).not.toHaveBeenCalled();
+  };
+  it("a generic-name product that carries a restricted SKU is refused before customer, claim or charge",async ()=>{
+   const {spies,run}=prepare();const policy=vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockResolvedValue(true);
+   const result=await run();
+   expect(policy).toHaveBeenCalledWith(902);
+   expect(result.status).toBe(403);expect(result.code).toBe("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+   expect(JSON.stringify(result.body)).not.toMatch(/14b|sku|variant/i);
+   noSideEffects(spies);
+  });
+  it("fails closed when the policy cannot be verified: no provider call, no claim, no internal detail",async ()=>{
+   const {spies,run}=prepare();vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockRejectedValue(new Error("db down: secret-detail"));
+   const result=await run();
+   expect(result.status).toBe(400);expect(result.code).toBe("CHECKOUT_CREATE_FAILED");
+   expect(JSON.stringify(result.body)).not.toMatch(/secret-detail|db down/);
+   noSideEffects(spies);
+  });
+  it("race: an exclusive SKU found by the locked claim is rejected before customer or Asaas IO",async ()=>{
+   const {spies,run}=prepare();
+   vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockResolvedValue(false); // initial read sees ordinary catalog
+   spies.claim.mockRejectedValue(Object.assign(new Error("restricted under product/variant locks"),{code:"CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION"}));
+   const result=await run();
+   expect(result.status).toBe(403);expect(result.code).toBe("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+   expect(spies.claim).toHaveBeenCalledOnce();
+   expect(spies.user).not.toHaveBeenCalled();
+   expect(ax.get).not.toHaveBeenCalled();expect(ax.post).not.toHaveBeenCalled();
+  });
+  it("keeps a durable claim after customer-provider failure and blocks blind retry for reconciliation",async ()=>{
+   vi.stubEnv("ASAAS_API_KEY","synthetic-local-key");vi.stubEnv("ASAAS_API_URL","https://api-sandbox.asaas.com/v3");vi.stubEnv("ASAAS_ENV","sandbox");
+   const {spies,run}=prepare();
+   vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockResolvedValue(false);
+   let claimExists=false;
+   spies.claim.mockImplementation(async()=>{
+    if(claimExists)throw new Error("Checkout reconciliation required");
+    claimExists=true;
+    return {id:902} as any;
+   });
+   spies.user.mockResolvedValue({id:44,name:"Synthetic buyer",email:"synthetic@example.invalid",cpf:"52998224725",phone:"61999990000",asaasCustomerId:null} as any);
+   ax.post.mockRejectedValueOnce(new Error("synthetic provider transport failure"));
+
+   const first=await run();
+   expect(first.code).toBe("CHECKOUT_CREATE_FAILED");
+   expect(claimExists).toBe(true);
+   expect(spies.claim).toHaveBeenCalledOnce();
+   expect(ax.post).toHaveBeenCalledOnce();
+
+   const second=await run();
+   expect(second.code).toBe("CHECKOUT_CREATE_FAILED");
+   expect(spies.claim).toHaveBeenCalledTimes(2);
+   expect(spies.user).toHaveBeenCalledOnce();
+   expect(ax.post).toHaveBeenCalledOnce(); // retry stops at durable claim; no duplicate provider call
+   expect(ax.get).not.toHaveBeenCalled();
+  });
+  it("a restriction confirmed under the transaction locks maps to the same contract and never reaches the charge",async ()=>{
+   const {spies,run}=prepare();vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockResolvedValue(false);
+   spies.user.mockResolvedValue({id:44,asaasCustomerId:"cus_synthetic"} as any);
+   const customer=await import("./asaasService");vi.spyOn(customer,"verifyAsaasCustomerNotifications").mockResolvedValue(undefined as any);
+   spies.claim.mockRejectedValue(Object.assign(new Error("internal"),{code:"CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION"}));
+   const result=await run();
+   expect(result.status).toBe(403);expect(result.code).toBe("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+   expect(JSON.stringify(result.body)).not.toMatch(/internal/);
+   expect(spies.claim).toHaveBeenCalledOnce();expect(spies.mark).not.toHaveBeenCalled();expect(ax.post).not.toHaveBeenCalled();
+  });
+  it("an ordinary product proceeds past the policy (control)",async ()=>{
+   const {spies,run}=prepare();vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockResolvedValue(false);
+   spies.claim.mockResolvedValue({id:902} as any);
+   spies.user.mockResolvedValue(undefined as any); // stops right after the policy, at customer lookup
+   const result=await run();
+   expect(result.code).not.toBe("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");expect(spies.user).toHaveBeenCalledOnce();
+  });
+ });
  it.each([["BOLETO"],["UNDEFINED"],["PIX","BOLETO"],["CREDIT_CARD","UNDEFINED"],[],undefined].map(billingTypes=>({billingTypes})))("rejects alternate billing types $billingTypes before customer GET or POST",async ({billingTypes})=>{
   await expect(createAsaasCheckout({billingTypes} as any)).rejects.toMatchObject({code:"CHECKOUT_PAYMENT_METHOD_DISABLED"});
   expect(ax.get).not.toHaveBeenCalled();expect(ax.post).not.toHaveBeenCalled();

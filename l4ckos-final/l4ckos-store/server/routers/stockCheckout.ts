@@ -28,6 +28,13 @@ function assertGate(): void {
 
 function mapCheckoutError(error: unknown): never {
   if (!(error instanceof StockCheckoutError)) throw error;
+  if (error.code === "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION") {
+    throw createAppError({
+      trpcCode: "BAD_REQUEST",
+      appCode: "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION",
+      message: "Este produto está temporariamente indisponível para compra pública.",
+    });
+  }
   if (error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") {
     throw new TRPCError({ code: "NOT_FOUND", message: "Tentativa não encontrada." });
   }
