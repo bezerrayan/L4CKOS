@@ -7,9 +7,14 @@ function compactIdentity(value: string | null | undefined) {
 }
 
 /** The Clã 14 Bis collaboration remains closed until a server-side authorization contract exists. */
-export function isRestrictedPublicPurchase(name: string | null | undefined, sku?: string | null) {
+export function isRestrictedPublicPurchase(
+  name: string | null | undefined,
+  skuOrSkus?: string | null | readonly (string | null | undefined)[],
+) {
   const normalizedName = compactIdentity(name);
-  return normalizedName.includes("cla14bis") || normalizedName.includes("clan14bis") || /^14b/.test(compactIdentity(sku));
+  if (normalizedName.includes("cla14bis") || normalizedName.includes("clan14bis")) return true;
+  const skus = typeof skuOrSkus === "string" || skuOrSkus == null ? [skuOrSkus] : skuOrSkus;
+  return skus.some(sku => /^14b/.test(compactIdentity(sku)));
 }
 
 /**

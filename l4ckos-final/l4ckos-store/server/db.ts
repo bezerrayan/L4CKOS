@@ -59,6 +59,19 @@ import { buildManagerSyncSnapshot, saoPauloMidnightUtc, type ManagerSyncIdentity
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
+/** Public list projection applies the exclusive-collaboration policy to every persisted SKU. */
+export function projectPublicProductAvailability(
+  productName: string,
+  variants: readonly { sku?: string | null }[],
+  sellableVariantIds: readonly number[],
+) {
+  const restricted = isRestrictedPublicPurchase(productName, variants.map(variant => variant.sku));
+  return {
+    hasVariants: variants.length > 0,
+    hasSellableVariants: !restricted && sellableVariantIds.length > 0,
+  };
+}
+
 /** Explicitly gated fixture injection for disposable local STOCK integration tests only. */
 export function setStockLocalHarnessDb(db: ReturnType<typeof drizzle> | null) {
   const host = process.env.STOCK_MYSQL_HOST ?? "";
@@ -650,8 +663,12 @@ export async function getProducts() {
   for (const variant of variantRows) variantsByProduct.set(variant.productId, [...(variantsByProduct.get(variant.productId) ?? []), variant]);
   return productsWithBatch.map(product => {
     const variants = variantsByProduct.get(product.id) ?? [];
-    const hasSellableVariants = getSellableVariantIds(product, variants, reserved).length > 0;
-    return { ...product, hasVariants: variants.length > 0, hasSellableVariants };
+    const availability = projectPublicProductAvailability(
+      product.name,
+      variants,
+      getSellableVariantIds(product, variants, reserved),
+    );
+    return { ...product, ...availability };
   }).filter(product => !isStagingQaCatalogProduct(product.name, variantsByProduct.get(product.id)));
 }
 
@@ -2889,6 +2906,9 @@ export async function getPublicProductVariants(productId: number) {
   const product = await getProductByIdWithDetails(productId);
   if (!product) return { product: null, hasVariants: false, variants: [] as Array<{ variantId: number; color: string; size: string; price: number; availableUnits: number | null }> };
   const sourceVariants = product.variants ?? [];
+  if (isRestrictedPublicPurchase(product.name, sourceVariants.map(variant => variant.sku))) {
+    return { product, hasVariants: sourceVariants.length > 0, variants: [] };
+  }
   if (sourceVariants.length === 0) return { product, hasVariants: false, variants: [] };
   const skuCounts = new Map<string, number>();
   for (const variant of sourceVariants) {

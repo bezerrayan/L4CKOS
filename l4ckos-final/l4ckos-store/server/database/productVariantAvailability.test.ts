@@ -29,6 +29,11 @@ describe("admin sellable variant projection", () => {
     expect(getSellableVariantIds(qaProduct, qaVariants, new Map())).toEqual([]);
   });
 
+  it("leaves the administrative sellability calculation unchanged for SKU-restricted products", () => {
+    const restrictedSku = [variant(10, { sku: "14B-CAM-PT-M" })];
+    expect(getSellableVariantIds(product, restrictedSku, new Map())).toEqual([10]);
+  });
+
   it("rejects malformed identities, duplicate SKUs, and invalid effective prices", () => {
     const duplicateSku = [variant(1, { sku: "DUP" }), variant(2, { color: "branco", sku: "DUP" })];
     expect(getSellableVariantIds(product, duplicateSku, new Map())).toEqual([]);

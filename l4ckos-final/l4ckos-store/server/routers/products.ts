@@ -70,9 +70,12 @@ export const productsRouter = router({
       }
 
       if (input.inStockOnly) {
-        products = products.filter(p => p.salesMode === "PREORDER"
-          ? batchAcceptsSales(p.productionBatch) && batchHasCapacity(p.productionBatch) && (p.hasVariants !== true || p.hasSellableVariants === true)
-          : p.hasVariants === true ? p.hasSellableVariants === true : Number(p.stock ?? 0) > 0);
+        products = products.filter(p => {
+          if (isRestrictedPublicPurchase(p.name)) return false;
+          return p.salesMode === "PREORDER"
+            ? batchAcceptsSales(p.productionBatch) && batchHasCapacity(p.productionBatch) && (p.hasVariants !== true || p.hasSellableVariants === true)
+            : p.hasVariants === true ? p.hasSellableVariants === true : Number(p.stock ?? 0) > 0;
+        });
       }
 
       if (input.sortBy && input.sortBy !== "relevance") {
@@ -104,7 +107,7 @@ export const productsRouter = router({
     if (isStagingQaCatalogProduct(result.product.name, result.product.variants)) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
     }
-    if (isRestrictedPublicPurchase(result.product.name)) {
+    if (isRestrictedPublicPurchase(result.product.name, result.product.variants?.map(variant => variant.sku))) {
       return { productId: input, hasVariants: result.hasVariants, publicPurchaseAllowed: false as const, variants: [] as const };
     }
     if (!result.hasVariants) return { productId: input, hasVariants: false as const, publicPurchaseAllowed: true as const, variants: [] as const };

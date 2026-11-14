@@ -26,6 +26,72 @@ describe("public sellable variant projection", () => {
     });
   });
 
+  it("blocks a generic product whose persisted SKU starts with 14B", async () => {
+    catalog.getPublicProductVariants.mockResolvedValue({
+      product: {
+        id: 27, name: "Camiseta comum", salesMode: "STOCK", productionBatch: null,
+        variants: [{ id: 91, sku: "14B-CAM-PT-M" }],
+      },
+      hasVariants: true,
+      variants: [{ variantId: 91, color: "Preto", size: "M", price: 8990, availableUnits: 3 }],
+    });
+
+    await expect(caller().sellableVariants(27)).resolves.toEqual({
+      productId: 27, hasVariants: true, publicPurchaseAllowed: false, variants: [],
+    });
+  });
+
+  it("blocks the whole product when an inactive persisted variant has a 14B SKU", async () => {
+    catalog.getPublicProductVariants.mockResolvedValue({
+      product: {
+        id: 30, name: "Camiseta comum", salesMode: "STOCK", productionBatch: null,
+        variants: [
+          { id: 97, sku: "14B-CAM-PT-M", isActive: 0 },
+          { id: 98, sku: "CAM-BR-G", isActive: 1 },
+        ],
+      },
+      hasVariants: true,
+      variants: [{ variantId: 98, color: "Branco", size: "G", price: 8990, availableUnits: 2 }],
+    });
+
+    await expect(caller().sellableVariants(30)).resolves.toEqual({
+      productId: 30, hasVariants: true, publicPurchaseAllowed: false, variants: [],
+    });
+  });
+
+  it("blocks every combination when a product has mixed ordinary and 14B SKUs", async () => {
+    catalog.getPublicProductVariants.mockResolvedValue({
+      product: {
+        id: 28, name: "Camiseta comum", salesMode: "STOCK", productionBatch: null,
+        variants: [{ id: 92, sku: "CAM-PT-M" }, { id: 93, sku: "14B-CAM-BR-G" }],
+      },
+      hasVariants: true,
+      variants: [
+        { variantId: 92, color: "Preto", size: "M", price: 8990, availableUnits: 2 },
+        { variantId: 93, color: "Branco", size: "G", price: 8990, availableUnits: 4 },
+      ],
+    });
+
+    await expect(caller().sellableVariants(28)).resolves.toEqual({
+      productId: 28, hasVariants: true, publicPurchaseAllowed: false, variants: [],
+    });
+  });
+
+  it("blocks the Clã 14 Bis product by name while preserving hasVariants", async () => {
+    catalog.getPublicProductVariants.mockResolvedValue({
+      product: {
+        id: 29, name: "Clã 14 Bis", salesMode: "STOCK", productionBatch: null,
+        variants: [{ id: 94, sku: "CAM-PT-M" }],
+      },
+      hasVariants: true,
+      variants: [{ variantId: 94, color: "Preto", size: "M", price: 8990, availableUnits: 1 }],
+    });
+
+    await expect(caller().sellableVariants(29)).resolves.toEqual({
+      productId: 29, hasVariants: true, publicPurchaseAllowed: false, variants: [],
+    });
+  });
+
   it("does not use aggregate product stock when a variant is inactive or depleted", async () => {
     catalog.getPublicProductVariants.mockResolvedValue({
       product: { id: 22, salesMode: "STOCK", stock: 99, productionBatch: null },
