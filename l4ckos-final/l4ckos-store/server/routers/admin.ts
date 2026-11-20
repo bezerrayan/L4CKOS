@@ -1,6 +1,9 @@
 import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
 ﻿import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
+import { isFinancialSandboxPhase } from "../_core/financialPhasePolicy";
+import { getDb } from "../db";
+import { alertExecutorForDrizzle, queryReconciliationAlerts, summarizeReconciliationAlerts, RECONCILIATION_PAGE_MAX } from "../payments/reconciliationAlerts";
 import {
   createAuditLog,
   createCoupon,
@@ -249,6 +252,10 @@ export const adminRouter = router({
       String(ENV.frontendUrl || process.env.APP_URL || process.env.APP_BASE_URL || "").trim(),
     );
 
+    const asaasCredentialName = isFinancialSandboxPhase(process.env.G4_FINANCIAL_PHASE)
+      ? "ASAAS_SANDBOX_API_KEY"
+      : process.env.ASAAS_SANDBOX_API_KEY?.trim() ? "ASAAS_SANDBOX_API_KEY" : "ASAAS_API_KEY";
+
     return {
       mode: "read-only" as const,
       generatedAt: new Date().toISOString(),
@@ -258,7 +265,7 @@ export const adminRouter = router({
         databaseConfigured: Boolean(ENV.databaseUrl),
       },
       integrations: {
-        asaas: resolveSafeIntegrationStatus(["ASAAS_API_KEY"], ["ASAAS_API_URL", "ASAAS_CHECKOUT_BASE_URL", "ASAAS_WEBHOOK_TOKEN"]),
+        asaas: resolveSafeIntegrationStatus([asaasCredentialName], ["ASAAS_API_URL", "ASAAS_CHECKOUT_BASE_URL", "ASAAS_WEBHOOK_TOKEN", "ASAAS_WEBHOOK_ACCOUNT_ID", "ASAAS_WEBHOOK_ACCOUNT_CURRENCY"]),
         melhorEnvio: resolveSafeIntegrationStatus(["MELHOR_ENVIO_TOKEN"], ["MELHOR_ENVIO_API_URL", "MELHOR_ENVIO_FROM_POSTAL_CODE"]),
         resend: resolveSafeIntegrationStatus(["RESEND_API_KEY"], [
           "EMAIL_FROM",
@@ -1071,6 +1078,31 @@ export const adminRouter = router({
   reconciliationCasesList: adminProcedure
     .input(z.object({ limit: z.number().int().min(1).max(1000).default(200) }).optional())
     .query(async ({ input }) => getStockReconciliationCases(input?.limit ?? 200)),
+
+  /**
+   * Financial reconciliation alerts (READ-ONLY). Sanitized projection (truncated ids, no payload/metadata/payer data), filters applied
+   * before the limit, keyset pagination. There is intentionally NO mutation here: claiming/resolving cases is not enabled.
+   */
+  reconciliationAlertsList: adminProcedure
+    .input(z.object({
+      state: z.enum(["pending", "in_review", "resolved"]).optional(),
+      priority: z.enum(["P1", "P2", "P3"]).optional(),
+      category: z.enum(["payment_without_correlation", "payment_deleted_unconfirmed", "payment_after_release", "order_attempt_payment_inconsistent",
+        "reference_conflict", "provider_state_unavailable", "observation_requires_review"]).optional(),
+      limit: z.number().int().min(1).max(RECONCILIATION_PAGE_MAX).default(25),
+      cursor: z.number().int().positive().nullish(),
+    }).default({ limit: 25 }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Banco de dados indisponível." });
+      return queryReconciliationAlerts(alertExecutorForDrizzle(db), input);
+    }),
+
+  reconciliationAlertsSummary: adminProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Banco de dados indisponível." });
+    return summarizeReconciliationAlerts(alertExecutorForDrizzle(db));
+  }),
 
   backupManual: adminProcedure.mutation(async ({ ctx }) => {
     try {

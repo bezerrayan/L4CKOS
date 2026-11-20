@@ -24,6 +24,7 @@ import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } f
 import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/attemptStorage";
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
 import { StockAttemptRecovery } from "../components/StockAttemptRecovery";
+import { authPageUrl } from "../utils/safeNext";
 import { buildShippingQuoteRequest, interpretShippingQuote, sanitizeCep, SHIPPING_UNAVAILABLE_MESSAGE, type ShippingOption, type ShippingQuoteResponse } from "../lib/shippingQuote";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
 import logoMainDark from "../images/l4ckos-main-dark-transparent.png";
@@ -106,7 +107,8 @@ function PagamentoContent() {
     dropQuotaBlocked,
     canIncreaseQuantity,
   } = useCart();
-  const { user, isAuthenticated } = useUser();
+  const { user, isAuthenticated, isLoading: authLoading } = useUser();
+  const showAuthPrompt = !isAuthenticated && !authLoading;
   const createAsaasCharge = useCreateAsaasCharge();
   const stockCreate = trpc.stockCheckout.create.useMutation();
   const stockShippingQuote = trpc.stockCheckout.quoteShipping.useMutation();
@@ -179,21 +181,35 @@ function PagamentoContent() {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isCouponOpen, setIsCouponOpen] = useState(false);
   const canShowTechnicalShippingError = import.meta.env.DEV || user?.role === "admin";
-  // STOCK V1 lines: a V6 variant line (server-resolved variantId) that is not a pre-sale. Everything else stays on the legacy checkout.
-  const isStockLine = (item: (typeof cart.items)[number]) => Number.isSafeInteger(item.variant?.variantId) && item.product.salesMode !== "PREORDER";
+  // STOCK and PREORDER use the reservation checkout. PREORDER capacity is
+  // reserved by batch on the server; unvariant legacy items remain on legacy checkout.
+  const hasVariant = (item: (typeof cart.items)[number]) => Number.isSafeInteger(item.variant?.variantId) && Number(item.variant?.variantId) > 0;
+  const isStockLine = (item: (typeof cart.items)[number]) => hasVariant(item) && item.product.salesMode !== "PREORDER";
+  const isPreorderLine = (item: (typeof cart.items)[number]) => hasVariant(item) && item.product.salesMode === "PREORDER";
   const hasStockItems = cart.items.some(isStockLine);
+  const hasPreorderItems = cart.items.some(item => item.product.salesMode === "PREORDER");
+  const hasStockCheckoutItems = hasStockItems || hasPreorderItems;
   const stockCartCompatible = hasStockItems && cart.items.every(isStockLine);
-  const stockCartInvalid = hasStockItems && !stockCartCompatible;
-  const stockCartInvalidMessage = "Itens com variante em estoque são comprados em um pedido próprio. Finalize pré-vendas e itens sem variante separadamente.";
-  const catalogIssues = hasStockItems && hasUnavailableItems ? ["Um item da sacola não está disponível na quantidade escolhida. Revise a sacola."] : [];
+  const preorderCartCompatible = hasPreorderItems && cart.items.every(isPreorderLine);
+  const stockCheckoutCompatible = stockCartCompatible || preorderCartCompatible;
+  const stockCartInvalid = hasStockCheckoutItems && !stockCheckoutCompatible;
+  const stockCartInvalidMessage = hasStockItems && hasPreorderItems
+    ? "Estoque e pré-venda usam reservas separadas. Finalize cada modalidade em uma compra própria."
+    : hasPreorderItems
+      ? "Para comprar a pré-venda, selecione uma variante ativa de tamanho e cor para cada item."
+      : "Itens em estoque usam um pedido próprio. Separe-os de itens sem variante e finalize cada compra separadamente.";
+  const catalogIssues = hasStockCheckoutItems && hasUnavailableItems ? ["Um item da sacola não está disponível na quantidade escolhida. Revise a sacola."] : [];
   const stockAttemptPending = stockCreate.isPending;
-  const stockView = hasStockItems && stockPaymentData ? describeStockAttempt(stockPaymentData) : null;
+  const baseStockView = hasStockCheckoutItems && stockPaymentData ? describeStockAttempt(stockPaymentData) : null;
+  const stockView = baseStockView && hasPreorderItems && stockPaymentData?.status === "paid"
+    ? { ...baseStockView, message: "Pagamento validado. Seu pedido segue o calendário de produção e envio do lote." }
+    : baseStockView;
   const stockCheckoutBlocked = Boolean(stockView?.blocksCheckout);
   // Own reservations lower the visible stock, so catalog issues only gate *new* attempts.
   const catalogBlocksNewAttempt = catalogIssues.length > 0 && !stockCheckoutBlocked;
 
   const refreshStockAttempt = async () => {
-    if (!isAuthenticated || !stockCartCompatible) return;
+    if (!isAuthenticated || !stockCheckoutCompatible) return;
     stockConsultCountRef.current += 1;
     setStockConsulting(true);
     try {
@@ -237,7 +253,7 @@ function PagamentoContent() {
     void refreshStockAttempt();
   // Resume only when the authenticated cart identity changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, stockCartCompatible, cart.items.map(item => `${item.product.id}:${item.variant?.variantId}:${item.quantity}`).join("|")]);
+  }, [isAuthenticated, stockCheckoutCompatible, cart.items.map(item => `${item.product.id}:${item.variant?.variantId}:${item.quantity}`).join("|")]);
 
   const validateCoupon = trpc.orders.validateCoupon.useMutation();
   const profileQuery = trpc.profile.get.useQuery(undefined, {
@@ -588,14 +604,14 @@ function PagamentoContent() {
       return;
     }
 
-    if (hasStockItems && (stockConsulting || stockUnderAnalysis) && !stockCheckoutBlocked) {
+    if (hasStockCheckoutItems && (stockConsulting || stockUnderAnalysis) && !stockCheckoutBlocked) {
       setPaymentError(stockUnderAnalysis
         ? "O pagamento está em análise. Consulte o status; não inicie outra tentativa."
         : "Estamos consultando seu pedido. Aguarde um instante antes de continuar.");
       return;
     }
 
-    if (hasStockItems && stockCheckoutBlocked) {
+    if (hasStockCheckoutItems && stockCheckoutBlocked) {
       setPaymentError(stockPaymentData?.status === "ambiguous"
         ? "O resultado do pagamento está em análise. Consulte o status; não inicie outra tentativa."
         : "Já existe uma tentativa em andamento ou concluída para este carrinho.");
@@ -627,9 +643,13 @@ function PagamentoContent() {
     }
 
     try {
-      if (hasStockItems) {
-        if (!stockCartCompatible) {
-          setPaymentError("Revise as variantes do carrinho. Itens STOCK precisam de uma variante válida e ativa.");
+      if (hasStockCheckoutItems) {
+        if (!stockCheckoutCompatible) {
+          setPaymentError(stockCartInvalidMessage);
+          return;
+        }
+        if (checkoutMethod !== "PIX") {
+          setPaymentError("Pedidos STOCK e pré-vendas devem ser pagos via PIX neste checkout.");
           return;
         }
         const stockAddress = {
@@ -649,7 +669,7 @@ function PagamentoContent() {
         } else if (selectedShipping.id.startsWith("melhor-envio-")) {
           // Carrier freight: the server re-quotes from ITS catalog and signs the terms; the charge uses only that signed quote.
           const signed = await stockShippingQuote.mutateAsync({
-            items: cart.items.map(item => ({ productId: item.product.id, variantId: item.variant!.variantId, quantity: item.quantity })), // stockCartCompatible guarantees a variant
+            items: cart.items.map(item => ({ productId: item.product.id, variantId: item.variant!.variantId, quantity: item.quantity })), // stockCheckoutCompatible guarantees a variant
             address: stockAddress,
           });
           const option = signed.options.find(candidate => candidate.optionId === selectedShipping.id);
@@ -713,7 +733,7 @@ function PagamentoContent() {
       setPaymentData(result);
       trackStoreEvent("payment_charge_created", { method: checkoutMethod });
     } catch (error) {
-      if (hasStockItems) {
+      if (hasStockCheckoutItems) {
         // The request may have reached the backend: never show a raw code, and re-query before any retry.
         const view = describeStockCheckoutError(error);
         setPaymentError(view.message);
@@ -735,7 +755,7 @@ function PagamentoContent() {
         <main className="l4-checkout-confirmation">
           <section className="l4-checkout-charge is-success" role="status" aria-live="polite" data-stock-status="paid">
             <h1>Pagamento aprovado</h1>
-            <p>Recebemos a confirmação do pagamento. Seu pedido segue para separação.</p>
+            <p>O pagamento foi validado. O pedido seguirá a preparação ou o calendário de produção informado na compra.</p>
             {stockConfirmation.orderId ? <p>Pedido #{stockConfirmation.orderId}</p> : null}
             {stockConfirmation.amountCents > 0 ? <p>Total: {formatPrice(stockConfirmation.amountCents / 100)}</p> : null}
             <Link to="/meus-pedidos">Ver meus pedidos</Link>
@@ -823,6 +843,16 @@ function PagamentoContent() {
           </aside>
 
           <main className="l4-checkout-form-panel">
+            {showAuthPrompt ? (
+              <section className="l4-checkout-auth" aria-labelledby="checkout-auth-title">
+                <h2 id="checkout-auth-title">Entre para finalizar a compra</h2>
+                <p>Sua sacola fica salva. Entre ou crie uma conta e voltaremos para cá, no ponto em que você parou.</p>
+                <div className="l4-checkout-auth-actions">
+                  <Link to={authPageUrl("/login", "/checkout")}>Entrar</Link>
+                  <Link to={authPageUrl("/cadastro", "/checkout")}>Criar conta</Link>
+                </div>
+              </section>
+            ) : null}
             <section className="l4-checkout-section" aria-labelledby="checkout-contact-title">
               <div className="l4-checkout-section-heading"><span>01</span><div><h2 id="checkout-contact-title">Contato</h2><p>Informe seus dados para continuarmos.</p></div></div>
               <div className="l4-checkout-fields">
@@ -906,12 +936,14 @@ function PagamentoContent() {
 
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
               <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
-              <div className="l4-checkout-payment-methods">
+              {hasStockCheckoutItems ? <div className="l4-checkout-payment-methods"><button type="button" className="is-selected" aria-pressed="true">
+                <span className="l4-checkout-payment-icon" aria-hidden="true"><QrCode size={18} /></span><span><strong>PIX</strong><small>Confirmação após validação do recebimento</small></span>
+              </button></div> : <div className="l4-checkout-payment-methods">
                 {ENABLED_CHECKOUT_METHODS.map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => { setCheckoutMethod(method); trackStoreEvent("payment_method_selected", { method }); }} aria-pressed={checkoutMethod === method}>
                   <span className="l4-checkout-payment-icon" aria-hidden="true">{method === "PIX" ? <QrCode size={18} /> : method === "CARD" ? <CreditCard size={18} /> : <Barcode size={18} />}</span><span><strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small></span>
                 </button>)}
-              </div>
-              <p className="l4-checkout-payment-hint">{checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
+              </div>}
+              <p className="l4-checkout-payment-hint">{hasStockCheckoutItems ? "A confirmação depende da validação do recebimento do PIX." : checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
             </section>
 
             <section className="l4-checkout-coupon">
@@ -930,7 +962,7 @@ function PagamentoContent() {
                   Um item da sacola não está disponível na quantidade escolhida (estoque ou capacidade da pré-venda). Ajuste as quantidades.
                 </p>
               ) : null}
-              {!hasCompleteCheckoutData && !paymentData && !stockPaymentData ? <p className="l4-checkout-validation-note" aria-live="polite">Preencha contato, endereço e frete para finalizar.</p> : null}
+              {!hasCompleteCheckoutData && !paymentData && !stockPaymentData ? <p className="l4-checkout-validation-note" aria-live="polite">{showAuthPrompt ? "Entre ou crie uma conta para finalizar a compra." : "Preencha contato, endereço e frete para finalizar."}</p> : null}
               {stockCartInvalid ? <p className="l4-checkout-validation-note is-error" role="alert">{stockCartInvalidMessage}</p> : null}
               {stockResumeError ? <p className="l4-checkout-validation-note is-error" role="alert">{stockResumeError} <button type="button" onClick={() => void refreshStockAttempt()}>Consultar status</button></p> : null}
               <p><LockKeyhole size={14} aria-hidden="true" /> Seus dados estão protegidos e sua compra é processada com segurança.</p>
@@ -945,7 +977,7 @@ function PagamentoContent() {
               {paymentData.invoiceUrl ? <a href={paymentData.invoiceUrl} target="_blank" rel="noreferrer">Abrir fatura no Asaas</a> : null}
               {paymentData.method === "BOLETO" && paymentData.bankSlipUrl ? <a href={paymentData.bankSlipUrl} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
             </section> : null}
-            {hasStockItems && stockPaymentData && stockView ? <section className={`l4-checkout-charge is-${stockView.tone}`} role="status" aria-live="polite" data-stock-status={stockPaymentData.status}>
+            {hasStockCheckoutItems && stockPaymentData && stockView ? <section className={`l4-checkout-charge is-${stockView.tone}`} role="status" aria-live="polite" data-stock-status={stockPaymentData.status}>
               <strong>{stockView.title}</strong>
               <p>{stockView.message}</p>
               {stockPaymentData.orderId ? <p>Pedido #{stockPaymentData.orderId}</p> : null}

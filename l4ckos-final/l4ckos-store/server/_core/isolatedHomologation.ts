@@ -1,4 +1,5 @@
 import { launchAfterFinancialBootstrap } from "./financialRuntimeBootstrap";
+import { emitFinancialRuntimeAttestation } from "./financialRuntimeAttestation";
 
 try {
   const result = await launchAfterFinancialBootstrap(
@@ -10,11 +11,8 @@ try {
       const { startServer } = await import("./application");
       await startServer();
     },
-    report => console.info("[Security]", {
-      at: new Date().toISOString(),
-      event: "financial.runtime_attestation",
-      ...report,
-    }),
+    report =>
+      emitFinancialRuntimeAttestation(report, process.env.G4_FINANCIAL_PHASE)
   );
   if (!result.allowed) {
     console.error("[Startup] isolated homologation bootstrap blocked");

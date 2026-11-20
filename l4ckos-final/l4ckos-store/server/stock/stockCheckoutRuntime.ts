@@ -13,6 +13,8 @@ import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 import { createExclusiveStore, type ExclusiveStore } from "../exclusive/store";
 import { createStockShippingQuoteService } from "./stockShippingQuoteService";
 import type { quoteShippingDetailed } from "../services/shippingService";
+import { resolveOwnerPixTestAuthorization, type OwnerPixTestActor } from "./ownerPixTestGate";
+import { StockCheckoutError } from "./stockCheckout";
 
 /** Composition boundary for a future STOCK-only route; this factory does not mount or enable any route. */
 export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean; exclusiveStore?: ExclusiveStore; shipping?: { secret: string; quote?: typeof quoteShippingDetailed } }) {
@@ -31,6 +33,23 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
     checkout(request: unknown, authenticatedUserId?: number) {
       // Gate check occurs before the domain can acquire a connection or invoke the provider.
       return createStockCheckout({ enabled: isPublicCheckoutEnabled() && input.checkoutEnabled !== false, ownerUserId: authenticatedUserId as number, store, provider: input.provider, request, ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}) });
+    },
+    checkoutOwnerPixTest(request: unknown, actor: OwnerPixTestActor) {
+      // Revalidate the complete server-side admission at the runtime boundary as well as in the router.
+      const authorization = resolveOwnerPixTestAuthorization(actor);
+      if (!authorization) throw new StockCheckoutError("PUBLIC_CHECKOUT_DISABLED");
+      const serverRequest = request && typeof request === "object"
+        ? { ...(request as Record<string, unknown>), attemptId: authorization.attemptId }
+        : request;
+      return createStockCheckout({
+        enabled: true,
+        ownerUserId: actor.id,
+        store,
+        provider: input.provider,
+        request: serverRequest,
+        maximumAmountCents: authorization.maxAmountCents,
+        ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}),
+      });
     },
     /** Null when freight signing is not configured: carrier delivery is then simply unavailable. */
     quoteShipping(request: unknown) {

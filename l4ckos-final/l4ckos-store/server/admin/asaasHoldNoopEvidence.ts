@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { structuralHash } from "../../database/schema/fingerprint";
+import { getAsaasConfig } from "../services/asaasConfig";
 export const PAYMENT13 = "pay_dog6ppexq4gyw3k6";
 export const HOOK = "7f9041aa-8df5-4e35-af6c-84b4ef5e18bb";
 const events = [
@@ -46,17 +47,13 @@ const webhook = z.object({
 export type NoopEvidence = Awaited<ReturnType<typeof readSandboxNoopEvidence>>;
 /** GET only, fixed Sandbox resources. Raw provider/customer data never leaves this function. */
 export async function readSandboxNoopEvidence() {
-  if (
-    process.env.ASAAS_API_URL?.replace(/\/+$/, "") !==
-      "https://api-sandbox.asaas.com/v3" ||
-    !process.env.ASAAS_API_KEY
-  )
-    throw Error("NOOP_SANDBOX_REQUIRED");
+  const config = getAsaasConfig();
+  if (config.apiUrl !== "https://api-sandbox.asaas.com/v3") throw Error("NOOP_SANDBOX_REQUIRED");
   const get = async (path: string) => {
-    const r = await fetch("https://api-sandbox.asaas.com/v3" + path, {
+    const r = await fetch(config.apiUrl + path, {
       method: "GET",
       redirect: "error",
-      headers: { access_token: process.env.ASAAS_API_KEY! },
+      headers: { access_token: config.apiKey },
       signal: AbortSignal.timeout(10000),
     });
     if (r.status !== 200) throw Error("NOOP_PROVIDER_READ_FAILED");

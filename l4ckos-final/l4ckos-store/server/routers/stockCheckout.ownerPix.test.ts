@@ -1,0 +1,81 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { stockCheckoutRouter } from "./stockCheckout";
+
+const ATTEMPT = "owner-pix-single-attempt-20261119-001";
+const OWNER = { id: 71, openId: "owner-open-id", role: "admin" };
+const OWNER_ENV = {
+  NODE_ENV: "production",
+  APP_ENV: "production",
+  RAILWAY_PROJECT_ID: "5937dcf3-18ae-4df8-83f0-5bb60ec9b8db",
+  RAILWAY_ENVIRONMENT_ID: "7d065409-7cc2-44ba-9fff-5524653b0484",
+  RAILWAY_SERVICE_ID: "743f3f4e-af1b-44f7-95c8-bb152e3c2f4b",
+  PUBLIC_SITE_MODE: "coming-soon",
+  PUBLIC_CHECKOUT_ENABLED: "false",
+  STOCK_CHECKOUT_ENABLED: "false",
+  STOCK_RUNTIME_ENABLED: "true",
+  OWNER_OPEN_ID: "owner-open-id",
+  OWNER_PIX_TEST_ENABLED: "true",
+  OWNER_PIX_TEST_ATTEMPT_ID: ATTEMPT,
+  OWNER_PIX_TEST_EXPIRES_AT: new Date(Date.now() + 5 * 60_000).toISOString(),
+  OWNER_PIX_TEST_MAX_AMOUNT_CENTS: "25000",
+};
+const address = { recipient: "Proprietário L4CKOS", zipCode: "70000000", street: "Rua Teste", number: "1", neighborhood: "Centro", city: "Brasília", state: "DF" };
+const checkoutInput = { attemptId: "client-controlled-attempt-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: { optionId: "local-plano-piloto", address } };
+
+function setup(user: typeof OWNER | { id: number; openId: string; role: string }, overrides: Record<string, string | undefined> = {}) {
+  for (const [key, value] of Object.entries({ ...OWNER_ENV, ...overrides })) vi.stubEnv(key, value ?? "");
+  const runtime = {
+    quoteShipping: vi.fn(async () => [{ optionId: "quote" }]),
+    checkout: vi.fn(async () => ({ orderId: "public-order", paymentId: "public-payment", checkoutUrl: "https://pay.invalid/public", amountCents: 10000, snapshots: [], replayed: false })),
+    checkoutOwnerPixTest: vi.fn(async () => ({ orderId: "owner-order", paymentId: "owner-payment", checkoutUrl: "https://pay.invalid/owner", amountCents: 10000, snapshots: [], replayed: false })),
+    resume: vi.fn(async (_ownerId: number, attemptId: string) => ({ attemptId, orderId: "owner-order", status: "pending", paymentId: "owner-payment", checkoutUrl: "https://pay.invalid/owner", amountCents: 10000, reservationExpiresAt: new Date(Date.now() + 60_000).toISOString(), canStartNewAttempt: false })),
+    resumeLatest: vi.fn(async () => null),
+  };
+  const caller = stockCheckoutRouter.createCaller({ user: user as any, req: {} as any, res: {} as any, stockCheckoutRuntime: runtime as any } as any);
+  return { caller, runtime };
+}
+
+describe("STOCK routes keep public checkout closed during the owner PIX test", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("uses only the server-configured attempt id for owner checkout and allows the matching freight quote", async () => {
+    const { caller, runtime } = setup(OWNER);
+    await expect(caller.quoteShipping({ items: [{ productId: 4, variantId: 8, quantity: 1 }], address })).resolves.toEqual([{ optionId: "quote" }]);
+    const created = await caller.create(checkoutInput as any);
+    expect(created.attemptId).toBe(ATTEMPT);
+    expect(runtime.checkoutOwnerPixTest).toHaveBeenCalledWith(checkoutInput, expect.objectContaining(OWNER));
+    expect(runtime.checkout).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-owner and different-account attempts before runtime calls", async () => {
+    const { caller, runtime } = setup({ id: 72, openId: "other-user", role: "admin" });
+    await expect(caller.create(checkoutInput as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.quoteShipping({ items: [{ productId: 4, variantId: 8, quantity: 1 }], address })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.resume({ attemptId: ATTEMPT })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
+    expect(runtime.checkout).not.toHaveBeenCalled();
+    expect(runtime.quoteShipping).not.toHaveBeenCalled();
+    expect(runtime.resume).not.toHaveBeenCalled();
+  });
+
+  it("allows resume only for the configured attempt, and never opens resumeLatest while public checkout is closed", async () => {
+    const { caller, runtime } = setup(OWNER);
+    await expect(caller.resume({ attemptId: ATTEMPT })).resolves.toMatchObject({ attemptId: ATTEMPT, checkoutUrl: "https://pay.invalid/owner" });
+    await expect(caller.resume({ attemptId: "some-other-attempt-00000001" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.resumeLatest()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(runtime.resume).toHaveBeenCalledTimes(1);
+    expect(runtime.resumeLatest).not.toHaveBeenCalled();
+  });
+
+  it("blocks an expired authorization without querying or returning a payment URL", async () => {
+    const { caller, runtime } = setup(OWNER, { OWNER_PIX_TEST_EXPIRES_AT: new Date(Date.now() - 1000).toISOString() });
+    await expect(caller.resume({ attemptId: ATTEMPT })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(runtime.resume).not.toHaveBeenCalled();
+  });
+
+  it("keeps the owner exception unavailable if any public or runtime checkout flag is enabled", async () => {
+    const { caller, runtime } = setup(OWNER, { STOCK_CHECKOUT_ENABLED: "true" });
+    await expect(caller.create(checkoutInput as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
+  });
+});

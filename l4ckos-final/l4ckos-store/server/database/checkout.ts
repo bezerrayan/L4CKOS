@@ -14,7 +14,8 @@ import {captureRecoveryFence} from '../payments/webhookRecovery';
 import {CANDIDATE,candidateMetadata} from '../payments/stagingCheckoutAdmission';
 import { assertPublicCheckoutEnabled } from "../_core/publicStore";
 import { createVariantOptionKey, normalizeVariantLabel } from "./productVariantIdentity";
-import { isRestrictedPublicPurchase } from "./publicPurchasePolicy";
+import { isPublicProductUnavailable } from "./publicPurchasePolicy";
+import { assertStagingSyntheticBuyer } from "../payments/syntheticBuyerGate";
 
 export const checkoutItemSchema = z.object({
   productId: z.number().int().positive(),
@@ -48,7 +49,7 @@ export type CheckoutVariantRow = {
 };
 export function resolveCheckoutVariant(item: CheckoutItem, productId: number, productName: string, variants: CheckoutVariantRow[]) {
   const productVariants = variants.filter(variant => Number(variant.productId) === productId);
-  if (isRestrictedPublicPurchase(productName, productVariants.map(variant => variant.sku))) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+  if (isPublicProductUnavailable(productName, productVariants)) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
   let variant = item.variantId === undefined ? null : variants.find(candidate => Number(candidate.id) === item.variantId) ?? null;
   if (productVariants.length > 0 && item.variantId === undefined) fail("CHECKOUT_VARIANT_REQUIRED");
   if (item.variantId !== undefined && !variant) fail("CHECKOUT_VARIANT_NOT_FOUND");
@@ -82,7 +83,7 @@ async function assertCurrentCheckoutProductsAuthorized(c: Connection, items: Che
   }
   for (const productId of productIds) {
     const variants = await rows(c, "SELECT sku FROM productVariants WHERE productId=? ORDER BY id FOR UPDATE", [productId]);
-    if (isRestrictedPublicPurchase(productNames.get(productId), variants.map(variant => variant.sku))) {
+    if (isPublicProductUnavailable(productNames.get(productId), variants.map(variant => ({ sku: variant.sku })))) {
       fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
     }
   }
@@ -144,10 +145,13 @@ async function checkStock(c: Connection, items: Snapshot[]) {
   }
   for (const id of [...new Set(items.flatMap(i => i.variantId !== null ? [i.variantId] : []))]) {
     const quantity = items.filter(i => i.variantId === id).reduce((n,i) => n+i.quantity,0);
-    const stockRow = (await rows(c, "SELECT stock FROM productVariants WHERE id=? FOR UPDATE", [id]))[0];
+    const stockRow = (await rows(c, "SELECT stock, reservedStock FROM productVariants WHERE id=? FOR UPDATE", [id]))[0];
     if (!stockRow) fail("CHECKOUT_VARIANT_NOT_FOUND");
     const stock = Number(stockRow.stock);
-    const reserved = Number((await rows(c, "SELECT COALESCE(SUM(quantity),0) n FROM stockReservations WHERE variantId=? AND status='active' AND expiresAt>NOW()", [id]))[0].n);
+    // STOCK attempts are counted by productVariants.reservedStock (held until paid/released, even after the ledger window);
+    // only legacy rows (attemptId IS NULL) are counted from the ledger, so nothing is counted twice.
+    const legacyReserved = Number((await rows(c, "SELECT COALESCE(SUM(quantity),0) n FROM stockReservations WHERE variantId=? AND attemptId IS NULL AND status='active' AND expiresAt>NOW()", [id]))[0].n);
+    const reserved = Number(stockRow.reservedStock) + legacyReserved;
     if (quantity > stock-reserved) fail("CHECKOUT_STOCK_INSUFFICIENT");
   }
 }
@@ -168,6 +172,9 @@ export type CheckoutAdapters = {
 };
 /** Caller owns the dedicated connection. Only the advisory attempt lock spans provider IO. */
 export async function checkout(c: Connection, input: CheckoutInput, adapters: CheckoutAdapters) {
+  // `userId` is supplied by the authenticated server router; reject before the
+  // freight quote, connection state changes, writes, or any provider call.
+  assertStagingSyntheticBuyer(input.userId);
   assertCheckoutMethodEnabled(input.method);
   // This runs before the idempotency lookup: closed or checkout-disabled
   // deployments must not return an old payment URL to a public caller.

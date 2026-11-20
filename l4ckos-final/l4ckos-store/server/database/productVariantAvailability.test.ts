@@ -29,6 +29,12 @@ describe("admin sellable variant projection", () => {
     expect(getSellableVariantIds(qaProduct, qaVariants, new Map())).toEqual([]);
   });
 
+  it("keeps QA fixtures unavailable when their direct variant SKU is ordinary or malformed", () => {
+    const qaProduct = { ...product, name: "[QA-STAGING] Fixture" };
+    expect(getSellableVariantIds(qaProduct, [variant(1, { sku: "REAL-PT-M" })], new Map())).toEqual([]);
+    expect(getSellableVariantIds(qaProduct, [variant(2, { sku: "??" })], new Map())).toEqual([]);
+  });
+
   it("leaves the administrative sellability calculation unchanged for SKU-restricted products", () => {
     const restrictedSku = [variant(10, { sku: "14B-CAM-PT-M" })];
     expect(getSellableVariantIds(product, restrictedSku, new Map())).toEqual([10]);

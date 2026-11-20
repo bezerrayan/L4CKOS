@@ -23,10 +23,12 @@ type AsaasCheckoutResponse = {
 
 type AsaasPaymentResponse = {
   id: string;
+  customer?: string | null;
   externalReference?: string | null;
   status?: string | null;
   deleted?: boolean;
   value?: number;
+  currency?: string | null;
   billingType?: string;
   refunds?: unknown[] | null;
   chargeback?: unknown;
@@ -50,7 +52,7 @@ function mapAsaasError(error: unknown): Error {
   const axiosError = error as AxiosError<AsaasErrorResponse>;
   const data = axiosError.response?.data;
   const message = data?.errors?.[0]?.description || data?.message || axiosError.message || "Asaas request failed";
-  return new Error(message);
+  return Object.assign(new Error(message), { providerStatus: axiosError.response?.status });
 }
 
 function buildClient() {

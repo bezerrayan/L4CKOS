@@ -36,6 +36,12 @@ GRANT SELECT, INSERT, UPDATE ON `@DB@`.`exclusiveRedeemAttempts`     TO '@USER@'
 GRANT SELECT, INSERT         ON `@DB@`.`exclusiveEvents`             TO '@USER@'@'%';
 GRANT SELECT, INSERT, UPDATE ON `@DB@`.`exclusiveNotificationOutbox` TO '@USER@'@'%';
 
+-- Financial reconciliation alerts (P5). The STOCK webhook path writes ONE durable operator alert per divergence in the same transaction as the
+-- divergence audit row: an existence SELECT + an idempotent INSERT (notificationOutbox.dedupeKey is UNIQUE). NO UPDATE/DELETE: operator state
+-- changes (in_review/resolved) belong to a separately authorized administrative account, never to this runtime account.
+-- PRIVILEGE EXPANSION vs the previously proven list: needs explicit approval before it is applied to any real database.
+GRANT SELECT, INSERT         ON `@DB@`.`notificationOutbox`          TO '@USER@'@'%';
+
 -- ---------------------------------------------------------------------------------------------------------------------------------
 -- NOT APPLIED / NOT PROVEN by the suite (derived from code review of server/payments/webhookInbox.ts, ingressProvenance.ts, webhookRecovery.ts).
 -- Needed only when the inbound Asaas webhook is enabled for payment homologation; verify with the same least-privilege phase before use:

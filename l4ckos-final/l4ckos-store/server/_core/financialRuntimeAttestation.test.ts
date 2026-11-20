@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  emitFinancialRuntimeAttestation,
   resolveFinancialRuntimeAttestation,
   shouldEmitFinancialRuntimeAttestation,
 } from "./financialRuntimeAttestation";
@@ -27,13 +28,143 @@ const isolatedClosedSandbox = {
   ASAAS_ENV: "sandbox",
   ASAAS_API_URL: "https://api-sandbox.asaas.com/v3",
   ASAAS_CHECKOUT_BASE_URL: "https://sandbox.asaas.com",
-  ASAAS_API_KEY: "synthetic-secret-must-not-be-returned",
+  ASAAS_API_KEY: "$aact_hmlg_synthetic-secret-must-not-be-returned",
   ASAAS_WEBHOOK_TOKEN: "synthetic-token-must-not-be-returned",
+  ASAAS_WEBHOOK_ACCOUNT_ID: "synthetic-account-id-must-not-be-returned",
+  ASAAS_WEBHOOK_ACCOUNT_CURRENCY: "BRL",
 };
 
 const processId = 4312;
 
 describe("financial runtime attestation", () => {
+  it("emits a PASS report as one structured JSON line with audit correlation", () => {
+    const report = resolveFinancialRuntimeAttestation(
+      isolatedClosedSandbox,
+      processId
+    );
+    const lines: string[] = [];
+
+    emitFinancialRuntimeAttestation(
+      report,
+      undefined,
+      line => lines.push(line),
+      "2026-11-18T00:00:00.000Z"
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("\n");
+    expect(JSON.parse(lines[0])).toMatchObject({
+      level: "info",
+      message: "financial.runtime_attestation",
+      at: "2026-11-18T00:00:00.000Z",
+      schemaVersion: 2,
+      financialPhase: "CLOSED",
+      verdict: "PASS",
+      issues: [],
+      railwayIdentityStatus: "VERIFIED",
+      railwayProjectId: ISOLATED_HOMOLOGATION_IDENTITY.projectId,
+      railwayEnvironmentId: ISOLATED_HOMOLOGATION_IDENTITY.environmentId,
+      railwayServiceId: ISOLATED_HOMOLOGATION_IDENTITY.serviceId,
+      deploymentId: "dpl-synthetic-financial-01",
+      replicaId: "replica-synthetic-01",
+      processId,
+      publicSiteMode: "coming-soon",
+      publicCheckoutFlagEnabled: false,
+      publicCheckoutEnabled: false,
+      stockRuntimeEnabled: false,
+      stockCheckoutEnabled: false,
+      stockCheckoutEffective: false,
+      stockReservationExpirySchedulerEnabled: false,
+      automaticBackupSchedulerEnabled: false,
+      asaasWebhookInboundEnabled: false,
+      asaasWebhookRecoveryWorkerEnabled: false,
+      paymentNotificationRecoveryWorkerEnabled: false,
+      asaasMode: "sandbox",
+      asaasModeConsistent: true,
+      asaasCredentialsPresent: true,
+      asaasWebhookAccountIdConfigured: true,
+      asaasWebhookAccountCurrencyConfigured: true,
+    });
+  });
+
+  it("emits FAIL reports without suppressing verdict or issues", () => {
+    const report = resolveFinancialRuntimeAttestation(
+      { ...isolatedClosedSandbox, PUBLIC_CHECKOUT_ENABLED: "true" },
+      processId
+    );
+    const lines: string[] = [];
+
+    emitFinancialRuntimeAttestation(
+      report,
+      "SANDBOX_WEBHOOK",
+      line => lines.push(line),
+      "2026-11-18T00:00:01.000Z"
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("\n");
+    expect(JSON.parse(lines[0])).toMatchObject({
+      level: "error",
+      message: "financial.runtime_attestation",
+      financialPhase: "SANDBOX_WEBHOOK",
+      verdict: "FAIL",
+      issues: expect.arrayContaining(["FINANCIAL_FLAG_OPEN"]),
+    });
+  });
+
+  it("serializes only sanitized phase and configuration metadata", () => {
+    const report = resolveFinancialRuntimeAttestation(
+      { ...isolatedClosedSandbox, G4_FINANCIAL_PHASE: "synthetic-secret-phase-value" },
+      processId
+    );
+    const lines: string[] = [];
+
+    emitFinancialRuntimeAttestation(
+      report,
+      "synthetic-secret-phase-value",
+      line => lines.push(line),
+      "2026-11-18T00:00:02.000Z"
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      financialPhase: "UNKNOWN",
+      verdict: "FAIL",
+      issues: expect.arrayContaining(["FINANCIAL_PHASE_CONFIGURATION_INVALID"]),
+    });
+    expect(lines[0]).not.toContain("synthetic-secret");
+    expect(lines[0]).not.toContain("synthetic-token");
+    expect(lines[0]).not.toContain("synthetic-account-id");
+    expect(lines[0]).not.toContain("https://");
+    expect(lines[0]).not.toContain("ASAAS_API_KEY");
+    expect(lines[0]).not.toContain("ASAAS_WEBHOOK_TOKEN");
+
+    emitFinancialRuntimeAttestation(
+      report,
+      " closed ",
+      line => lines.push(line),
+      "2026-11-18T00:00:03.000Z"
+    );
+    expect(JSON.parse(lines[1]).financialPhase).toBe("UNKNOWN");
+  });
+
+  it("preserves SANDBOX_RECOVERY as a valid financial phase", () => {
+    const report = resolveFinancialRuntimeAttestation(
+      isolatedClosedSandbox,
+      processId
+    );
+    const lines: string[] = [];
+
+    emitFinancialRuntimeAttestation(
+      report,
+      "SANDBOX_RECOVERY",
+      line => lines.push(line),
+      "2026-11-18T00:00:04.000Z"
+    );
+
+    expect(JSON.parse(lines[0]).financialPhase).toBe("SANDBOX_RECOVERY");
+  });
+
   it("passes only for the exact isolated identity, correlated execution, closed flags, and Sandbox", () => {
     const report = resolveFinancialRuntimeAttestation(
       isolatedClosedSandbox,
@@ -70,6 +201,8 @@ describe("financial runtime attestation", () => {
       asaasMode: "sandbox",
       asaasModeConsistent: true,
       asaasCredentialsPresent: true,
+      asaasWebhookAccountIdConfigured: true,
+      asaasWebhookAccountCurrencyConfigured: true,
     });
     expect(shouldEmitFinancialRuntimeAttestation(isolatedClosedSandbox)).toBe(
       true
@@ -212,9 +345,26 @@ describe("financial runtime attestation", () => {
     );
     expect(serialized).not.toContain("synthetic-secret");
     expect(serialized).not.toContain("synthetic-token");
+    expect(serialized).not.toContain("synthetic-account-id");
+    expect(serialized).not.toContain('"BRL"');
     expect(serialized).not.toContain("https://");
     expect(serialized).toContain("dpl-synthetic-financial-01");
     expect(serialized).toContain("replica-synthetic-01");
+  });
+
+  it("reports missing webhook account configuration only as sanitized booleans", () => {
+    const report = resolveFinancialRuntimeAttestation({
+      ...isolatedClosedSandbox,
+      ASAAS_WEBHOOK_ACCOUNT_ID: undefined,
+      ASAAS_WEBHOOK_ACCOUNT_CURRENCY: undefined,
+    }, processId);
+    expect(report).toMatchObject({
+      asaasWebhookAccountIdConfigured: false,
+      asaasWebhookAccountCurrencyConfigured: false,
+    });
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain("ASAAS_WEBHOOK_ACCOUNT_ID=");
+    expect(serialized).not.toContain("ASAAS_WEBHOOK_ACCOUNT_CURRENCY=");
   });
 
   it("does not emit evidence from Production, legacy staging, or a local process", () => {

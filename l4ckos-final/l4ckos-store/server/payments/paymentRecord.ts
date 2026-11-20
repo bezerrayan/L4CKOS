@@ -17,9 +17,11 @@ export async function validatePaymentObservationBinding(orderId:number,paymentId
 export async function validatePaymentBinding(orderId:number,paymentId:string|null,amount:number){
  const db=webhookDb();if(!db)throw Error('PAYMENT_RECORD_TRANSACTION_REQUIRED');
  await db.execute(sql`SELECT id FROM orders WHERE id=${orderId} FOR UPDATE`);
- const [result]=await db.execute(sql`SELECT providerPaymentId,amount,externalReference FROM payments WHERE orderId=${orderId} FOR UPDATE`);
- const row=(result as unknown as any[])[0];
- if(row&&(Number(row.amount)!==amount||row.externalReference!==String(orderId)||(row.providerPaymentId&&row.providerPaymentId!==paymentId)))throw Error('PAYMENT_RECORD_BINDING_MISMATCH');
+ const [result]=await db.execute(sql`SELECT providerPaymentId,amount,externalReference,billingType FROM payments WHERE orderId=${orderId} FOR UPDATE`);
+ const records=result as unknown as Array<{providerPaymentId:string|null;amount:number;externalReference:string;billingType:string|null}>;
+ const row=records[0];
+ if(records.length>1||row&&(Number(row.amount)!==amount||row.externalReference!==String(orderId)||(row.providerPaymentId&&row.providerPaymentId!==paymentId)))throw Error('PAYMENT_RECORD_BINDING_MISMATCH');
+ return row ? { billingType: row.billingType } : null;
 }
 export async function recordTrustedPaymentReceipt(orderId:number,paymentId:string|null,received:boolean){
  assertWebhookBusinessEffectsAllowed();

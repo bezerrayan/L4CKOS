@@ -39,7 +39,46 @@ describe("Asaas STOCK webhook boundary", () => {
       status: "paid",
       amountCents: 12990,
       payload: event,
+      referenceKind: "legacy",
     });
+  });
+
+  it("does not infer BRL from the official webhook shape when payment.currency is absent", () => {
+    const official = {
+      id: "evt_05b708f961d739ea7eba7e4db318f621&368604920",
+      event: "PAYMENT_RECEIVED",
+      dateCreated: "2024-06-12 16:45:03",
+      account: { id: "47ed0d25-f9fb-4b35-b23a-d8895caf92b7", ownerId: null },
+      payment: {
+        object: "payment", id: "pay_080225913252", dateCreated: "2021-01-01",
+        customer: "cus_G7Dvo4iphUNk", value: 100, netValue: 94.51,
+        externalReference: "L4CKOS-STOCK-ATTEMPT:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        billingType: "CREDIT_CARD", status: "RECEIVED", extraProviderField: "ignored",
+      },
+    };
+    expect(() => createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(official)))
+      .toThrow("WEBHOOK_CURRENCY_MISMATCH");
+    expect(createAsaasStockWebhookBoundary({ verifiedProviderCurrency: "BRL" })
+      .decodeSignedEvent(JSON.stringify(official))).toMatchObject({
+        eventId: official.id, paymentId: "pay_080225913252", amountCents: 10000,
+        strongReference: official.payment.externalReference,
+      });
+    expect(() => createAsaasStockWebhookBoundary({ verifiedProviderCurrency: "USD" })
+      .decodeSignedEvent(JSON.stringify(official))).toThrow("WEBHOOK_CURRENCY_MISMATCH");
+  });
+
+  it.each(["PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"])("does not settle PIX from %s alone", eventName => {
+    const observation = { ...event, event: eventName, payment: { ...event.payment, status: "CONFIRMED" } };
+    expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(observation))).toMatchObject({ status: "pending" });
+  });
+
+  it.each(["PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"])("accepts currencyless %s as a non-settling observation", eventName => {
+    const observation: any = { ...event, event: eventName, payment: { ...event.payment, status: "CONFIRMED" } };
+    delete observation.payment.currency;
+    expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(observation))).toMatchObject({ status: "pending" });
+    observation.payment.currency = "USD";
+    expect(() => createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(observation)))
+      .toThrow("WEBHOOK_CURRENCY_MISMATCH");
   });
 
   it.each([

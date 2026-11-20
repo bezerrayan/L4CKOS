@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./publicPurchasePolicy";
+import { isPublicProductUnavailable, isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./publicPurchasePolicy";
 
 describe("public purchase restriction policy", () => {
   it("blocks the Clã 14 Bis collaboration by product name", () => {
     expect(isRestrictedPublicPurchase("Clã 14 Bis — edição especial")).toBe(true);
     expect(isRestrictedPublicPurchase("CAMISETA CLAN-14-BIS")).toBe(true);
+    for (const name of ["Clã XIV Bis", "CLAN XIV-BIS", "clãxivbis", "Camiseta 14 Bis", "XIV BIS edição limitada"]) {
+      expect(isRestrictedPublicPurchase(name)).toBe(true);
+    }
   });
 
   it("blocks a generic product when any persisted SKU starts with 14B", () => {
@@ -14,6 +17,13 @@ describe("public purchase restriction policy", () => {
 
   it("blocks all combinations when a mixed SKU set contains a 14B SKU", () => {
     expect(isRestrictedPublicPurchase("Camiseta comum", ["CAM-PT-M", "14B-CAM-BR-G"])).toBe(true);
+    for (const sku of ["CLA-XIV-BIS-P", "CLAN14BIS-GG", "XIV BIS M", "clãxivbis-g"]) {
+      expect(isRestrictedPublicPurchase("Camiseta comum", sku)).toBe(true);
+    }
+  });
+
+  it("blocks an explicit partnership-exclusivity attribute for future schema-backed callers", () => {
+    expect(isRestrictedPublicPurchase("Unknown Territory", ["UT-WHITE-M"], true)).toBe(true);
   });
 
   it("leaves ordinary products unrestricted", () => {
@@ -21,12 +31,14 @@ describe("public purchase restriction policy", () => {
     expect(isRestrictedPublicPurchase("Camiseta Horizonte", "HORIZONTE-PT-M")).toBe(false);
   });
 
-  it("keeps the existing QA fixture policy intact", () => {
+  it("treats the QA label as authoritative even when variant data is missing or malformed", () => {
     const qaVariants = ["QA-PRE-M-01", "QA-PRE-G-01", "QA-BRA-M-01", "QA-BRA-G-01"].map(sku => ({ sku }));
     expect(isStagingQaCatalogProduct("[QA-STAGING] Teste de Variantes", qaVariants)).toBe(true);
-    expect(isStagingQaCatalogProduct("[QA-STAGING] Produto", [{ sku: "REAL-PT-M" }])).toBe(false);
+    expect(isStagingQaCatalogProduct("[QA-STAGING] Produto", [{ sku: "REAL-PT-M" }])).toBe(true);
     expect(isStagingQaCatalogProduct("Camiseta Horizonte", qaVariants)).toBe(false);
-    expect(isStagingQaCatalogProduct("[QA-STAGING] Produto simples", [])).toBe(false);
-    expect(isStagingQaCatalogProduct("[QA-STAGING] Teste", [...qaVariants.slice(0, 3), { sku: null }])).toBe(false);
+    expect(isStagingQaCatalogProduct("[QA-STAGING] Produto simples", [])).toBe(true);
+    expect(isStagingQaCatalogProduct("[QA-STAGING] Teste", [...qaVariants.slice(0, 3), { sku: null }])).toBe(true);
+    expect(isPublicProductUnavailable("[QA-STAGING] Produto", [{ sku: "REAL-PT-M" }])).toBe(true);
+    expect(isPublicProductUnavailable("Produto legítimo", [{ sku: "REAL-PT-M" }])).toBe(false);
   });
 });

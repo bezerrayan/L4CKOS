@@ -18,7 +18,8 @@ import {
   asaasWebhookHandler,
   processWebhookEnvelope,
 } from "../controllers/paymentController";
-import { financialEnvelope, receiveWebhook, persistWebhook, processStoredWebhook, recoverWebhooks, startWebhookRecovery } from "../payments/webhookInbox";
+import { financialEnvelope, receiveWebhook as receiveWebhookInternal, persistWebhook as persistWebhookInternal, processStoredWebhook, recoverWebhooks, startWebhookRecovery } from "../payments/webhookInbox";
+import { attestAuthenticatedIngress } from "../payments/ingressProvenance";
 
 import {markOrderPaid,runAsaasWebhookOnce,updateOrderAndReserveDeliveredEmailEvents} from '../db';
 import {deliverPaymentNotifications,enqueuePaymentApproved} from '../payments/paymentNotificationOutbox';
@@ -65,10 +66,19 @@ vi.mock("../services/asaasService", () => ({
   }),
 }));
 function setReview(){
+  vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-token');
   vi.stubEnv('NODE_ENV','production');vi.stubEnv('RAILWAY_PROJECT_ID','2bb90c8e-eb65-43ee-826b-f93750f0499c');
   vi.stubEnv('RAILWAY_ENVIRONMENT_ID','15545eee-bc02-4b70-afc4-19a5db9e6f46');vi.stubEnv('RAILWAY_SERVICE_ID','9f1c7705-f2f9-48cf-b957-8f63a6bba4db');
   vi.stubEnv('ASAAS_WEBHOOK_RECOVERY_MODE','review_only');
 }
+const receiveWebhook = async (payload: unknown, process = processWebhookEnvelope as any, preflight?: any) => {
+  await attestAuthenticatedIngress(payload);
+  return receiveWebhookInternal(payload, process, preflight);
+};
+const persistWebhook = async (payload: unknown) => {
+  await attestAuthenticatedIngress(payload);
+  return persistWebhookInternal(payload);
+};
 async function preserved(before:unknown){
  expect(await financialSnapshot()).toEqual(before);
  expect(await query('SELECT * FROM asaasWebhookEvents')).toHaveLength(0);
@@ -172,7 +182,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         "92e96ae744d2112c5b4a430abc9a75d557a43d293652dd68369aa81786479f09"
       )
         throw Error("REMOTE_DB_FORBIDDEN");
-      await root.query("CREATE DATABASE `" + database + "`");
+      await root.query("CREATE DATABASE `" + database + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
       c = await openBackupConnection(
         "mysql://root@localhost/" + database,
         socket
@@ -198,6 +208,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
     beforeEach(async () => {
       vi.unstubAllEnvs();
       vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic");
+      vi.stubEnv("ASAAS_WEBHOOK_TOKEN", "synthetic-token");
       injected.mail.mockClear();
       injected.provider.mockReset();
       injected.provider.mockImplementation(async (id: string) => ({
@@ -293,11 +304,13 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
     });
     it('inbox failure never ACKs',async()=>{
       await query("CREATE TRIGGER fail_recovery_inbox BEFORE INSERT ON asaasWebhookInbox FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='LOCAL_INBOX_FAILURE'");
-      try{expect((await send(envelope('PAYMENT_RECEIVED'))).status).toBe(503);expect(await query('SELECT * FROM auditLogs')).toHaveLength(0);}finally{await query('DROP TRIGGER fail_recovery_inbox');}
+      try{expect((await send(envelope('PAYMENT_RECEIVED'))).status).toBe(503);expect(await query("SELECT * FROM auditLogs WHERE action <> 'webhook.ingress_authenticated.v1'")).toHaveLength(0);}finally{await query('DROP TRIGGER fail_recovery_inbox');}
     });
     it('hold-audit failure rolls admission back atomically and never ACKs',async()=>{
       const before=await financialSnapshot();await query("CREATE TRIGGER fail_recovery_audit BEFORE INSERT ON auditLogs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='LOCAL_HOLD_FAILURE'");
-      try{expect((await send(envelope('PAYMENT_RECEIVED'))).status).toBe(503);expect(await query('SELECT * FROM asaasWebhookInbox')).toHaveLength(0);await preserved(before);}finally{await query('DROP TRIGGER fail_recovery_audit');}
+      const e=envelope('PAYMENT_RECEIVED');
+      try{expect((await send(e)).status).toBe(503);expect((await query('SELECT state FROM asaasWebhookInbox WHERE eventId=?',[e.id]))[0].state).toBe('received');await preserved(before);}finally{await query('DROP TRIGGER fail_recovery_audit');}
+      expect((await send(e)).status).toBe(200);expect(await query('SELECT * FROM auditLogs WHERE action=?',[RECOVERY_HOLD_ACTION])).toHaveLength(1);await preserved(before);
     });
     it('preserves the original historical rejected row during hold and redelivery',async()=>{
       const e=envelope('PAYMENT_CREATED',CREATED_ID),before=await financialSnapshot();await seedRejected(e);const original=await query('SELECT * FROM asaasWebhookInbox');
@@ -349,7 +362,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       const e=envelope('PAYMENT_RECEIVED',randomUUID(),14),before=await financialSnapshot();await persistWebhook(e);await c.beginTransaction();await query('SELECT * FROM asaasWebhookInbox WHERE eventId=? FOR UPDATE',[e.id]);
       const pending=send(e);let waiting=false;
       for(let i=0;i<100;i++){const [locks]=await root.query<any[]>("SELECT COUNT(*) n FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA=? AND l.OBJECT_NAME='asaasWebhookInbox'",[database]);if(Number(locks[0].n)>0){waiting=true;break;}await new Promise(r=>setTimeout(r,5));}
-      expect(waiting).toBe(true);vi.stubEnv('ASAAS_WEBHOOK_RECOVERY_MODE','off');await c.commit();expect((await pending).status).toBe(503);expect(await query('SELECT * FROM auditLogs')).toHaveLength(0);await preserved(before);
+      expect(waiting).toBe(true);vi.stubEnv('ASAAS_WEBHOOK_RECOVERY_MODE','off');await c.commit();expect((await pending).status).toBe(503);expect(await query("SELECT * FROM auditLogs WHERE action <> 'webhook.ingress_authenticated.v1'")).toHaveLength(0);await preserved(before);
       setReview();expect((await send(e)).status).toBe(200);
     });
     it('invalid mode or a production target fails closed without persistence',async()=>{

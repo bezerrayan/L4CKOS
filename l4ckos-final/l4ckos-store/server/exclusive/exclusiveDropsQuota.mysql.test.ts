@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPool, type Pool } from "mysql2/promise";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import express from "express";
 import { createServer, type Server } from "node:http";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -167,6 +169,20 @@ const viewerFor = async (session: Session, productId: number) => {
 const batchClaimed = () =>
   count(`SELECT COALESCE(SUM(i.quantity),0) AS n FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId = ${BATCH} AND i.salesModeAtPurchase='PREORDER' AND o.status <> 'cancelled'`);
 
+async function ensureExclusiveDropTables() {
+  const migration = await readFile(resolve("database/migrations/exclusive-drops-v1/0028_exclusive_drops_candidate.sql"), "utf8");
+  const tableStatements = migration.match(/CREATE TABLE IF NOT EXISTS[\s\S]*?ENGINE=InnoDB;/gi) ?? [];
+  for (const statement of tableStatements) {
+    const tableName = statement.match(/^CREATE TABLE IF NOT EXISTS\s+`?([A-Za-z0-9_]+)`?/i)?.[1];
+    if (!tableName) throw new Error("Could not identify an exclusive-drop table in migration 0028");
+    const [rows] = await pool.execute<any[]>(
+      "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+      [tableName],
+    );
+    if (Number(rows[0]?.n) === 0) await pool.query(statement);
+  }
+}
+
 describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout (MySQL 9.7.2 disposable only)", () => {
   beforeAll(async () => {
     if (!/^(127\.0\.0\.1|localhost|::1)$/.test(host) || database !== "l4ckos_stock_test" || user !== "stock_test" || process.env.STOCK_LOCAL_HARNESS !== "true" ||
@@ -180,6 +196,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
     setStockLocalHarnessDb(drizzleMysql(appPool));
     const [identity] = await pool.query<any[]>("SELECT VERSION() AS version, DATABASE() AS dbName");
     if (!String(identity[0]?.version).startsWith("9.7.2") || identity[0]?.dbName !== database) throw new Error("MySQL identity mismatch");
+    await ensureExclusiveDropTables();
     sessionTokens = {
       "owner-81": await sdk.createSessionToken("synthetic-owner-81", { name: "Um", sessionVersion: 1 }),
       "other-82": await sdk.createSessionToken("synthetic-other-82", { name: "Dois", sessionVersion: 1 }),
@@ -530,6 +547,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Drop quota at the STOCK checkout
       // never issued: provider call never happened for this attempt
       const b = await buy(other, "late-unstarted-other-0001", 9, 1);
       await pool.query("UPDATE stockCheckoutAttempts SET providerState = 'not_started', paymentId = NULL, checkoutUrl = NULL WHERE attemptId = 'late-unstarted-other-0001'");
+      await pool.query("UPDATE orders SET stockPaymentId = NULL WHERE id = ?", [b.orderId]);
       await expect(webhook(b.orderId, "pay-GHOST", b.amountCents, "paid", "unstarted-paid-event-001")).resolves.toBe("conflict");
       expect((await cases()).map(r => r.event).sort()).toEqual(["PAID_FOR_UNSTARTED_ATTEMPT", "PAID_WITH_DIFFERENT_PAYMENT_ID"]);
       expect(await count("SELECT COUNT(*) AS n FROM orders WHERE paymentStatus = 'confirmed'")).toBe(0);

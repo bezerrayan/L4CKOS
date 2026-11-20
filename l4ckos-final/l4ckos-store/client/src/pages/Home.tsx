@@ -111,7 +111,7 @@ export default function Home() {
   }
 
   return (
-    <div className="l4-home">
+    <div className={import.meta.env.VITE_DEPLOY_TARGET === "preview" ? "l4-home l4-home-preview" : "l4-home"}>
       <div className="l4-home-announce" tabIndex={0} role="region" aria-label="Frases da marca — role horizontalmente para ler">
         <span className="l4-home-announce-track">
             <strong>L4CKOS</strong><span>LOJA OFICIAL</span><span>BUILT FOR ADVENTURE</span><span>IDENTIDADE EM MOVIMENTO</span><span>DROPS AUTORAIS</span>

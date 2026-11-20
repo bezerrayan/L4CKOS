@@ -1,5 +1,6 @@
 import { validateAsaasWebhookSignature } from "../services/asaasService";
 import type { StockNormalizedWebhook, StockWebhookBoundary } from "./stockCheckout";
+import { parseStockPaymentReference } from "./stockPaymentReference";
 
 const PAID_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"]);
 const FAILED_EVENTS = new Set(["PAYMENT_REFUSED", "PAYMENT_DELETED", "PAYMENT_REPROVED", "PAYMENT_FAILED"]);
@@ -20,7 +21,7 @@ function requiredText(value: unknown, code: string): string {
 }
 
 /** Adapts the existing production token verifier, while making STOCK fail closed in every environment. */
-export function createAsaasStockWebhookBoundary(): StockWebhookBoundary {
+export function createAsaasStockWebhookBoundary(input: { verifiedProviderCurrency?: string | null } = {}): StockWebhookBoundary {
   return {
     async verifySignature({ headers }) {
       if (!process.env.ASAAS_WEBHOOK_TOKEN?.trim()) return false;
@@ -42,7 +43,10 @@ export function createAsaasStockWebhookBoundary(): StockWebhookBoundary {
       const eventName = requiredText(payload.event, "WEBHOOK_EVENT_INVALID").toUpperCase();
       const paymentStatus = typeof payment.status === "string" ? payment.status.trim().toUpperCase() : "";
       let status: StockNormalizedWebhook["status"];
-      if (PAID_EVENTS.has(eventName) && (!paymentStatus || PAID_STATUSES.has(paymentStatus))) status = "paid";
+      // PIX is settled only by a validated PAYMENT_RECEIVED. A CONFIRMED event
+      // is an observation; accepting it as paid can release fulfilment early.
+      if (eventName === "PAYMENT_RECEIVED" && (!paymentStatus || PAID_STATUSES.has(paymentStatus))) status = "paid";
+      else if (PAID_EVENTS.has(eventName) && (!paymentStatus || PAID_STATUSES.has(paymentStatus))) status = "pending";
       else if (FAILED_EVENTS.has(eventName) && FAILED_STATUSES.has(paymentStatus)) status = "failed";
       else if (PENDING_EVENTS.has(eventName) && (!paymentStatus || PENDING_STATUSES.has(paymentStatus))) status = "pending";
       else throw new Error("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
@@ -54,10 +58,20 @@ export function createAsaasStockWebhookBoundary(): StockWebhookBoundary {
       if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) throw new Error("WEBHOOK_AMOUNT_INVALID");
       const amountCents = Math.round(amount * 100);
       if (!Number.isSafeInteger(amountCents) || Math.abs(amount * 100 - amountCents) > 1e-7) throw new Error("WEBHOOK_AMOUNT_INVALID");
-      const currency = typeof payment.currency === "string" ? payment.currency.trim().toUpperCase() : "BRL";
-      if (currency !== "BRL") throw new Error("WEBHOOK_CURRENCY_MISMATCH");
+      const currency = typeof payment.currency === "string" && payment.currency.trim()
+        ? payment.currency.trim().toUpperCase()
+        : String(input.verifiedProviderCurrency ?? "").trim().toUpperCase();
+      // These two authenticated PIX events are observations only. They never
+      // settle an order, so an omitted currency must not turn a valid delivery
+      // into a permanent retry. Explicit incompatible currency still fails.
+      const currencylessNonSettlement = !currency &&
+        (eventName === "PAYMENT_CONFIRMED" || eventName === "PAYMENT_OVERDUE_RECEIVED") &&
+        status === "pending";
+      if (currency !== "BRL" && !currencylessNonSettlement) throw new Error("WEBHOOK_CURRENCY_MISMATCH");
 
-      return { eventId, orderId, paymentId, status, amountCents, payload: parsed };
+      const reference = parseStockPaymentReference(orderId);
+      if (reference.kind === "strong") return { eventId, orderId, paymentId, status, amountCents, payload: parsed, strongReference: reference.reference, referenceKind: "strong" };
+      return { eventId, orderId, paymentId, status, amountCents, payload: parsed, referenceKind: "legacy" };
     },
   };
 }

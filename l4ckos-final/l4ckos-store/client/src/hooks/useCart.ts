@@ -3,8 +3,9 @@ import { trpc } from "../lib/trpc";
 /**
  * Hook para listar itens do carrinho
  */
-export function useCart() {
-  return trpc.cart.list.useQuery();
+export function useCart(options?: { enabled?: boolean }) {
+  // `cart.list` is a protected procedure: callers pass `enabled: false` for anonymous visitors so it is never requested (401).
+  return trpc.cart.list.useQuery(undefined, { enabled: options?.enabled ?? true });
 }
 
 /**

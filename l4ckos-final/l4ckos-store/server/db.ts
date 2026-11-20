@@ -53,7 +53,7 @@ import {confirmSelectedCheckoutStock} from './payments/selectedCheckoutStock';
 import { enqueueOrderCancelledInTransaction } from "./payments/notificationOutboxQueue";
 import {assertSelectedLedgerBinding,selectiveOrderAllowed} from './payments/stagingCheckoutAdmission';
 import { aggregateSalesReport } from "./reports/salesReport";
-import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
+import { isPublicProductUnavailable, isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
 import { getSellableVariantIds } from "./database/productVariantAvailability";
 import { buildManagerSyncSnapshot, saoPauloMidnightUtc, type ManagerSyncIdentity } from "./services/managerSyncSnapshot";
 
@@ -65,10 +65,11 @@ export function projectPublicProductAvailability(
   variants: readonly { sku?: string | null }[],
   sellableVariantIds: readonly number[],
 ) {
-  const restricted = isRestrictedPublicPurchase(productName, variants.map(variant => variant.sku));
+  const restricted = isPublicProductUnavailable(productName, [...variants]);
   return {
     hasVariants: variants.length > 0,
     hasSellableVariants: !restricted && sellableVariantIds.length > 0,
+    publicPurchaseAllowed: !restricted,
   };
 }
 
@@ -607,7 +608,7 @@ function mergeProductRowsWithImages(productRows: Array<typeof products.$inferSel
 async function enrichProductsWithBatch<T extends {id:number; salesMode:string},
 >(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, rows: T[]) {
   const assignments = extractExecutedRows(
-    await db.execute(sql`SELECT b.id,b.name,b.status,b.maximumQuantity,DATE_FORMAT(b.estimatedManufacturingStart,'%Y-%m-%d') estimatedManufacturingStart,DATE_FORMAT(b.estimatedManufacturingEnd,'%Y-%m-%d') estimatedManufacturingEnd,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId,COALESCE((SELECT SUM(oi.quantity) FROM orderItems oi JOIN orders o ON o.id=oi.orderId WHERE oi.productionBatchId=b.id AND oi.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'),0) claimedQuantity FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`
+    await db.execute(sql`SELECT b.id,b.name,b.status,b.maximumQuantity,DATE_FORMAT(b.estimatedManufacturingStart,'%Y-%m-%d') estimatedManufacturingStart,DATE_FORMAT(b.estimatedManufacturingEnd,'%Y-%m-%d') estimatedManufacturingEnd,UNIX_TIMESTAMP(b.salesOpenAt)*1000 salesOpenAt,UNIX_TIMESTAMP(b.salesCloseAt)*1000 salesCloseAt,UNIX_TIMESTAMP(b.estimatedShippingStart)*1000 estimatedShippingStart,UNIX_TIMESTAMP(b.estimatedShippingEnd)*1000 estimatedShippingEnd,bp.productId,COALESCE((SELECT SUM(oi.quantity) FROM orderItems oi JOIN orders o ON o.id=oi.orderId WHERE oi.productionBatchId=b.id AND oi.salesModeAtPurchase='PREORDER' AND (o.status<>'cancelled' OR o.paymentStatus='confirmed')),0) claimedQuantity FROM productionBatchProducts bp JOIN productionBatches b ON b.id=bp.productionBatchId`
     )
   );
   const byProduct = new Map(assignments.map(row=> [Number(row.productId),
@@ -645,10 +646,11 @@ export async function getProducts() {
   const imageRows = await selectProductImageRows(db, productRows.map(product => product.id));
   const productsWithBatch = await enrichProductsWithBatch(db, mergeProductRowsWithImages(productRows, imageRows));
   const variantRows = await selectProductVariantRows(db, productRows.map(product => product.id));
-  if (!variantRows.length) return productsWithBatch.map(product => ({
+  if (!variantRows.length) return productsWithBatch.filter(product => !isStagingQaCatalogProduct(product.name)).map(product => ({
     ...product,
     hasVariants: false,
     hasSellableVariants: false,
+    publicPurchaseAllowed: !isPublicProductUnavailable(product.name),
   }));
   const reservations = await db.select({
     variantId: stockReservations.variantId,
@@ -669,7 +671,7 @@ export async function getProducts() {
       getSellableVariantIds(product, variants, reserved),
     );
     return { ...product, ...availability };
-  }).filter(product => !isStagingQaCatalogProduct(product.name, variantsByProduct.get(product.id)));
+  }).filter(product => !isStagingQaCatalogProduct(product.name));
 }
 
 export async function getProductById(id: number) {
@@ -1497,7 +1499,7 @@ export async function reserveStockForOrder(input: {
       if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) throw new Error("Invalid reservation quantity.");
       const [product] = await tx.select().from(products).where(eq(products.id, item.productId)).for("update");
       if (!product) throw new Error(`Produto ${item.productId} nao encontrado.`);
-      if (isRestrictedPublicPurchase(product.name)) throw new Error("Product requires server-side purchase authorization.");
+      if (isPublicProductUnavailable(product.name)) throw new Error("Product requires server-side purchase authorization.");
       if (product.salesMode === "PREORDER") throw new Error("Preorder items do not reserve physical stock.");
       if (item.orderItemId === undefined) throw new Error("Stock reservation requires its order item.");
       const [orderItem] = await tx.select().from(orderItems).where(and(
@@ -1508,6 +1510,7 @@ export async function reserveStockForOrder(input: {
         throw new Error("Stock reservation does not match its order item.");
       }
       const variants = await tx.select().from(productVariants).where(eq(productVariants.productId, item.productId)).orderBy(productVariants.id).for("update");
+      if (isPublicProductUnavailable(product.name, variants)) throw new Error("Product requires server-side purchase authorization.");
       // Single writer per inventory: a product with an active STOCK V1 variant reserves ONLY through the STOCK checkout,
       // so the legacy per-order reservation can never oversell the same variant concurrently.
       if (variants.some(row => Number(row.isActive) === 1)) {
@@ -1625,8 +1628,9 @@ export async function isLegacyCheckoutOrderRestricted(orderId: number): Promise<
       ...reserved.filter(line => line.productId === product.id).map(line => line.skuSnapshot),
     ];
     const skus = [...variantRows.filter(variant => variant.productId === product.id).map(variant => variant.sku), ...snapshots];
-    return isRestrictedPublicPurchase(product.name, skus) ||
-      lines.some(line => line.productId === product.id && isRestrictedPublicPurchase(line.productName, skus));
+    const variants = skus.map(sku => ({ sku }));
+    return isPublicProductUnavailable(product.name, variants) ||
+      lines.some(line => line.productId === product.id && isPublicProductUnavailable(line.productName, variants));
   });
 }
 
@@ -1657,7 +1661,8 @@ export async function reserveExternalCheckoutCreation(orderId: number, userId: n
       const variants = await tx.select().from(productVariants).where(eq(productVariants.productId, item.productId)).orderBy(productVariants.id).for("update");
       // Repeat the exclusivity policy under the product/variant locks, over every persisted SKU (active or not).
       const persistedSkus = [item.sku, item.skuSnapshot, ...variants.map(variant => variant.sku)];
-      if (isRestrictedPublicPurchase(product.name, persistedSkus) || isRestrictedPublicPurchase(item.productName, persistedSkus)) {
+      const persistedVariants = persistedSkus.map(sku => ({ sku }));
+      if (isPublicProductUnavailable(product.name, persistedVariants) || isPublicProductUnavailable(item.productName, persistedVariants)) {
         throw new LegacyCheckoutProductRestrictedError();
       }
       if (variants.length && item.variantId === null) throw new Error("Legacy checkout variant identity is missing.");
@@ -1680,14 +1685,17 @@ export async function reserveExternalCheckoutCreation(orderId: number, userId: n
 
 /** Immutable reconciliation evidence only; no financial or fulfillment mutation. */
 export async function recordPaymentException(input: { orderId: number; eventId: string; event: string; paymentId: string | null; checkoutId: string | null; observation?: { eventDeleted: boolean; currentDeleted: boolean | null; currentStatus: string | null; currentAmountCents: number | null; eventAmountCents: number | null } }) {
-  const db = await getDb();
+  const activeTransaction = webhookDb();
+  const db = activeTransaction ?? await getDb();
   if (!db) throw new Error("Persistent reconciliation unavailable");
-  await db.transaction(async tx => {
+  const persist = async (tx: any) => {
     const [order] = await tx.select().from(orders).where(eq(orders.id, input.orderId)).for("update");
     if (!order) throw new Error("Order not found");
     if (input.checkoutId && order.asaasCheckoutId && input.checkoutId !== order.asaasCheckoutId) throw new Error("Payment checkout mismatch");
     await tx.insert(auditLogs).values({ actorType: "system", action: "payment.reconciliation_required", entity: "order", entityId: String(input.orderId), metadata: JSON.stringify({ ...input, orderStatus: order.status, providerObservationOnly: true, financialMutation: false, reservationMutation: false, reconciliationRequired: true }) });
-  });
+  };
+  if (activeTransaction) await persist(activeTransaction);
+  else await db.transaction(persist);
 }
 
 export async function markOrderPaid(
@@ -2951,8 +2959,8 @@ export async function getPublicProductVariants(productId: number) {
   const product = await getProductByIdWithDetails(productId);
   if (!product) return { product: null, hasVariants: false, variants: [] as Array<{ variantId: number; color: string; size: string; price: number; availableUnits: number | null }> };
   const sourceVariants = product.variants ?? [];
-  if (isRestrictedPublicPurchase(product.name, sourceVariants.map(variant => variant.sku))) {
-    return { product, hasVariants: sourceVariants.length > 0, variants: [] };
+  if (isPublicProductUnavailable(product.name, sourceVariants)) {
+    return { product: null, hasVariants: false, variants: [] };
   }
   if (sourceVariants.length === 0) return { product, hasVariants: false, variants: [] };
   const skuCounts = new Map<string, number>();

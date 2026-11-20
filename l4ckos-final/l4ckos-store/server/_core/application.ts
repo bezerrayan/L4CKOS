@@ -1,7 +1,7 @@
 import { startPaymentNotificationRecovery } from "../payments/paymentNotificationOutbox";
 import { startWebhookRecovery } from "../payments/webhookInbox";
 import {initializeWebhookRecoveryMode} from '../payments/webhookRecovery';
-import { processWebhookEnvelope } from "../controllers/paymentController";
+import { processWebhookEnvelope, preflightAsaasWebhookEnvelope, type AsaasWebhookPreflight } from "../controllers/paymentController";
 import { prepareRecoveryWorkerStartup } from "./recoveryWorkerStartup";
 import { createAsaasWebhookInboundGate, resolveAsaasWebhookInboundEnabled } from "./asaasWebhookIngress";
 ﻿import express from "express";
@@ -46,6 +46,8 @@ import { assertStagingApiAccessConfiguration, createStagingApiAccessMiddleware }
 import { shouldScheduleAutomaticBackup } from "./automaticBackupStartup";
 import { isIsolatedHomologationIdentity } from "./railwayEnvironment";
 import { initializeBeforeBackgroundEffects } from "./startupEffects";
+import { assertIsolatedHomologationDatabaseIdentity, resolveFinancialPhasePolicy } from "./financialPhasePolicy";
+import { assertStockRuntimeDatabaseIdentity, assertStockRuntimeStartupEnvironment } from "./productionFinancialPolicy";
 
 function scheduleDailyBackup() {
   const dir = process.env.BACKUP_DIR || "backups";
@@ -187,6 +189,7 @@ async function listenWithRetry(
 
 export async function startServer() {
   assertStagingApiAccessConfiguration(process.env);
+  const financialPhase = resolveFinancialPhasePolicy(process.env);
   if (isIsolatedHomologationIdentity(process.env)) {
     // Validate the isolated DATABASE_URL, private hostname, CA fingerprint and
     // strict identity-verification options before listening, without connecting.
@@ -199,25 +202,35 @@ export async function startServer() {
   }
   initializeWebhookRecoveryMode(); // Invalid target/config fails before listen or worker startup.
   const recoveryWorkers = prepareRecoveryWorkerStartup(process.env, {
-    startAsaasWebhookRecovery: () => startWebhookRecovery(processWebhookEnvelope),
+    startAsaasWebhookRecovery: () => startWebhookRecovery(
+      (payload, preflightResult) => processWebhookEnvelope(payload, undefined, undefined, preflightResult as AsaasWebhookPreflight | undefined),
+      preflightAsaasWebhookEnvelope),
     startPaymentNotifications: () => startPaymentNotificationRecovery(),
   });
   const asaasWebhookInboundEnabled = resolveAsaasWebhookInboundEnabled(process.env);
   const envIssues = validateEnvOnStartup();
   envIssues.forEach(issue => securityLog("warn", "startup.env_issue", { issue }));
 
-  if (process.env.STOCK_RUNTIME_ENABLED === "true") {
-    if (process.env.STOCK_DATABASE_ENV !== "staging" || !process.env.STOCK_EXPECTED_DATABASE?.trim()) {
-      throw new Error("STOCK_STAGING_DATABASE_IDENTITY_REQUIRED");
-    }
-    const pool = await getMysqlPool();
-    if (!pool) throw new Error("STOCK_RUNTIME_DATABASE_UNAVAILABLE");
-    const [identityRows] = await pool.execute<Array<RowDataPacket & { databaseName: string | null; version: string }>>(
+  let isolatedHomologationPool: Awaited<ReturnType<typeof getMysqlPool>> = null;
+  if (financialPhase.phase !== "CLOSED") {
+    isolatedHomologationPool = await getMysqlPool();
+    if (!isolatedHomologationPool) throw new Error("HOMOLOGATION_DATABASE_UNAVAILABLE");
+    const [identityRows] = await isolatedHomologationPool.execute<Array<RowDataPacket & { databaseName: string | null; version: string }>>(
       "SELECT DATABASE() AS databaseName, VERSION() AS version",
     );
-    const identity = identityRows[0];
-    if (identity?.databaseName !== process.env.STOCK_EXPECTED_DATABASE || !identity.version.startsWith("9.7.2")) {
-      throw new Error("STOCK_STAGING_DATABASE_IDENTITY_MISMATCH");
+    assertIsolatedHomologationDatabaseIdentity(identityRows[0] ?? { databaseName: null, version: null }, process.env.STOCK_EXPECTED_DATABASE ?? "");
+  }
+
+  if (process.env.STOCK_RUNTIME_ENABLED === "true") {
+    const stockRuntimeKind = assertStockRuntimeStartupEnvironment(process.env);
+    const pool = isolatedHomologationPool ?? await getMysqlPool();
+    if (!pool) throw new Error("STOCK_RUNTIME_DATABASE_UNAVAILABLE");
+    if (!isolatedHomologationPool) {
+      const [identityRows] = await pool.execute<Array<RowDataPacket & { databaseName: string | null; version: string }>>(
+        "SELECT DATABASE() AS databaseName, VERSION() AS version",
+      );
+      const identity = identityRows[0];
+      assertStockRuntimeDatabaseIdentity(stockRuntimeKind, identity, process.env.STOCK_EXPECTED_DATABASE);
     }
     const runtime = createStockCheckoutRuntime({
       pool,

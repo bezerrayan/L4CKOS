@@ -14,6 +14,7 @@
 .l4-hero-editorial-product { position: relative; isolation: isolate; min-width: 0; display: grid; place-items: center; }
 .l4-hero-editorial-product picture { display: block; width: 100%; }
 .l4-hero-editorial-image { display: block; width: 100%; height: auto; max-height: 440px; object-fit: contain; }
+.l4-home-preview .l4-hero-editorial-image { margin-inline: auto; }
 .l4-hero-editorial-fallback { min-height: 280px; display: grid; place-items: center; color: #9a9a9f; font-size: 14px; }
 .l4-hero-editorial-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; color: #a8a8ad; font-size: 12px; }
 .l4-hero-editorial-controls > button, .l4-hero-editorial-indicators button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #37373b; border-radius: 50%; background: #080808; color: #eee; cursor: pointer; }
@@ -36,4 +37,13 @@
   .l4-hero-editorial-copy h1 { font-size: clamp(40px, 10.5vw, 52px); overflow-wrap: anywhere; hyphens: auto; }
   .l4-hero-editorial-description { margin: 14px auto 20px; }
   .l4-hero-editorial-controls { justify-content: center; }
+}
+
+.l4-hero-editorial-frame:not(.has-media) {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.l4-hero-editorial-frame:not(.has-media) .l4-hero-editorial-copy {
+  max-width: 720px;
 }

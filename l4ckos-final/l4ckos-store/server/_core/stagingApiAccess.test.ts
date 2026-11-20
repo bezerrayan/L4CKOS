@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import {
   STAGING_API_ACCESS_HEADER,
 } from "./stagingApiAccess";
 import { ISOLATED_HOMOLOGATION_IDENTITY } from "./railwayEnvironment";
+import { resolveFinancialPhasePolicy } from "./financialPhasePolicy";
 
 const token = "synthetic-staging-api-access-token-0123456789";
 const environment = {
@@ -17,6 +19,7 @@ const environment = {
   RAILWAY_ENVIRONMENT_ID: ISOLATED_HOMOLOGATION_IDENTITY.environmentId,
   RAILWAY_SERVICE_ID: ISOLATED_HOMOLOGATION_IDENTITY.serviceId,
   STAGING_API_ACCESS_TOKEN: token,
+  PUBLIC_SITE_MODE: "coming-soon",
   PUBLIC_CHECKOUT_ENABLED: "false",
   STOCK_CHECKOUT_ENABLED: "false",
   STOCK_RUNTIME_ENABLED: "false",
@@ -29,9 +32,9 @@ const environment = {
   ALLOW_PUBLIC_LOCAL_SIGNUP_IN_PRODUCTION: "false",
 };
 
-async function withApi(run: (base: string) => Promise<void>) {
+async function withApi(run: (base: string) => Promise<void>, env = environment) {
   const app = express();
-  app.use(createStagingApiAccessMiddleware(environment));
+  app.use(createStagingApiAccessMiddleware(env));
   app.get("/health", (_req, res) => res.json({ ok: true }));
   app.post("/api/webhooks/asaas", (_req, res) => res.json({ handled: true }));
   app.get("/api/trpc/admin.secret", (_req, res) => res.json({ authenticated: false }));
@@ -63,6 +66,47 @@ describe("isolated staging API access gate", () => {
       .toThrow("STAGING_API_EXTERNAL_IDENTITY_OR_EMAIL_PROVIDER_MUST_BE_DISABLED");
     expect(() => assertStagingApiAccessConfiguration({ APP_ENV: "staging", NODE_ENV: "production" }))
       .toThrow("STAGING_API_RAILWAY_IDENTITY_INVALID");
+  });
+
+  it("allows only the authenticated webhook path through the proxy token gate in SANDBOX_WEBHOOK", async () => {
+    const ca = "-----BEGIN CERTIFICATE-----\nU1lO\n-----END CERTIFICATE-----";
+    const webhookPhase = {
+      ...environment,
+      G4_FINANCIAL_PHASE: "SANDBOX_WEBHOOK",
+      ASAAS_WEBHOOK_INBOUND_ENABLED: "true",
+      G4_SANDBOX_WEBHOOK_APPROVED: "true",
+      G4_SANDBOX_WEBHOOK_VALIDATED: "false",
+      G4_SANDBOX_CHECKOUT_APPROVED: "false",
+      G4_SANDBOX_CHECKOUT_VALIDATED: "false",
+      G4_SANDBOX_RECOVERY_APPROVED: "false",
+      ASAAS_ENV: "sandbox",
+      STOCK_ASAAS_MODE: "sandbox",
+      ASAAS_API_URL: "https://api-sandbox.asaas.com/v3",
+      ASAAS_CHECKOUT_BASE_URL: "https://sandbox.asaas.com",
+      ASAAS_SANDBOX_API_KEY: "$aact_hmlg_synthetic",
+      ASAAS_WEBHOOK_TOKEN: "synthetic-webhook-token-with-at-least-32-bytes",
+      ASAAS_WEBHOOK_ACCOUNT_ID: "synthetic-account-id",
+      ASAAS_WEBHOOK_ACCOUNT_CURRENCY: "BRL",
+      ASAAS_WEBHOOK_RECOVERY_MODE: "review_only",
+      EMAIL_ENV: "staging",
+      EMAIL_MODE: "restricted",
+      DATABASE_URL: "mysql://stage:synthetic@mysql-stock-homologation.railway.internal/railway",
+      STOCK_DATABASE_ENV: "staging",
+      STOCK_EXPECTED_DATABASE: "railway",
+      STAGING_DB_TLS_HOST: "mysql-stock-homologation.railway.internal",
+      STAGING_DB_TLS_CA_PEM: ca,
+      STAGING_DB_TLS_CA_SHA256: createHash("sha256").update(`${ca}\n`).digest("hex"),
+    };
+    expect(resolveFinancialPhasePolicy(webhookPhase)).toMatchObject({ phase: "SANDBOX_WEBHOOK", allowed: true });
+    expect(() => assertStagingApiAccessConfiguration(webhookPhase)).not.toThrow();
+    await withApi(async base => {
+      const hook = await fetch(`${base}/api/webhooks/asaas`, { method: "POST" });
+      expect(hook.status).toBe(200);
+      const other = await fetch(`${base}/api/trpc/admin.secret`);
+      expect(other.status).toBe(401);
+      const hookGet = await fetch(`${base}/api/webhooks/asaas`);
+      expect(hookGet.status).toBe(401);
+    }, webhookPhase);
   });
 
   it("rejects direct API calls without the gate token, including webhook routes", async () => {

@@ -20,6 +20,7 @@ import App from "./App";
 import "./index.css";
 import "./storefront.css";
 import "./styles/l4-polish.css";
+import "./styles/l4-display.css";
 
 // ============= SETUP TRPC =============
 

@@ -150,3 +150,32 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Preview apenas: footer mobile compacto e detalhe vermelho nos títulos.
+   Tudo escopado em .l4-footer-preview (classe aplicada por Footer.tsx só com VITE_DEPLOY_TARGET=preview),
+   para que staging/store e Production mantenham o footer da V6. */
+@media (max-width: 980px) {
+  .l4-footer.l4-footer-preview { padding: 30px 18px 16px; }
+  .l4-footer-preview .l4-footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 22px; padding-bottom: 20px; }
+  .l4-footer-preview .l4-footer-grid > div:first-child { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .l4-footer-preview .l4-footer-logo { width: 132px; }
+  .l4-footer-preview .l4-footer-text { max-width: 38ch; margin: 10px 0 0; }
+  .l4-footer-preview h4 { position: relative; width: fit-content; margin-bottom: 5px; padding-bottom: 6px; }
+  .l4-footer-preview h4::after { position: absolute; bottom: 0; left: 0; width: 24px; height: 2px; background: #e8002a; content: ""; }
+  .l4-footer-preview ul { gap: 2px; }
+  .l4-footer-preview li > a,
+  .l4-footer-preview .l4-footer-link-button { display: inline-flex; width: 100%; min-height: 44px; align-items: center; line-height: 1.35; }
+  .l4-footer-preview .l4-footer-socials { margin-bottom: 8px; }
+  .l4-footer-preview .l4-footer-bottom { flex-direction: column; align-items: center; gap: 4px; padding-top: 14px; text-align: center; }
+}
+
+@media (max-width: 560px) {
+  .l4-footer.l4-footer-preview { padding: 26px 18px 16px; }
+  .l4-footer-preview .l4-footer-grid { column-gap: 14px; row-gap: 8px; padding-bottom: 16px; }
+  .l4-footer-preview .l4-footer-logo { width: 128px; }
+  .l4-footer-preview .l4-footer-text { width: min(100%, 34ch); font-size: 12px; line-height: 1.5; }
+  .l4-footer-preview .l4-footer-socials { margin-top: 10px; }
+  .l4-footer-preview h4 { font-size: 19px; }
+  .l4-footer-preview a,
+  .l4-footer-preview .l4-footer-link-button { font-size: 12px; overflow-wrap: anywhere; }
+}

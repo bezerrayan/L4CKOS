@@ -103,6 +103,10 @@ function AppRoutes() {
   const isAllowedDuringComingSoon = comingSoonAllowedRoutes.has(location.pathname)
     || (import.meta.env.DEV && location.pathname === "/__admin-backup-visual-preview");
 
+  // In coming-soon mode the teaser owns the whole viewport, as on "/": the store Header, Footer and cookie banner
+  // must not be layered over its own header and calls to action.
+  if (comingSoonEnabled && location.pathname.replace(/\/+$/, "") === "/em-breve") return <ComingSoon />;
+
   if (comingSoonEnabled && !isAllowedDuringComingSoon) {
     if (isLoading) return <ComingSoon />;
     if (!isAdmin) return <ComingSoon />;

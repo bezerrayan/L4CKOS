@@ -19,7 +19,8 @@ export const CONFIRMED_DEMAND_SQL = `o.paymentStatus='confirmed' AND o.paymentCo
  OR (o.paymentConfirmationSource='asaas_webhook' AND LENGTH(TRIM(o.paymentConfirmationReference))>0))
  AND o.status IN ('paid','processing','shipped','delivered')`;
 export const CAPACITY_SQL = `SELECT COALESCE(SUM(i.quantity),0) n FROM orderItems i JOIN orders o ON o.id=i.orderId
- WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'`;
+ WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER'
+   AND (o.status<>'cancelled' OR o.paymentStatus='confirmed')`;
 export class BatchError extends Error {}
 const fail = (message: string): never => {
   throw new BatchError(message);

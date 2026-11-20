@@ -4,17 +4,19 @@ import { TRPCError } from "@trpc/server";
 const dbMocks = vi.hoisted(() => ({
   createVerifiedProductReview: vi.fn(),
   getEligibleReviewProducts: vi.fn(),
+  getProductByIdWithDetails: vi.fn(),
+  getProductReviews: vi.fn(),
 }));
 
 vi.mock("../db", () => ({
   createVerifiedProductReview: dbMocks.createVerifiedProductReview,
   getEligibleReviewProducts: dbMocks.getEligibleReviewProducts,
   getProducts: vi.fn(),
-  getProductByIdWithDetails: vi.fn(),
+  getProductByIdWithDetails: dbMocks.getProductByIdWithDetails,
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
   deleteProduct: vi.fn(),
-  getProductReviews: vi.fn(),
+  getProductReviews: dbMocks.getProductReviews,
   getPromoBanners: vi.fn(),
 }));
 
@@ -36,6 +38,10 @@ const user = {
 
 function createCaller() {
   return productsRouter.createCaller({ user, req: {} as any, res: {} as any });
+}
+
+function publicCaller() {
+  return productsRouter.createCaller({ user: null, req: {} as any, res: {} as any } as any);
 }
 
 const validInput = {
@@ -84,5 +90,24 @@ describe("products.reviewCreate", () => {
     dbMocks.createVerifiedProductReview.mockResolvedValue({ outcome: "invalid_image" });
     await expect(createCaller().reviewCreate({ ...validInput, imageToken: "b9a741dd-7402-4599-b87c-9479aa43ea28" }))
       .rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
+describe("public product reviews hide restricted catalog rows", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each(["Clã XIV Bis", "CLAN XIV-BIS", "[QA-STAGING] Fixture"])("returns NOT_FOUND for %s", async name => {
+    dbMocks.getProductByIdWithDetails.mockResolvedValue({
+      id: 7, name, variants: [{ sku: "QA-FIXTURE-M", price: 7990, stock: 9 }],
+    });
+    await expect(publicCaller().reviews(7)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(dbMocks.getProductReviews).not.toHaveBeenCalled();
+  });
+
+  it("preserves review projection for an ordinary product", async () => {
+    const response = { summary: { total: 0, average: 0 }, reviews: [] };
+    dbMocks.getProductByIdWithDetails.mockResolvedValue({ id: 8, name: "Produto legítimo", variants: [{ sku: "REAL-M" }] });
+    dbMocks.getProductReviews.mockResolvedValue(response);
+    await expect(publicCaller().reviews(8)).resolves.toEqual(response);
   });
 });

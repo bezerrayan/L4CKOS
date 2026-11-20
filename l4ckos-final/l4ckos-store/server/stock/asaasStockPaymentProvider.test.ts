@@ -29,7 +29,7 @@ describe("STOCK Asaas sandbox provider", () => {
     const provider = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer, createCharge });
     expect(provider.supportsIdempotencyKey).toBe(false);
     await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).resolves.toEqual({
-      paymentId: "pay-sandbox-fixture", checkoutUrl: "https://sandbox.asaas.com/checkout",
+      paymentId: "pay-sandbox-fixture", checkoutUrl: "https://sandbox.asaas.com/checkout", customerId: null,
     });
     expect(createCharge).toHaveBeenCalledWith(expect.objectContaining({
       orderId: 12345, value: 129, method: "PIX", description: "Pedido STOCK #12345",
@@ -59,5 +59,28 @@ describe("STOCK Asaas sandbox provider", () => {
     });
     await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).rejects.toThrow("STOCK_PAYMENT_RESPONSE_INCOMPLETE");
     expect(createCharge).toHaveBeenCalledOnce();
+  });
+});
+
+describe("STOCK provider idempotency key binding (V2)", () => {
+  const make = () => {
+    const createCharge = vi.fn(async () => ({ paymentId: "pay-x", checkoutUrl: "https://sandbox.asaas.com/checkout" }));
+    return { createCharge, provider: createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: async () => ({ name: "N", email: "b@example.invalid", cpfCnpj: "11111111111" }), createCharge }) };
+  };
+  const REF = "L4CKOS-STOCK-ATTEMPT:v1:" + "A".repeat(32);
+  it("accepts the attempt-bound key and forwards the strong reference to the charge", async () => {
+    const { provider, createCharge } = make();
+    await provider.createPayment({ orderId: "9", amountCents: 12900, idempotencyKey: `stock:9:${"A".repeat(32)}`, externalReference: REF });
+    expect(createCharge).toHaveBeenCalledWith(expect.objectContaining({ externalReference: REF }));
+  });
+  it.each([
+    ["legacy key with a strong reference", { idempotencyKey: "stock:9", externalReference: REF }],
+    ["another attempt's token", { idempotencyKey: `stock:9:${"B".repeat(32)}`, externalReference: REF }],
+    ["attempt key without reference", { idempotencyKey: `stock:9:${"A".repeat(32)}` }],
+    ["custom non-strong reference", { idempotencyKey: "stock:9", externalReference: "anything" }],
+  ])("rejects %s", async (_n, extra) => {
+    const { provider, createCharge } = make();
+    await expect(provider.createPayment({ orderId: "9", amountCents: 12900, ...(extra as any) })).rejects.toThrow(/STOCK_PAYMENT_(KEY_MISMATCH|REFERENCE_INVALID)/);
+    expect(createCharge).not.toHaveBeenCalled();
   });
 });

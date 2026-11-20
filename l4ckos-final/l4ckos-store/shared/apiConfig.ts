@@ -1,4 +1,8 @@
-export type ApiDeploymentTarget = "staging" | "production";
+/**
+ * "preview" is a protected, BFF-fronted artifact (Vercel preview): the browser talks ONLY to its own origin, which hosts the BFF; the real API
+ * origin and its access token exist server-side only. It is deliberately narrow: same-origin or nothing, HTTPS only, never on a production host.
+ */
+export type ApiDeploymentTarget = "staging" | "production" | "preview";
 
 export type ApiConfigInput = {
   apiUrl?: string;
@@ -19,6 +23,8 @@ export class ApiConfigError extends Error {
 const PRODUCTION_API_HOSTS = new Set(["api.l4ckos.com.br"]);
 const LEGACY_STAGING_API_HOSTS = new Set(["api-staging.l4ckos.com.br"]);
 const LOCAL_API_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+/** A preview artifact must never be served from (or talk to) a production or staging L4CKOS host. */
+const PREVIEW_FORBIDDEN_HOSTS = new Set(["l4ckos.com.br", "www.l4ckos.com.br", "api.l4ckos.com.br", "api-staging.l4ckos.com.br", "staging.l4ckos.com.br"]);
 
 function isLocalApiUrl(url: URL): boolean {
   return LOCAL_API_HOSTS.has(url.hostname.toLowerCase());
@@ -27,8 +33,8 @@ function isLocalApiUrl(url: URL): boolean {
 function parseTarget(value?: string): ApiDeploymentTarget | undefined {
   const target = value?.trim().toLowerCase();
   if (!target) return undefined;
-  if (target === "staging" || target === "production") return target;
-  throw new ApiConfigError("API_TARGET_INVALID", "VITE_DEPLOY_TARGET must be staging or production.");
+  if (target === "staging" || target === "production" || target === "preview") return target;
+  throw new ApiConfigError("API_TARGET_INVALID", "VITE_DEPLOY_TARGET must be staging, production or preview.");
 }
 
 function parseRemoteUrl(value: string, allowLocalHttp = false): URL {
@@ -61,6 +67,12 @@ export function validateBuildApiConfig(input: Pick<ApiConfigInput, "apiUrl" | "t
   if (!target) throw new ApiConfigError("API_TARGET_REQUIRED", "Set VITE_DEPLOY_TARGET=staging or production for a release build.");
   const value = input.apiUrl?.trim();
   if (!value) throw new ApiConfigError("API_URL_REQUIRED", "VITE_API_URL is required for a release build.");
+
+  if (target === "preview") {
+    // The only accepted destination is the page's own origin (the BFF). No absolute URL, no relative path, no allowlist to bypass.
+    if (value !== "same-origin") throw new ApiConfigError("PREVIEW_API_SAME_ORIGIN_REQUIRED", "A preview build must set VITE_API_URL=same-origin (the BFF on the preview origin).");
+    return;
+  }
 
   if (target === "staging") {
     validateStagingApiConfig(value, input.stagingApiAllowedOrigins);
@@ -135,6 +147,12 @@ export function resolveApiUrl(input: ApiConfigInput): URL {
   if (input.currentOrigin && new URL(input.currentOrigin).hostname === "staging.l4ckos.com.br") {
     if (target !== "staging") throw new ApiConfigError("STAGING_API_ORIGIN_MISMATCH", "The staging frontend requires a staging build.");
     validateBuildApiConfig(input);
+  }
+  if (target === "preview") {
+    if (!input.currentOrigin) throw new ApiConfigError("API_URL_INVALID", "A preview build requires a browser origin.");
+    const origin = new URL(input.currentOrigin);
+    if (origin.protocol !== "https:") throw new ApiConfigError("PREVIEW_ORIGIN_INVALID", "A preview build must run on an HTTPS origin.");
+    if (PREVIEW_FORBIDDEN_HOSTS.has(origin.hostname.toLowerCase())) throw new ApiConfigError("PREVIEW_ORIGIN_FORBIDDEN", "A preview build cannot run on a production or staging L4CKOS host.");
   }
   if (!input.isDevelopment || target === "staging") validateBuildApiConfig(input);
   const configured = input.apiUrl?.trim() || (input.isDevelopment ? input.legacyBackendUrl?.trim() : undefined);

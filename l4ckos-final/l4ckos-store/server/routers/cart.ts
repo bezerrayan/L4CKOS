@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
-import { getCartItems, addToCart, removeFromCartByUser, clearCart, getProductById } from "../db";
+import { getCartItems, addToCart, removeFromCartByUser, clearCart, getProductByIdWithDetails } from "../db";
 import { assertCanAddToServerCart } from "../exclusive/checkoutGuard";
+import { isPublicProductUnavailable } from "../database/publicPurchasePolicy";
+import { TRPCError } from "@trpc/server";
 
 export const cartRouter = router({
   // Listar itens do carrinho do usuário autenticado
@@ -11,15 +13,17 @@ export const cartRouter = router({
     // Enriquecer os itens com informações do produto
     const enrichedItems = await Promise.all(
       items.map(async (item) => {
-        const product = await getProductById(item.productId);
+        const product = await getProductByIdWithDetails(item.productId);
+        if (!product || isPublicProductUnavailable(product.name, product.variants)) return null;
+        const { variants: _variants, images: _images, productionBatch: _batch, ...cartProduct } = product;
         return {
           ...item,
-          product,
+          product: cartProduct,
         };
       })
     );
 
-    return enrichedItems;
+    return enrichedItems.filter((item): item is NonNullable<typeof item> => item !== null);
   }),
 
   // Adicionar item ao carrinho
@@ -31,6 +35,10 @@ export const cartRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      const product = await getProductByIdWithDetails(input.productId);
+      if (!product || isPublicProductUnavailable(product.name, product.variants)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
+      }
       // Exclusive products need an unlocked, in-quota authorization even to enter the server cart (checkout re-verifies).
       await assertCanAddToServerCart({ userId: ctx.user.id, productId: input.productId, quantity: input.quantity });
       await addToCart(ctx.user.id, input.productId, input.quantity);

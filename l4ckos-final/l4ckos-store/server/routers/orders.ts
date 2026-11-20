@@ -21,6 +21,7 @@ import { createAsaasChargeForOrder } from "../services/asaas";
 import { quoteShippingDetailed } from "../services/shippingService";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
 import { assertNoExclusiveInLegacyCheckout } from "../exclusive/checkoutGuard";
+import { assertStagingSyntheticBuyerTrpc } from "../payments/syntheticBuyerGate";
 
 import { securityLog } from "../_core/security";
 import { PublicCheckoutDisabledError, PublicStoreClosedError, assertPublicCheckoutEnabled, publicCheckoutDisabledTrpcError, publicStoreClosedTrpcError } from "../_core/publicStore";
@@ -220,7 +221,8 @@ export const ordersRouter = router({
         shipping: shippingSelectionSchema,
       }).strict(),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      assertStagingSyntheticBuyerTrpc(ctx.user.id);
       const pricing = await resolveOrderPricing({
         items: input.items,
         shipping: input.shipping,
@@ -262,6 +264,7 @@ export const ordersRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       let orderId = 0;
+      assertStagingSyntheticBuyerTrpc(ctx.user.id);
 
       try {
         assertCheckoutMethodEnabled(input.method);

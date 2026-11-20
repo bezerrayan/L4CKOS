@@ -254,10 +254,13 @@ export default function ProductDetail() {
     if (productQuery.isLoading) {
       return <div className="l4-product-loading" role="status"><div className="l4-skeleton-card" aria-hidden="true" /><p>Carregando os detalhes da peça...</p></div>;
     }
+    // A definitive API NOT_FOUND (removed/unknown product) is not a connectivity failure.
+    const loadFailed = productQuery.isError
+      && (productQuery.error as { data?: { code?: string } | null } | null)?.data?.code !== "NOT_FOUND";
     return (
       <div style={styles.errorContainer as CSSProperties}>
-        <h1>{productQuery.isError ? "Não conseguimos carregar esta peça" : "Produto não encontrado"}</h1>
-        <p>{productQuery.isError ? "Verifique sua conexão e tente novamente em instantes." : "Explore a coleção para encontrar outras peças."}</p>
+        <h1>{loadFailed ? "Não conseguimos carregar esta peça" : "Produto não encontrado"}</h1>
+        <p>{loadFailed ? "Verifique sua conexão e tente novamente em instantes." : "Explore a coleção para encontrar outras peças."}</p>
         <button
           onClick={handleGoBack}
           style={styles.backButton as CSSProperties}
@@ -319,6 +322,12 @@ export default function ProductDetail() {
   const quotaUsedUpByCart = Number.isFinite(quotaLeft) && quotaLeft <= 0;
   const purchaseLocked = dropQuery.isLoading || exclusiveBlocked || quotaUsedUpByCart;
   const canAddToCart = Boolean(selectedColor && selectedSize && available);
+  // A product with sellable variants is not "unavailable" merely because the customer has not picked color and size yet:
+  // the buttons stay usable and ask for the selection instead.
+  const selectionPending = hasVariants && publicPurchaseAllowed && publicVariants.length > 0 && !(selectedColor && selectedSize);
+  const canStartPurchase = available || selectionPending;
+  // The variants request failed (not merely loading): availability is unknown, which is not the same as sold out.
+  const availabilityUnknown = !variantCatalogReady && sellableVariantsQuery.isError;
   const missingSelections: string[] = [];
   const formattedPrice = formatStorefrontPrice(selectedVariant ? productPriceFromCents(selectedVariant.price) : product.price);
   if (!selectedColor) missingSelections.push("cor");
@@ -326,7 +335,7 @@ export default function ProductDetail() {
 
   const handleAddToCart = () => {
     if (purchaseLocked) return;
-    if (!available) {
+    if (!canStartPurchase) {
       showToast({
         message: "Este produto está Indisponível no momento.",
         duration: 3500,
@@ -374,7 +383,7 @@ export default function ProductDetail() {
 
   const handleBuyNow = () => {
     if (purchaseLocked) return;
-    if (!available) {
+    if (!canStartPurchase) {
       showToast({ message: "Este produto está indisponível no momento.", duration: 3500 });
       return;
     }
@@ -685,14 +694,14 @@ export default function ProductDetail() {
             <button
               onClick={handleBuyNow}
               className="l4-detail-buy"
-              disabled={!available}
+              disabled={!canStartPurchase}
             >
-              {available ? "Comprar agora" : "Indisponível"}
+              {canStartPurchase ? "Comprar agora" : "Indisponível"}
             </button>
             <button
               onClick={handleAddToCart}
               className="l4-detail-add"
-              disabled={!available}
+              disabled={!canStartPurchase}
             >
               Adicionar à sacola
             </button>
@@ -705,7 +714,12 @@ export default function ProductDetail() {
             </p>
           )}
 
-          {product.salesMode !== "PREORDER" && (hasVariants || product.stock >= 0) && (
+          {availabilityUnknown ? (
+            <div style={styles.stockInfo as CSSProperties} role="status">
+              <span style={{ color: "#ff869a" }}>Não foi possível verificar a disponibilidade agora. Tente novamente em instantes.</span>
+            </div>
+          ) : null}
+          {!availabilityUnknown && product.salesMode !== "PREORDER" && (hasVariants || product.stock >= 0) && (
             <div style={styles.stockInfo as CSSProperties} role="status">
               <span style={{ color: (hasVariants ? Number(selectedVariant?.availableUnits ?? 0) : product.stock) > 5 ? "#d1d5db" : "#ff869a" }}>
                 {hasVariants && !selectedVariant

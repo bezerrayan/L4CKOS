@@ -301,7 +301,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         "92e96ae744d2112c5b4a430abc9a75d557a43d293652dd68369aa81786479f09"
       )
         throw Error("REMOTE_FORBIDDEN");
-      await root.query("CREATE DATABASE `" + database + "`");
+      await root.query("CREATE DATABASE `" + database + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
       c = await openBackupConnection(
         "mysql://root@localhost/" + database,
         socket

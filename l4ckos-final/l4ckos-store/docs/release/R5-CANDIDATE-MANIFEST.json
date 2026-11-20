@@ -1,0 +1,38 @@
+{
+  "format": "l4ckos-r5-candidate-manifest-v1",
+  "candidate_kind": "reconstructed-review-candidate",
+  "base_commit": "4e548622f320fd19abd752906dc567b8d5a45be2",
+  "base_tree": "2b4dc8207111ef6c123e327662658c1256903b65",
+  "component_sources": {
+    "p23_snapshot": "/home/yan/.local/share/l4ckos/production-prep-20261118/p23-build",
+    "p3i_snapshot": "/home/yan/.local/share/l4ckos/production-prep-20261118/p3i-build",
+    "p2_3_patch_sha256": "490afe9424347cb62e2c349f2043b99f0759d303918eefd057b12424363b949b",
+    "p3_incremental_patch_sha256": "f1b3365a48c22ed0bf355d8647a66c7c22976529506193cc9e01ceb42109c880",
+    "real_c7_ca_pem_sha256": "4365d180154640779b83dbd8ae014bbf187b513e0b87839c2fba220e47986a49"
+  },
+  "snapshot_comparison": {
+    "p23_safe_files": 1272,
+    "p3i_safe_files": 1272,
+    "different_paths_between_snapshots": 6,
+    "base_files": 1232,
+    "p23_added": 40,
+    "p23_modified": 100,
+    "base_files_missing": 0,
+    "p23_files_without_exact_path_provenance_after_approved_patch_exclusions": 112,
+    "unverified_file_list": "R5-UNVERIFIED-SNAPSHOT-FILES.txt",
+    "full_delta": "R5-SNAPSHOT-DELTA.csv"
+  },
+  "candidate_changes": [
+    "Integrate P2.3 Asaas source files and P3 c7 TLS registry files.",
+    "Gate STOCK resume/resumeLatest while public checkout is closed.",
+    "Add an opt-in, exact-owner, one-attempt, expiring and amount-limited PIX test gate; no schema change."
+  ],
+  "validation": {
+    "runtime": "Node 22.23.2; pnpm 10.4.1",
+    "targeted_tests": "22 files; 287 passed; 1 skipped (real leaf cert fixture absent)",
+    "typecheck": "pnpm check PASS",
+    "clean_production_build": "dist removed; VITE_DEPLOY_TARGET=production VITE_API_URL=https://api.l4ckos.com.br pnpm build PASS"
+  },
+  "release_status": "NOT_PRODUCTION_APPROVED: exact provenance/review of 112 snapshot files remains unresolved",
+  "remote_mutations": "NONE"
+}

@@ -23,7 +23,7 @@ let replies: any[];
 let fetcher: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.stubEnv("ASAAS_API_URL", "https://api-sandbox.asaas.com/v3");
-  vi.stubEnv("ASAAS_API_KEY", "synthetic-local-key");
+  vi.stubEnv("ASAAS_API_KEY", "$aact_hmlg_synthetic-local-key"); vi.stubEnv("ASAAS_ENV", "sandbox");
   replies = [
     {
       id: PAYMENT13,
@@ -94,8 +94,9 @@ describe("fixed Sandbox proof and safe CLI", () => {
   });
   it("rejects production URL before any network call", async () => {
     vi.stubEnv("ASAAS_API_URL", "https://api.asaas.com/v3");
+    // P2.1: the environment/endpoint binding now refuses the crossed combination first; either code means "rejected before any network call".
     await expect(readSandboxNoopEvidence()).rejects.toThrow(
-      "NOOP_SANDBOX_REQUIRED"
+      /^(NOOP_SANDBOX_REQUIRED|ASAAS_ENVIRONMENT_MISMATCH)$/
     );
     expect(fetcher).not.toHaveBeenCalled();
   });

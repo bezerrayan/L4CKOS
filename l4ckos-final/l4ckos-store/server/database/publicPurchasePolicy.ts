@@ -6,27 +6,34 @@ function compactIdentity(value: string | null | undefined) {
     .replace(/[^a-z0-9]/g, "");
 }
 
-/** The Clã 14 Bis collaboration remains closed until a server-side authorization contract exists. */
+/** Partnership products remain closed until a server-side authorization contract exists. */
 export function isRestrictedPublicPurchase(
   name: string | null | undefined,
   skuOrSkus?: string | null | readonly (string | null | undefined)[],
+  partnershipExclusive = false,
 ) {
+  if (partnershipExclusive === true) return true;
   const normalizedName = compactIdentity(name);
-  if (normalizedName.includes("cla14bis") || normalizedName.includes("clan14bis")) return true;
+  if (["claxivbis", "clanxivbis", "cla14bis", "clan14bis", "xivbis", "14bis"].some(marker => normalizedName.includes(marker))) return true;
   const skus = typeof skuOrSkus === "string" || skuOrSkus == null ? [skuOrSkus] : skuOrSkus;
-  return skus.some(sku => /^14b/.test(compactIdentity(sku)));
+  return skus.some(sku => {
+    const identity = compactIdentity(sku);
+    return /^14b/.test(identity) || ["claxivbis", "clanxivbis", "cla14bis", "clan14bis", "xivbis", "14bis"].some(marker => identity.includes(marker));
+  });
 }
 
-/**
- * QA catalog fixtures are kept in the admin catalog but must not be discoverable
- * from public product endpoints. Require both the staging QA label and QA-marked
- * SKUs for every variant; a product name prefix alone is not a visibility rule.
- */
+/** A QA label is an explicit classification; malformed or missing SKUs must not unhide it. */
 export function isStagingQaCatalogProduct(
   name: string | null | undefined,
-  variants: Array<{ sku?: string | null }> | null | undefined,
+  _variants?: Array<{ sku?: string | null }> | null,
 ) {
-  if (!/^\s*\[QA-STAGING\](?:\s|$)/iu.test(String(name ?? ""))) return false;
-  if (!variants?.length) return false;
-  return variants.every(variant => /^QA-[A-Z0-9]+(?:-[A-Z0-9]+)*$/iu.test(String(variant.sku ?? "").trim()));
+  return /^\s*\[QA-STAGING\](?:\s|$)/iu.test(String(name ?? ""));
+}
+
+/** Single fail-closed policy for public reads, cart entry, availability and checkout. */
+export function isPublicProductUnavailable(
+  name: string | null | undefined,
+  variants?: Array<{ sku?: string | null }> | null,
+) {
+  return isStagingQaCatalogProduct(name) || isRestrictedPublicPurchase(name, variants?.map(variant => variant.sku));
 }

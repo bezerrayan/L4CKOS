@@ -34,6 +34,8 @@ import { baselineDatabase } from "../../database/schema/baseline";
 import { migrateDatabase, loadLineage, readOperationalManifest } from "../../database/migrations/runner";
 import { ledgerRows } from "../../database/schema/governance";
 import { productionBatchesRouter } from "../routers/productionBatches";
+import { applyStockV6Migration } from "../stock/testing/applyStockV6Migration";
+import { createVariantOptionKey } from "./productVariantIdentity";
 import {
   batchAcceptsSales,
   productionLabel,
@@ -52,7 +54,21 @@ const commit = "83ee0d835e9bacadc12ac3d08603ce7600135b97";
 const connections: Connection[] = [],
   names: string[] = [];
 let root: Connection;
-async function database(version: 1 | 2 = 2, seed = true) {
+async function applyOperationalStockFixtureSchema(c: Connection, name: string) {
+  for (const migration of [
+    "0021_preorder_production_batches.sql",
+    "0022_preorder_manufacturing_schedule.sql",
+    "0023_asaas_webhook_inbox.sql",
+    "0024_home_highlight_settings.sql",
+    "0025_product_variant_identity.sql",
+  ]) {
+    const source = await readFile(new URL(`../../database/migrations/${migration}`, import.meta.url), "utf8");
+    for (const statement of source.split(/^-- l4ckos:statement-breakpoint\s*$/m).map(part => part.trim()).filter(Boolean))
+      await c.query(statement);
+  }
+  await applyStockV6Migration(c, name);
+}
+async function database(version: 1 | 2 = 2, seed = true, operationalStock = version === 2 && seed) {
   const name =
     "l4ckos_test_preorder_" + randomUUID().replaceAll("-", "").slice(0, 10);
   assertLocalRestoreTarget(url(name), socketPath);
@@ -62,11 +78,11 @@ async function database(version: 1 | 2 = 2, seed = true) {
   names.push(name);
   const c = await openBackupConnection(url(name), socketPath);
   connections.push(c);
-  for (const s of (version === 2
+  for (const s of (version === 2 && !operationalStock
     ? await currentBootstrapArtifacts()
-    : await bootstrapArtifacts()
-  ).statements)
+    : await bootstrapArtifacts()).statements)
     await c.query(s.sql);
+  if (operationalStock) await applyOperationalStockFixtureSchema(c, name);
   if (seed) {
     await c.query(
       "INSERT INTO users (id,openId,name,role) VALUES (1,'synthetic-preorder-admin','Synthetic Admin','admin'),(2,'synthetic-preorder-user','Synthetic User','user')"
@@ -74,9 +90,14 @@ async function database(version: 1 | 2 = 2, seed = true) {
     await c.query(
       "INSERT INTO products (id,name,category,price,stock) VALUES (1,'Sideways Dreams','fixture',8000,0),(2,'Unknown Territory','fixture',5000,0),(3,'Stock Fixture','fixture',3000,10)"
     );
-    await c.query(
-      "INSERT INTO productVariants (id,productId,name,size,color,stock,sku) VALUES (1,1,'M / Preto','M','Preto',0,'FIXTURE-M'),(2,2,'G / Preto','G','Preto',0,'FIXTURE-G'),(3,1,'P / Preto','P','Preto',0,'FIXTURE-P')"
-    );
+    if (version === 1) {
+      await c.query("INSERT INTO productVariants (id,productId,name,stock) VALUES (1,1,'M / Preto',0),(2,2,'G / Preto',0),(3,1,'P / Preto',0)");
+    } else {
+      await c.query(
+        "INSERT INTO productVariants (id,productId,name,size,color,stock,sku,optionKey,price,isActive) VALUES (1,1,'M / Preto','M','Preto',0,'FIXTURE-M',?,?,1),(2,2,'G / Preto','G','Preto',0,'FIXTURE-G',?,?,1),(3,1,'P / Preto','P','Preto',0,'FIXTURE-P',?,?,1)",
+        [createVariantOptionKey("Preto", "M"), 8000, createVariantOptionKey("Preto", "G"), 5000, createVariantOptionKey("Preto", "P"), 8000]
+      );
+    }
   }
   return c;
 }
@@ -122,14 +143,23 @@ const adapters = () => ({
   quote: vi.fn(async () => ({
     options: [{ id: "local", label: "Local", price: 5 }],
   })),
-  charge: vi.fn(async () => payment),
+  // Each simulated charge is a distinct provider object. Reusing one fixed
+  // payment ID across separate orders exercises the runtime's duplicate-ID
+  // recovery guard instead of the scenario under test.
+  charge: vi.fn(async () => ({ ...payment, paymentId: `synthetic-payment-${randomUUID()}` })),
 });
+const variantDimensions: Record<number, { size: string; color: string }> = {
+  1: { size: "M", color: "Preto" }, 2: { size: "G", color: "Preto" }, 3: { size: "P", color: "Preto" },
+};
 const input = (
   items: CheckoutInput["items"] = [{ productId: 1, variantId: 1, quantity: 2 }]
 ): CheckoutInput => ({
   userId: 2,
   checkoutAttemptId: randomUUID(),
-  items,
+  items: items.map(item => {
+    const dimensions = item.variantId === undefined ? undefined : variantDimensions[item.variantId];
+    return dimensions ? { ...item, size: item.size ?? dimensions.size, color: item.color ?? dimensions.color } : item;
+  }),
   method: "PIX",
   shipping: { cep: "70000000", optionId: "local" },
   shippingAddress: {
@@ -294,7 +324,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       } finally {process.env.DATABASE_URL=prior;vi.resetModules();}
     });
     it.each([false, true])("cancellation releases active MIXED reservations once without refund or stock restoration, paid=%s", async confirmed => {
-      const {c,id}=await fixture(); const a=adapters(), request=input([{productId:1,quantity:1},{productId:3,quantity:2}]);
+      const {c,id}=await fixture(); const a=adapters(), request=input([{productId:1,variantId:1,quantity:1},{productId:3,quantity:2}]);
       const r=await checkout(c,request,a), original=await query(c,"SELECT * FROM orderItems WHERE orderId=?",[r.orderId]);
       const prior=process.env.DATABASE_URL;
       process.env.DATABASE_URL=url(c.config.database!)+"?socketPath="+encodeURIComponent(socketPath);
@@ -328,8 +358,11 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         expect((await query(c,'SELECT stock FROM products WHERE id=3'))[0].stock).toBe(reservation.status==='consumed'?8:10);
         const e=await checkout(c,input([{productId:3,quantity:1}]),adapters());
         await expect(db.reserveExternalCheckoutCreation(e.orderId,2)).rejects.toThrow('reconciliation');
-        const [inserted]=await c.query<any>('INSERT INTO orders (userId,totalPrice) VALUES (2,3000)');
-        const legacyId=Number(inserted.insertId);
+        // Model a historical STOCK order with real item and reservation rows.
+        // A bare order row is not eligible for external charge recovery.
+        const historical=await checkout(c,input([{productId:3,quantity:1}]),adapters());
+        await c.query('UPDATE orders SET checkoutAttemptId=NULL WHERE id=?',[historical.orderId]);
+        const legacyId=Number(historical.orderId);
         const claims=await Promise.allSettled([db.reserveExternalCheckoutCreation(legacyId,2),db.reserveExternalCheckoutCreation(legacyId,2)]);
         expect(claims.filter(x=>x.status==='fulfilled')).toHaveLength(1);
         await expect(db.reserveExternalCheckoutCreation(legacyId,2)).rejects.toThrow('reconciliation');
@@ -618,7 +651,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       const { c } = await fixture(3),
         a = adapters();
       await expect(
-        checkout(c, input([{ productId: 1, quantity: 4 }]), a)
+        checkout(c, input([{ productId: 1, variantId: 1, quantity: 4 }]), a)
       ).rejects.toThrow("CHECKOUT_BATCH_CAPACITY_EXCEEDED");
       expect(a.charge).not.toHaveBeenCalled();
       expect((await query(c, "SELECT COUNT(*) n FROM orderItems"))[0].n).toBe(
@@ -631,7 +664,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         a = adapters();
       const results = await Promise.allSettled(
         clients.map((client, i) =>
-          checkout(client, input([{ productId: (i % 2) + 1, quantity: 1 }]), a)
+          checkout(client, input([{ productId: (i % 2) + 1, variantId: (i % 2) + 1, quantity: 1 }]), a)
         )
       );
       expect(results.filter(r => r.status === "fulfilled")).toHaveLength(5);
@@ -665,7 +698,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       );
       await paid(c, r.orderId);
       await expect(
-        checkout(c, input([{ productId: 2, quantity: 1 }]), adapters())
+        checkout(c, input([{ productId: 2, variantId: 2, quantity: 1 }]), adapters())
       ).rejects.toThrow("CHECKOUT_BATCH_CAPACITY_EXCEEDED");
       await c.query("UPDATE orders SET status='cancelled' WHERE id=?", [
         r.orderId,
@@ -691,8 +724,8 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
     });
     it("unlimited preorder accepts multiple orders and large quantity without false stock", async () => {
       const { c } = await fixture();
-      await checkout(c, input([{ productId: 1, quantity: 99 }]), adapters());
-      await checkout(c, input([{ productId: 2, quantity: 99 }]), adapters());
+      await checkout(c, input([{ productId: 1, variantId: 1, quantity: 99 }]), adapters());
+      await checkout(c, input([{ productId: 2, variantId: 2, quantity: 99 }]), adapters());
       expect(
         (await query(c, "SELECT stock FROM products WHERE id=1"))[0].stock
       ).toBe(0);
@@ -727,7 +760,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         checkout(
           c,
           input([
-            { productId: 1, quantity: 2 },
+            { productId: 1, variantId: 1, quantity: 2 },
             { productId: 3, quantity: 11 },
           ]),
           adapters()
@@ -924,16 +957,16 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
       const r = await checkout(
         c,
         input([
-          { productId: 1, quantity: 2 },
+          { productId: 1, variantId: 1, quantity: 2 },
           { productId: 3, quantity: 1 },
         ]),
         adapters()
       );
       await paid(c, r.orderId);
       const artifact = await backupDatabase(c);
-      expect(artifact.tableManifestVersion).toBe(5);
-      expect(Object.keys(artifact.tables)).toHaveLength(28);
-      const destination = await database(2, false);
+      expect(artifact.tableManifestVersion).toBe(6);
+      expect(Object.keys(artifact.tables)).toHaveLength(31);
+      const destination = await database(2, false, true);
       await restoreDatabase(destination, JSON.parse(JSON.stringify(artifact)), {
         url: url(destination.config.database!),
         socketPath,
@@ -976,7 +1009,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         r = await checkout(
           c,
           input([
-            { productId: 1, quantity: 2 },
+            { productId: 1, variantId: 1, quantity: 2 },
             { productId: 3, quantity: 2 },
           ]),
           adapters()
@@ -1063,7 +1096,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")(
         ).toEqual(storefront.productionBatch?.capacity);
         const blocked = adapters();
         await expect(
-          checkout(c, input([{ productId: 1, quantity: 4 }]), blocked)
+          checkout(c, input([{ productId: 1, variantId: 1, quantity: 4 }]), blocked)
         ).rejects.toThrow("CHECKOUT_BATCH_CAPACITY_EXCEEDED");
         expect(blocked.charge).not.toHaveBeenCalled();
         expect((await query(c, "SELECT COUNT(*) n FROM orders"))[0].n).toBe(1);

@@ -11,7 +11,6 @@ import {
   assertRecoveryFence,
   RECOVERY_HOLD_ACTION,
 } from "./webhookRecovery";
-import { getAsaasPayment } from "../services/asaasService";
 import { ENV } from "../_core/env";
 import { assertRestrictedEmailRecipientsAllowed } from "../services/email/recipientPolicy.js";
 
@@ -70,6 +69,7 @@ const scope = new AsyncLocalStorage<{
   expiresAt: number;
   method: string;
   policyVersion: number;
+  released: boolean;
 }>();
 export function assertSelectedLedgerBinding(input: {
   eventId: string;
@@ -92,6 +92,9 @@ export function selectiveEffectsAllowed() {
 }
 export function selectiveEventAllowed(eventId: string) {
   return selectiveEffectsAllowed() && scope.getStore()!.eventId === eventId;
+}
+export function selectiveEventReleased(eventId: string) {
+  return selectiveEventAllowed(eventId) && scope.getStore()!.released;
 }
 export function selectiveOrderAllowed(orderId: number) {
   return selectiveEffectsAllowed() && scope.getStore()!.orderId === orderId;
@@ -274,13 +277,12 @@ export async function loadSelectedGrant(
   const cardReviewHeld = holds.some(h => ["PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "PAYMENT_REPROVED_BY_RISK_ANALYSIS"].includes(json(h.metadata).eventType));
   return { grant, g, d, order, payment, email: user.email, cardReviewHeld };
 }
-export async function verifySelectedProvider(d: any, event?: string) {
-  let p: Awaited<ReturnType<typeof getAsaasPayment>>;
-  try {
-    p = await getAsaasPayment(d.request.paymentId);
-  } catch {
-    throw new AdmissionDenied("SELECTIVE_PROVIDER_READ_REQUIRED");
-  }
+export async function verifySelectedProvider(
+  d: any,
+  event?: string,
+  p?: Record<string, any>,
+) {
+  if (!p) throw new AdmissionDenied("SELECTIVE_PROVIDER_READ_REQUIRED");
   requireAdmission(
     p.id === d.request.paymentId &&
       parseAsaasOrderReference(p.externalReference) === d.request.orderId &&
@@ -321,7 +323,7 @@ export function checkedEnvelope(record: InboxRecord) {
   );
   return p;
 }
-export async function validateSelectedEvent(db: Executor, record: InboxRecord) {
+export async function validateSelectedEvent(db: Executor, record: InboxRecord, providerPayment?: Record<string, any>) {
   const p = checkedEnvelope(record),
     orderId = parseAsaasOrderReference(
       p.payment?.externalReference ?? p.externalReference
@@ -348,11 +350,11 @@ export async function validateSelectedEvent(db: Executor, record: InboxRecord) {
       ? p.payment.status === "PENDING"
       : ["CONFIRMED", "RECEIVED"].includes(p.payment.status)
   );
-  await verifySelectedProvider(selected.d, p.event);
+  await verifySelectedProvider(selected.d, p.event, providerPayment);
   return { p, ...selected };
 }
 /** First receipt only. A grant never releases an existing hold or an unmarked worker backlog. */
-export async function admitFirstReceipt(db: Executor, record: InboxRecord) {
+export async function admitFirstReceipt(db: Executor, record: InboxRecord, providerPayment?: Record<string, any>) {
   try {
     if (
       await auditRecord(
@@ -373,7 +375,7 @@ export async function admitFirstReceipt(db: Executor, record: InboxRecord) {
       requireAdmission(json(prior.metadata).payloadHash === record.payloadHash);
       return true;
     }
-    const s = await validateSelectedEvent(db, record);
+    const s = await validateSelectedEvent(db, record, providerPayment);
     await insertAdmissionAudit(
       db,
       ADMIT,
@@ -397,9 +399,11 @@ export async function admitFirstReceipt(db: Executor, record: InboxRecord) {
 export async function runSelectedEvent<T>(
   db: Executor,
   record: InboxRecord,
-  action: () => Promise<T>
+  action: () => Promise<T>,
+  providerPayment?: Record<string, any>,
 ) {
   let s: Awaited<ReturnType<typeof validateSelectedEvent>>;
+  let released = false;
   try {
     requireAdmission(
       !(await auditRecord(
@@ -415,6 +419,7 @@ export async function runSelectedEvent<T>(
       "asaasWebhookInbox",
       eventKey(record.eventId)
     );
+    released = Boolean(held);
     const marker = await auditRecord(
       db,
       held ? RELEASE : ADMIT,
@@ -431,7 +436,7 @@ export async function runSelectedEvent<T>(
         m.holdId === held.id &&
           m.holdHash === admissionHash(json(held.metadata))
       );
-    s = await validateSelectedEvent(db, record);
+    s = await validateSelectedEvent(db, record, providerPayment);
     requireAdmission(m.grantId === s.grant.id);
   } catch (e) {
     if (e instanceof AdmissionDenied) return { admitted: false } as const;
@@ -447,6 +452,7 @@ export async function runSelectedEvent<T>(
       expiresAt,
       method: s.d.request.method,
       policyVersion: s.d.policyVersion ?? 1,
+      released,
     },
     async () => {
       const value = await action();

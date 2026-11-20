@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "../contexts/ToastContext";
 import { getLoginUrl } from "../const";
+import { authPageUrl, sanitizeNextPath } from "../utils/safeNext";
 import { trpc } from "../lib/trpc";
 import { getPasswordPolicyDetails } from "../../../shared/passwordPolicy";
 import PasswordChecklist from "../components/auth/PasswordChecklist";
@@ -15,6 +16,8 @@ function isValidEmail(email: string) {
 
 export default function Cadastro() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const safeNextPath = sanitizeNextPath(new URLSearchParams(location.search).get("next"));
   const { showToast } = useToast();
   const { isAuthenticated, isLoading } = useUser();
   const utils = trpc.useUtils();
@@ -27,8 +30,8 @@ export default function Cadastro() {
   const showTopAlert = Boolean(formError && formError.code !== "WEAK_PASSWORD" && formError.code !== "PASSWORD_MISMATCH");
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) navigate("/", { replace: true });
-  }, [isAuthenticated, isLoading, navigate]);
+    if (!isLoading && isAuthenticated) navigate(safeNextPath, { replace: true });
+  }, [isAuthenticated, isLoading, navigate, safeNextPath]);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target;
@@ -70,7 +73,7 @@ export default function Cadastro() {
       await localSignupMutation.mutateAsync({ name: `${formData.firstName} ${formData.lastName}`.trim() || formData.firstName, email: normalizedEmail, password: formData.password });
       await utils.auth.me.invalidate();
       showToast({ message: "Cadastro realizado com sucesso!", duration: 3000 });
-      navigate("/");
+      navigate(safeNextPath);
     } catch (error) {
       const parsed = getApiErrorDisplay(error, "Não foi possível criar sua conta agora.");
       setFormError({ code: parsed.code, message: parsed.message, details: parsed.details });
@@ -81,7 +84,7 @@ export default function Cadastro() {
   };
 
   const handleGoogleSignUp = () => {
-    const loginUrl = getLoginUrl();
+    const loginUrl = getLoginUrl(safeNextPath);
     if (!loginUrl) {
       showToast({ message: "Não foi possível iniciar cadastro com Google", duration: 3000 });
       return;
@@ -109,7 +112,7 @@ export default function Cadastro() {
       <div className="l4-auth-divider" aria-hidden="true">OU</div>
       <button className="l4-auth-secondary" type="button" onClick={handleGoogleSignUp} disabled={isBusy}><GoogleMark />Cadastrar com Google</button>
       <p className="l4-auth-policy">Cookies essenciais protegem a autenticação e mantêm sua sessão. Consulte a <Link to="/privacidade">Política de Privacidade</Link>.</p>
-      <p className="l4-auth-footer">Já tem conta? <Link to="/entrar">Fazer login</Link></p>
+      <p className="l4-auth-footer">Já tem conta? <Link to={authPageUrl("/login", safeNextPath)}>Fazer login</Link></p>
     </AuthLayout>
   );
 }

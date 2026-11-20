@@ -24,6 +24,20 @@ import { seedCart, cartItem, product, variant } from "../test/fixtures";
 import Pagamento from "./Pagamento";
 import { canonicalizeSeedVariants } from "../../../server/stock/testing/canonicalizeSeedVariants";
 
+const providerSimulation = vi.hoisted(() => ({ payments: new Map<string, Record<string, unknown> & { orderId: string }>() }));
+vi.mock("../../../server/services/asaasService", async importOriginal => {
+  const original = await importOriginal<typeof import("../../../server/services/asaasService")>();
+  return {
+    ...original,
+    getAsaasPayment: vi.fn(async (paymentId: string) => {
+      const payment = providerSimulation.payments.get(paymentId);
+      if (!payment) throw Object.assign(new Error("SYNTHETIC_PROVIDER_PAYMENT_NOT_FOUND"), { providerStatus: 404 });
+      const { orderId: _orderId, ...current } = payment;
+      return current;
+    }),
+  };
+});
+
 vi.mock("../contexts/UserContext", () => ({
   useUser: () => ({
     user: { id: 81, name: "Cliente Sintético", email: "stock-customer@example.invalid", role: "user" },
@@ -117,9 +131,14 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
       pool,
       provider: {
         supportsIdempotencyKey: true,
-        async createPayment() {
+        async createPayment(input) {
           providerCalls += 1;
-          return { paymentId: "pay-ui-e2e-1", checkoutUrl: "https://sandbox.invalid/ui-e2e" };
+          const customerId = "cus-ui-e2e-synthetic";
+          providerSimulation.payments.set("pay-ui-e2e-1", {
+            id: "pay-ui-e2e-1", orderId: input.orderId, externalReference: input.externalReference ?? input.orderId,
+            value: input.amountCents / 100, currency: "BRL", customer: customerId, billingType: "PIX", status: "PENDING", deleted: false,
+          });
+          return { paymentId: "pay-ui-e2e-1", customerId, checkoutUrl: "https://sandbox.invalid/ui-e2e" };
         },
       },
     });
@@ -136,7 +155,16 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
         user: { id: 81, openId: "synthetic-owner-81", name: "Cliente Sintético", email: "stock-customer@example.invalid", role: "user", isBlocked: 0, sessionVersion: 1 } as any,
       }),
     }));
-    app.post("/webhook/asaas", (await import("../../../server/controllers/paymentController")).asaasWebhookHandler);
+    app.post("/webhook/asaas", (req, _res, next) => {
+      const payment = req.body?.payment;
+      const current = typeof payment?.id === "string" ? providerSimulation.payments.get(payment.id) : undefined;
+      if (current) {
+        if (String(payment.externalReference ?? "") === current.orderId) payment.externalReference = current.externalReference;
+        if (typeof payment.status === "string") current.status = payment.status;
+      }
+      req.body.account ??= { id: "account-ui-e2e-synthetic" };
+      next();
+    }, (await import("../../../server/controllers/paymentController")).asaasWebhookHandler);
     server = createServer(app);
     await new Promise<void>(resolveListen => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -151,9 +179,12 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
   beforeEach(async () => {
     await resetDatabase();
     providerCalls = 0;
+    providerSimulation.payments.clear();
     vi.stubEnv("PUBLIC_SITE_MODE", "store");
     vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
     vi.stubEnv("ASAAS_WEBHOOK_TOKEN", webhookToken);
+    vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_ID", "account-ui-e2e-synthetic");
+    vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_CURRENCY", "BRL");
     window.localStorage.clear();
     // V6 cart line: the variant identity travels as `variant`; the live catalog (server) confirms price/availability.
     seedCart([cartItem({
@@ -206,7 +237,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
     expect(await screen.findByText("Aguardando confirmação do pagamento", {}, { timeout: 5000 })).toBeTruthy();
     expect(providerCalls).toBe(1);
 
-    const [createdRows] = await pool.execute<(Record<string, unknown> & { attemptId: string; amountCents: number; status: string })[]>(
+    const [createdRows] = await pool.execute<(Record<string, unknown> & { attemptId: string; orderId: string; amountCents: number; status: string })[]>(
       "SELECT attemptId, orderId, amountCents, status FROM stockCheckoutAttempts WHERE ownerUserId = 81",
     );
     expect(createdRows).toHaveLength(1);
@@ -216,10 +247,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
     );
     expect(reservedRows[0]).toMatchObject({ stock: 1, reservedStock: 1 });
 
+    const simulatedPayment = providerSimulation.payments.get("pay-ui-e2e-1")!;
+    simulatedPayment.status = "RECEIVED";
     const paidEvent = JSON.stringify({
       id: "evt-ui-e2e-paid-1",
       event: "PAYMENT_RECEIVED",
-      payment: { id: "pay-ui-e2e-1", externalReference: String(createdRows[0]?.orderId), status: "RECEIVED", value: 129, currency: "BRL" },
+      account: { id: "account-ui-e2e-synthetic" },
+      payment: { id: "pay-ui-e2e-1", externalReference: String(simulatedPayment.externalReference), status: "RECEIVED", value: 129, currency: "BRL", billingType: "PIX" },
     });
     const webhookResponse = await nativeFetch(`${baseUrl}/webhook/asaas`, {
       method: "POST",
@@ -240,5 +274,144 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("Pagamento UI → tRPC → MySQL 
     );
     expect(Number(ledgerRows[0]?.eventCount)).toBe(1);
     expect(screen.getByRole("link", { name: "Ver meus pedidos" })).toBeTruthy();
+  }, 30_000);
+
+  it("completes a synthetic PREORDER through UI, batch reservation, PIX proof and duplicate delivery", async () => {
+    const batchId = 70;
+    await pool.query("DELETE FROM productionBatchProducts");
+    await pool.query("DELETE FROM productionBatches");
+    await pool.execute("UPDATE products SET salesMode = 'PREORDER' WHERE id = 4");
+    await pool.execute("UPDATE productVariants SET stock = 0, reservedStock = 0 WHERE id = 8");
+    await pool.execute(
+      "INSERT INTO productionBatches (id, name, status, salesOpenAt, salesCloseAt, estimatedShippingStart, estimatedShippingEnd, estimatedManufacturingStart, estimatedManufacturingEnd, minimumQuantity, maximumQuantity) VALUES (?, 'Lote PREORDER UI', 'OPEN', '2020-01-01 00:00:00', NULL, '2027-02-01 00:00:00', '2027-02-20 00:00:00', '2026-12-10', '2027-01-20', 0, 2)",
+      [batchId],
+    );
+    await pool.execute("INSERT INTO productionBatchProducts (productionBatchId, productId) VALUES (?, 4)", [batchId]);
+    seedCart([cartItem({
+      product: product({ id: 4, name: "Jaqueta PREORDER sintética", price: 129, stock: 0, salesMode: "PREORDER", productionBatch: {
+        id: batchId, name: "Lote PREORDER UI", status: "OPEN", salesOpenAt: null, salesCloseAt: null,
+        estimatedShippingStart: "2027-02-01T00:00:00.000Z", estimatedShippingEnd: "2027-02-20T00:00:00.000Z",
+        estimatedManufacturingStart: "2026-12-10", estimatedManufacturingEnd: "2027-01-20",
+        capacity: { maximumQuantity: 2, claimedQuantity: 0, remainingQuantity: 2 },
+      } }),
+      variant: { variantId: 8, color: "Preto", size: "M", priceCents: 12900, availableUnits: null },
+      selectedOptions: { cor: "Preto", tamanho: "M" },
+    })]);
+
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const trpcClient = trpc.createClient({ links: [httpBatchLink({ url: `${baseUrl}/api/trpc`, transformer: superjson, headers: {} })] });
+    render(
+      <trpc.Provider client={trpcClient} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <CartProvider><MemoryRouter initialEntries={["/checkout"]}><Pagamento /></MemoryRouter></CartProvider>
+        </QueryClientProvider>
+      </trpc.Provider>,
+    );
+
+    expect(await screen.findByText(/Fabricação estimada/)).toBeTruthy();
+    expect(screen.getByText(/Postagem estimada entre/)).toBeTruthy();
+    await user.type(screen.getByLabelText(/CPF ou CNPJ/), "12345678909");
+    await user.type(screen.getByLabelText(/^CEP/), "70040010");
+    expect(await screen.findByRole("button", { name: /Entrega local - Plano Piloto/ }, { timeout: 5000 })).toBeTruthy();
+    await user.type(screen.getByLabelText(/^Número/), "10");
+    await waitFor(() => expect((screen.getByRole("button", { name: /Finalizar compra/ }) as HTMLButtonElement).disabled).toBe(false));
+    await user.click(screen.getByRole("button", { name: /Finalizar compra/ }));
+    expect(await screen.findByText("Aguardando confirmação do pagamento", {}, { timeout: 5000 })).toBeTruthy();
+    expect(providerCalls).toBe(1);
+
+    const [attemptRows] = await pool.execute<(Record<string, unknown> & { attemptId: string; orderId: string; amountCents: number; status: string })[]>(
+      "SELECT attemptId, orderId, amountCents, status FROM stockCheckoutAttempts WHERE ownerUserId = 81",
+    );
+    expect(attemptRows).toHaveLength(1);
+    expect(attemptRows[0]).toMatchObject({ amountCents: 12900, status: "reserved" });
+    const [snapshotRows] = await pool.execute<(Record<string, unknown> & { salesModeAtPurchase: string; productionBatchId: number; size: string; quantity: number })[]>(
+      "SELECT salesModeAtPurchase, productionBatchId, size, quantity FROM orderItems WHERE orderId = ?", [attemptRows[0]?.orderId],
+    );
+    expect(snapshotRows[0]).toMatchObject({ salesModeAtPurchase: "PREORDER", productionBatchId: batchId, size: "M", quantity: 1 });
+    const [claimedBefore] = await pool.execute<(Record<string, unknown> & { quantity: number })[]>(
+      "SELECT COALESCE(SUM(i.quantity),0) AS quantity FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'", [batchId],
+    );
+    expect(Number(claimedBefore[0]?.quantity)).toBe(1);
+    const [variantBefore] = await pool.execute<(Record<string, unknown> & { stock: number; reservedStock: number })[]>("SELECT stock,reservedStock FROM productVariants WHERE id=8");
+    expect(variantBefore[0]).toMatchObject({ stock: 0, reservedStock: 0 });
+
+    const current = providerSimulation.payments.get("pay-ui-e2e-1")!;
+    current.status = "RECEIVED";
+    const send = (id: string, webhookBillingType: string | null = "PIX") => nativeFetch(`${baseUrl}/webhook/asaas`, {
+      method: "POST", headers: { "content-type": "application/json", "asaas-access-token": webhookToken },
+      body: JSON.stringify({ id, event: "PAYMENT_RECEIVED", account: { id: "account-ui-e2e-synthetic" }, payment: {
+        id: "pay-ui-e2e-1", externalReference: current.externalReference, status: "RECEIVED", value: 129, currency: "BRL",
+        ...(webhookBillingType === null ? {} : { billingType: webhookBillingType }),
+      } }),
+    });
+    const rejectionCases: Array<{ id: string; providerBillingType?: string; webhookBillingType: string | null }> = [
+      { id: "evt-ui-preorder-cash-get", providerBillingType: "RECEIVED_IN_CASH", webhookBillingType: "PIX" },
+      { id: "evt-ui-preorder-missing-get", webhookBillingType: "PIX" },
+      { id: "evt-ui-preorder-cash-webhook", providerBillingType: "PIX", webhookBillingType: "RECEIVED_IN_CASH" },
+      { id: "evt-ui-preorder-missing-webhook", providerBillingType: "PIX", webhookBillingType: null },
+    ];
+    for (const scenario of rejectionCases) {
+      if (scenario.providerBillingType === undefined) delete current.billingType;
+      else current.billingType = scenario.providerBillingType;
+      const first = await send(scenario.id, scenario.webhookBillingType);
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ reconciliationRequired: true, financialMutation: false, stockMutation: false });
+      const [heldOrder] = await pool.execute<(Record<string, unknown> & { status: string; paymentStatus: string; fulfillmentStatus: string })[]>(
+        "SELECT status,paymentStatus,fulfillmentStatus FROM orders WHERE stockAttemptId = ?", [attemptRows[0]?.attemptId],
+      );
+      expect(heldOrder[0]).toMatchObject({ status: "pending", paymentStatus: "unconfirmed", fulfillmentStatus: "awaiting_payment" });
+      const [heldAttempt] = await pool.execute<(Record<string, unknown> & { status: string })[]>(
+        "SELECT status FROM stockCheckoutAttempts WHERE attemptId = ?", [attemptRows[0]?.attemptId],
+      );
+      expect(heldAttempt[0]?.status).toBe("reserved");
+      const [heldClaim] = await pool.execute<(Record<string, unknown> & { quantity: number })[]>(
+        "SELECT COALESCE(SUM(i.quantity),0) AS quantity FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'", [batchId],
+      );
+      expect(Number(heldClaim[0]?.quantity)).toBe(1);
+      const [heldVariant] = await pool.execute<(Record<string, unknown> & { stock: number; reservedStock: number })[]>("SELECT stock,reservedStock FROM productVariants WHERE id=8");
+      expect(heldVariant[0]).toMatchObject({ stock: 0, reservedStock: 0 });
+      const [physicalReservations] = await pool.execute<(Record<string, unknown> & { count: number })[]>("SELECT COUNT(*) AS count FROM stockReservations WHERE orderId = ?", [attemptRows[0]?.orderId]);
+      expect(Number(physicalReservations[0]?.count)).toBe(0);
+      const [reconciliationAudits] = await pool.execute<(Record<string, unknown> & { count: number })[]>(
+        "SELECT COUNT(*) AS count FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.eventId'))=?", [scenario.id],
+      );
+      expect(Number(reconciliationAudits[0]?.count)).toBe(1);
+      const [reconciliationAlerts] = await pool.execute<(Record<string, unknown> & { count: number })[]>(
+        "SELECT COUNT(*) AS count FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.attemptId'))=?", [attemptRows[0]?.attemptId],
+      );
+      expect(Number(reconciliationAlerts[0]?.count)).toBe(1);
+      expect((await send(scenario.id, scenario.webhookBillingType)).status).toBe(200);
+      const [auditAfterDuplicate] = await pool.execute<(Record<string, unknown> & { count: number })[]>(
+        "SELECT COUNT(*) AS count FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.eventId'))=?", [scenario.id],
+      );
+      expect(Number(auditAfterDuplicate[0]?.count)).toBe(1);
+      const [alertAfterDuplicate] = await pool.execute<(Record<string, unknown> & { count: number })[]>(
+        "SELECT COUNT(*) AS count FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.attemptId'))=?", [attemptRows[0]?.attemptId],
+      );
+      expect(Number(alertAfterDuplicate[0]?.count)).toBe(1);
+    }
+
+    current.billingType = "PIX";
+    const paidEvent = "evt-ui-preorder-paid-1";
+    const sendPaid = () => send(paidEvent, "PIX");
+    expect((await sendPaid()).status).toBe(200);
+    await user.click(await screen.findByRole("button", { name: "Atualizar status" }));
+    expect(await screen.findByText("Pagamento aprovado", {}, { timeout: 5000 })).toBeTruthy();
+    const ordersLink = await screen.findByRole("link", { name: "Ver meus pedidos" }, { timeout: 5000 });
+    expect(ordersLink).toBeTruthy();
+    const preorderStatus = ordersLink.closest('[role="status"]');
+    expect(preorderStatus).toBeTruthy();
+    expect(preorderStatus?.getAttribute("data-stock-status")).toBe("paid");
+    expect(preorderStatus?.textContent).toContain("Pagamento aprovado");
+    expect(preorderStatus?.textContent).toContain("calendário de produção informado na compra");
+    expect((await sendPaid()).status).toBe(200);
+    const [orderRows] = await pool.execute<(Record<string, unknown> & { status: string; paymentStatus: string })[]>("SELECT status,paymentStatus FROM orders WHERE stockAttemptId = ?", [attemptRows[0]?.attemptId]);
+    expect(orderRows[0]).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+    const [ledgerRows] = await pool.execute<(Record<string, unknown> & { eventCount: number })[]>("SELECT COUNT(*) AS eventCount FROM stockWebhookEvents WHERE eventId = 'evt-ui-preorder-paid-1'");
+    expect(Number(ledgerRows[0]?.eventCount)).toBe(1);
+    const [claimedAfter] = await pool.execute<(Record<string, unknown> & { quantity: number })[]>("SELECT COALESCE(SUM(i.quantity),0) AS quantity FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId=? AND i.salesModeAtPurchase='PREORDER' AND o.status<>'cancelled'", [batchId]);
+    expect(Number(claimedAfter[0]?.quantity)).toBe(1);
+    expect(providerCalls).toBe(1);
   }, 30_000);
 });

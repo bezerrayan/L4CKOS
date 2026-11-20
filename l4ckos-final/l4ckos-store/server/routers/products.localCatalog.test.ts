@@ -38,12 +38,12 @@ describe("local catalog tRPC procedure", () => {
     await expect(caller.list({ inStockOnly: true })).resolves.toEqual([
       expect.objectContaining({ id: 3, hasVariants: false }),
     ]);
-    await expect(caller.list({})).resolves.toHaveLength(4);
+    await expect(caller.list({})).resolves.toHaveLength(2);
   });
 
-  it("keeps an in-stock SKU-restricted product listed but excludes it from inStockOnly", async () => {
+  it("hides SKU-restricted products from every public list projection", async () => {
     catalog.getProducts.mockResolvedValue([
-      { id: 6, name: "Camiseta comum", category: "Camisetas", price: 8990, stock: 12, salesMode: "STOCK", hasVariants: true, hasSellableVariants: false },
+      { id: 6, name: "Camiseta comum", category: "Camisetas", price: 8990, stock: 12, salesMode: "STOCK", hasVariants: true, hasSellableVariants: false, publicPurchaseAllowed: false },
       { id: 7, name: "Camiseta livre", category: "Camisetas", price: 8990, stock: 4, salesMode: "STOCK", hasVariants: false, hasSellableVariants: true },
     ]);
     const caller = productsRouter.createCaller({ user: null, req: {} as any, res: {} as any } as any);
@@ -52,8 +52,18 @@ describe("local catalog tRPC procedure", () => {
       expect.objectContaining({ id: 7 }),
     ]);
     await expect(caller.list({})).resolves.toEqual([
-      expect.objectContaining({ id: 6, stock: 12, hasVariants: true, hasSellableVariants: false }),
       expect.objectContaining({ id: 7 }),
     ]);
+  });
+
+  it("hides explicitly labeled QA products from every list filter, even without variants", async () => {
+    catalog.getProducts.mockResolvedValue([
+      { id: 8, name: "[QA-STAGING] Fixture", category: "Camisetas", price: 7990, stock: 12, salesMode: "STOCK", hasVariants: false, hasSellableVariants: true },
+      { id: 9, name: "Produto comercial legítimo", category: "Camisetas", price: 8990, stock: 2, salesMode: "STOCK", hasVariants: false, hasSellableVariants: true },
+    ]);
+    const caller = productsRouter.createCaller({ user: null, req: {} as any, res: {} as any } as any);
+
+    await expect(caller.list({})).resolves.toEqual([expect.objectContaining({ id: 9 })]);
+    await expect(caller.list({ inStockOnly: true })).resolves.toEqual([expect.objectContaining({ id: 9 })]);
   });
 });

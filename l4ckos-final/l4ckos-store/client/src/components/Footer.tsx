@@ -8,10 +8,11 @@ import "./Footer.css";
 
 export default function Footer() {
   const year = new Date().getFullYear();
+  const previewClass = import.meta.env.VITE_DEPLOY_TARGET === "preview" ? " l4-footer-preview" : "";
   const whatsappUrl = "https://wa.me/5561984716602";
 
   return (
-    <footer className="l4-footer">
+    <footer className={`l4-footer${previewClass}`}>
       <div className="l4-footer-grid">
         <div>
           <img src={logoMainDark} alt="L4CKOS" className="l4-footer-logo" />

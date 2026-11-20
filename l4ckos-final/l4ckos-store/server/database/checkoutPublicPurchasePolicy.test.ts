@@ -64,9 +64,9 @@ function makeConnection(input: CheckoutInput, variants: Array<Record<string, unk
       if (sql.includes("SELECT * FROM productVariants WHERE productId=? ORDER BY id") || sql.includes("SELECT sku FROM productVariants WHERE productId=? ORDER BY id")) {
         return [variants, []];
       }
-      if (sql.includes("SELECT stock FROM productVariants WHERE id=? FOR UPDATE")) {
+      if (sql.includes("SELECT stock, reservedStock FROM productVariants WHERE id=? FOR UPDATE")) {
         const variant = variants.find(row => Number(row.id) === Number(_values[0]));
-        return [variant ? [{ stock: variant.stock }] : [], []];
+        return [variant ? [{ stock: variant.stock, reservedStock: variant.reservedStock ?? 0 }] : [], []];
       }
       if (sql.includes("SUM(quantity),0) n FROM stockReservations")) return [[{ n: 0 }], []];
       if (sql.includes("SELECT paymentStatus FROM orders WHERE id=? FOR UPDATE")) return [[{ paymentStatus: "unconfirmed" }], []];
@@ -78,7 +78,7 @@ function makeConnection(input: CheckoutInput, variants: Array<Record<string, unk
     commit: vi.fn(async () => undefined),
     rollback: vi.fn(async () => undefined),
   };
-  return { connection, statements, writes };
+  return { connection, statements, writes, product };
 }
 
 function activeVariant(overrides: Record<string, unknown> = {}) {
@@ -130,7 +130,13 @@ describe("public exclusive-product checkout policy", () => {
 
   it.each([
     ["restricted product name", "Clã 14 Bis", [activeVariant()]],
+    ["Roman numeral collaboration name", "Clã XIV Bis", [activeVariant()]],
+    ["accent and punctuation collaboration alias", "CLAN-XIV-BIS", [activeVariant()]],
+    ["QA-STAGING label with an ordinary direct variant", "[QA-STAGING] Synthetic QA", [activeVariant()]],
+    ["QA-STAGING label with a QA-marked direct variant", "[QA-STAGING] Synthetic QA", [activeVariant({ sku: "QA-PRE-M-01" })]],
     ["selected exclusive SKU", "Camiseta comum", [activeVariant({ sku: "14B-DROP-PT-M" })]],
+    ["Roman numeral exclusive SKU", "Camiseta comum", [activeVariant({ sku: "XIV-BIS-DROP-M" })]],
+    ["accented exclusive SKU", "Camiseta comum", [activeVariant({ sku: "CLÃ-XIV-BIS-GG" })]],
     ["mixed catalog with ordinary selected SKU", "Camiseta comum", [activeVariant(), { ...activeVariant({ id: 102, sku: "14B-DROP-BR-G", isActive: 1, color: "Branco", size: "G", optionKey: createVariantOptionKey("Branco", "G") }) }]],
     ["inactive exclusive SKU alongside ordinary selected SKU", "Camiseta comum", [activeVariant(), { ...activeVariant({ id: 102, sku: "14B-DROP-BR-G", isActive: 0, color: "Branco", size: "G", optionKey: createVariantOptionKey("Branco", "G") }) }]],
   ] as const)("blocks direct checkout for %s before commercial writes or provider calls", async (_scenario, productName, variants) => {
@@ -164,5 +170,24 @@ describe("public exclusive-product checkout policy", () => {
     expect(statements.some(sql => sql.includes("FROM productVariants WHERE productId=?"))).toBe(true);
     expect(writes).toEqual([]);
     expect(provider.charge).not.toHaveBeenCalled();
+  });
+
+  it("rechecks QA classification under product locks after the shipping quote", async () => {
+    enableTestCheckout();
+    const input = makeInput();
+    const { connection, writes, product } = makeConnection(input, [activeVariant()]);
+    const provider = adapters();
+    provider.quote.mockImplementation(async () => {
+      product.name = "[QA-STAGING] Reclassified during checkout";
+      return { options: [{ id: "local", label: "Local", price: 0 }] };
+    });
+
+    await expect(checkout(connection as any, input, provider as any)).rejects.toMatchObject({
+      code: "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION",
+    });
+    expect(provider.quote).toHaveBeenCalledOnce();
+    expect(provider.charge).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+    expect(connection.rollback).toHaveBeenCalledOnce();
   });
 });

@@ -4,7 +4,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { createConnection, createPool, type Connection, type Pool } from "mysql2/promise";
 import type * as mysqlOrm from "drizzle-orm/mysql2";
 import { processWebhookEnvelope } from "../controllers/paymentController";
-import { financialEnvelope, persistWebhook, processStoredWebhook, receiveWebhook, recoverWebhooks } from "../payments/webhookInbox";
+import { financialEnvelope, persistWebhook, processStoredWebhook, receiveWebhook as receiveWebhookInternal, recoverWebhooks } from "../payments/webhookInbox";
+import { attestAuthenticatedIngress } from "../payments/ingressProvenance";
 
 import { rehearseCreatedRecovery } from "../payments/supervisedCreatedRecoveryRehearsal";
 import { canonical, structuralHash, readStructuralSchema } from "../../database/schema/fingerprint";
@@ -35,6 +36,10 @@ const created = (id = randomUUID()) => ({
   payment: { id: "pay_dog6ppexq4gyw3k6", externalReference: "13", status: "PENDING", value: 99, netValue: 98.01 },
 });
 const paid = (event = "PAYMENT_RECEIVED") => ({ ...created(), event, payment: { ...created().payment, status: event === "PAYMENT_CONFIRMED" ? "CONFIRMED" : "RECEIVED" } });
+const receiveWebhook = async (payload: unknown, process = processWebhookEnvelope) => {
+  await attestAuthenticatedIngress(payload);
+  return receiveWebhookInternal(payload, process as any);
+};
 const inbox = async (id: string) => (await query("SELECT * FROM asaasWebhookInbox WHERE eventId=?", [id]))[0];
 const order = async () => (await query("SELECT status,paymentStatus,fulfillmentStatus FROM orders WHERE id=13"))[0];
 const stock = async () => Number((await query("SELECT stock FROM products WHERE id=1"))[0].stock);
@@ -78,7 +83,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 financial recover
     injected.orm = orm.drizzle(pool);
   });
   beforeEach(async () => {
-    vi.unstubAllEnvs(); vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic"); vi.clearAllMocks();
+    vi.unstubAllEnvs(); vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic"); vi.stubEnv("ASAAS_WEBHOOK_TOKEN", "synthetic-token"); vi.clearAllMocks();
     for (const table of ["notificationOutbox", "orderEmailEvents", "paymentEvents", "payments", "asaasWebhookInbox", "asaasWebhookEvents", "auditLogs", "stockReservations", "orderItems", "orders", "products", "users"])
       await query("DELETE FROM `" + table + "`");
     await query("INSERT INTO users(id,openId,name,email,role) VALUES(14,'synthetic-admin','Fixture Admin','admin@example.invalid','admin')");
@@ -98,7 +103,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 financial recover
   });
   let historicalBefore: Record<string,unknown>;
   const historical = async () => ({orders:await query("SELECT * FROM orders WHERE id IN(2,3,6,12) ORDER BY id"),
-    audits:await query("SELECT * FROM auditLogs WHERE entityId<>'13' ORDER BY id"),
+    audits:await query("SELECT * FROM auditLogs WHERE entity='order' AND entityId<>'13' ORDER BY id"),
     outbox:await query("SELECT * FROM notificationOutbox WHERE orderId<>13 ORDER BY id"),
     emails:await query("SELECT * FROM orderEmailEvents ORDER BY id")});
   beforeEach(async()=>{historicalBefore=await historical();});
@@ -136,7 +141,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 financial recover
     const orderRow=(await query('SELECT * FROM orders WHERE id=13'))[0];expect(orderRow).toMatchObject({status:'paid',paymentStatus:'confirmed',paymentConfirmationSource:'manual',paymentConfirmedBy:14,fulfillmentStatus:'ready',paymentConfirmationReference:null});
     expect(Date.parse(orderRow.paymentConfirmedAt+'Z')).toBeGreaterThanOrEqual(started-1000);
     const payment=(await query('SELECT * FROM payments WHERE orderId=13'))[0];expect(payment).toMatchObject({providerPaymentId:input.evidence.paymentId,status:'received',amount:9900,paidAmount:9900,refundedAmount:0,statusSource:'reconciliation',manualConfirmedBy:14});
-    if(path==='B')expect(payment.receivedAt).toBeNull();else expect(Date.parse(payment.receivedAt+'Z')).toBe(Math.floor(Date.parse(input.evidence.financialReceivedAt!)/1000)*1000);
+    if(path==='B')expect(payment.receivedAt).toBeNull();else expect(Date.parse(payment.receivedAt+'Z')).toBe(Math.round(Date.parse(input.evidence.financialReceivedAt!)/1000)*1000);
     const audit=(await completedAudits())[0];expect(audit.actorUserId).toBe(14);expect(JSON.parse(audit.metadata).evidence.timestampMeaning).toBe(input.evidence.timestampMeaning);
     expect(await query('SELECT * FROM paymentEvents')).toHaveLength(0);expect(await query('SELECT * FROM asaasWebhookInbox')).toHaveLength(0);
     expect((await query('SELECT * FROM notificationOutbox WHERE orderId=13'))[0]).toMatchObject({status:'pending',attempts:0,sentAt:null});
@@ -213,26 +218,38 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 financial recover
     const createdBefore=await inbox(fixture.event.id);await apply(plan(path));const paymentBefore=await query('SELECT * FROM payments'),stockBefore=await stock();
     const received=paid(),confirmed=paid('PAYMENT_CONFIRMED');
     expect((await receiveWebhook(received,processWebhookEnvelope)).status).toBe(200);expect((await receiveWebhook(confirmed,processWebhookEnvelope)).status).toBe(200);
-    await receiveWebhook(received,processWebhookEnvelope);await receiveWebhook(created(),processWebhookEnvelope);
+    await receiveWebhook(received,processWebhookEnvelope);await receiveWebhook(confirmed,processWebhookEnvelope);await receiveWebhook(created(),processWebhookEnvelope);
     expect(await inbox(fixture.event.id)).toEqual(createdBefore);expect(await stock()).toBe(stockBefore);
     expect(await query('SELECT * FROM payments')).toEqual(paymentBefore);expect(await completedAudits()).toHaveLength(1);
-    expect(await query('SELECT * FROM notificationOutbox WHERE orderId=13')).toHaveLength(1);
+    expect(await query("SELECT * FROM notificationOutbox WHERE orderId=13 AND type='payment-approved'")).toHaveLength(1);
+    const alerts=await query("SELECT payload FROM notificationOutbox WHERE orderId=13 AND type='financial-reconciliation-alert-v1'");
+    expect(alerts).toHaveLength(2);
+    expect(alerts.map((r:any)=>JSON.parse(r.payload).providerEventId).sort()).toEqual([received.id,confirmed.id].sort());
     expect((await inbox(received.id)).state).toBe('processed');expect((await inbox(confirmed.id)).state).toBe('processed');
   });
   it("an event received before reconciliation remains an observation; reconciliation does not invent another event",async()=>{
-    const received=paid();expect((await receiveWebhook(received,processWebhookEnvelope)).body).toMatchObject({reason:'invalid_status_transition'});
+    const received=paid();expect((await receiveWebhook(received,processWebhookEnvelope)).body).toMatchObject({
+      reason:'payment_reconciliation_required',reconciliationRequired:true,financialMutation:false,stockMutation:false,
+    });
     const inboxBefore=await inbox(received.id);await apply();expect(await inbox(received.id)).toEqual(inboxBefore);
     expect((await receiveWebhook(received,processWebhookEnvelope)).body).toMatchObject({reason:'duplicate_event'});
     expect(await stock()).toBe(97);expect(await query('SELECT * FROM paymentEvents')).toHaveLength(0);
   });
   it("financial exception before CREATED resolution is safe for spontaneous provider retries",async()=>{
     const fixture=await seedRejected();await apply();
-    expect((await receiveWebhook(fixture.event,processWebhookEnvelope)).status).toBe(422);
+    expect(await receiveWebhook(fixture.event,processWebhookEnvelope)).toMatchObject({status:200,body:{reason:'rejected_observation_recorded',reconciliationRequired:true}});
     await rehearseCreatedRecovery(fixture.plan,processWebhookEnvelope);
     expect((await receiveWebhook(fixture.event,processWebhookEnvelope)).body).toMatchObject({reason:'duplicate_event'});
-    await Promise.all([receiveWebhook(paid(),processWebhookEnvelope),receiveWebhook(paid('PAYMENT_CONFIRMED'),processWebhookEnvelope)]);
+    const received=paid(),confirmed=paid('PAYMENT_CONFIRMED');
+    await Promise.all([receiveWebhook(received,processWebhookEnvelope),receiveWebhook(confirmed,processWebhookEnvelope)]);
     expect(await stock()).toBe(97);expect(await reservation()).toBe('consumed');expect(await completedAudits()).toHaveLength(1);
-    expect(await query('SELECT * FROM notificationOutbox WHERE orderId=13')).toHaveLength(1);
+    expect(await query("SELECT * FROM notificationOutbox WHERE orderId=13 AND type='payment-approved'")).toHaveLength(1);
+    const alerts=await query("SELECT payload FROM notificationOutbox WHERE orderId=13 AND type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.providerEventId')) IN (?,?)",[received.id,confirmed.id]);
+    expect(alerts).toHaveLength(2);
+    expect(alerts.map((r:any)=>JSON.parse(r.payload).providerEventId).sort()).toEqual([received.id,confirmed.id].sort());
+    expect(await query("SELECT id FROM notificationOutbox WHERE orderId=13 AND type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.providerEventId'))=?",[fixture.event.id])).toHaveLength(1);
+    await Promise.all([receiveWebhook(received,processWebhookEnvelope),receiveWebhook(confirmed,processWebhookEnvelope)]);
+    expect(await query("SELECT * FROM notificationOutbox WHERE orderId=13 AND type='financial-reconciliation-alert-v1'")).toHaveLength(3);
   });
   it("rejects mismatched original checkout audit",async()=>{
     await query("UPDATE auditLogs SET metadata='{}' WHERE id=72");await expect(apply()).rejects.toThrow('RECOVERY_CHECKOUT_PAYMENT_MISMATCH');expect(await stock()).toBe(98);

@@ -1,16 +1,8 @@
 import { resolveFinancialRuntimeAttestation, type FinancialRuntimeAttestation } from "./financialRuntimeAttestation";
+import { resolveFinancialPhasePolicy } from "./financialPhasePolicy";
 import { isIsolatedHomologationIdentity } from "./railwayEnvironment";
 
 type RuntimeEnvironment = Record<string, string | undefined>;
-
-const REQUIRED_CLOSED_FLAGS = [
-  "PUBLIC_CHECKOUT_ENABLED",
-  "STOCK_RUNTIME_ENABLED",
-  "STOCK_CHECKOUT_ENABLED",
-  "ASAAS_WEBHOOK_INBOUND_ENABLED",
-  "ASAAS_WEBHOOK_RECOVERY_WORKER_ENABLED",
-  "PAYMENT_NOTIFICATION_RECOVERY_WORKER_ENABLED",
-] as const;
 
 export type FinancialBootstrapResult = {
   allowed: boolean;
@@ -23,16 +15,15 @@ export function inspectFinancialBootstrap(
   processId: number,
 ): FinancialBootstrapResult {
   const report = resolveFinancialRuntimeAttestation(env, processId);
-  const explicitlyClosed = REQUIRED_CLOSED_FLAGS.every(name => env[name] === "false");
-  const explicitlyComingSoon = env.PUBLIC_SITE_MODE?.trim().toLowerCase() === "coming-soon";
+  const phasePolicy = resolveFinancialPhasePolicy(env);
   const completeExecutionIdentity = Boolean(
     report.execution.deploymentId && report.execution.replicaId && report.execution.processId,
   );
   const sandboxReady = report.asaasMode === "sandbox" && report.asaasModeConsistent && report.asaasCredentialsPresent;
   const allowed = isIsolatedHomologationIdentity(env) &&
-    report.verdict === "PASS" && explicitlyClosed && explicitlyComingSoon &&
+    report.verdict === "PASS" && phasePolicy.allowed &&
     completeExecutionIdentity && sandboxReady &&
-    report.stockReservationExpirySchedulerEnabled === false &&
+    report.stockReservationExpirySchedulerEnabled === phasePolicy.checkoutEnabled &&
     report.automaticBackupSchedulerEnabled === false;
 
   return { allowed, report };

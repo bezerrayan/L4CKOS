@@ -164,3 +164,13 @@
 /* Touch target: the coupon disclosure must be at least 44px tall on phones. */
 .l4-checkout-coupon > button { min-height: 44px; }
 .l4-checkout-back-link { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* Anonymous visitor: sign-in / sign-up prompt shown above the form (the Header is hidden on /checkout). */
+.l4-checkout-auth { margin: 0 0 8px; padding: 20px; border: 1px solid #3b3b3b; border-radius: 8px; background: #141414; }
+.l4-checkout-auth h2 { margin: 0 0 6px; color: #f0ede8; font-size: 17px; }
+.l4-checkout-auth p { margin: 0 0 14px; color: #c8c1ba; font-size: 13px; line-height: 1.5; }
+.l4-checkout-auth-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.l4-checkout-auth-actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 10px 14px; border: 1px solid #e8002a; border-radius: 7px; color: #fff; background: #e8002a; font-size: 14px; font-weight: 800; text-align: center; text-decoration: none; }
+.l4-checkout-auth-actions a + a { color: #f0ede8; background: transparent; border-color: #4a4a4a; }
+.l4-checkout-auth-actions a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (max-width: 380px) { .l4-checkout-auth-actions { grid-template-columns: 1fr; } }

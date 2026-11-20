@@ -1,0 +1,70 @@
+/*
+ * L4CKOS Display — tipografia de destaque (titulos apenas).
+ * Monocromatica; o 4 vermelho vem de <span>/<em> no markup.
+ * Cobertura: A-Z a-z 0-9 acentos PT-BR e ! & ' , - . / : ?
+ * Glifos ausentes (% $ ( ) + @ # aspas) caem por caractere em Bebas Neue.
+ * Nao altera h1-h6 global, admin, precos, formularios nem nomes de produto.
+ */
+@font-face {
+  font-family: "L4CKOS Display";
+  src: url("../fonts/L4CKOS-Display.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  /* Fonte larga: reduz a escala para manter o tamanho visual dos titulos atuais. */
+  size-adjust: 74%;
+}
+
+/* Mesma fonte, escala menor para titulos gigantes (Sobre/Contato, ate ~150px). */
+@font-face {
+  font-family: "L4CKOS Display XL";
+  src: url("../fonts/L4CKOS-Display.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  size-adjust: 58%;
+}
+
+:root {
+  --l4-font-display-xl: "L4CKOS Display XL", "Bebas Neue", Impact, sans-serif;
+  --l4-font-display: "L4CKOS Display", "Bebas Neue", Impact, sans-serif;
+}
+
+/* Home */
+body .l4-home-section-title,
+body .l4-home-newsletter h3,
+/* Hero editorial (PromoCarousel) */
+body .l4-hero-editorial-copy h1,
+/* Colecoes / vitrine */
+body .l4-related-heading h2,
+body .l4-display-title,
+/* Institucionais: Sobre */
+body .l4-about-story-item h3,
+body .l4-about-principle h3,
+/* Institucionais: Contato e Trocas */
+body .l4-returns-header h1 {
+  font-family: var(--l4-font-display);
+  font-synthesis: none;
+  letter-spacing: 0;
+}
+body .l4-display-title { font-weight: 400 !important; }
+
+/* Hero editorial: coluna de texto estreita; titulos de campanha sao longos. */
+body .l4-hero-editorial-copy h1 {
+  font-size: clamp(38px, 3.4vw, 52px);
+  line-height: 1.02;
+  overflow-wrap: break-word;
+}
+
+body .l4-about-hero-copy h1,
+body .l4-about-section-heading h2,
+body .l4-about-statement h2,
+body .l4-about-principles-heading h2,
+body .l4-about-founders h2,
+body .l4-about-founders-names span,
+body .l4-about-closing h2,
+body .l4-contact-hero h1 {
+  font-family: var(--l4-font-display-xl);
+  font-synthesis: none;
+  letter-spacing: 0;
+}

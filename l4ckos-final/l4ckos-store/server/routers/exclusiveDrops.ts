@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
-import { createAuditLog } from "../db";
+import { createAuditLog, getProductByIdWithDetails } from "../db";
+import { isPublicProductUnavailable } from "../database/publicPurchasePolicy";
 import {
   accessCodeInputSchema,
   accessRequestStatusSchema,
@@ -34,7 +35,13 @@ export const exclusiveDropsRouter = router({
   /** Public: drop information for a product page, plus the caller's own access status when signed in. */
   forProduct: publicProcedure
     .input(z.object({ productId: z.number().int().positive() }).strict())
-    .query(({ ctx, input }) => run(async () => (await store()).productDrop(input.productId, ctx.user?.id ?? null))),
+    .query(({ ctx, input }) => run(async () => {
+      const product = await getProductByIdWithDetails(input.productId);
+      if (!product || isPublicProductUnavailable(product.name, product.variants)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
+      }
+      return (await store()).productDrop(input.productId, ctx.user?.id ?? null);
+    })),
 
   requestAccess: protectedProcedure
     .input(z.object({ dropId: z.number().int().positive() }).strict())

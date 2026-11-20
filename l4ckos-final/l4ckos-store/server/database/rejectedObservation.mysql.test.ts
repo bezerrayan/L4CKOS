@@ -14,6 +14,7 @@ const socket=process.env.L4CKOS_LOCAL_MYSQL_SOCKET??'';
 const database='l4ckos_test_redelivery_'+randomUUID().replaceAll('-','').slice(0,12);
 let root:any,c:any,pool:any;
 const query=async(q:string,args:unknown[]=[]) => (await c.query(q,args))[0];
+const businessAudits=async()=>query("SELECT * FROM auditLogs WHERE action <> 'webhook.ingress_authenticated.v1'");
 const payload=(event='PAYMENT_CREATED')=>({id:'evt_synthetic',event,payment:{id:'pay_synthetic',externalReference:'901',status:event==='PAYMENT_RECEIVED'?'RECEIVED':'PENDING',value:99,currency:'BRL'}});
 async function seed(event=payload(),state='rejected'){
  const minimal=financialEnvelope(event),content={...minimal} as any;delete content.sourcePayloadHash;
@@ -39,6 +40,7 @@ beforeAll(async()=>{
  pool=createPool({socketPath:socket,user:'root',database,connectionLimit:4});
  const {drizzle}=await import('drizzle-orm/mysql2');injected.orm=drizzle(pool);
  vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-token');
+ vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-token');
 });
 beforeEach(async()=>{
  await query('DROP TRIGGER IF EXISTS reject_audit');
@@ -56,7 +58,7 @@ for(const event of ['PAYMENT_CREATED','PAYMENT_UPDATED','PAYMENT_RESTORED'])it(`
  const before=await query('SELECT * FROM asaasWebhookInbox');
  expect((await send(body)).status).toBe(200);expect((await send(body)).status).toBe(200);
  expect(await query('SELECT * FROM asaasWebhookInbox')).toEqual(before);
- const audits=await query('SELECT action,metadata FROM auditLogs');expect(audits).toHaveLength(1);
+ const audits=await businessAudits();expect(audits).toHaveLength(1);
  expect(JSON.parse(audits[0].metadata)).toMatchObject({originalState:'rejected',reconciliationRequired:true,financialMutation:false,reservationMutation:false,notificationMutation:false});
  expect((await query('SELECT paymentStatus FROM orders'))[0].paymentStatus).toBe('unconfirmed');
  expect(await query('SELECT * FROM payments')).toHaveLength(0);
@@ -68,11 +70,16 @@ it('preserves an ampersand event ID and audits historical PENDING without paymen
  expect((await send(body,'wrong')).status).toBe(401);
  expect((await send(body)).status).toBe(200);expect((await send(body)).status).toBe(200);
  expect(await query('SELECT * FROM asaasWebhookInbox')).toEqual(before);
- const audits=await query('SELECT entityId,metadata FROM auditLogs');expect(audits).toHaveLength(1);
+ const audits=await query("SELECT entityId,metadata FROM auditLogs WHERE action='webhook.rejected_observation_acknowledged.v1'");expect(audits).toHaveLength(1);
  expect(audits[0].entityId).toBe(createHash('sha256').update(body.id).digest('hex'));
  expect(JSON.parse(audits[0].metadata)).toMatchObject({eventId:body.id,reason:'HISTORICAL_PAYMENT_BINDING_REQUIRES_REVIEW',reconciliationRequired:true,financialMutation:false});
  expect(await query('SELECT * FROM payments')).toHaveLength(0);
- expect(await query('SELECT * FROM notificationOutbox')).toHaveLength(0);
+ const alerts=await query("SELECT type,orderId,payload FROM notificationOutbox");
+ expect(alerts).toHaveLength(1);
+ expect(alerts[0]).toMatchObject({type:'financial-reconciliation-alert-v1',orderId:901});
+ expect(JSON.parse(alerts[0].payload)).toMatchObject({kind:'ASAAS_WEBHOOK_RECONCILIATION',category:'observation_requires_review',
+  providerEventId:body.id,paymentId:'pay_synthetic',reason:'HISTORICAL_PAYMENT_BINDING_REQUIRES_REVIEW',
+  financialMutation:false,stockMutation:false,externalNotification:false});
  expect((await query('SELECT paymentStatus FROM orders'))[0].paymentStatus).toBe('unconfirmed');
  expect((await send({...body,payment:{...body.payment,status:'RECEIVED'}})).status).toBe(409);
  expect(await query('SELECT * FROM asaasWebhookInbox')).toEqual(before);
@@ -87,22 +94,22 @@ it.each(['PAYMENT_RECEIVED','PAYMENT_UNKNOWN'])('terminal %s remains 422 without
 });
 it('conflicting content is 409 before acknowledgement',async()=>{
  await seed();expect((await send({...payload(),payment:{...payload().payment,value:100}})).status).toBe(409);
- expect(await query('SELECT * FROM auditLogs')).toHaveLength(0);
+ expect(await businessAudits()).toHaveLength(0);
 });
 it('amount or binding mismatch never becomes 200',async()=>{
  await seed();await query('UPDATE orders SET totalPrice=10000');expect((await send(payload())).status).toBe(422);
  await query('UPDATE orders SET totalPrice=9900');await query("INSERT INTO payments VALUES(901,'different','901',9900,'pending')");
- expect((await send(payload())).status).toBe(422);expect(await query('SELECT * FROM auditLogs')).toHaveLength(0);
+ expect((await send(payload())).status).toBe(422);expect(await businessAudits()).toHaveLength(0);
 });
 it('audit failure is 503 and never acknowledges a non-durable decision',async()=>{
  await seed();await query("CREATE TRIGGER reject_audit BEFORE INSERT ON auditLogs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic audit failure'");
- expect((await send(payload())).status).toBe(503);expect(await query('SELECT * FROM auditLogs')).toHaveLength(0);
+ expect((await send(payload())).status).toBe(503);expect(await businessAudits()).toHaveLength(0);
  expect((await query('SELECT state FROM asaasWebhookInbox'))[0].state).toBe('rejected');
 });
 it('concurrent redelivery serializes audit and permits retry after busy',async()=>{
  await seed();const results=await Promise.all([send(payload()),send(payload())]);
  expect(results.some(r=>r.status===200)).toBe(true);expect(results.every(r=>[200,503].includes(r.status))).toBe(true);
- expect((await send(payload())).status).toBe(200);expect(await query('SELECT * FROM auditLogs')).toHaveLength(1);
+ expect((await send(payload())).status).toBe(200);expect(await businessAudits()).toHaveLength(1);
 });
 
 it('new worker leaves both legacy payment-approved notifications untouched',async()=>{
@@ -114,7 +121,7 @@ it('new worker leaves both legacy payment-approved notifications untouched',asyn
 
 it('unrecognized rejection reason never receives an automatic acknowledgement',async()=>{
  await seed();await query("UPDATE asaasWebhookInbox SET errorCode='MANUAL_REVIEW_HOLD'");
- expect((await send(payload())).status).toBe(422);expect(await query('SELECT * FROM auditLogs')).toHaveLength(0);
+ expect((await send(payload())).status).toBe(422);expect(await businessAudits()).toHaveLength(0);
 });
 
 });

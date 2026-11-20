@@ -3,7 +3,7 @@ import { stockDeliveryV1Schema, type StockDeliveryV1 } from "../../shared/stockC
 import { isLocalDeliveryCep } from "../../shared/localDeliveryTerritory";
 import type { StockShippingAcceptanceV1 } from "../../shared/stockShippingV1";
 import { StockShippingQuoteError, verifyStockShippingQuoteV1 } from "./stockShippingQuoteV1";
-import { isRestrictedPublicPurchase } from "../database/publicPurchasePolicy";
+import { isPublicProductUnavailable } from "../database/publicPurchasePolicy";
 
 export type StockVariant = {
   id: number;
@@ -67,7 +67,13 @@ export type StockFinancialDivergenceKind =
   | "PAID_AFTER_TERMINAL_FAILURE" // signed terminal failure released the attempt, then "paid" arrived
   | "PAID_AFTER_RELEASE" // attempt released by another path, then "paid" arrived
   | "PAID_FOR_UNSTARTED_ATTEMPT" // no charge was ever issued for this attempt
-  | "PAID_WITH_DIFFERENT_PAYMENT_ID"; // the order was paid under a payment id that is not the attempt's
+  | "PAID_WITH_DIFFERENT_PAYMENT_ID" // the order was paid under a payment id that is not the attempt's
+  | "PAYMENT_ID_MISMATCH"
+  | "PAYMENT_WITHOUT_CORRELATION" // provider event cannot be bound to an attempt with no persisted payment id
+  | "PAYMENT_REFERENCE_MISMATCH" // payment id and external order reference point to different attempts
+  | "PAYMENT_ORDER_BINDING_MISMATCH" // order owner/attempt/amount projection disagrees with the STOCK attempt
+  | "PAID_AMOUNT_MISMATCH"
+  | "PAYMENT_AMOUNT_MISMATCH";
 export type StockFinancialDivergence = {
   kind: StockFinancialDivergenceKind;
   attemptId: string;
@@ -80,6 +86,8 @@ export type StockFinancialDivergence = {
   attemptStatus: StockAttempt["status"];
   attemptProviderState: StockAttempt["providerState"];
   attemptPaymentId: string | null;
+  observedStatus: "pending" | "paid" | "failed";
+  observedOrderId?: string;
 };
 
 export interface StockCheckoutTransaction {
@@ -108,10 +116,21 @@ export interface StockCheckoutTransaction {
   markProviderAmbiguous(attemptId: string): Promise<void>;
   markProviderFailure(attemptId: string): Promise<boolean>;
   markReconciliationRequired(attemptId: string): Promise<void>;
-  recordPayment(attemptId: string, paymentId: string, checkoutUrl: string | null): Promise<void>;
+  /** `providerCustomerId` (if the adapter reports it) is persisted with the payment as the durable customer link for supervised recovery. */
+  recordPayment(attemptId: string, paymentId: string, checkoutUrl: string | null, providerCustomerId?: string | null): Promise<void>;
+  /**
+   * Returns the attempt's strong provider reference, creating and persisting it (idempotently, under the attempt lock) on first use.
+   * Called in the SAME transaction that starts the provider attempt, i.e. committed BEFORE any provider call. A store without it
+   * keeps the legacy numeric reference (historical behaviour).
+   */
+  ensurePaymentReference?(attemptId: string): Promise<string>;
+  /** Exact lookup of the attempt that owns a strong reference (null when unknown, e.g. a charge from before a restore). */
+  findAttemptByPaymentReference?(reference: string): Promise<StockAttempt | null>;
   claimWebhook(eventId: string, payloadHash: string): Promise<"claimed" | "duplicate" | "conflict">;
   findAttemptByPayment(paymentId: string): Promise<StockAttempt | null>;
   findAttemptByOrder(orderId: string): Promise<StockAttempt | null>;
+  /** Verifies the durable order projection still belongs to this attempt and owner. */
+  validateAttemptOrderProjection?(attempt: StockAttempt): Promise<boolean>;
   consumeReservations(attemptId: string): Promise<void>;
   releaseReservations(attemptId: string): Promise<void>;
   markPaid(attemptId: string, paymentId: string): Promise<"paid" | "already-paid" | "not-pending">;
@@ -136,7 +155,17 @@ export interface StockCheckoutStore {
 export interface StockPaymentProvider {
   /** True only when the provider guarantees the idempotencyKey is enforced server-side. */
   supportsIdempotencyKey: boolean;
-  createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string }): Promise<{ paymentId: string; checkoutUrl: string }>;
+  createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string; externalReference?: string }): Promise<{ paymentId: string; checkoutUrl: string; customerId?: string | null }>;
+}
+
+/**
+ * Provider idempotency key. `stock:<orderId>` is reusable after a database restore (AUTO_INCREMENT rewinds), so for attempts that own a
+ * strong reference the key is bound to that attempt's unique token: `stock:<orderId>:<token>`. Historical attempts (no reference) keep
+ * the legacy key unchanged. A retry of the SAME attempt reuses the same reference and therefore the same key.
+ */
+export function stockProviderIdempotencyKey(orderId: string, paymentReference: string | null): string {
+  const token = paymentReference ? paymentReference.slice(paymentReference.lastIndexOf(":") + 1) : "";
+  return token ? `stock:${orderId}:${token}` : `stock:${orderId}`;
 }
 
 export class StockProviderError extends Error {
@@ -172,7 +201,7 @@ async function assertPublicPurchaseAllowed(tx: StockCheckoutTransaction, product
   for (const productId of ids) {
     const product = byId.get(productId);
     if (!product) fail("CHECKOUT_VARIANT_NOT_FOUND");
-    if (isRestrictedPublicPurchase(product.name, product.skus)) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+    if (isPublicProductUnavailable(product.name, product.skus.map(sku => ({ sku })))) fail("CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
   }
 }
 /** Cart facts bound into a freight quote: server-loaded variants, unit prices and aggregated quantities. */
@@ -244,10 +273,16 @@ export async function createStockCheckout(input: {
   request: unknown;
   /** Freight signing secret (>= 32 bytes). Without it carrier deliveries are unavailable (fail closed). */
   shipping?: { secret: string };
+  /** Server-only cap used by the temporary owner PIX test admission. */
+  maximumAmountCents?: number;
 }): Promise<{ orderId: string; paymentId: string; checkoutUrl: string; amountCents: number; snapshots: StockSnapshot[]; replayed: boolean }> {
   // Gate is deliberately the first operation; no repository, provider, or financial IO may precede it.
   if (!input.enabled) fail("PUBLIC_CHECKOUT_DISABLED");
   if (!Number.isSafeInteger(input.ownerUserId) || input.ownerUserId <= 0) fail("AUTHENTICATION_REQUIRED");
+  if (input.maximumAmountCents !== undefined &&
+      (!Number.isSafeInteger(input.maximumAmountCents) || input.maximumAmountCents <= 0 || input.maximumAmountCents > MYSQL_SIGNED_INT_MAX)) {
+    fail("OWNER_PIX_TEST_CONFIGURATION_INVALID");
+  }
   const request = parseRequest(input.request);
   const cartFingerprint = canonicalCart(request.items);
   // The quote token is a bearer credential with a fresh nonce: it is verified, never part of the idempotency fingerprint.
@@ -264,6 +299,7 @@ export async function createStockCheckout(input: {
         if (existing.fingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
         if (existing.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
         if (existing.status === "paid") fail("CHECKOUT_ALREADY_PAID");
+        if (input.maximumAmountCents !== undefined && stockAttemptAmountCents(existing) > input.maximumAmountCents) fail("OWNER_PIX_TEST_AMOUNT_LIMIT");
         await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), true);
         if (existing.providerState === "not_started") {
           await tx.reserveExclusiveQuota?.({ userId: input.ownerUserId, attemptId: request.attemptId, items: request.items });
@@ -277,10 +313,15 @@ export async function createStockCheckout(input: {
       // Clear this owner's definitively unstarted expired reservations before
       // deciding whether a new equivalent cart is still open. Uncertain provider
       // outcomes remain reserved and are marked for reconciliation.
-      let expiryBatch;
-      do {
-        expiryBatch = await tx.expireDueReservations(500, input.ownerUserId);
-      } while (expiryBatch.releasedAttemptIds.length + expiryBatch.reconciliationAttemptIds.length === 500);
+      // The one-off owner test validates its amount ceiling before any DML. It
+      // therefore leaves expiry maintenance to the normal worker; stale rows
+      // can fail this attempt closed, but cannot cause unrelated writes first.
+      if (input.maximumAmountCents === undefined) {
+        let expiryBatch;
+        do {
+          expiryBatch = await tx.expireDueReservations(500, input.ownerUserId);
+        } while (expiryBatch.releasedAttemptIds.length + expiryBatch.reconciliationAttemptIds.length === 500);
+      }
 
       for (const open of await tx.findOpenAttemptsForOwner(input.ownerUserId)) {
         if (canonicalCart(open.snapshots.map(item => ({
@@ -313,6 +354,10 @@ export async function createStockCheckout(input: {
         snapshots.push({ id: variant.id, productId: variant.productId, sku: variant.sku, size: variant.size, color: variant.color, unitPriceCents: variant.unitPriceCents, quantity: item.quantity, totalCents, salesMode: variant.salesMode === "PREORDER" ? "PREORDER" : "STOCK", productionBatchId: variant.salesMode === "PREORDER" ? variant.productionBatchId ?? null : null });
       }
 
+      // Public PREORDER and STOCK purchases are separate checkouts. Enforce
+      // this at the server boundary as well as in the storefront UI.
+      if (new Set(snapshots.map(snapshot => snapshot.salesMode)).size > 1) fail("CHECKOUT_MIXED_SALES_MODE");
+
       const merchandiseCents = snapshots.reduce((sum, item) => sum + item.totalCents, 0);
       if (!Number.isSafeInteger(merchandiseCents) || merchandiseCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
       let shipping: StockShippingAcceptanceV1 | undefined;
@@ -335,6 +380,7 @@ export async function createStockCheckout(input: {
       }
       const amountCents = merchandiseCents + (shipping?.shippingPriceCents ?? 0);
       if (!Number.isSafeInteger(amountCents) || amountCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
+      if (input.maximumAmountCents !== undefined && amountCents > input.maximumAmountCents) fail("OWNER_PIX_TEST_AMOUNT_LIMIT");
 
       // The quota ledger, STOCK attempt, and variant reservations commit or roll
       // back together. A crash cannot leave an expiring pre-claim outside STOCK.
@@ -385,6 +431,7 @@ export async function createStockCheckout(input: {
       if (attempt.fingerprint !== fingerprint) fail("CHECKOUT_ATTEMPT_CHANGED");
       if (attempt.status === "released") fail("CHECKOUT_ATTEMPT_RELEASED");
       if (attempt.status === "paid") fail("CHECKOUT_ALREADY_PAID");
+      if (input.maximumAmountCents !== undefined && stockAttemptAmountCents(attempt) > input.maximumAmountCents) fail("OWNER_PIX_TEST_AMOUNT_LIMIT");
       await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), true);
       return attempt;
     });
@@ -403,9 +450,14 @@ export async function createStockCheckout(input: {
     await input.store.transaction(tx => tx.markReconciliationRequired(request.attemptId));
     fail("CHECKOUT_PROVIDER_RECONCILIATION_REQUIRED");
   }
-  const providerStarted = await input.store.transaction(tx =>
-    tx.beginProviderAttempt(request.attemptId, input.provider.supportsIdempotencyKey),
-  );
+  // The strong reference is persisted in the SAME transaction that starts the provider attempt and is committed before the provider
+  // is called. No provider I/O happens inside this transaction.
+  let paymentReference: string | null = null;
+  const providerStarted = await input.store.transaction(async tx => {
+    const started = await tx.beginProviderAttempt(request.attemptId, input.provider.supportsIdempotencyKey);
+    if (started && tx.ensurePaymentReference) paymentReference = await tx.ensurePaymentReference(request.attemptId);
+    return started;
+  });
   if (!providerStarted) {
     const latest = await input.store.transaction(tx => tx.findAttempt(request.attemptId));
     if (latest?.status === "reserved" && latest.paymentId) {
@@ -423,9 +475,12 @@ export async function createStockCheckout(input: {
     fail("CHECKOUT_RECONCILIATION_REQUIRED");
   }
 
-  let payment: { paymentId: string; checkoutUrl: string };
+  let payment: { paymentId: string; checkoutUrl: string; customerId?: string | null };
   try {
-    payment = await input.provider.createPayment({ orderId: prepared.attempt.orderId, amountCents, idempotencyKey: `stock:${prepared.attempt.orderId}` });
+    payment = await input.provider.createPayment({
+      orderId: prepared.attempt.orderId, amountCents, idempotencyKey: stockProviderIdempotencyKey(prepared.attempt.orderId, paymentReference),
+      ...(paymentReference ? { externalReference: paymentReference } : {}),
+    });
   } catch (error) {
     if (error instanceof StockProviderError && error.definitelyNotCreated) {
       await input.store.transaction(async tx => {
@@ -438,7 +493,7 @@ export async function createStockCheckout(input: {
     fail("CHECKOUT_PROVIDER_OUTCOME_UNKNOWN");
   }
   try {
-    await input.store.transaction(tx => tx.recordPayment(request.attemptId, payment.paymentId, payment.checkoutUrl));
+    await input.store.transaction(tx => tx.recordPayment(request.attemptId, payment.paymentId, payment.checkoutUrl, payment.customerId ?? null));
   } catch {
     // The provider may have created a real charge. Keep the reservation for reconciliation.
     fail("CHECKOUT_PAYMENT_CORRELATION_REQUIRED");
@@ -513,15 +568,23 @@ async function processStockPaymentWebhook(input: {
   status: "pending" | "paid" | "failed";
   amountCents: number;
   payload: unknown;
+  strongReference?: string;
+  referenceKind?: "strong" | "legacy";
 }): Promise<"processed" | "duplicate" | "conflict"> {
   if (!input.eventId.trim() || !input.orderId.trim() || !input.paymentId.trim() || !Number.isSafeInteger(input.amountCents) || input.amountCents < 0) fail("WEBHOOK_INPUT_INVALID");
   const payloadHash = sha256(input.payload);
   return input.store.transaction(async tx => {
     const claim = await tx.claimWebhook(input.eventId, payloadHash);
     if (claim !== "claimed") return claim;
-    const attempt = await tx.findAttemptByOrder(input.orderId);
+    // A strong reference selects the attempt by an exact, persisted, non-reusable token; a legacy numeric reference selects by the
+    // (restore-reusable) order id and therefore never proves ownership by itself.
+    const attemptByOrder = input.strongReference
+      ? (tx.findAttemptByPaymentReference ? await tx.findAttemptByPaymentReference(input.strongReference) : null)
+      : await tx.findAttemptByOrder(input.orderId);
+    const attemptByPayment = await tx.findAttemptByPayment(input.paymentId);
+    const resolvedOrderId = input.strongReference ? (attemptByOrder?.orderId ?? null) : input.orderId;
+    const attempt = attemptByOrder ?? attemptByPayment;
     if (!attempt) fail("WEBHOOK_PAYMENT_UNKNOWN");
-    // Only a "paid" signal can mean money moved; every other rejected transition stays a plain, non-financial conflict.
     const rejectApproval = async (kind: StockFinancialDivergenceKind, current: StockAttempt = attempt): Promise<"conflict"> => {
       let expectedAmountCents: number | null = null;
       try { expectedAmountCents = stockAttemptAmountCents(current); } catch { /* legacy attempt without an authoritative amount */ }
@@ -529,23 +592,37 @@ async function processStockPaymentWebhook(input: {
         kind, attemptId: current.attemptId, orderId: current.orderId, paymentId: input.paymentId, providerEventId: input.eventId,
         observedAmountCents: input.amountCents, expectedAmountCents,
         attemptStatus: current.status, attemptProviderState: current.providerState, attemptPaymentId: current.paymentId ?? null,
+        observedStatus: input.status, observedOrderId: input.orderId,
       });
       return "conflict";
     };
-    if (attempt.paymentId && attempt.paymentId !== input.paymentId) return input.status === "paid" ? rejectApproval("PAID_WITH_DIFFERENT_PAYMENT_ID") : "conflict";
+    if (attemptByPayment && (attemptByPayment.orderId !== resolvedOrderId || (attemptByOrder && attemptByOrder.attemptId !== attemptByPayment.attemptId))) {
+      return rejectApproval("PAYMENT_REFERENCE_MISMATCH", attemptByPayment);
+    }
+    if (!attemptByOrder) return rejectApproval("PAYMENT_REFERENCE_MISMATCH", attempt);
+    if (tx.validateAttemptOrderProjection && !(await tx.validateAttemptOrderProjection(attempt))) {
+      return rejectApproval("PAYMENT_ORDER_BINDING_MISMATCH");
+    }
     if (attempt.providerState === "not_started" || attempt.providerState === "definitive_failure") {
       if (input.status !== "paid") return "conflict";
       return rejectApproval(attempt.providerState === "not_started" ? "PAID_FOR_UNSTARTED_ATTEMPT" : attempt.status === "released" ? "PAID_AFTER_TERMINAL_FAILURE" : "PAID_AFTER_RELEASE");
     }
+    // A restored or ambiguous attempt has no proof that this provider charge was created for it.
+    // Never adopt a charge from its reusable numeric order reference, even when the amount matches.
+    if (!attempt.paymentId) return rejectApproval("PAYMENT_WITHOUT_CORRELATION");
+    if (attempt.paymentId !== input.paymentId) {
+      return input.status === "paid" ? rejectApproval("PAID_WITH_DIFFERENT_PAYMENT_ID") : rejectApproval("PAYMENT_ID_MISMATCH");
+    }
     // The charged total (merchandise + accepted freight), exactly as persisted with the attempt.
-    const expected = stockAttemptAmountCents(attempt);
-    if (expected !== input.amountCents) fail("WEBHOOK_AMOUNT_MISMATCH");
+    let expected: number;
+    try { expected = stockAttemptAmountCents(attempt); }
+    catch { return rejectApproval(input.status === "paid" ? "PAID_AMOUNT_MISMATCH" : "PAYMENT_AMOUNT_MISMATCH"); }
+    if (expected !== input.amountCents) return rejectApproval(input.status === "paid" ? "PAID_AMOUNT_MISMATCH" : "PAYMENT_AMOUNT_MISMATCH");
     if (attempt.status === "paid") return input.status === "failed" ? "conflict" : "processed";
     if (attempt.status === "released") {
-      if (input.status === "failed" && attempt.paymentId === input.paymentId) return "processed";
+      if (input.status === "failed") return "processed";
       return input.status === "paid" ? rejectApproval("PAID_AFTER_RELEASE") : "conflict";
     }
-    if (!attempt.paymentId) await tx.recordPayment(attempt.attemptId, input.paymentId, null);
     if (input.status === "pending") return "processed";
     if (input.status === "paid") {
       const result = await tx.markPaid(attempt.attemptId, input.paymentId);
@@ -580,6 +657,10 @@ export type StockNormalizedWebhook = {
   status: "pending" | "paid" | "failed";
   amountCents: number;
   payload: unknown;
+  /** Set when the event's externalReference is a strong attempt reference; `orderId` then carries that opaque reference. */
+  strongReference?: string;
+  /** "legacy" = historical numeric order reference. */
+  referenceKind?: "strong" | "legacy";
 };
 
 export interface StockWebhookBoundary {

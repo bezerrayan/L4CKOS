@@ -9,7 +9,7 @@ import { createTRPCProxyClient, httpBatchLink } from "@trpc/client";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
 import superjson from "superjson";
 import { appRouter } from "../routers";
-import { getOrderById, getOrderByIdAndUser, setStockLocalHarnessDb } from "../db";
+import { getOrderById, getOrderByIdAndUser, setStockLocalHarnessDb, updateOrderAndReserveDeliveredEmailEvents } from "../db";
 import { ENV } from "../_core/env";
 import { configureStockCheckoutRuntimeForLocalHarness, createContext } from "../_core/context";
 import { asaasWebhookHandler, createAsaasWebhookHandler, processWebhookEnvelope } from "../controllers/paymentController";
@@ -19,9 +19,31 @@ import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "./stockCheckoutRuntime";
 import { createExclusiveStore } from "../exclusive/store";
 import { configureExclusiveStoreForLocalHarness } from "../exclusive/runtime";
+import { productionSummary, saveBatch } from "../database/productionBatches";
 import { processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 import { canonicalizeSeedVariants } from "./testing/canonicalizeSeedVariants";
+import { checkout as legacyCheckout } from "../database/checkout";
+import paymentRoutes from "../routes/paymentRoutes";
+import shippingRoutes from "../routes/shippingRoutes";
+
+const providerSimulator = vi.hoisted(() => ({
+  payments: new Map<string, Record<string, unknown> & { orderId: string }>(),
+  unavailable: false,
+}));
+vi.mock("../services/asaasService", async importOriginal => {
+  const original = await importOriginal<typeof import("../services/asaasService")>();
+  return {
+    ...original,
+    getAsaasPayment: vi.fn(async (paymentId: string) => {
+      if (providerSimulator.unavailable) throw Object.assign(new Error("SYNTHETIC_PROVIDER_UNAVAILABLE"), { providerStatus: 503 });
+      const payment = providerSimulator.payments.get(paymentId);
+      if (!payment) throw Object.assign(new Error("SYNTHETIC_PROVIDER_PAYMENT_NOT_FOUND"), { providerStatus: 404 });
+      const { orderId: _orderId, ...current } = payment;
+      return current;
+    }),
+  };
+});
 
 const database = process.env.STOCK_MYSQL_DATABASE ?? "";
 const host = process.env.STOCK_MYSQL_HOST ?? "";
@@ -29,6 +51,15 @@ const port = Number(process.env.STOCK_MYSQL_PORT ?? 0);
 const user = process.env.STOCK_MYSQL_USER ?? "";
 const password = process.env.STOCK_MYSQL_PASSWORD ?? "";
 const syntheticWebhookToken = "synthetic-stock-webhook-token-only";
+const syntheticGateEnvKeys = [
+  "NODE_ENV",
+  "RAILWAY_PROJECT_ID",
+  "RAILWAY_ENVIRONMENT_ID",
+  "RAILWAY_SERVICE_ID",
+  "STAGING_SYNTHETIC_BUYER_GATE_ENABLED",
+  "STAGING_SYNTHETIC_BUYER_IDS",
+] as const;
+const originalSyntheticGateEnv = Object.fromEntries(syntheticGateEnvKeys.map(key => [key, process.env[key]]));
 const syntheticAdminEmail = ENV.adminEmails[0] ?? "admin@local.dev";
 const syntheticDelivery = {
   optionId: "local-plano-piloto" as const,
@@ -84,9 +115,16 @@ function adminHttpClient(session: string) {
   });
 }
 
+async function readVariantInventory(variantId: number) {
+  const [rows] = await pool.query<(Record<string, unknown> & { stock: number; reservedStock: number })[]>(
+    "SELECT stock, reservedStock FROM productVariants WHERE id = ?", [variantId],
+  );
+  return rows[0];
+}
+
 async function resetDatabase() {
   await pool.query("SET FOREIGN_KEY_CHECKS = 0");
-  for (const table of ["auditLogs", "stockWebhookEvents", "stockReservations", "orderItems", "stockCheckoutItems", "stockCheckoutAttempts", "orders", "productVariants", "products", "userAddresses", "users"]) {
+  for (const table of ["notificationOutbox", "payments", "auditLogs", "stockWebhookEvents", "stockReservations", "orderItems", "stockCheckoutItems", "stockCheckoutAttempts", "orders", "productVariants", "products", "userAddresses", "users"]) {
     await pool.query("TRUNCATE TABLE " + table);
   }
   await pool.query("SET FOREIGN_KEY_CHECKS = 1");
@@ -133,7 +171,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
         async createPayment(input) {
           providerCalls.push(input);
           // unique per call (a sync push+length), so concurrent attempts never collide on the payment unique key
-          return { paymentId: paymentIdFor(input.idempotencyKey), checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
+          const paymentId = paymentIdFor(input.idempotencyKey);
+          const customerId = "cus-synthetic-stock-customer";
+          providerSimulator.payments.set(paymentId, {
+            id: paymentId, orderId: input.orderId, externalReference: input.externalReference ?? input.orderId,
+            value: input.amountCents / 100, currency: "BRL", customer: customerId, billingType: "PIX", status: "PENDING", deleted: false,
+          });
+          return { paymentId, customerId, checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
         },
       },
     });
@@ -148,7 +192,21 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       createContext: async options => ({ ...await createContext(options), stockCheckoutRuntime: undefined }),
     }));
     app.use(express.json({ limit: "64kb" }));
-    app.post("/webhook/asaas", asaasWebhookHandler);
+    app.use("/api/payments", paymentRoutes);
+    app.use("/api/shipping", shippingRoutes);
+    app.post("/webhook/asaas", (req, _res, next) => {
+      const payment = req.body?.payment;
+      const current = typeof payment?.id === "string" ? providerSimulator.payments.get(payment.id) : undefined;
+      if (current) {
+        // Test fixtures historically used the order id as a placeholder. Emit
+        // the actual provider reference from the simulated charge instead.
+        if (String(payment.externalReference ?? "") === current.orderId) payment.externalReference = current.externalReference;
+        if (typeof payment.status === "string") current.status = payment.status;
+        if (req.body?.event === "PAYMENT_DELETED") current.deleted = payment.deleted === true;
+      }
+      req.body.account ??= { id: "account-synthetic-stock" };
+      next();
+    }, asaasWebhookHandler);
     app.post("/webhook-asaas-runtime-absent", createAsaasWebhookHandler(() => undefined));
     httpServer = createServer(app);
     await new Promise<void>(resolveListen => httpServer.listen(0, "127.0.0.1", resolveListen));
@@ -161,9 +219,251 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     await resetDatabase();
     providerCalls = [];
     paymentIds.clear();
+    providerSimulator.payments.clear();
+    providerSimulator.unavailable = false;
     vi.stubEnv("PUBLIC_SITE_MODE", "store");
     vi.stubEnv("PUBLIC_CHECKOUT_ENABLED", "true");
     vi.stubEnv("ASAAS_WEBHOOK_TOKEN", syntheticWebhookToken);
+    vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_ID", "account-synthetic-stock");
+    vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_CURRENCY", "BRL");
+  });
+
+  it("gates direct STOCK and legacy API calls to the configured synthetic buyer before any side effect", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RAILWAY_PROJECT_ID", "66faf690-a068-40d1-b85c-cb5d8595560a");
+    vi.stubEnv("RAILWAY_ENVIRONMENT_ID", "5335340d-311c-47e9-9713-6e5a86969c88");
+    vi.stubEnv("RAILWAY_SERVICE_ID", "d66762a4-422a-4656-94a1-502215a27aa2");
+    vi.stubEnv("STAGING_SYNTHETIC_BUYER_GATE_ENABLED", "true");
+    vi.stubEnv("STAGING_SYNTHETIC_BUYER_IDS", "81");
+    shippingQuoteCalls = [];
+    shippingQuoteResult = { options: [{ id: "melhor-envio-1", label: "Fixture", description: "Fixture", price: 1, minDays: 1, maxDays: 1 }], source: "melhor-envio" };
+
+    const request = { items: [{ productId: 4, variantId: 8, quantity: 1 }], address: syntheticDelivery.address };
+    await expect(httpClient("other-82").stockCheckout.quoteShipping.mutate(request))
+      .rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    await expect(httpClient("other-82").stockCheckout.create.mutate({
+      attemptId: "stock-gate-denied-0001", items: request.items, delivery: syntheticDelivery,
+    })).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    await expect(httpClient("anonymous").stockCheckout.create.mutate({
+      attemptId: "stock-gate-anon-0001", items: request.items, delivery: syntheticDelivery,
+    })).rejects.toMatchObject({ data: { code: "UNAUTHORIZED" } });
+    await expect(httpClient("other-82").stockCheckout.create.mutate({
+      attemptId: "stock-gate-spoof-0001", userId: 81, items: request.items, delivery: syntheticDelivery,
+    } as never)).rejects.toMatchObject({ data: { code: "BAD_REQUEST" } });
+
+    const legacyClient = adminHttpClient("other-82");
+    await expect(legacyClient.orders.createAsaasCharge.mutate({
+      checkoutAttemptId: "9434467d-2687-46e7-b5b6-d076d3bfe456", method: "PIX",
+      items: [{ productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 1 }],
+      shipping: { cep: "70000000", optionId: "local-plano-piloto" }, shippingAddress: syntheticDelivery.address,
+      customer: { name: "Other Customer", cpfCnpj: "11144477735", email: "other-customer@example.invalid" },
+    } as never)).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    await expect(legacyClient.orders.validateCoupon.mutate({
+      code: "SYNTHETIC", items: request.items, shipping: { cep: "70000000", optionId: "test" },
+    } as never)).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    const cookie = `${COOKIE_NAME}=${sessionTokens["other-82"]}`;
+    const customer = await fetch(`${baseUrl}/api/payments/create-customer`, {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ cpf: "11144477735" }),
+    });
+    expect(customer.status).toBe(403);
+    const legacyRest = await fetch(`${baseUrl}/api/payments/create-checkout`, {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({}),
+    });
+    expect(legacyRest.status).toBe(403);
+    const shipping = await fetch(`${baseUrl}/api/shipping/quote`, {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ cep: "70000000", itemCount: 1, subtotal: 129 }),
+    });
+    expect(shipping.status).toBe(403);
+    const anonymousShipping = await fetch(`${baseUrl}/api/shipping/quote`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cep: "70000000", itemCount: 1, subtotal: 129 }),
+    });
+    expect(anonymousShipping.status).toBe(401);
+
+    expect(shippingQuoteCalls).toHaveLength(0);
+    expect(providerCalls).toHaveLength(0);
+    for (const table of ["orders", "orderItems", "stockReservations", "stockCheckoutAttempts"]) {
+      const [rows] = await pool.query<(Record<string, unknown> & { n: number })[]>(`SELECT COUNT(*) AS n FROM ${table}`);
+      expect(Number(rows[0].n), table).toBe(0);
+    }
+
+    for (const key of syntheticGateEnvKeys) vi.stubEnv(key, originalSyntheticGateEnv[key]);
+  });
+
+  async function buyLegacyVariant(attemptId: string, chargeCalls: string[] = [], variantId = 8) {
+    const connection = await pool.getConnection();
+    try {
+      return await legacyCheckout(connection, {
+        userId: 81,
+        checkoutAttemptId: attemptId,
+        method: "PIX",
+        items: [{ productId: 4, variantId, size: variantId === 8 ? "M" : "G", color: "Preto", quantity: 1 }],
+        shipping: { cep: "70000000", optionId: "local-plano-piloto" },
+        shippingAddress: syntheticDelivery.address,
+        customer: { name: "STOCK Customer", cpfCnpj: "11144477735", email: "stock-customer@example.invalid" },
+      }, {
+        quote: async () => ({ options: [{ id: "local-plano-piloto", label: "Fixture", price: 0 }] }),
+        charge: async ({ orderId }) => {
+          chargeCalls.push(`order-${orderId}`);
+          return { method: "PIX", customerId: `customer-${orderId}`, paymentId: `legacy-payment-${orderId}`,
+            invoiceUrl: null, pixQrCode: null, pixCopyPaste: null, bankSlipUrl: null,
+            digitableLine: null, nossoNumero: null, billingType: "PIX" };
+        },
+      });
+    } finally {
+      connection.release();
+    }
+  }
+
+  it("does not let legacy reserve a variant already held by STOCK", async () => {
+    const stock = await httpClient("owner-81").stockCheckout.create.mutate({
+      attemptId: "stock-wins-cross-path-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+    });
+    let financialCalls = 0;
+    const connection = await pool.getConnection();
+    try {
+      await expect(legacyCheckout(connection, {
+        userId: 81, checkoutAttemptId: "ad65be9d-2f28-4a0a-b383-63ef7fc0a1b2", method: "PIX",
+        items: [{ productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 1 }],
+        shipping: { cep: "70000000", optionId: "local-plano-piloto" }, shippingAddress: syntheticDelivery.address,
+        customer: { name: "STOCK Customer", cpfCnpj: "11144477735", email: "stock-customer@example.invalid" },
+      }, {
+        quote: async () => ({ options: [{ id: "local-plano-piloto", label: "Fixture", price: 0 }] }),
+        charge: async ({ orderId }) => { financialCalls++; return { method: "PIX", customerId: `customer-${orderId}`, paymentId: `legacy-payment-${orderId}`, invoiceUrl: null, pixQrCode: null, pixCopyPaste: null, bankSlipUrl: null, digitableLine: null, nossoNumero: null, billingType: "PIX" }; },
+      })).rejects.toMatchObject({ code: "CHECKOUT_STOCK_INSUFFICIENT" });
+    } finally { connection.release(); }
+    expect(financialCalls).toBe(0);
+    expect(providerCalls).toHaveLength(1);
+    expect(stock.status).toBe("pending");
+    expect(await readVariantInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+    const [rows] = await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockReservations WHERE variantId=8 AND status='active'");
+    expect(Number(rows[0].n)).toBe(1);
+  });
+
+  it("REPRO: rejects legacy after the STOCK ledger expires but its payment is held for reconciliation", async () => {
+    const attemptId = "stock-expired-payment-held-0001";
+    const stock = await httpClient("owner-81").stockCheckout.create.mutate({
+      attemptId, items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+    });
+    expect(stock.status).toBe("pending");
+
+    await pool.execute(
+      "UPDATE stockCheckoutAttempts SET reservationExpiresAt = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND) WHERE attemptId = ?",
+      [attemptId],
+    );
+    await pool.execute(
+      "UPDATE stockReservations SET expiresAt = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND) WHERE attemptId = ? AND status = 'active'",
+      [attemptId],
+    );
+    const expiry = await createMysqlStockCheckoutStore(pool).transaction(tx => tx.expireDueReservations(20));
+    expect(expiry.releasedAttemptIds).toEqual([]);
+    expect(expiry.reconciliationAttemptIds).toEqual([attemptId]);
+
+    const [attemptRows] = await pool.execute<(Record<string, unknown> & {
+      status: string; providerState: string; reconciliationRequiredAt: Date | null;
+    })[]>("SELECT status, providerState, reconciliationRequiredAt FROM stockCheckoutAttempts WHERE attemptId = ?", [attemptId]);
+    const [reservationRows] = await pool.execute<(Record<string, unknown> & {
+      status: string; expiresAt: Date;
+    })[]>("SELECT status, expiresAt FROM stockReservations WHERE attemptId = ?", [attemptId]);
+    expect(attemptRows[0]).toMatchObject({ status: "reserved", providerState: "created" });
+    expect(attemptRows[0]?.reconciliationRequiredAt).not.toBeNull();
+    expect(reservationRows[0]?.status).toBe("active");
+    const [expiredRows] = await pool.execute<(Record<string, unknown> & { expired: number })[]>(
+      "SELECT (expiresAt <= UTC_TIMESTAMP(3)) AS expired FROM stockReservations WHERE attemptId = ?",
+      [attemptId],
+    );
+    expect(Number(expiredRows[0]?.expired)).toBe(1);
+    expect(await readVariantInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+
+    const legacyFinancialCalls: string[] = [];
+    await expect(buyLegacyVariant("ad65be9d-2f28-4a0a-b383-63ef7fc0a1b8", legacyFinancialCalls))
+      .rejects.toMatchObject({ code: "CHECKOUT_STOCK_INSUFFICIENT" });
+    expect(legacyFinancialCalls).toHaveLength(0);
+    expect(providerCalls).toHaveLength(1); // only the original synthetic STOCK payment
+    expect(await readVariantInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+    const [orders] = await pool.execute<(Record<string, unknown> & { n: number })[]>(
+      "SELECT COUNT(*) AS n FROM orders WHERE stockAttemptId IS NULL",
+    );
+    expect(Number(orders[0].n)).toBe(0); // no legacy order was created
+  });
+
+  it("does not let STOCK reserve a variant already held by legacy", async () => {
+    const chargeCalls: string[] = [];
+    const attemptId = "ad65be9d-2f28-4a0a-b383-63ef7fc0a1b3";
+    const legacy = await buyLegacyVariant(attemptId, chargeCalls);
+    const replay = await buyLegacyVariant(attemptId, chargeCalls);
+    expect(replay.replayed).toBe(true);
+    expect(replay.orderId).toBe(legacy.orderId);
+    expect(chargeCalls).toHaveLength(1);
+    const stockPaymentsBefore = providerCalls.length;
+    await expect(httpClient("other-82").stockCheckout.create.mutate({
+      attemptId: "stock-loses-cross-path-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+    })).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+    expect(providerCalls).toHaveLength(stockPaymentsBefore);
+    expect(await readVariantInventory(8)).toMatchObject({ stock: 1, reservedStock: 0 });
+    const [rows] = await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockReservations WHERE variantId=8 AND status='active'");
+    expect(Number(rows[0].n)).toBe(1);
+  });
+
+  it("lets STOCK claim the unit after a legacy reservation is cancelled or expires", async () => {
+    const cancelled = await buyLegacyVariant("ad65be9d-2f28-4a0a-b383-63ef7fc0a1b5");
+    await updateOrderAndReserveDeliveredEmailEvents(cancelled.orderId, { status: "cancelled" }, 81);
+    const [cancelledReservation] = await pool.query<(Record<string, unknown> & { status: string })[]>(
+      "SELECT status FROM stockReservations WHERE orderId = ?", [cancelled.orderId],
+    );
+    expect(cancelledReservation[0]?.status).toBe("released");
+    const afterCancel = await httpClient("owner-81").stockCheckout.create.mutate({
+      attemptId: "stock-after-legacy-cancel-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+    });
+    expect(afterCancel.status).toBe("pending");
+
+    await resetDatabase();
+    providerCalls = [];
+    const expired = await buyLegacyVariant("ad65be9d-2f28-4a0a-b383-63ef7fc0a1b6");
+    await pool.execute("UPDATE stockReservations SET expiresAt = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND) WHERE orderId = ?", [expired.orderId]);
+    const afterExpiry = await httpClient("owner-81").stockCheckout.create.mutate({
+      attemptId: "stock-after-legacy-expiry-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+    });
+    expect(afterExpiry.status).toBe("pending");
+    const [rows] = await pool.query<(Record<string, unknown> & { active: number })[]>(
+      "SELECT COUNT(*) AS active FROM stockReservations WHERE variantId=8 AND status='active' AND expiresAt>UTC_TIMESTAMP(3)",
+    );
+    expect(Number(rows[0].active)).toBe(1);
+  });
+
+  it("allows a different variant with available stock while the first variant is held", async () => {
+    await pool.execute("INSERT INTO productVariants (id, productId, name, sku, size, color, price, stock, reservedStock, isActive) VALUES (9, 4, 'TSHIRT-BLK-G', 'TSHIRT-BLK-G', 'G', 'Preto', 14900, 2, 0, 1)");
+    await canonicalizeSeedVariants(pool);
+    await httpClient("owner-81").stockCheckout.create.mutate({
+      attemptId: "stock-cross-variant-held-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+    });
+    const legacy = await buyLegacyVariant("ad65be9d-2f28-4a0a-b383-63ef7fc0a1b7", [], 9);
+    expect(legacy.replayed).not.toBe(true);
+    expect(await readVariantInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+    expect(await readVariantInventory(9)).toMatchObject({ stock: 2, reservedStock: 0 });
+    const [rows] = await pool.query<(Record<string, unknown> & { variantId: number; total: number })[]>(
+      "SELECT variantId, COUNT(*) AS total FROM stockReservations WHERE status='active' GROUP BY variantId ORDER BY variantId",
+    );
+    expect(rows.map(row => [Number(row.variantId), Number(row.total)])).toEqual([[8, 1], [9, 1]]);
+  });
+
+  it("serializes a legacy and STOCK race for the last variant unit", async () => {
+    const results = await Promise.allSettled([
+      buyLegacyVariant("ad65be9d-2f28-4a0a-b383-63ef7fc0a1b4"),
+      httpClient("other-82").stockCheckout.create.mutate({
+        attemptId: "stock-cross-path-race-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery,
+      }),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    const [rows] = await pool.query<(Record<string, unknown> & { active: number; stock: number; reservedStock: number; legacyReserved: number })[]>(
+      "SELECT (SELECT COUNT(*) FROM stockReservations WHERE variantId=8 AND status='active') AS active, (SELECT COALESCE(SUM(quantity),0) FROM stockReservations WHERE variantId=8 AND attemptId IS NULL AND status='active' AND expiresAt>UTC_TIMESTAMP(3)) AS legacyReserved, v.stock, v.reservedStock FROM productVariants v WHERE v.id=8",
+    );
+    expect(Number(rows[0].active)).toBe(1);
+    expect(Number(rows[0].stock) - Number(rows[0].reservedStock) - Number(rows[0].legacyReserved)).toBe(0);
+    // If legacy won, its charge must be the only external financial action; if STOCK won, its provider is called once.
+    expect(providerCalls.length + Number(results[0].status === "fulfilled")).toBe(1);
   });
 
   afterAll(async () => {
@@ -215,7 +515,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     const webhookBody = JSON.stringify({
       id: "evt-synthetic-paid-1",
       event: "PAYMENT_RECEIVED",
-      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" },
+      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL", billingType: "PIX" },
     });
     const invalidWebhook = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": "invalid" }, body: webhookBody });
     expect(invalidWebhook.status).toBe(401);
@@ -293,7 +593,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     const body = JSON.stringify({
       id: "evt-synthetic-recovery-1",
       event: "PAYMENT_RECEIVED",
-      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" },
+      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL", billingType: "PIX" },
     });
     const store = createMysqlStockCheckoutStore(pool);
     const failingProjectionStore: StockCheckoutStore = {
@@ -339,7 +639,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
         supportsIdempotencyKey: true,
         async createPayment(input) {
           providerCalls.push(input);
-          return { paymentId: paymentIdFor(input.idempotencyKey), checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
+          const paymentId = paymentIdFor(input.idempotencyKey);
+          const customerId = "cus-synthetic-stock-customer";
+          providerSimulator.payments.set(paymentId, {
+            id: paymentId, orderId: input.orderId, externalReference: input.externalReference ?? input.orderId,
+            value: input.amountCents / 100, currency: "BRL", customer: customerId, billingType: "PIX", status: "PENDING", deleted: false,
+          });
+          return { paymentId, customerId, checkoutUrl: "https://sandbox.invalid/synthetic-checkout" };
         },
       },
     });
@@ -353,15 +659,32 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
   it("internal replay of a stored STOCK event needs verified ingress provenance: unauthenticated, tampered or token-rotated events are never processed", async () => {
     const owner = httpClient("owner-81");
     const created = await owner.stockCheckout.create.mutate({ attemptId: "stock-replay-attempt-0001", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery });
-    const body = (value: number) => ({ id: "evt-replay-paid-1", event: "PAYMENT_RECEIVED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value, currency: "BRL" } });
+    const paymentId = created.paymentId!;
+    const current = providerSimulator.payments.get(paymentId)!;
+    current.status = "RECEIVED";
+    const body = (value: number, billingType: string | null = "PIX", id = "evt-replay-paid-1") => ({ id, event: "PAYMENT_RECEIVED", account: { id: "account-synthetic-stock" }, payment: { id: paymentId, externalReference: current.externalReference, status: "RECEIVED", value, currency: "BRL", ...(billingType === null ? {} : { billingType }) } });
     const attemptStatus = async () => ((await pool.execute<(Record<string, unknown> & { status: string })[]>("SELECT status FROM stockCheckoutAttempts WHERE attemptId = 'stock-replay-attempt-0001'"))[0][0]?.status);
     const ledger = async () => Number(((await pool.execute<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockWebhookEvents"))[0][0])?.n);
+    const inboxCount = async (eventId: string) => Number(((await pool.execute<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM asaasWebhookInbox WHERE eventId = ?", [eventId]))[0][0])?.n);
 
-    // 1. Nothing was attested at an authenticated delivery: a bare DB envelope is NOT accepted.
+    // Missing billingType cannot bypass the authenticated-ingress gate by becoming a durable reconciliation ACK.
+    const missingType = await processWebhookEnvelope(body(129, null, "evt-replay-missing-billing-type"));
+    expect(missingType.status).toBe(503);
+    expect(missingType.body).toMatchObject({ reason: "payment_replay_requires_authenticated_delivery", retryable: true });
+    expect([await attemptStatus(), await ledger()]).toEqual(["reserved", 0]);
+    expect(await inboxCount("evt-replay-missing-billing-type")).toBe(0);
+    const [unauthenticatedAudit] = await pool.query<any[]>(
+      "SELECT COUNT(*) AS n FROM auditLogs WHERE action = 'payment.webhook_reconciliation_required.v1' AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.eventId')) = ?",
+      ["evt-replay-missing-billing-type"],
+    );
+    expect(Number(unauthenticatedAudit[0]?.n)).toBe(0);
+
+    // 1. Nothing was attested at an authenticated delivery: a valid PIX-shaped bare DB envelope is NOT accepted.
     const bare = await processWebhookEnvelope(body(129));
     expect(bare.status).toBe(503);
-    expect(bare.body).toMatchObject({ reason: "stock_replay_requires_authenticated_delivery" });
+    expect(bare.body).toMatchObject({ reason: "payment_replay_requires_authenticated_delivery", retryable: true });
     expect([await attemptStatus(), await ledger()]).toEqual(["reserved", 0]);
+    expect(await inboxCount("evt-replay-paid-1")).toBe(0);
 
     // 2. Provenance for a DIFFERENT envelope (other amount) does not vouch for this one.
     expect(await attestAuthenticatedIngress(body(1))).toBe(true);
@@ -407,10 +730,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     }
     const buy = (session: string, attemptId: string, quantity: number, variantId = 21) =>
       httpClient(session).stockCheckout.create.mutate({ attemptId, items: [{ productId: 6, variantId, quantity }], delivery: syntheticDelivery });
-    const claimed = async () => Number(((await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COALESCE(SUM(i.quantity),0) AS n FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId = 70 AND i.salesModeAtPurchase='PREORDER' AND o.status <> 'cancelled'"))[0] as any)[0].n);
+    const claimed = async () => Number(((await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COALESCE(SUM(i.quantity),0) AS n FROM orderItems i JOIN orders o ON o.id=i.orderId WHERE i.productionBatchId = 70 AND i.salesModeAtPurchase='PREORDER' AND (o.status <> 'cancelled' OR o.paymentStatus = 'confirmed')"))[0] as any)[0].n);
     const variantStock = async () => ((await pool.query<(Record<string, unknown> & { stock: number; reservedStock: number })[]>("SELECT stock, reservedStock FROM productVariants WHERE id IN (21,22) ORDER BY id"))[0] as any[]).map(r => [Number(r.stock), Number(r.reservedStock)]);
     const webhook = (eventId: string, event: string, status: string, orderId: string, paymentId: string, value: number) =>
-      fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: eventId, event, payment: { id: paymentId, externalReference: orderId, status, value, currency: "BRL" } }) });
+      fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: eventId, event, payment: { id: paymentId, externalReference: orderId, status, value, currency: "BRL", billingType: "PIX" } }) });
 
     it("sells against batch capacity without touching variant stock, snapshotting the batch on the order item", async () => {
       await seedPreorder({ maximumQuantity: 3 });
@@ -451,6 +774,91 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       expect(providerCalls).toHaveLength(0);
     });
 
+    it("rejects a mixed STOCK/PREORDER cart at the public checkout API before any side effect", async () => {
+      await seedPreorder({ maximumQuantity: 3 });
+      await expect(httpClient("owner-81").stockCheckout.create.mutate({
+        attemptId: "xiv-mixed-cart-api-0001",
+        items: [
+          { productId: 4, variantId: 8, quantity: 1 },
+          { productId: 6, variantId: 21, quantity: 1 },
+        ],
+        delivery: syntheticDelivery,
+      })).rejects.toMatchObject({ data: { code: "BAD_REQUEST" } });
+      for (const table of ["orders", "orderItems", "stockCheckoutAttempts", "stockCheckoutItems", "stockReservations"]) {
+        const [rows] = await pool.query<(Record<string, unknown> & { n: number })[]>(`SELECT COUNT(*) AS n FROM ${table}`);
+        expect(Number(rows[0].n), table).toBe(0);
+      }
+      expect(providerCalls).toHaveLength(0);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      expect(await readVariantInventory(8)).toMatchObject({ stock: 1, reservedStock: 0 });
+      expect(await claimed()).toBe(0);
+    });
+
+    it("keeps capacity held for a paid PREORDER cancelled without a refund", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const created = await buy("owner-81", "xiv-paid-cancel-hold-0001", 2);
+      const receipt = await webhook("evt-xiv-paid-cancel-hold", "PAYMENT_RECEIVED", "RECEIVED", created.orderId, created.paymentId!, 258);
+      expect(receipt.status).toBe(200);
+      await updateOrderAndReserveDeliveredEmailEvents(Number(created.orderId), { status: "cancelled" }, 81);
+
+      const [order] = await pool.query<(Record<string, unknown> & { status: string; paymentStatus: string })[]>(
+        "SELECT status, paymentStatus FROM orders WHERE id = ?", [created.orderId],
+      );
+      expect(order[0]).toMatchObject({ status: "cancelled", paymentStatus: "confirmed" });
+      const [audit] = await pool.query<(Record<string, unknown> & { metadata: string })[]>(
+        "SELECT metadata FROM auditLogs WHERE action = 'order.cancelled' AND entityId = ?", [created.orderId],
+      );
+      expect(JSON.parse(audit[0].metadata)).toMatchObject({ refundExecuted: false, reconciliationRequired: true });
+      expect(await claimed()).toBe(2);
+      expect((await httpClient("owner-81").products.sellableVariants.query(6)).variants).toEqual([]);
+      const adminConnection = await pool.getConnection();
+      try {
+        await expect(saveBatch(adminConnection as any, {
+          id: BATCH,
+          name: "Lote XIV Bis #1",
+          salesOpenAt: null,
+          salesCloseAt: null,
+          estimatedShippingStart: "2027-02-01T00:00:00.000Z",
+          estimatedShippingEnd: "2027-02-20T00:00:00.000Z",
+          estimatedManufacturingStart: "2026-12-10",
+          estimatedManufacturingEnd: "2027-01-20",
+          minimumQuantity: 0,
+          maximumQuantity: 1,
+        }, 83)).rejects.toThrow("Máximo inferior à capacidade já comprometida.");
+      } finally {
+        adminConnection.release();
+      }
+      await expect(buy("other-82", "xiv-after-paid-cancel-0001", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+      expect(providerCalls).toHaveLength(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+    });
+
+    it("keeps batch summary totals consistent when PAYMENT_RECEIVED races the demand read", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const created = await buy("owner-81", "xiv-summary-race-attempt-01", 1);
+      const originalQuery = pool.query.bind(pool);
+      let interleaved = false;
+      (pool as any).query = async (...args: any[]) => {
+        const result = await (originalQuery as any)(...args);
+        const statement = typeof args[0] === "string" ? args[0] : String(args[0]?.sql ?? "");
+        if (!interleaved && statement.includes("FROM orderItems i JOIN orders o")) {
+          interleaved = true;
+          expect((await webhook("evt-xiv-summary-race", "PAYMENT_RECEIVED", "RECEIVED", created.orderId, created.paymentId!, 129)).status).toBe(200);
+        }
+        return result;
+      };
+      let first: Awaited<ReturnType<typeof productionSummary>>;
+      try {
+        first = await productionSummary(pool as any, BATCH);
+      } finally {
+        (pool as any).query = originalQuery;
+      }
+      expect(interleaved).toBe(true);
+      expect(first!).toMatchObject({ pendingOrders: 1, pendingQuantity: 1, paidOrders: 0, confirmedQuantity: 0 });
+      expect(await productionSummary(pool as any, BATCH)).toMatchObject({ pendingOrders: 0, pendingQuantity: 0, paidOrders: 1, confirmedQuantity: 1 });
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+    });
+
     it("closing the batch (status or sales window) stops sales; an unlimited batch has no cap", async () => {
       await seedPreorder({ maximumQuantity: 3, status: "CLOSED" });
       await expect(buy("owner-81", "xiv-preorder-closed-attempt-1", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
@@ -467,18 +875,289 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       await seedPreorder({ maximumQuantity: 2 });
       const a = await buy("owner-81", "xiv-preorder-release-attempt-0001", 2);
       await expect(buy("other-82", "xiv-preorder-release-attempt-0002", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
-      const failed = await webhook("evt-pre-refused-1", "PAYMENT_REFUSED", "REFUSED", a.orderId, "pay-synthetic-1", 258);
+      const failed = await webhook("evt-pre-refused-1", "PAYMENT_REFUSED", "REFUSED", a.orderId, a.paymentId!, 258);
       expect(failed.status).toBe(200);
       expect(await claimed()).toBe(0);
       const b = await buy("other-82", "xiv-preorder-release-attempt-0003", 2);
       expect(b).toMatchObject({ status: "pending" });
-      const paid = await webhook("evt-pre-paid-1", "PAYMENT_RECEIVED", "RECEIVED", b.orderId, "pay-synthetic-2", 258);
+      const paid = await webhook("evt-pre-paid-1", "PAYMENT_RECEIVED", "RECEIVED", b.orderId, b.paymentId!, 258);
       expect(paid.status).toBe(200);
       const [orderRows] = await pool.query<(Record<string, unknown> & { status: string })[]>("SELECT status FROM orders WHERE id = ?", [b.orderId]);
       expect(orderRows[0].status).toBe("paid");
       expect(await claimed()).toBe(2);
       expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
       await expect(buy("admin-83", "xiv-preorder-release-attempt-0004", 1)).rejects.toMatchObject({ data: { appError: { code: "STOCK_UNAVAILABLE" } } });
+    });
+
+    it("late PAYMENT_RECEIVED after a cancelled PREORDER lot was reallocated is reconciled without confirming either order", async () => {
+      await seedPreorder({ maximumQuantity: 1 });
+      const cancelled = await buy("owner-81", "xiv-preorder-late-cancel-0001", 1);
+      await expect(adminHttpClient("admin-83").admin.orderUpdate.mutate({ orderId: Number(cancelled.orderId), status: "cancelled" }))
+        .rejects.toMatchObject({ data: { code: "CONFLICT" } });
+      expect(await claimed()).toBe(1);
+      await updateOrderAndReserveDeliveredEmailEvents(Number(cancelled.orderId), { status: "cancelled" }, 83);
+      expect(await claimed()).toBe(0);
+
+      const current = await buy("other-82", "xiv-preorder-late-next-0001", 1);
+      expect(await claimed()).toBe(1);
+      const late = await webhook("evt-xiv-preorder-late-cancel", "PAYMENT_RECEIVED", "RECEIVED", cancelled.orderId, cancelled.paymentId!, 129);
+      expect(late.status).toBe(200);
+
+      const [orders] = await pool.query<(Record<string, unknown> & { id: number; status: string; paymentStatus: string })[]>(
+        "SELECT id, status, paymentStatus FROM orders ORDER BY id",
+      );
+      expect(orders).toEqual([
+        { id: Number(cancelled.orderId), status: "cancelled", paymentStatus: "unconfirmed" },
+        { id: Number(current.orderId), status: "pending", paymentStatus: "unconfirmed" },
+      ]);
+      const [divergences] = await pool.query<(Record<string, unknown> & { event: string })[]>(
+        "SELECT event FROM auditLogs WHERE action = 'stock.reconciliation.required'",
+      );
+      expect(divergences).toHaveLength(1);
+      const [alerts] = await pool.query<(Record<string, unknown> & { n: number })[]>(
+        "SELECT COUNT(*) AS n FROM notificationOutbox WHERE type = 'financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.providerEventId')) = ?",
+        ["evt-xiv-preorder-late-cancel"],
+      );
+      expect(Number(alerts[0]?.n)).toBe(1);
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      expect(providerCalls).toHaveLength(2);
+
+      const duplicate = await webhook("evt-xiv-preorder-late-cancel", "PAYMENT_RECEIVED", "RECEIVED", cancelled.orderId, cancelled.paymentId!, 129);
+      expect(duplicate.status).toBe(200);
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+    });
+
+    it("accepts a late PREORDER receipt after expiry only while the batch capacity remains held", async () => {
+      await seedPreorder({ maximumQuantity: 1 });
+      const created = await buy("owner-81", "xiv-preorder-late-expiry-0001", 1);
+      await pool.execute(
+        "UPDATE stockCheckoutAttempts SET reservationExpiresAt = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND) WHERE attemptId = ?",
+        ["xiv-preorder-late-expiry-0001"],
+      );
+      const expiry = await createMysqlStockCheckoutStore(pool).transaction(tx => tx.expireDueReservations(20));
+      expect(expiry).toEqual({ releasedAttemptIds: [], reconciliationAttemptIds: ["xiv-preorder-late-expiry-0001"] });
+      expect(await claimed()).toBe(1);
+
+      const received = await webhook("evt-xiv-preorder-late-expiry", "PAYMENT_RECEIVED", "RECEIVED", created.orderId, created.paymentId!, 129);
+      expect(received.status).toBe(200);
+      const [order] = await pool.query<(Record<string, unknown> & { status: string; paymentStatus: string })[]>(
+        "SELECT status, paymentStatus FROM orders WHERE id = ?", [created.orderId],
+      );
+      expect(order[0]).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      const duplicate = await webhook("evt-xiv-preorder-late-expiry", "PAYMENT_RECEIVED", "RECEIVED", created.orderId, created.paymentId!, 129);
+      expect(duplicate.status).toBe(200);
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+    });
+
+    it("requires authoritative PAYMENT_RECEIVED after PAYMENT_CONFIRMED and keeps the lot reservation idempotent", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const created = await buy("owner-81", "xiv-preorder-confirmed-gate-01", 1);
+      const confirmed = await webhook("evt-pre-confirmed-only", "PAYMENT_CONFIRMED", "CONFIRMED", created.orderId, created.paymentId!, 129);
+      expect(confirmed.status).toBe(200);
+      const [beforeReceived] = await pool.query<(Record<string, unknown> & { status: string })[]>("SELECT status FROM orders WHERE stockAttemptId = ?", ["xiv-preorder-confirmed-gate-01"]);
+      expect(beforeReceived[0]?.status).toBe("pending");
+      expect(await claimed()).toBe(1);
+
+      const received = await webhook("evt-pre-received-after-confirmed", "PAYMENT_RECEIVED", "RECEIVED", created.orderId, created.paymentId!, 129);
+      expect(received.status).toBe(200);
+      const duplicate = await webhook("evt-pre-received-after-confirmed", "PAYMENT_RECEIVED", "RECEIVED", created.orderId, created.paymentId!, 129);
+      expect(duplicate.status).toBe(200);
+      const [afterReceived] = await pool.query<(Record<string, unknown> & { status: string })[]>("SELECT status FROM orders WHERE stockAttemptId = ?", ["xiv-preorder-confirmed-gate-01"]);
+      expect(afterReceived[0]?.status).toBe("paid");
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      const [events] = await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockWebhookEvents WHERE eventId IN ('evt-pre-confirmed-only','evt-pre-received-after-confirmed')");
+      expect(Number(events[0]?.n)).toBe(2);
+    });
+
+    it.each(["CONFIRMED", "RECEIVED_IN_CASH"] as const)(
+      "does not settle PIX PAYMENT_RECEIVED when the authoritative provider state is %s",
+      async providerStatus => {
+        await seedPreorder({ maximumQuantity: 2 });
+        const created = await buy("owner-81", `xiv-preorder-authority-${providerStatus.toLowerCase()}-01`, 1);
+        const providerPayment = providerSimulator.payments.get(created.paymentId!)!;
+        providerPayment.status = providerStatus;
+        const envelope = {
+          id: `evt-xiv-authority-${providerStatus.toLowerCase()}`,
+          event: "PAYMENT_RECEIVED",
+          account: { id: "account-synthetic-stock" },
+          // Deliberately omit status: this is an authenticated receipt event, while the GET state is controlled above.
+          payment: { id: created.paymentId, externalReference: providerPayment.externalReference, value: 129, currency: "BRL", billingType: "PIX" },
+        };
+        const deliver = () => fetch(`${baseUrl}/webhook/asaas`, {
+          method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken },
+          body: JSON.stringify(envelope),
+        });
+
+        const first = await deliver();
+        expect(first.status).toBe(200);
+        expect(await first.json()).toMatchObject({ handled: false, reconciliationRequired: true, financialMutation: false, stockMutation: false });
+        const [order] = await pool.query<(Record<string, unknown> & { status: string; paymentStatus: string })[]>(
+          "SELECT status, paymentStatus FROM orders WHERE id = ?", [created.orderId],
+        );
+        const [attempt] = await pool.query<(Record<string, unknown> & { status: string })[]>(
+          "SELECT status FROM stockCheckoutAttempts WHERE attemptId = ?", [`xiv-preorder-authority-${providerStatus.toLowerCase()}-01`],
+        );
+        expect(order[0]).toMatchObject({ status: "pending", paymentStatus: "unconfirmed" });
+        expect(attempt[0]?.status).toBe("reserved");
+        expect(await claimed()).toBe(1);
+        expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+
+        const [auditRows] = await pool.query<(Record<string, unknown> & { metadata: string })[]>(
+          "SELECT metadata FROM auditLogs WHERE action = 'payment.webhook_reconciliation_required.v1'",
+        );
+        const audit = auditRows.map(row => JSON.parse(row.metadata)).find(row => row.eventId === envelope.id);
+        expect(audit).toMatchObject({ reason: "PROVIDER_STATUS_NOT_RECEIVED", providerObservedStatus: providerStatus,
+          reconciliationRequired: true, financialMutation: false, stockMutation: false });
+        const [alerts] = await pool.query<(Record<string, unknown> & { payload: string })[]>(
+          "SELECT payload FROM notificationOutbox WHERE type = 'financial-reconciliation-alert-v1'",
+        );
+        const alert = alerts.map(row => JSON.parse(row.payload)).find(row => row.providerEventId === envelope.id);
+        expect(alert).toMatchObject({ observedStatus: providerStatus, financialMutation: false, stockMutation: false,
+          category: "order_attempt_payment_inconsistent" });
+
+        const duplicate = await deliver();
+        expect(duplicate.status).toBe(200);
+        expect(await claimed()).toBe(1);
+        expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+        const [alertCount] = await pool.query<(Record<string, unknown> & { n: number })[]>(
+          "SELECT COUNT(*) AS n FROM notificationOutbox WHERE type = 'financial-reconciliation-alert-v1'",
+        );
+        expect(Number(alertCount[0]?.n)).toBe(1);
+      },
+    );
+
+    it("keeps authoritative PENDING PAYMENT_RECEIVED retryable, then durably escalates without settling", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const created = await buy("owner-81", "xiv-preorder-authority-pending-01", 1);
+      const providerPayment = providerSimulator.payments.get(created.paymentId!)!;
+      providerPayment.status = "PENDING";
+      const envelope = {
+        id: "evt-xiv-authority-pending", event: "PAYMENT_RECEIVED", account: { id: "account-synthetic-stock" },
+        payment: { id: created.paymentId, externalReference: providerPayment.externalReference, value: 129, currency: "BRL", billingType: "PIX" },
+      };
+      const deliver = () => fetch(`${baseUrl}/webhook/asaas`, {
+        method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken },
+        body: JSON.stringify(envelope),
+      });
+
+      for (const expectedAttempt of [1, 2]) {
+        const retryable = await deliver();
+        expect(retryable.status).toBe(503);
+        expect(await retryable.json()).toMatchObject({ retryable: true, code: "PAYMENT_NOT_RECEIVED_YET" });
+        const [inbox] = await pool.query<(Record<string, unknown> & { state: string; attempts: number; nextAttemptAt: Date | null })[]>(
+          "SELECT state, attempts, nextAttemptAt FROM asaasWebhookInbox WHERE eventId = ?", [envelope.id],
+        );
+        expect(inbox[0]).toMatchObject({ state: "failed", attempts: expectedAttempt });
+        expect(inbox[0]?.nextAttemptAt).not.toBeNull();
+        const [order] = await pool.query<(Record<string, unknown> & { status: string; paymentStatus: string })[]>(
+          "SELECT status, paymentStatus FROM orders WHERE id = ?", [created.orderId],
+        );
+        expect(order[0]).toMatchObject({ status: "pending", paymentStatus: "unconfirmed" });
+        expect(await claimed()).toBe(1);
+        expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+        if (expectedAttempt === 1) {
+          const premature = await deliver();
+          expect(premature.status).toBe(503);
+          expect(await premature.json()).toMatchObject({ code: "PAYMENT_PROVIDER_RETRY_BACKOFF", retryable: true });
+          const [unchanged] = await pool.query<(Record<string, unknown> & { attempts: number })[]>(
+            "SELECT attempts FROM asaasWebhookInbox WHERE eventId = ?", [envelope.id],
+          );
+          expect(unchanged[0]?.attempts).toBe(1);
+        }
+        await pool.execute("UPDATE asaasWebhookInbox SET nextAttemptAt = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND) WHERE eventId = ?", [envelope.id]);
+      }
+
+      const escalated = await deliver();
+      expect(escalated.status).toBe(200);
+      expect(await escalated.json()).toMatchObject({ handled: false, reconciliationRequired: true, financialMutation: false, stockMutation: false });
+      const [inbox] = await pool.query<(Record<string, unknown> & { state: string; attempts: number; nextAttemptAt: Date | null })[]>(
+        "SELECT state, attempts, nextAttemptAt FROM asaasWebhookInbox WHERE eventId = ?", [envelope.id],
+      );
+      expect(inbox[0]).toMatchObject({ state: "processed", attempts: 3, nextAttemptAt: null });
+      const [auditRows] = await pool.query<(Record<string, unknown> & { metadata: string })[]>(
+        "SELECT metadata FROM auditLogs WHERE action = 'payment.provider_preflight_failure.v1'",
+      );
+      expect(auditRows.map(row => JSON.parse(row.metadata))).toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventId: envelope.id, providerObservedStatus: "PENDING", reason: "PROVIDER_STATUS_NOT_RECEIVED_RETRY_LIMIT", reconciliationRequired: true }),
+      ]));
+      const [alerts] = await pool.query<(Record<string, unknown> & { payload: string })[]>(
+        "SELECT payload FROM notificationOutbox WHERE type = 'financial-reconciliation-alert-v1'",
+      );
+      expect(alerts.map(row => JSON.parse(row.payload))).toEqual(expect.arrayContaining([
+        expect.objectContaining({ providerEventId: envelope.id, observedStatus: "PENDING", reason: "PROVIDER_STATUS_NOT_RECEIVED_RETRY_LIMIT" }),
+      ]));
+      const [order] = await pool.query<(Record<string, unknown> & { status: string; paymentStatus: string })[]>(
+        "SELECT status, paymentStatus FROM orders WHERE id = ?", [created.orderId],
+      );
+      expect(order[0]).toMatchObject({ status: "pending", paymentStatus: "unconfirmed" });
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+    });
+
+    it("serializes concurrent duplicate RECEIVED deliveries and applies the PIX settlement once", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const created = await buy("owner-81", "xiv-preorder-authority-race-01", 1);
+      const providerPayment = providerSimulator.payments.get(created.paymentId!)!;
+      providerPayment.status = "RECEIVED";
+      const envelope = {
+        id: "evt-xiv-authority-race", event: "PAYMENT_RECEIVED", account: { id: "account-synthetic-stock" },
+        payment: { id: created.paymentId, externalReference: providerPayment.externalReference, value: 129, currency: "BRL", billingType: "PIX" },
+      };
+      const deliver = () => fetch(`${baseUrl}/webhook/asaas`, {
+        method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken },
+        body: JSON.stringify(envelope),
+      });
+      const concurrent = await Promise.all(Array.from({ length: 8 }, deliver));
+      expect(concurrent.every(response => [200, 503].includes(response.status))).toBe(true);
+      const retryResponses = await Promise.all(concurrent.filter(response => response.status === 503).map(() => deliver()));
+      expect(retryResponses.every(response => response.status === 200)).toBe(true);
+      const [order] = await pool.query<(Record<string, unknown> & { status: string; paymentStatus: string })[]>(
+        "SELECT status, paymentStatus FROM orders WHERE id = ?", [created.orderId],
+      );
+      const [attempt] = await pool.query<(Record<string, unknown> & { status: string })[]>(
+        "SELECT status FROM stockCheckoutAttempts WHERE attemptId = ?", ["xiv-preorder-authority-race-01"],
+      );
+      expect(order[0]).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+      expect(attempt[0]?.status).toBe("paid");
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+      const [ledger] = await pool.query<(Record<string, unknown> & { n: number })[]>("SELECT COUNT(*) AS n FROM stockWebhookEvents WHERE eventId = ?", [envelope.id]);
+      expect(Number(ledger[0]?.n)).toBe(1);
+    });
+
+    it("does not confirm an explicit-BRL PAYMENT_RECEIVED when provider proof is unavailable; retry succeeds", async () => {
+      await seedPreorder({ maximumQuantity: 2 });
+      const created = await buy("owner-81", "xiv-preorder-provider-fail-01", 1);
+      const paymentId = created.paymentId!;
+      const providerPayment = providerSimulator.payments.get(paymentId)!;
+      const event = {
+        id: "evt-pre-provider-retry", event: "PAYMENT_RECEIVED", account: { id: "account-synthetic-stock" },
+        payment: { id: paymentId, externalReference: providerPayment.externalReference, value: 129, currency: "BRL", billingType: "PIX" },
+      };
+      providerSimulator.unavailable = true;
+      const unavailable = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify(event) });
+      expect(unavailable.status).toBe(503);
+      const [pending] = await pool.query<(Record<string, unknown> & { orderStatus: string; attemptStatus: string })[]>("SELECT o.status AS orderStatus,a.status AS attemptStatus FROM orders o JOIN stockCheckoutAttempts a ON a.attemptId=o.stockAttemptId WHERE a.attemptId=?", ["xiv-preorder-provider-fail-01"]);
+      expect(pending[0]).toMatchObject({ orderStatus: "pending", attemptStatus: "reserved" });
+      expect(await claimed()).toBe(1);
+      expect(await variantStock()).toEqual([[0, 0], [0, 0]]);
+
+      providerSimulator.unavailable = false;
+      providerPayment.status = "RECEIVED";
+      // Advance the persisted retry schedule instead of sleeping through the
+      // inbox's bounded backoff in this disposable database test.
+      await pool.execute("UPDATE asaasWebhookInbox SET nextAttemptAt = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND) WHERE eventId = ?", [event.id]);
+      const retried = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify(event) });
+      expect(retried.status).toBe(200);
+      const [paid] = await pool.query<(Record<string, unknown> & { status: string })[]>("SELECT status FROM orders WHERE stockAttemptId=?", ["xiv-preorder-provider-fail-01"]);
+      expect(paid[0]?.status).toBe("paid");
+      expect(await claimed()).toBe(1);
     });
   });
 
@@ -522,10 +1201,10 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
       expect(snapshot.shipping.quoteReference).toMatch(/^[0-9a-f-]{36}$/);
       expect(JSON.stringify(snapshot)).not.toContain(option.quoteToken);
       // the provider reports only the merchandise value: refused, never marked paid
-      const wrong = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-ship-wrong", event: "PAYMENT_RECEIVED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" } }) });
+      const wrong = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-ship-wrong", event: "PAYMENT_RECEIVED", payment: { id: created.paymentId, externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL", billingType: "PIX" } }) });
       expect(wrong.status === 200 ? (await wrong.json()).handled : false).toBe(false); // acknowledged as a conflict or refused: never processed
       expect((await pool.query<any[]>("SELECT status FROM stockCheckoutAttempts"))[0][0].status).toBe("reserved");
-      const right = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-ship-right", event: "PAYMENT_RECEIVED", payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 160.9, currency: "BRL" } }) });
+      const right = await fetch(`${baseUrl}/webhook/asaas`, { method: "POST", headers: { "content-type": "application/json", "asaas-access-token": syntheticWebhookToken }, body: JSON.stringify({ id: "evt-ship-right", event: "PAYMENT_RECEIVED", payment: { id: created.paymentId, externalReference: created.orderId, status: "RECEIVED", value: 160.9, currency: "BRL", billingType: "PIX" } }) });
       expect(right.status).toBe(200);
       expect((await pool.query<any[]>("SELECT status FROM stockCheckoutAttempts"))[0][0].status).toBe("paid");
     });
@@ -603,7 +1282,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("STOCK mounted tRPC integration (
     const eventBody = JSON.stringify({
       id: "evt-stock-no-owner",
       event: "PAYMENT_RECEIVED",
-      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL" },
+      payment: { id: "pay-synthetic-1", externalReference: created.orderId, status: "RECEIVED", value: 129, currency: "BRL", billingType: "PIX" },
     });
     const rejectedWebhook = await fetch(`${baseUrl}/webhook-asaas-runtime-absent`, {
       method: "POST",

@@ -1,10 +1,12 @@
 import { getOrderById, getUserById, getUserPhoneById } from "../db";
 import { createAsaasChargeForOrder } from "../services/asaas";
-import { createSandboxAsaasStockPaymentProvider } from "./asaasStockPaymentProvider";
+import { createProductionAsaasStockPaymentProvider, createSandboxAsaasStockPaymentProvider } from "./asaasStockPaymentProvider";
+import { isProductionStockRuntimeIdentity } from "../_core/productionFinancialPolicy";
 
 /** Bridges STOCK's stable provider contract to the existing Asaas charge code. */
 export function createConfiguredStockAsaasProvider() {
-  return createSandboxAsaasStockPaymentProvider({
+  const create = isProductionStockRuntimeIdentity(process.env) ? createProductionAsaasStockPaymentProvider : createSandboxAsaasStockPaymentProvider;
+  return create({
     loadBuyer: async orderId => {
       const order = await getOrderById(Number(orderId));
       if (!order?.stockAttemptId) return null;
@@ -19,7 +21,7 @@ export function createConfiguredStockAsaasProvider() {
     },
     createCharge: async args => {
       const result = await createAsaasChargeForOrder(args);
-      return { paymentId: result.paymentId, checkoutUrl: result.invoiceUrl };
+      return { paymentId: result.paymentId, checkoutUrl: result.invoiceUrl, customerId: result.customerId ?? null };
     },
   });
 }

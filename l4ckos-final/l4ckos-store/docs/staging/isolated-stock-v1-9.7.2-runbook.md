@@ -139,7 +139,57 @@ STOCK/Drops em MySQL 9.7.2.
 - `ASAAS_WEBHOOK_TOKEN` exclusivo deste ambiente; webhook só recebe eventos
   autenticados. Configurar `ASAAS_WEBHOOK_INBOUND_ENABLED=true` depois de testar
   a rota autenticada.
+- `ASAAS_WEBHOOK_ACCOUNT_ID` deve conter a identidade exata `account.id` da
+  conta Sandbox aprovada para este ambiente; não há fallback por ausência.
+- `ASAAS_WEBHOOK_ACCOUNT_CURRENCY=BRL` só pode ser configurada depois de prova
+  independente da moeda dessa mesma conta Sandbox. A variável declara a decisão,
+  mas não é sua prova. O painel de configuração e a attestation mostram apenas
+  contagens/booleans de presença, nunca o ID nem a moeda.
+- Sem identidade ou moeda comprovada, recibos sem `payment.currency` não podem
+  confirmar pagamento. O evento e a divergência seguem para reconciliação
+  durável; não inferir BRL nem alterar estoque.
 - Nunca usar chave, endpoint ou token financeiro de produção.
+
+### Credenciais rejeitadas pelo provedor (HTTP 401/403)
+
+O preflight registra auditoria e um alerta durável `financial-reconciliation-alert-v1`
+na mesma transação que encerra o evento como observação de reconciliação. O alerta
+usa categoria P1 `order_attempt_payment_inconsistent` e razão `PROVIDER_HTTP_401`
+ou `PROVIDER_HTTP_403`; a confirmação financeira e o estoque permanecem intactos.
+O HTTP 200 só é enviado depois do commit da auditoria, alerta e estado do inbox.
+
+Procedimento read-only para o operador:
+
+1. Na tela existente `/gestao/conciliacao`, filtre prioridade P1. Com permissão
+   de leitura financeira já concedida, use a consulta abaixo para identificar o
+   event ID, payment ID e a razão exata; não leia nem copie o payload bruto.
+
+   ```sql
+   SELECT id, status, createdAt,
+          JSON_UNQUOTE(JSON_EXTRACT(payload, '$.providerEventId')) AS providerEventId,
+          JSON_UNQUOTE(JSON_EXTRACT(payload, '$.paymentId')) AS paymentId,
+          JSON_UNQUOTE(JSON_EXTRACT(payload, '$.reason')) AS reason,
+          JSON_UNQUOTE(JSON_EXTRACT(payload, '$.category')) AS category
+     FROM notificationOutbox
+    WHERE type = 'financial-reconciliation-alert-v1'
+      AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.reason')) IN ('PROVIDER_HTTP_401', 'PROVIDER_HTTP_403')
+    ORDER BY id DESC;
+   ```
+
+2. Consulte `asaasWebhookInbox` pelo `providerEventId` retornado, selecionando
+   apenas `eventId`, `state`, `attempts`, `errorCode`, `payloadHash` e
+   `completedAt`. A cobrança e o evento ficam ligados pelo ID persistido; não
+   associe por referência numérica aproximada.
+3. Depois de verificar credenciais Sandbox por canal operacional aprovado, uma
+   consulta somente leitura `GET /payments/{paymentId}` deve confirmar o mesmo
+   ID, cliente, referência externa, valor/moeda e status pago atual e deve
+   corresponder ao pedido/tentativa local. 401/403, timeout, resposta ambígua ou
+   qualquer diferença mantêm o caso P1 aberto e o pedido sem confirmação.
+4. Não confirme manualmente, não consuma/libere estoque, não crie outra cobrança
+   e não cancele/reembolse. O evento já encerrado como observação não será
+   reconsultado por replay do mesmo event ID. Se a consulta posterior for válida,
+   encaminhe as evidências para o procedimento financeiro supervisionado vigente;
+   este release não fornece uma ação automática de recuperação.
 
 ### E-mail e workers
 

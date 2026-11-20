@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   createMysqlConnectionOptions,
   MYSQL_TLS_CA_SHA256,
-  MYSQL_TLS_HOST,
+  isApprovedMysqlTlsHost,
 } from "./mysqlTls.mjs";
 
 // Known staging identity (same constants the staging guards in services/asaasConfig.ts and payments/webhookRecovery.ts use).
@@ -88,7 +88,7 @@ function stagingOptions(url, databaseUrl, env) {
   if (!host || !expectedHash || !rawCa.trim()) fail("STAGING_DB_TLS_CONFIG_REQUIRED");
   if (!SHA256_HEX.test(expectedHash)) fail("STAGING_DB_TLS_CA_SHA256_INVALID");
   // Staging must never reuse the production database identity or production trust anchor.
-  if (host === MYSQL_TLS_HOST || url.hostname.toLowerCase() === MYSQL_TLS_HOST) fail("STAGING_DB_MUST_NOT_USE_PRODUCTION_HOST");
+  if (isApprovedMysqlTlsHost(host) || isApprovedMysqlTlsHost(url.hostname)) fail("STAGING_DB_MUST_NOT_USE_PRODUCTION_HOST");
   if (expectedHash === MYSQL_TLS_CA_SHA256) fail("STAGING_DB_MUST_NOT_USE_PRODUCTION_CA");
   if (url.hostname.toLowerCase() !== host) fail("STAGING_DB_TLS_HOST_MISMATCH");
   if (matchesIsolatedStagingIdentity(env) && host !== ISOLATED_STAGING_MYSQL_HOST) {
@@ -118,7 +118,7 @@ export function resolveMysqlConnection(databaseUrl, env = process.env) {
   const environment = resolveDatabaseEnvironment(env);
   const url = parseUrl(databaseUrl);
   if (environment === "production") {
-    if (url.hostname.toLowerCase() !== MYSQL_TLS_HOST) fail("MYSQL_TLS_HOST_MISMATCH");
+    if (!isApprovedMysqlTlsHost(url.hostname)) fail("MYSQL_TLS_HOST_MISMATCH");
     return { environment, options: createMysqlConnectionOptions(databaseUrl) };
   }
   if (environment === "staging") return { environment, options: stagingOptions(url, databaseUrl, env) };

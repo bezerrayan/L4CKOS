@@ -82,6 +82,8 @@ export async function createAsaasChargeForOrder(input: {
   };
   description: string;
   dueDate?: string;
+  /** Overrides the legacy numeric order reference (STOCK passes its strong, non-reusable attempt reference). */
+  externalReference?: string;
   signal?: AbortSignal;
 }) {
   assertCheckoutMethodEnabled(input.method);
@@ -111,7 +113,7 @@ export async function createAsaasChargeForOrder(input: {
       value: Number(input.value.toFixed(2)),
       dueDate: input.dueDate || getDefaultDueDate(),
       description: input.description,
-      externalReference: String(input.orderId),
+      externalReference: input.externalReference ?? String(input.orderId),
     },
   });
 

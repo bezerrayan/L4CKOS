@@ -26,7 +26,7 @@ describe("public sellable variant projection", () => {
     });
   });
 
-  it("blocks a generic product whose persisted SKU starts with 14B", async () => {
+  it("returns NOT_FOUND for a generic product whose persisted SKU starts with 14B", async () => {
     catalog.getPublicProductVariants.mockResolvedValue({
       product: {
         id: 27, name: "Camiseta comum", salesMode: "STOCK", productionBatch: null,
@@ -36,9 +36,7 @@ describe("public sellable variant projection", () => {
       variants: [{ variantId: 91, color: "Preto", size: "M", price: 8990, availableUnits: 3 }],
     });
 
-    await expect(caller().sellableVariants(27)).resolves.toEqual({
-      productId: 27, hasVariants: true, publicPurchaseAllowed: false, variants: [],
-    });
+    await expect(caller().sellableVariants(27)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("blocks the whole product when an inactive persisted variant has a 14B SKU", async () => {
@@ -54,9 +52,7 @@ describe("public sellable variant projection", () => {
       variants: [{ variantId: 98, color: "Branco", size: "G", price: 8990, availableUnits: 2 }],
     });
 
-    await expect(caller().sellableVariants(30)).resolves.toEqual({
-      productId: 30, hasVariants: true, publicPurchaseAllowed: false, variants: [],
-    });
+    await expect(caller().sellableVariants(30)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("blocks every combination when a product has mixed ordinary and 14B SKUs", async () => {
@@ -72,24 +68,20 @@ describe("public sellable variant projection", () => {
       ],
     });
 
-    await expect(caller().sellableVariants(28)).resolves.toEqual({
-      productId: 28, hasVariants: true, publicPurchaseAllowed: false, variants: [],
-    });
+    await expect(caller().sellableVariants(28)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("blocks the Clã 14 Bis product by name while preserving hasVariants", async () => {
+  it.each(["Clã 14 Bis", "Clã XIV Bis", "CLAN XIV-BIS"]) ("returns NOT_FOUND for exclusive product %s", async name => {
     catalog.getPublicProductVariants.mockResolvedValue({
       product: {
-        id: 29, name: "Clã 14 Bis", salesMode: "STOCK", productionBatch: null,
+        id: 29, name, salesMode: "STOCK", productionBatch: null,
         variants: [{ id: 94, sku: "CAM-PT-M" }],
       },
       hasVariants: true,
       variants: [{ variantId: 94, color: "Preto", size: "M", price: 8990, availableUnits: 1 }],
     });
 
-    await expect(caller().sellableVariants(29)).resolves.toEqual({
-      productId: 29, hasVariants: true, publicPurchaseAllowed: false, variants: [],
-    });
+    await expect(caller().sellableVariants(29)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("does not use aggregate product stock when a variant is inactive or depleted", async () => {
@@ -131,14 +123,14 @@ describe("public sellable variant projection", () => {
     await expect(caller().sellableVariants(24)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("does not expose QA fixtures through the public variant endpoint", async () => {
+  it.each(["[QA-STAGING] Teste de Variantes", "[QA-STAGING] Produto"])("returns NOT_FOUND for direct QA variant lookup (%s)", async name => {
     catalog.getPublicProductVariants.mockResolvedValue({
       product: {
-        id: 9, name: "[QA-STAGING] Teste de Variantes", salesMode: "STOCK",
-        variants: ["QA-PRE-M-01", "QA-PRE-G-01", "QA-BRA-M-01", "QA-BRA-G-01"].map((sku, index) => ({ id: 17 + index, sku, isActive: 0 })),
+        id: 9, name, salesMode: "STOCK",
+        variants: [{ id: 17, sku: "QA-PRE-M-01", isActive: 1, color: "Preto", size: "M", price: 7990 }],
       },
       hasVariants: true,
-      variants: [],
+      variants: [{ variantId: 17, color: "Preto", size: "M", price: 7990, availableUnits: 4 }],
     });
     await expect(caller().sellableVariants(9)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });

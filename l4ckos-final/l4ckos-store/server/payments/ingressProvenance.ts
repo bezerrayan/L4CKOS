@@ -9,25 +9,33 @@ import { eventKey } from "./stagingCheckoutAdmission";
  * Provenance for provider events that were AUTHENTICATED at HTTP ingress and then persisted in the durable inbox.
  *
  * The stored envelope carries no headers, so an internal replay (recovery worker, admin recovery) cannot re-read the provider
- * token. Instead, at ingress - only after validateAsaasWebhookSignature succeeded - we write an audit row holding
- * HMAC-SHA256(key = derived from ASAAS_WEBHOOK_TOKEN, "v1|eventId|payloadHash"). A replay is "authenticated" only if that MAC
- * recomputes with the CURRENT token over the CURRENT stored envelope: a row that was written without the token, an edited
- * envelope, a different event id or a rotated token all fail verification. No audit row => not authenticated => no processing.
+ * token. At ingress - only after validateAsaasWebhookSignature succeeded - we record a v1 MAC over the canonical envelope
+ * and a legacy-shape MAC over the same envelope with only billingType removed. The legacy MAC permits an already stored
+ * historical envelope that predates retention of billingType to be verified without authenticating a changed billingType
+ * or any other financial field. Internal PAYMENT_RECEIVED is admitted only when an exact current-token MAC verifies.
  */
 export const INGRESS_ATTESTATION_ACTION = "webhook.ingress_authenticated.v1";
 const ENTITY = "asaasWebhookInbox";
 
-function mac(eventId: string, payloadHash: string): string | null {
+function keyFor(domain: string): Buffer | null {
   const token = process.env.ASAAS_WEBHOOK_TOKEN?.trim();
   if (!token) return null;
-  const key = createHmac("sha256", token).update("l4ckos-inbox-ingress-provenance-v1").digest();
-  return createHmac("sha256", key).update(`v1|${eventId}|${payloadHash}`).digest("hex");
+  return createHmac("sha256", token).update(domain).digest();
 }
 
-function describeEnvelope(payload: unknown): { eventId: string; payloadHash: string } | null {
+function mac(eventId: string, payloadHash: string, version = "v1"): string | null {
+  const key = keyFor(`l4ckos-inbox-ingress-provenance-${version}`);
+  return key ? createHmac("sha256", key).update(`${version}|${eventId}|${payloadHash}`).digest("hex") : null;
+}
+
+function describeEnvelope(payload: unknown): { eventId: string; payloadHash: string; legacyPayloadHash: string; billingTypePresent: boolean } | null {
   try {
     const envelope = financialEnvelope(payload);
-    return { eventId: envelope.id, payloadHash: digest(JSON.stringify(envelope)) };
+    const legacyEnvelope = structuredClone(envelope);
+    const billingTypePresent = typeof legacyEnvelope.payment?.billingType === "string";
+    if (legacyEnvelope.payment) delete legacyEnvelope.payment.billingType;
+    return { eventId: envelope.id, payloadHash: digest(JSON.stringify(envelope)),
+      legacyPayloadHash: digest(JSON.stringify(legacyEnvelope)), billingTypePresent };
   } catch {
     return null;
   }
@@ -37,7 +45,8 @@ function describeEnvelope(payload: unknown): { eventId: string; payloadHash: str
 export async function attestAuthenticatedIngress(payload: unknown): Promise<boolean> {
   const identity = describeEnvelope(payload);
   const value = identity ? mac(identity.eventId, identity.payloadHash) : null;
-  if (!identity || !value) return false;
+  const legacyValue = identity ? mac(identity.eventId, identity.legacyPayloadHash, "legacy-no-billing-type") : null;
+  if (!identity || !value || !legacyValue) return false;
   try {
     const db = await getDb();
     if (!db) return false;
@@ -45,10 +54,14 @@ export async function attestAuthenticatedIngress(payload: unknown): Promise<bool
     const existing = await db.select({ metadata: auditLogs.metadata }).from(auditLogs)
       .where(and(eq(auditLogs.action, INGRESS_ATTESTATION_ACTION), eq(auditLogs.entity, ENTITY), eq(auditLogs.entityId, entityId)))
       .orderBy(desc(auditLogs.id)).limit(5);
-    if (existing.some(row => safeParse(row.metadata)?.mac === value)) return true;
+    if (existing.some(row => {
+      const metadata = safeParse(row.metadata);
+      return metadata?.mac === value && metadata?.legacyMac === legacyValue;
+    })) return true;
     await db.insert(auditLogs).values({
       actorUserId: null, actorType: "system", action: INGRESS_ATTESTATION_ACTION, entity: ENTITY, entityId,
-      metadata: JSON.stringify({ payloadHash: identity.payloadHash, mac: value }),
+      metadata: JSON.stringify({ payloadHash: identity.payloadHash, mac: value,
+        legacyPayloadHash: identity.legacyPayloadHash, legacyMac: legacyValue }),
     });
     return true;
   } catch {
@@ -56,7 +69,7 @@ export async function attestAuthenticatedIngress(payload: unknown): Promise<bool
   }
 }
 
-function safeParse(text: string | null): { mac?: string; payloadHash?: string } | null {
+function safeParse(text: string | null): { mac?: string; payloadHash?: string; legacyMac?: string; legacyPayloadHash?: string } | null {
   try { return text ? JSON.parse(text) : null; } catch { return null; }
 }
 
@@ -64,17 +77,21 @@ function safeParse(text: string | null): { mac?: string; payloadHash?: string } 
 export async function hasVerifiedIngressProvenance(payload: unknown): Promise<boolean> {
   const identity = describeEnvelope(payload);
   const expected = identity ? mac(identity.eventId, identity.payloadHash) : null;
-  if (!identity || !expected) return false;
+  const expectedLegacy = identity ? mac(identity.eventId, identity.legacyPayloadHash, "legacy-no-billing-type") : null;
+  if (!identity || !expected || !expectedLegacy) return false;
   const db = await getDb();
   if (!db) return false;
   const rows = await db.select({ metadata: auditLogs.metadata }).from(auditLogs)
     .where(and(eq(auditLogs.action, INGRESS_ATTESTATION_ACTION), eq(auditLogs.entity, ENTITY), eq(auditLogs.entityId, eventKey(identity.eventId))))
     .orderBy(desc(auditLogs.id)).limit(5);
-  const want = Buffer.from(expected, "hex");
+  const want = Buffer.from(expected, "hex"), wantLegacy = Buffer.from(expectedLegacy, "hex");
   return rows.some(row => {
-    const found = safeParse(row.metadata)?.mac;
-    if (typeof found !== "string" || !/^[0-9a-f]{64}$/.test(found)) return false;
-    const have = Buffer.from(found, "hex");
-    return have.length === want.length && timingSafeEqual(have, want);
+    const metadata = safeParse(row.metadata);
+    const valid = (found: unknown, wanted: Buffer) => {
+      if (typeof found !== "string" || !/^[0-9a-f]{64}$/.test(found)) return false;
+      const have = Buffer.from(found, "hex");
+      return have.length === wanted.length && timingSafeEqual(have, wanted);
+    };
+    return valid(metadata?.mac, want) || (!identity.billingTypePresent && valid(metadata?.legacyMac, wantLegacy));
   });
 }

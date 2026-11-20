@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { createConnection, createPool, type Connection, type Pool } from "mysql2/promise";
 import type * as mysqlOrm from "drizzle-orm/mysql2";
-import { processWebhookEnvelope } from "../controllers/paymentController";
+import { preflightAsaasWebhookEnvelope, processWebhookEnvelope, type AsaasWebhookPreflight } from "../controllers/paymentController";
 import { financialEnvelope, persistWebhook, processStoredWebhook, receiveWebhook, recoverWebhooks } from "../payments/webhookInbox";
 
 import { rehearseCreatedRecovery } from "../payments/supervisedCreatedRecoveryRehearsal";
@@ -12,7 +12,7 @@ import { afterWebhookCommit } from "../database/webhookTransaction";
 import { markOrderPaid } from "../db";
 
 import { addStockColumnsToFixture } from "../stock/testing/applyStockV6Migration";
-const injected = vi.hoisted(() => ({ orm: null as unknown }));
+const injected = vi.hoisted(() => ({ orm: null as unknown, getPayment: vi.fn(async (_paymentId: string): Promise<any> => { throw Error("OFFLINE_PROVIDER"); }) }));
 vi.mock("drizzle-orm/mysql2", async original => ({ ...await original<typeof mysqlOrm>(), drizzle: () => injected.orm }));
 vi.mock("../services/emailService.js", () => ({
   sendPaymentApprovedEmail: vi.fn(async () => {}), sendInternalNewSaleAlertEmail: vi.fn(async () => {}),
@@ -21,7 +21,7 @@ vi.mock("../services/emailService.js", () => ({
 }));
 vi.mock("../services/asaasService", () => ({
   validateAsaasWebhookSignature: (headers: Record<string, unknown>) => headers["asaas-access-token"] === "synthetic-token",
-  getAsaasPayment: vi.fn(async () => { throw Error("OFFLINE_PROVIDER"); }),
+  getAsaasPayment: injected.getPayment,
   createAsaasCheckout: vi.fn(() => { throw Error("FORBIDDEN_EXTERNAL_CHARGE"); }),
   createAsaasCustomer: vi.fn(() => { throw Error("FORBIDDEN_EXTERNAL_CUSTOMER"); }),
 }));
@@ -35,6 +35,9 @@ const created = (id = randomUUID()) => ({
   payment: { id: "pay-staging-synthetic", externalReference: "13", status: "PENDING", value: 99, netValue: 98.01 },
 });
 const paid = (event = "PAYMENT_RECEIVED") => ({ ...created(), event, payment: { ...created().payment, status: event === "PAYMENT_CONFIRMED" ? "CONFIRMED" : "RECEIVED" } });
+const accountId = "sandbox-account-created-recovery";
+const customerId = "cus-created-recovery-594";
+const paidWithAccount = (event = "PAYMENT_RECEIVED") => ({ ...paid(event), account: { id: accountId } });
 const inbox = async (id: string) => (await query("SELECT * FROM asaasWebhookInbox WHERE eventId=?", [id]))[0];
 const order = async () => (await query("SELECT status,paymentStatus,fulfillmentStatus FROM orders WHERE id=13"))[0];
 const stock = async () => Number((await query("SELECT stock FROM products WHERE id=1"))[0].stock);
@@ -78,7 +81,9 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 supervised recove
     injected.orm = orm.drizzle(pool);
   });
   beforeEach(async () => {
-    vi.unstubAllEnvs(); vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic"); vi.clearAllMocks();
+    vi.unstubAllEnvs(); vi.stubEnv("DATABASE_URL", "mysql://root@localhost/l4ckos_test_synthetic");
+    vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_ID", ""); vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_CURRENCY", ""); vi.clearAllMocks();
+    injected.getPayment.mockRejectedValue(Error("OFFLINE_PROVIDER"));
     for (const table of ["notificationOutbox", "orderEmailEvents", "paymentEvents", "payments", "asaasWebhookInbox", "asaasWebhookEvents", "auditLogs", "stockReservations", "orderItems", "orders", "products", "users"])
       await query("DELETE FROM `" + table + "`");
     await query("INSERT INTO users(id,openId,name,email) VALUES(14,'synthetic-admin','Fixture Admin','admin@example.invalid')");
@@ -106,18 +111,64 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 supervised recove
   };
   const historical = async () => ({
     orders: await query("SELECT * FROM orders WHERE id IN(2,3,6,12) ORDER BY id"),
-    outbox: await query("SELECT * FROM notificationOutbox ORDER BY id"),
+    // Compare pre-existing order effects only. A legitimately paid order 13
+    // creates its own payment-approved outbox entry and must not be mistaken for history dispatch.
+    outbox: await query("SELECT * FROM notificationOutbox WHERE orderId IN(2,3,6,12) ORDER BY id"),
     emails: await query("SELECT * FROM orderEmailEvents ORDER BY id"),
   });
   const liveReservation = () => query("UPDATE stockReservations SET expiresAt=DATE_ADD(NOW(),INTERVAL 1 HOUR) WHERE id=10");
   const audits = () => query("SELECT * FROM auditLogs WHERE action='webhook.created_recovery_completed'");
   const recover = async () => { const fixture = await seedRejected(); await rehearseCreatedRecovery(fixture.plan,processWebhookEnvelope); return fixture; };
+  const processWithPreflight = (event: unknown, result?: unknown) =>
+    processWebhookEnvelope(event, undefined, undefined, result as AsaasWebhookPreflight | undefined);
+  const receiveWithPreflight = (event: unknown) => receiveWebhook(event, processWithPreflight, preflightAsaasWebhookEnvelope);
+  const seedAuthoritativePayment = async () => {
+    vi.stubEnv("ASAAS_WEBHOOK_ACCOUNT_ID", accountId);
+    await query("UPDATE users SET asaasCustomerId=? WHERE id=594", [customerId]);
+    await query("INSERT INTO payments(orderId,providerPaymentId,providerCustomerId,billingType,amount,status,creationStatus,externalReference) VALUES(13,'pay-staging-synthetic',?,'PIX',9900,'pending','created','13')", [customerId]);
+    injected.getPayment.mockResolvedValue({ id: "pay-staging-synthetic", externalReference: "13", status: "CONFIRMED",
+      deleted: false, value: 99, currency: "BRL", customer: customerId });
+  };
+  const assertMissingEvidenceBlocked = async (label: string) => {
+    const event = { ...paid(), id: `evt-${label}-without-authoritative-proof` };
+    const response = await receiveWithPreflight(event);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ reason: "payment_reconciliation_required", reconciliationRequired: true,
+      financialMutation: false, stockMutation: false });
+    expect(injected.getPayment).not.toHaveBeenCalled();
+    expect(await order()).toMatchObject({ status: "pending", paymentStatus: "unconfirmed" });
+    expect(await stock()).toBe(98); expect(await reservation()).toBe("active");
+    expect(await inbox(event.id)).toMatchObject({ state: "processed" });
+    expect(await query("SELECT * FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1'")).toHaveLength(1);
+    expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(1);
+    expect((await receiveWithPreflight(event)).body).toMatchObject({ reason: "duplicate_event" });
+    expect(await query("SELECT * FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1'")).toHaveLength(1);
+    expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(1);
+  };
 
   it("does not automatically reopen the historical rejected CREATED", async () => {
     const {event}=await seedRejected(), before=await inbox(event.id);
     expect(await recoverWebhooks(processWebhookEnvelope)).toMatchObject({examined:0,rejected:1});
-    expect((await processStoredWebhook(event.id,processWebhookEnvelope)).status).toBe(422);
+    expect(await processStoredWebhook(event.id,processWebhookEnvelope)).toMatchObject({status:200,body:{reason:"rejected_observation_recorded",reconciliationRequired:true}});
     expect(await inbox(event.id)).toEqual(before);
+    expect(await query("SELECT * FROM auditLogs WHERE action='webhook.rejected_observation_acknowledged.v1'")).toHaveLength(1);
+    expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(1);
+    expect((await processStoredWebhook(event.id,processWebhookEnvelope)).status).toBe(200);
+    expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(1);
+  });
+  it("does not acknowledge a rejected observation until its reconciliation alert is durable",async()=>{
+    const {event}=await seedRejected();
+    await query(`CREATE TRIGGER rejected_observation_alert_fail BEFORE INSERT ON notificationOutbox FOR EACH ROW
+      BEGIN IF NEW.type='financial-reconciliation-alert-v1' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic alert failure'; END IF; END`);
+    try {
+      expect((await processStoredWebhook(event.id,processWebhookEnvelope)).status).toBeGreaterThanOrEqual(500);
+      expect(await query("SELECT * FROM auditLogs WHERE action='webhook.rejected_observation_acknowledged.v1'")).toHaveLength(0);
+      expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(0);
+      expect(await inbox(event.id)).toMatchObject({state:'rejected',attempts:1});
+    } finally { await query('DROP TRIGGER rejected_observation_alert_fail'); }
+    expect(await processStoredWebhook(event.id,processWebhookEnvelope)).toMatchObject({status:200,body:{reconciliationRequired:true}});
+    expect(await query("SELECT * FROM auditLogs WHERE action='webhook.rejected_observation_acknowledged.v1'")).toHaveLength(1);
+    expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(1);
   });
   it("atomically resolves CREATED and audits the original rejection without financial effects", async () => {
     const {event,plan}=await seedRejected(),before=await financialSnapshot(),history=await historical();
@@ -185,65 +236,103 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== "1")("ORD-13 supervised recove
     expect(send).not.toHaveBeenCalled();expect(await inbox(event.id)).toEqual(before);
   });
   it("CREATED then RECEIVED with expired-active reserve remains pending and records reconciliation",async()=>{
-    await recover();const event=paid();expect((await receiveWebhook(event,processWebhookEnvelope)).body).toMatchObject({reason:'invalid_status_transition'});
-    expect(await order()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});expect(await stock()).toBe(98);expect(await reservation()).toBe('active');
+    await assertMissingEvidenceBlocked("expired-active");await recover();await seedAuthoritativePayment();const event=paidWithAccount();expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'invalid_status_transition'});
+    // markOrderPaid expires an active reservation whose deadline has passed; it does not release or consume it.
+    expect(await order()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});expect(await stock()).toBe(98);expect(await reservation()).toBe('expired');
     expect((await query("SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required'"))[0].n).toBe(1);
-    expect((await receiveWebhook(event,processWebhookEnvelope)).body).toMatchObject({reason:'duplicate_event'});
+    expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'duplicate_event'});
     expect((await query("SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required'"))[0].n).toBe(1);
   });
   it("receipt before expiry but delivery late is not silently treated as a live reserve",async()=>{
-    await recover();const event={...paid(),dateCreated:'2026-10-11T12:55:00-03:00',payment:{...paid().payment,confirmedDate:'2026-10-11T12:55:00-03:00'}};
+    await assertMissingEvidenceBlocked("late-delivery");await recover();await seedAuthoritativePayment();const event={...paidWithAccount(),dateCreated:'2026-10-11T12:55:00-03:00',payment:{...paidWithAccount().payment,confirmedDate:'2026-10-11T12:55:00-03:00'}};
     expect(financialEnvelope(event).payment).not.toHaveProperty('confirmedDate');
-    expect((await receiveWebhook(event,processWebhookEnvelope)).body).toMatchObject({reason:'invalid_status_transition'});
+    expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'invalid_status_transition'});
     expect(await stock()).toBe(98);expect(await order()).toMatchObject({paymentStatus:'unconfirmed'});
+    expect(await reservation()).toBe('expired');
+    expect((await query("SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required'"))[0].n).toBe(1);
+    expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'duplicate_event'});
   });
   it("released reserve remains released when the financial event arrives",async()=>{
-    await recover();await query("UPDATE stockReservations SET status='released' WHERE id=10");
-    expect((await receiveWebhook(paid(),processWebhookEnvelope)).body).toMatchObject({reason:'invalid_status_transition'});
+    await assertMissingEvidenceBlocked("released-reserve");await recover();await seedAuthoritativePayment();await query("UPDATE stockReservations SET status='released' WHERE id=10");
+    const event=paidWithAccount();expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'invalid_status_transition'});
     expect(await reservation()).toBe('released');expect(await stock()).toBe(98);
+    expect((await query("SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required'"))[0].n).toBe(1);
+    expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'duplicate_event'});
   });
   it("manual admin confirmation also refuses the expired reserve",async()=>{
     await recover();expect(await markOrderPaid(13,{source:'manual',actorUserId:14})).toMatchObject({updated:false,invalidTransition:true});
     expect(await order()).toMatchObject({paymentStatus:'unconfirmed'});expect(await stock()).toBe(98);
   });
   it("live-fixture concurrent RECEIVED and CONFIRMED consume once and do not dispatch history",async()=>{
-    await liveReservation();await recover();const history=await historical();const received=paid(),confirmed=paid('PAYMENT_CONFIRMED');
-    const replies=await Promise.all([receiveWebhook(received,processWebhookEnvelope),receiveWebhook(confirmed,processWebhookEnvelope)]);
+    await assertMissingEvidenceBlocked("concurrent-paid");await liveReservation();await recover();await seedAuthoritativePayment();const history=await historical();const received=paidWithAccount(),confirmed=paidWithAccount('PAYMENT_CONFIRMED');
+    const replies=await Promise.all([receiveWithPreflight(received),receiveWithPreflight(confirmed)]);
     expect(replies.every(r=>r.status===200||r.status===503)).toBe(true);
     // Explicit test-only retry after known busy/rollback, with original event IDs.
-    for(const [i,event] of [received,confirmed].entries())if(replies[i].status!==200)expect((await receiveWebhook(event,processWebhookEnvelope)).status).toBe(200);
+    for(const [i,event] of [received,confirmed].entries())if(replies[i].status!==200)expect((await receiveWithPreflight(event)).status).toBe(200);
     expect(await stock()).toBe(97);expect(await reservation()).toBe('consumed');
     expect(await order()).toMatchObject({status:'paid',paymentStatus:'confirmed'});
-    await receiveWebhook(received,processWebhookEnvelope);await receiveWebhook(paid(),processWebhookEnvelope);
+    expect(await query("SELECT eventId,status FROM asaasWebhookEvents WHERE eventId IN(?,?)",[received.id,confirmed.id])).toHaveLength(2);
+    await receiveWithPreflight(received);await receiveWithPreflight(paidWithAccount());
     expect(await stock()).toBe(97);expect(await historical()).toEqual(history);
     const email=await import('../services/emailService.js');expect(email.sendPaymentApprovedEmail).toHaveBeenCalledTimes(1);expect(email.sendInternalNewSaleAlertEmail).toHaveBeenCalledTimes(1);
   });
   it("concurrent release holding the order lock prevents late financial consumption",async()=>{
-    await liveReservation();await recover();
+    await assertMissingEvidenceBlocked("concurrent-release");await liveReservation();await recover();await seedAuthoritativePayment();
     const releaser=await createConnection({user:'root',socketPath,database});
     try {
       await releaser.beginTransaction();await releaser.query('SELECT id FROM orders WHERE id=13 FOR UPDATE');
-      const processing=receiveWebhook(paid(),processWebhookEnvelope);
+      const event=paidWithAccount();const processing=receiveWithPreflight(event);
       await releaser.query("UPDATE stockReservations SET status='released' WHERE id=10");await releaser.commit();
-      expect((await processing).body).toMatchObject({reason:'invalid_status_transition'});
+      const result=await processing;expect(result.status).toBe(200);expect(result.body).toMatchObject({reason:'invalid_status_transition'});
       expect(await stock()).toBe(98);expect(await reservation()).toBe('released');expect(await order()).toMatchObject({paymentStatus:'unconfirmed'});
+      expect((await query("SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required'"))[0].n).toBe(1);
+      expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'duplicate_event'});
     } finally {await releaser.end();}
   });
-  it("partial financial failure rolls back payment and stock and dispatches no notification",async()=>{
-    await liveReservation();await recover();const history=await historical();
+  it("partial financial failure rolls back before a safe retry consumes once",async()=>{
+    await assertMissingEvidenceBlocked("partial-financial-failure");await liveReservation();await recover();await seedAuthoritativePayment();const history=await historical();
     await query("CREATE TRIGGER paid_reservation_fail BEFORE UPDATE ON stockReservations FOR EACH ROW BEGIN IF NEW.status='consumed' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic financial failure'; END IF; END");
     try {
-      const event=paid();expect((await receiveWebhook(event,processWebhookEnvelope)).status).not.toBe(200);
+      const event=paidWithAccount();expect((await receiveWithPreflight(event)).status).not.toBe(200);
       expect(await inbox(event.id)).toMatchObject({state:'failed'});expect(await stock()).toBe(98);expect(await reservation()).toBe('active');
       expect(await order()).toMatchObject({paymentStatus:'unconfirmed'});expect(await historical()).toEqual(history);
       expect((await import('../services/emailService.js')).sendPaymentApprovedEmail).not.toHaveBeenCalled();
-    } finally {await query('DROP TRIGGER paid_reservation_fail');}
+      await query('DROP TRIGGER paid_reservation_fail');
+      expect((await receiveWithPreflight(event)).status).toBe(200);
+      expect(await stock()).toBe(97);expect(await reservation()).toBe('consumed');
+      expect(await order()).toMatchObject({status:'paid',paymentStatus:'confirmed'});
+      expect((await import('../services/emailService.js')).sendPaymentApprovedEmail).toHaveBeenCalledTimes(1);
+      expect((await receiveWithPreflight(event)).body).toMatchObject({reason:'duplicate_event'});
+      expect(await stock()).toBe(97);
+    } finally {await query('DROP TRIGGER IF EXISTS paid_reservation_fail');}
+  });
+  it("does not ACK a missing-evidence receipt when reconciliation audit persistence fails",async()=>{
+    const event={...paid(),id:'evt-audit-failure-no-ack'};
+    await query(`CREATE TRIGGER webhook_reconciliation_audit_fail BEFORE INSERT ON auditLogs FOR EACH ROW
+      BEGIN IF NEW.action='payment.webhook_reconciliation_required.v1' THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic audit failure'; END IF; END`);
+    try {
+      expect((await receiveWithPreflight(event)).status).not.toBe(200);
+      expect(await inbox(event.id)).toMatchObject({state:'failed'});
+      expect(await query("SELECT * FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1'")).toHaveLength(0);
+      expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(0);
+      expect(await order()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});expect(await stock()).toBe(98);
+      await query('DROP TRIGGER webhook_reconciliation_audit_fail');
+      expect((await receiveWithPreflight(event)).status).toBe(200);
+      expect(await inbox(event.id)).toMatchObject({state:'processed'});
+      expect(await query("SELECT * FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1'")).toHaveLength(1);
+      expect(await query("SELECT * FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1'")).toHaveLength(1);
+      expect(await order()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});expect(await stock()).toBe(98);
+    } finally {await query('DROP TRIGGER IF EXISTS webhook_reconciliation_audit_fail');}
   });
   it("live-fixture RECEIVED before late CREATED recovery does not consume or notify again",async()=>{
-    await liveReservation();const {plan}=await seedRejected();await receiveWebhook(paid(),processWebhookEnvelope);
+    await assertMissingEvidenceBlocked("late-created");await liveReservation();const {plan}=await seedRejected();await seedAuthoritativePayment();const paymentEvent=paidWithAccount();await receiveWithPreflight(paymentEvent);
     expect(await rehearseCreatedRecovery(plan,processWebhookEnvelope)).toEqual({status:'completed'});
     expect(await stock()).toBe(97);expect(await reservation()).toBe('consumed');
     expect((await import('../services/emailService.js')).sendPaymentApprovedEmail).toHaveBeenCalledTimes(1);
+    expect(await audits()).toHaveLength(1);
+    expect((await receiveWithPreflight(paymentEvent)).body).toMatchObject({reason:'duplicate_event'});
+    expect(await stock()).toBe(97);
   });
   it("out-of-order RECEIVED before recovery has no effects for expired reserve",async()=>{
     const {plan}=await seedRejected();await receiveWebhook(paid(),processWebhookEnvelope);

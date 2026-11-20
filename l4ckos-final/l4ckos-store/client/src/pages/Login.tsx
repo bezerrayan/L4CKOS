@@ -6,6 +6,7 @@ import { trpc } from "../lib/trpc";
 import { getApiErrorDisplay } from "../utils/apiError";
 import { useUser } from "../contexts/UserContext";
 import { AuthFormError, AuthLayout } from "../components/auth/AuthLayout";
+import { authPageUrl, sanitizeNextPath } from "../utils/safeNext";
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
@@ -19,7 +20,7 @@ export default function Login() {
   const utils = trpc.useUtils();
   const localLoginMutation = trpc.auth.localLogin.useMutation();
   const nextPath = new URLSearchParams(location.search).get("next");
-  const safeNextPath = nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//") ? nextPath : "/";
+  const safeNextPath = sanitizeNextPath(nextPath);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -98,7 +99,7 @@ export default function Login() {
         Continuar com Google
       </button>
       <p className="l4-auth-policy">Ao continuar, você concorda com o uso de cookies essenciais de autenticação. Saiba mais na <Link to="/privacidade">Política de Privacidade</Link>.</p>
-      <p className="l4-auth-footer">Não tem conta? <Link to="/cadastro">Criar conta</Link></p>
+      <p className="l4-auth-footer">Não tem conta? <Link to={authPageUrl("/cadastro", safeNextPath)}>Criar conta</Link></p>
     </AuthLayout>
   );
 }

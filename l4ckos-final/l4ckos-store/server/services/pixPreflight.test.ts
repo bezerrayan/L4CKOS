@@ -7,7 +7,7 @@ import {assertEmailRecipientsAllowed} from "./email/recipientPolicy.js";
 const ax=vi.hoisted(()=>({post:vi.fn(),get:vi.fn()}));
 vi.mock('axios',()=>({default:{create:()=>ax,isAxiosError:()=>false}}));
 const buyer="yanbezerra651@gmail.com";
-function config(staging=true){vi.stubEnv('ASAAS_API_KEY','synthetic');vi.stubEnv('ASAAS_API_URL',staging?'https://api-sandbox.asaas.com/v3':'https://api.asaas.com/v3');vi.stubEnv('ASAAS_ENV',staging?'sandbox':'production');}
+function config(staging=true){vi.stubEnv('ASAAS_API_KEY',staging?'$aact_hmlg_synthetic':'$aact_prod_synthetic');vi.stubEnv('ASAAS_API_URL',staging?'https://api-sandbox.asaas.com/v3':'https://api.asaas.com/v3');vi.stubEnv('ASAAS_ENV',staging?'sandbox':'production');if(!staging){vi.stubEnv('RAILWAY_PROJECT_ID','5937dcf3-18ae-4df8-83f0-5bb60ec9b8db');vi.stubEnv('RAILWAY_ENVIRONMENT_ID','7d065409-7cc2-44ba-9fff-5524653b0484');vi.stubEnv('RAILWAY_SERVICE_ID','743f3f4e-af1b-44f7-95c8-bb152e3c2f4b');}}
 function scope(){config();for(const [k,v] of Object.entries({NODE_ENV:'production',RAILWAY_PROJECT_ID:'2bb90c8e-eb65-43ee-826b-f93750f0499c',RAILWAY_ENVIRONMENT_ID:'15545eee-bc02-4b70-afc4-19a5db9e6f46',RAILWAY_SERVICE_ID:'9f1c7705-f2f9-48cf-b957-8f63a6bba4db',ASAAS_WEBHOOK_RECOVERY_MODE:'review_only',EMAIL_MODE:'restricted',STAGING_EMAIL_ALLOWLIST:'synthetic@example.invalid'}))vi.stubEnv(k,v);}
 const input={orderId:999901,method:'PIX' as const,value:99,customer:{name:'Synthetic',cpfCnpj:'11144477735'},description:'LOCAL FIXTURE'};
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.clearAllMocks();});

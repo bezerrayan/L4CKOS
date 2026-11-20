@@ -16,7 +16,7 @@ import {
 } from "../db";
 import { TRPCError } from "@trpc/server";
 import { createReviewInputSchema } from "../reviews/policy";
-import { isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "../database/publicPurchasePolicy";
+import { isPublicProductUnavailable } from "../database/publicPurchasePolicy";
 
 export const productsRouter = router({
   promotions: publicProcedure.query(async () => {
@@ -47,6 +47,9 @@ export const productsRouter = router({
     )
     .query(async ({ input }) => {
       let products = await getProducts();
+      // Restricted collaborations are absent from every public catalog projection,
+      // independent of search, category, or in-stock filters.
+      products = products.filter(p => p.publicPurchaseAllowed !== false && !isPublicProductUnavailable(p.name));
 
       if (input.category) {
         products = products.filter((p) => p.category === input.category);
@@ -71,7 +74,7 @@ export const productsRouter = router({
 
       if (input.inStockOnly) {
         products = products.filter(p => {
-          if (isRestrictedPublicPurchase(p.name)) return false;
+          if (isPublicProductUnavailable(p.name)) return false;
           return p.salesMode === "PREORDER"
             ? batchAcceptsSales(p.productionBatch) && batchHasCapacity(p.productionBatch) && (p.hasVariants !== true || p.hasSellableVariants === true)
             : p.hasVariants === true ? p.hasSellableVariants === true : Number(p.stock ?? 0) > 0;
@@ -93,7 +96,7 @@ export const productsRouter = router({
   // Obter um produto especifico por ID com detalhes
   getById: publicProcedure.input(z.number()).query(async ({ input }) => {
     const product = await getProductByIdWithDetails(input);
-    if (!product || isStagingQaCatalogProduct(product.name, product.variants)) {
+    if (!product || isPublicProductUnavailable(product.name, product.variants)) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
     }
     const { variants: _internalVariants, ...publicProduct } = product;
@@ -104,11 +107,8 @@ export const productsRouter = router({
   sellableVariants: publicProcedure.input(z.number().int().positive()).query(async ({ input }) => {
     const result = await getPublicProductVariants(input);
     if (!result.product) throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
-    if (isStagingQaCatalogProduct(result.product.name, result.product.variants)) {
+    if (isPublicProductUnavailable(result.product.name, result.product.variants)) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
-    }
-    if (isRestrictedPublicPurchase(result.product.name, result.product.variants?.map(variant => variant.sku))) {
-      return { productId: input, hasVariants: result.hasVariants, publicPurchaseAllowed: false as const, variants: [] as const };
     }
     if (!result.hasVariants) return { productId: input, hasVariants: false as const, publicPurchaseAllowed: true as const, variants: [] as const };
     const preorderAvailable = result.product.salesMode === "PREORDER"
@@ -128,6 +128,10 @@ export const productsRouter = router({
   }),
 
   reviews: publicProcedure.input(z.number().int().positive()).query(async ({ input }) => {
+    const product = await getProductByIdWithDetails(input);
+    if (!product || isPublicProductUnavailable(product.name, product.variants)) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Produto não encontrado." });
+    }
     return await getProductReviews(input);
   }),
 

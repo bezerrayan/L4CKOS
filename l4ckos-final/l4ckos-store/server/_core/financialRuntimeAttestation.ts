@@ -2,9 +2,11 @@ import { resolveAsaasWebhookInboundEnabled } from "./asaasWebhookIngress";
 import { classifyAsaasRuntime } from "../services/asaasConfig";
 import { isPublicCheckoutEnabled, resolvePublicSiteMode } from "./publicStorePolicy";
 import { resolveRecoveryWorkerStartup } from "./recoveryWorkerStartup";
+import { isFinancialSandboxPhase, resolveFinancialPhasePolicy, type FinancialPhase } from "./financialPhasePolicy";
 import {
   ISOLATED_HOMOLOGATION_IDENTITY,
   isApprovedStagingIdentity,
+  hasIsolatedHomologationIdentityMarker,
   isIsolatedHomologationIdentity,
 } from "./railwayEnvironment";
 
@@ -23,10 +25,12 @@ export type AttestationIssue =
   | "FINANCIAL_FLAG_OPEN"
   | "ASAAS_UNCONFIGURED"
   | "ASAAS_PRODUCTION_SELECTED"
-  | "ASAAS_CONFIGURATION_INVALID";
+  | "ASAAS_CONFIGURATION_INVALID"
+  | "FINANCIAL_PHASE_CONFIGURATION_INVALID";
 
 export type FinancialRuntimeAttestation = {
   schemaVersion: 2;
+  financialPhase: FinancialPhase;
   verdict: AttestationVerdict;
   issues: AttestationIssue[];
   identity: {
@@ -56,6 +60,8 @@ export type FinancialRuntimeAttestation = {
   asaasMode: "sandbox" | "production" | "unconfigured" | "invalid";
   asaasModeConsistent: boolean;
   asaasCredentialsPresent: boolean;
+  asaasWebhookAccountIdConfigured: boolean;
+  asaasWebhookAccountCurrencyConfigured: boolean;
 };
 
 const SAFE_PLATFORM_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -118,6 +124,9 @@ export function resolveFinancialRuntimeAttestation(
   processId: number = process.pid
 ): FinancialRuntimeAttestation {
   const issues: AttestationIssue[] = [];
+  const phasePolicy = resolveFinancialPhasePolicy(env);
+  if (!phasePolicy.allowed && (hasIsolatedHomologationIdentityMarker(env) || env.G4_FINANCIAL_PHASE !== undefined))
+    addIssue(issues, "FINANCIAL_PHASE_CONFIGURATION_INVALID");
   const identity = identityState(env);
   if (identity.status === "NOT_VERIFIED")
     addIssue(issues, "RAILWAY_IDENTITY_INCOMPLETE");
@@ -158,12 +167,8 @@ export function resolveFinancialRuntimeAttestation(
   const publicSiteRaw = env.PUBLIC_SITE_MODE?.trim().toLowerCase();
   if (publicSiteRaw && !["store", "coming-soon"].includes(publicSiteRaw))
     financialFlagsInvalid = true;
-  if (isolatedHomologation && (
-    publicSiteRaw !== "coming-soon" ||
-    ["PUBLIC_CHECKOUT_ENABLED", "STOCK_RUNTIME_ENABLED", "STOCK_CHECKOUT_ENABLED",
-      "ASAAS_WEBHOOK_INBOUND_ENABLED", "ASAAS_WEBHOOK_RECOVERY_WORKER_ENABLED",
-      "PAYMENT_NOTIFICATION_RECOVERY_WORKER_ENABLED"].some(name => env[name] !== "false")
-  )) financialFlagsInvalid = true;
+  if (isolatedHomologation && phasePolicy.phase === "CLOSED" && publicSiteRaw !== "coming-soon")
+    financialFlagsInvalid = true;
   if (
     hasInvalidBoolean(env, "PUBLIC_CHECKOUT_ENABLED") ||
     hasInvalidBoolean(env, "STOCK_RUNTIME_ENABLED") ||
@@ -173,7 +178,12 @@ export function resolveFinancialRuntimeAttestation(
   if (financialFlagsInvalid) addIssue(issues, "FINANCIAL_FLAG_INVALID");
 
   const asaas = resolveAsaasMode(env);
-  if (isolatedHomologation && !env.ASAAS_API_KEY?.trim())
+  const sandboxCredentialConfigured = Boolean(
+    (isFinancialSandboxPhase(env.G4_FINANCIAL_PHASE) || env.ASAAS_SANDBOX_API_KEY?.trim())
+      ? env.ASAAS_SANDBOX_API_KEY?.trim()
+      : env.ASAAS_API_KEY?.trim(),
+  );
+  if (isolatedHomologation && !sandboxCredentialConfigured)
     addIssue(issues, "ASAAS_UNCONFIGURED");
   if (isolatedHomologation && asaas.mode !== "unconfigured" && env.ASAAS_ENV !== "sandbox")
     addIssue(issues, "ASAAS_CONFIGURATION_INVALID");
@@ -193,13 +203,14 @@ export function resolveFinancialRuntimeAttestation(
     asaasWebhookInboundEnabled === true ||
     asaasWebhookRecoveryWorkerEnabled === true ||
     paymentNotificationRecoveryWorkerEnabled === true;
-  if (financialFeatureOpen) addIssue(issues, "FINANCIAL_FLAG_OPEN");
+  if (phasePolicy.phase === "CLOSED" && financialFeatureOpen) addIssue(issues, "FINANCIAL_FLAG_OPEN");
 
   const hasKnownFailure = issues.some(issue =>
     [
       "RAILWAY_IDENTITY_MISMATCH",
       "FINANCIAL_FLAG_INVALID",
       "FINANCIAL_FLAG_OPEN",
+      "FINANCIAL_PHASE_CONFIGURATION_INVALID",
       "ASAAS_PRODUCTION_SELECTED",
       "ASAAS_CONFIGURATION_INVALID",
     ].includes(issue)
@@ -222,6 +233,7 @@ export function resolveFinancialRuntimeAttestation(
 
   return {
     schemaVersion: 2,
+    financialPhase: phasePolicy.phase,
     verdict,
     issues,
     identity,
@@ -245,6 +257,79 @@ export function resolveFinancialRuntimeAttestation(
     paymentNotificationRecoveryWorkerEnabled,
     asaasMode: asaas.mode,
     asaasModeConsistent: asaas.consistent,
-    asaasCredentialsPresent: Boolean(env.ASAAS_API_KEY?.trim()),
+    asaasCredentialsPresent: sandboxCredentialConfigured,
+    asaasWebhookAccountIdConfigured: Boolean(env.ASAAS_WEBHOOK_ACCOUNT_ID?.trim()),
+    asaasWebhookAccountCurrencyConfigured: Boolean(env.ASAAS_WEBHOOK_ACCOUNT_CURRENCY?.trim()),
   };
+}
+
+const LOGGABLE_FINANCIAL_PHASES = new Set([
+  "CLOSED",
+  "SANDBOX_WEBHOOK",
+  "SANDBOX_CHECKOUT",
+  "SANDBOX_RECOVERY",
+]);
+
+function sanitizedFinancialPhase(value: string | undefined): string {
+  if (value === undefined) return "CLOSED";
+  return LOGGABLE_FINANCIAL_PHASES.has(value) ? value : "UNKNOWN";
+}
+
+export function serializeFinancialRuntimeAttestation(
+  report: FinancialRuntimeAttestation,
+  financialPhase: string | undefined,
+  at: string = new Date().toISOString()
+): string {
+  const event = {
+    level:
+      report.verdict === "FAIL"
+        ? "error"
+        : report.verdict === "NOT_VERIFIED"
+          ? "warn"
+          : "info",
+    message: "financial.runtime_attestation",
+    at,
+    schemaVersion: report.schemaVersion,
+    financialPhase: sanitizedFinancialPhase(financialPhase),
+    verdict: report.verdict,
+    issues: [...report.issues],
+    railwayIdentityStatus: report.identity.status,
+    railwayProjectId: report.identity.projectId,
+    railwayEnvironmentId: report.identity.environmentId,
+    railwayServiceId: report.identity.serviceId,
+    deploymentId: report.execution.deploymentId,
+    replicaId: report.execution.replicaId,
+    processId: report.execution.processId,
+    sourceCommitSha: report.execution.sourceCommitSha,
+    publicSiteMode: report.publicSiteMode,
+    publicCheckoutFlagEnabled: report.publicCheckoutFlagEnabled,
+    publicCheckoutEnabled: report.publicCheckoutEnabled,
+    stockRuntimeEnabled: report.stockRuntimeEnabled,
+    stockCheckoutEnabled: report.stockCheckoutEnabled,
+    stockCheckoutEffective: report.stockCheckoutEffective,
+    stockReservationExpirySchedulerEnabled:
+      report.stockReservationExpirySchedulerEnabled,
+    automaticBackupSchedulerEnabled: report.automaticBackupSchedulerEnabled,
+    asaasWebhookInboundEnabled: report.asaasWebhookInboundEnabled,
+    asaasWebhookRecoveryWorkerEnabled: report.asaasWebhookRecoveryWorkerEnabled,
+    paymentNotificationRecoveryWorkerEnabled:
+      report.paymentNotificationRecoveryWorkerEnabled,
+    asaasMode: report.asaasMode,
+    asaasModeConsistent: report.asaasModeConsistent,
+    asaasCredentialsPresent: report.asaasCredentialsPresent,
+    asaasWebhookAccountIdConfigured: report.asaasWebhookAccountIdConfigured,
+    asaasWebhookAccountCurrencyConfigured:
+      report.asaasWebhookAccountCurrencyConfigured,
+  };
+
+  return JSON.stringify(event);
+}
+
+export function emitFinancialRuntimeAttestation(
+  report: FinancialRuntimeAttestation,
+  financialPhase: string | undefined,
+  writeLine: (line: string) => void = line => console.info(line),
+  at: string = new Date().toISOString()
+): void {
+  writeLine(serializeFinancialRuntimeAttestation(report, financialPhase, at));
 }

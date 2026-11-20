@@ -87,7 +87,7 @@ describe("commercial purchase methods, independent of provider/webhook observati
    expect(ax.get).not.toHaveBeenCalled();expect(ax.post).not.toHaveBeenCalled();
   });
   it("keeps a durable claim after customer-provider failure and blocks blind retry for reconciliation",async ()=>{
-   vi.stubEnv("ASAAS_API_KEY","synthetic-local-key");vi.stubEnv("ASAAS_API_URL","https://api-sandbox.asaas.com/v3");vi.stubEnv("ASAAS_ENV","sandbox");
+   vi.stubEnv("ASAAS_API_KEY","$aact_hmlg_synthetic-local-key");vi.stubEnv("ASAAS_API_URL","https://api-sandbox.asaas.com/v3");vi.stubEnv("ASAAS_ENV","sandbox");
    const {spies,run}=prepare();
    vi.spyOn(db,"isLegacyCheckoutOrderRestricted").mockResolvedValue(false);
    let claimExists=false;

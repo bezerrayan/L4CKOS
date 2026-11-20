@@ -1,5 +1,6 @@
 import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import type { ExclusiveCheckoutClaim } from "../exclusive/store";
+import { webhookMysqlConnection, webhookTransactionActive } from "../database/webhookTransaction";
 import {
   StockAttemptConflictError,
   type StockAttempt,
@@ -8,6 +9,10 @@ import {
   type StockSnapshot,
   type StockVariant,
 } from "./stockCheckout";
+import { generateStockPaymentReference, STOCK_PAYMENT_CUSTOMER_ACTION, STOCK_PAYMENT_REFERENCE_ACTION } from "./stockPaymentReference";
+import { alertExecutorForConnection, recordReconciliationAlert } from "../payments/reconciliationAlerts";
+import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
+import { formatCurrency } from "../utils/email/formatCurrency.js";
 
 /** auditLogs.action of the durable manual-reconciliation evidence for a rejected financial approval. */
 export const STOCK_RECONCILIATION_ACTION = "stock.reconciliation.required";
@@ -230,8 +235,9 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
     },
 
     async reserveVariant(variantId, quantity, attemptId): Promise<boolean> {
-      // Lock the parent product first to serialize against the legacy product-level
-      // reservation writer, then reject open reservations with no variant identity.
+      // Lock the parent product first: the legacy checkout locks this same row
+      // before checking/inserting its variant reservations. This makes the
+      // ledger check below mutually exclusive with the legacy claim.
       const [parentRows] = await connection.execute<(RowDataPacket & { productId: number })[]>(
         `SELECT productId FROM productVariants WHERE id = ? LIMIT 1`,
         [variantId],
@@ -251,6 +257,17 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       );
       if (legacyReservations.length > 0) return false;
 
+      // `reservedStock` is the counter for STOCK attempts (which also have
+      // attemptId). Legacy checkout writes active rows with attemptId NULL but
+      // does not mutate that counter. Count only those rows here to avoid
+      // counting STOCK reservations twice.
+      const [legacyVariantReservations] = await connection.execute<(RowDataPacket & { reserved: number | string })[]>(
+        `SELECT COALESCE(SUM(quantity), 0) AS reserved FROM stockReservations
+          WHERE productId = ? AND variantId = ? AND attemptId IS NULL
+            AND status = 'active' AND expiresAt > UTC_TIMESTAMP(3)`,
+        [productId, variantId],
+      );
+
       // Explicit variant row lock serializes claims. The guarded UPDATE remains
       // the final invariant check for active and unreserved sellable units.
       const [rows] = await connection.execute<(RowDataPacket & { stock: number; reservedStock: number; isActive: number })[]>(
@@ -259,12 +276,13 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       );
       const variant = rows[0];
       if (!variant || Number(variant.isActive) !== 1) return false;
-      if (asNumber(variant.stock) - asNumber(variant.reservedStock) < quantity) return false;
+      const reserved = asNumber(variant.reservedStock) + asNumber(legacyVariantReservations[0]?.reserved);
+      if (asNumber(variant.stock) - reserved < quantity) return false;
 
       const [update] = await connection.execute<ResultSetHeader>(
         `UPDATE productVariants SET reservedStock = reservedStock + ?
-          WHERE id = ? AND isActive = 1 AND stock - reservedStock >= ?`,
-        [quantity, variantId, quantity],
+          WHERE id = ? AND isActive = 1 AND stock - reservedStock - ? >= ?`,
+        [quantity, variantId, asNumber(legacyVariantReservations[0]?.reserved), quantity],
       );
       if (update.affectedRows !== 1) return false;
       const [identityRows] = await connection.execute<(RowDataPacket & {
@@ -308,7 +326,8 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       if (batch.maximumQuantity === null || batch.maximumQuantity === undefined) return "ok";
       const [claimed] = await connection.execute<(RowDataPacket & { n: number | string })[]>(
         `SELECT COALESCE(SUM(i.quantity), 0) AS n FROM orderItems i JOIN orders o ON o.id = i.orderId
-          WHERE i.productionBatchId = ? AND i.salesModeAtPurchase = 'PREORDER' AND o.status <> 'cancelled' FOR UPDATE`,
+          WHERE i.productionBatchId = ? AND i.salesModeAtPurchase = 'PREORDER'
+            AND (o.status <> 'cancelled' OR o.paymentStatus = 'confirmed') FOR UPDATE`,
         [batchId],
       );
       return asNumber(claimed[0]?.n) + quantity > asNumber(batch.maximumQuantity) ? "capacity_exceeded" : "ok";
@@ -437,7 +456,7 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       );
     },
 
-    async recordPayment(attemptId, paymentId, checkoutUrl): Promise<void> {
+    async recordPayment(attemptId, paymentId, checkoutUrl, providerCustomerId): Promise<void> {
       const attempt = await lockAttempt(connection, attemptId);
       if (!attempt || attempt.status !== "reserved" || !["creating", "ambiguous", "created"].includes(attempt.providerState)) {
         throw new StockMySqlInvariantError("Payment correlation requires a submitted or recoverable attempt");
@@ -480,6 +499,52 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         [paymentId, attempt.orderId, attemptId],
       );
       if (orderResult.affectedRows !== 1) throw new StockMySqlInvariantError("Payment correlation projection was not persisted");
+      // Durable provider-customer link (identifier only; no payer data) in the same transaction as the payment correlation.
+      if (providerCustomerId && /^[A-Za-z0-9_.:-]{3,120}$/.test(providerCustomerId)) {
+        await connection.execute(
+          `INSERT INTO auditLogs (actorUserId, actorType, action, entity, entityId, orderId, event, correlationId, metadata)
+           SELECT NULL, 'system', ?, 'stockCheckoutAttempt', ?, ?, 'STOCK_PAYMENT_CUSTOMER', ?, ?
+             FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM auditLogs WHERE action = ? AND orderId = ? AND entityId = ?)`,
+          [STOCK_PAYMENT_CUSTOMER_ACTION, attemptId, attempt.orderId, `${attemptId}:${paymentId}`.slice(0, 191),
+           JSON.stringify({ attemptId, paymentId, providerCustomerId }), STOCK_PAYMENT_CUSTOMER_ACTION, attempt.orderId, attemptId],
+        );
+      }
+    },
+
+    async ensurePaymentReference(attemptId): Promise<string> {
+      const attempt = await lockAttempt(connection, attemptId); // serializes concurrent creators of the same attempt
+      if (!attempt) throw new StockMySqlInvariantError("Payment reference requires an existing attempt");
+      const [existing] = await connection.execute<(RowDataPacket & { correlationId: string })[]>(
+        `SELECT correlationId FROM auditLogs WHERE orderId = ? AND action = ? AND entityId = ? ORDER BY id LIMIT 1`,
+        [attempt.orderId, STOCK_PAYMENT_REFERENCE_ACTION, attemptId],
+      );
+      if (existing[0]?.correlationId) return existing[0].correlationId;
+      for (let tries = 0; tries < 3; tries += 1) {
+        const reference = generateStockPaymentReference();
+        // The token is random (192 bits); this check only makes a (practically impossible) collision loud instead of silent.
+        const [taken] = await connection.execute<(RowDataPacket & { id: number })[]>(
+          `SELECT id FROM auditLogs WHERE correlationId = ? AND action = ? LIMIT 1`, [reference, STOCK_PAYMENT_REFERENCE_ACTION],
+        );
+        if (taken[0]) continue;
+        await connection.execute(
+          `INSERT INTO auditLogs (actorUserId, actorType, action, entity, entityId, orderId, event, correlationId, metadata)
+           VALUES (NULL, 'system', ?, 'stockCheckoutAttempt', ?, ?, 'STOCK_PAYMENT_REFERENCE', ?, ?)`,
+          [STOCK_PAYMENT_REFERENCE_ACTION, attemptId, attempt.orderId, reference, JSON.stringify({ attemptId, orderId: String(attempt.orderId), referenceVersion: 1 })],
+        );
+        return reference;
+      }
+      throw new StockMySqlInvariantError("Payment reference could not be generated uniquely");
+    },
+
+    async findAttemptByPaymentReference(reference): Promise<StockAttempt | null> {
+      const [rows] = await connection.execute<(RowDataPacket & { entityId: string; orderId: number | string })[]>(
+        `SELECT entityId, orderId FROM auditLogs WHERE correlationId = ? AND action = ? LIMIT 2`,
+        [reference, STOCK_PAYMENT_REFERENCE_ACTION],
+      );
+      if (rows.length !== 1) return null; // unknown (e.g. pre-restore) or ambiguous: never guess
+      const attempt = await findAttempt(connection, rows[0].entityId);
+      // The record must still point at the attempt's own order; otherwise the evidence is stale and proves nothing.
+      return attempt && String(attempt.orderId) === String(rows[0].orderId) ? attempt : null;
     },
 
     async claimWebhook(eventId, payloadHash): Promise<"claimed" | "duplicate" | "conflict"> {
@@ -514,6 +579,21 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         [orderId],
       );
       return rows[0] ? findAttempt(connection, rows[0].attemptId) : null;
+    },
+
+    async validateAttemptOrderProjection(attempt): Promise<boolean> {
+      const [rows] = await connection.execute<(RowDataPacket & {
+        userId: number | string; stockAttemptId: string | null; totalPrice: number | string; stockPaymentId: string | null;
+      })[]>(
+        `SELECT userId, stockAttemptId, totalPrice, stockPaymentId FROM orders WHERE id = ? LIMIT 1`,
+        [attempt.orderId],
+      );
+      const row = rows[0];
+      if (!row) return false;
+      const expectedAmount = attempt.amountCents ?? attempt.snapshots.reduce((sum, item) => sum + item.totalCents, 0);
+      return String(row.stockAttemptId ?? "") === attempt.attemptId &&
+        asNumber(row.userId) === attempt.ownerUserId && asNumber(row.totalPrice) === expectedAmount &&
+        (row.stockPaymentId ?? null) === (attempt.paymentId ?? null);
     },
 
     async consumeReservations(attemptId): Promise<void> {
@@ -613,7 +693,18 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
               AND reservationExpiresAt <= UTC_TIMESTAMP(3) AND expiryReviewedAt IS NULL`,
           [row.attemptId],
         );
-        if (result.affectedRows === 1) reconciliationAttemptIds.push(row.attemptId);
+        if (result.affectedRows === 1) {
+          reconciliationAttemptIds.push(row.attemptId);
+          if (row.providerState === "creating" || row.providerState === "ambiguous") {
+            // A charge may exist at the provider without a local payment id: that is exactly how an unlinked paid event arises.
+            const [orderRows] = await connection.execute<(RowDataPacket & { orderId: number | string })[]>(
+              `SELECT orderId FROM stockCheckoutAttempts WHERE attemptId = ?`, [row.attemptId]);
+            await recordReconciliationAlert(alertExecutorForConnection(connection), {
+              kind: "STOCK_RECONCILIATION_REQUIRED", subject: { attemptId: row.attemptId }, orderId: orderRows[0] ? asNumber(orderRows[0].orderId) : null,
+              reason: `PROVIDER_OUTCOME_UNKNOWN_${row.providerState}`,
+            });
+          }
+        }
       }
       return { releasedAttemptIds, reconciliationAttemptIds };
     },
@@ -634,6 +725,15 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       }
       if (attempt.status !== "reserved") return "not-pending";
       if (attempt.paymentId !== paymentId) throw new StockPaymentCorrelationConflictError();
+      const [orderRows] = await connection.execute<(RowDataPacket & { status: string; paymentStatus: string })[]>(
+        `SELECT status, paymentStatus FROM orders WHERE id = ? AND stockAttemptId = ? LIMIT 1 FOR UPDATE`,
+        [attempt.orderId, attemptId],
+      );
+      // An administrator may cancel an unpaid PREORDER after its batch capacity
+      // has been reallocated. Keep the attempt reserved long enough for the
+      // webhook path to record PAID_AFTER_RELEASE instead of failing halfway
+      // through the attempt/order projection update.
+      if (!orderRows[0] || orderRows[0].status !== "pending" || orderRows[0].paymentStatus !== "unconfirmed") return "not-pending";
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE stockCheckoutAttempts
             SET status = 'paid', providerState = 'created', paidAt = UTC_TIMESTAMP(3),
@@ -649,6 +749,9 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         [paymentId, attempt.orderId, attemptId],
       );
       if (orderResult.affectedRows !== 1) throw new StockMySqlInvariantError("Administrative order projection could not be confirmed atomically");
+      // The customer's payment-approved e-mail is queued durably in the SAME commit that settles the payment (idempotent per order).
+      // Delivery happens after commit (and by the notification worker); a provider failure can never undo the payment.
+      await enqueueStockPaymentApprovedNotification(connection, attempt.orderId);
       return "paid";
     },
 
@@ -660,7 +763,19 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         `SELECT id FROM auditLogs WHERE action = ? AND correlationId = ? LIMIT 1`,
         [STOCK_RECONCILIATION_ACTION, correlationId],
       );
-      if (existing[0]) return "duplicate";
+      const alertInput = {
+        kind: divergence.kind,
+        subject: { attemptId: divergence.attemptId, orderId: divergence.orderId, paymentId: divergence.paymentId },
+        orderId: /^\d{1,10}$/.test(divergence.orderId) ? Number(divergence.orderId) : null,
+        providerEventId: divergence.providerEventId,
+        observed: { status: divergence.observedStatus, amountCents: divergence.observedAmountCents, expectedAmountCents: divergence.expectedAmountCents },
+        reason: divergence.kind,
+      };
+      if (existing[0]) {
+        // Idempotent backfill: a divergence recorded before alerts existed gets its (single) alert on the next delivery.
+        await recordReconciliationAlert(alertExecutorForConnection(connection), alertInput);
+        return "duplicate";
+      }
       const orderIdNumber = /^\d{1,10}$/.test(divergence.orderId) ? Number(divergence.orderId) : null;
       // No payer data and no raw provider payload: identifiers, amounts and the ledger state that rejected the approval.
       // Any failure here throws and rolls back the whole webhook transaction (the claim included), so the provider redelivers.
@@ -680,7 +795,10 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
             orderId: divergence.orderId,
             paymentId: divergence.paymentId,
             providerEventId: divergence.providerEventId,
-            observedStatus: "paid",
+            observedStatus: divergence.observedStatus,
+            ...(divergence.observedOrderId && divergence.observedOrderId !== divergence.orderId
+              ? { observedOrderId: divergence.observedOrderId }
+              : {}),
             observedAmountCents: divergence.observedAmountCents,
             expectedAmountCents: divergence.expectedAmountCents,
             attemptPaymentId: divergence.attemptPaymentId,
@@ -690,6 +808,8 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
           JSON.stringify({ status: divergence.attemptStatus, providerState: divergence.attemptProviderState, reconciliation: "open" }),
         ],
       );
+      // Same transaction as the audit row and the webhook claim: a failure rolls everything back and the delivery is not acknowledged.
+      await recordReconciliationAlert(alertExecutorForConnection(connection), alertInput);
       return "recorded";
     },
 
@@ -715,6 +835,38 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
 }
 
 /** Uses only the caller's already-configured pool; TLS/identity connection guards remain outside this adapter. */
+/** Same outbox row/key the legacy payment path uses, so a retry or a second delivery can never queue a second e-mail for the order. */
+async function enqueueStockPaymentApprovedNotification(connection: PoolConnection, orderId: string | number): Promise<void> {
+  const numericOrderId = Number(orderId);
+  if (!Number.isSafeInteger(numericOrderId) || numericOrderId <= 0) throw new StockMySqlInvariantError("Paid STOCK order id is not numeric");
+  const [orders] = await connection.execute<(RowDataPacket & { totalPrice: number })[]>("SELECT totalPrice FROM orders WHERE id = ? LIMIT 1", [numericOrderId]);
+  if (!orders[0]) throw new StockMySqlInvariantError("Paid STOCK order projection is missing");
+  const [items] = await connection.execute<RowDataPacket[]>(
+    `SELECT salesModeAtPurchase, productionBatchNameAtPurchase, estimatedManufacturingStartAtPurchase, estimatedManufacturingEndAtPurchase,
+            estimatedShippingStartAtPurchase, estimatedShippingEndAtPurchase
+       FROM orderItems WHERE orderId = ?`,
+    [numericOrderId],
+  );
+  const lines = items.map(row => ({
+    salesModeAtPurchase: String(row.salesModeAtPurchase ?? "STOCK"),
+    productionBatchNameAtPurchase: row.productionBatchNameAtPurchase ?? null,
+    estimatedManufacturingStartAtPurchase: row.estimatedManufacturingStartAtPurchase instanceof Date ? row.estimatedManufacturingStartAtPurchase.toISOString().slice(0, 10) : row.estimatedManufacturingStartAtPurchase ?? null,
+    estimatedManufacturingEndAtPurchase: row.estimatedManufacturingEndAtPurchase instanceof Date ? row.estimatedManufacturingEndAtPurchase.toISOString().slice(0, 10) : row.estimatedManufacturingEndAtPurchase ?? null,
+    estimatedShippingStartAtPurchase: row.estimatedShippingStartAtPurchase ?? null,
+    estimatedShippingEndAtPurchase: row.estimatedShippingEndAtPurchase ?? null,
+  }));
+  const payload = JSON.stringify({
+    salesMode: purchasedSalesMode(lines),
+    scheduleMessages: purchasedScheduleMessages(lines),
+    orderNumber: String(numericOrderId),
+    total: formatCurrency(Number(orders[0].totalPrice) / 100),
+  });
+  await connection.execute(
+    "INSERT INTO notificationOutbox (dedupeKey, type, orderId, payload) VALUES (?, 'payment-approved-email-v1', ?, ?) ON DUPLICATE KEY UPDATE dedupeKey = dedupeKey",
+    [`payment-approved-email:v1:order:${numericOrderId}`, numericOrderId, payload],
+  );
+}
+
 export function createMysqlStockCheckoutStore(pool: Pool, options: { reservationTtlSeconds?: number; reserveExclusiveQuota?: ExclusiveQuotaReserver } = {}): StockCheckoutStore {
   const reservationTtlSeconds = options.reservationTtlSeconds ?? 15 * 60;
   if (!Number.isSafeInteger(reservationTtlSeconds) || reservationTtlSeconds < 60 || reservationTtlSeconds > 24 * 60 * 60) {
@@ -775,6 +927,14 @@ export function createMysqlStockCheckoutStore(pool: Pool, options: { reservation
       };
     },
     async transaction<T>(work: (tx: StockCheckoutTransaction) => Promise<T>): Promise<T> {
+      const webhookConnection = webhookMysqlConnection();
+      if (webhookConnection) {
+        // A webhook already owns this pool connection and transaction. Joining it
+        // avoids a second checkout from a pool whose slots may all be held by
+        // webhook transactions waiting for STOCK work.
+        return work(createTransaction(webhookConnection, reservationTtlSeconds, options.reserveExclusiveQuota));
+      }
+      if (webhookTransactionActive()) throw new Error("WEBHOOK_MYSQL_CONNECTION_UNAVAILABLE");
       const connection = await pool.getConnection();
       let transactionStarted = false;
       try {

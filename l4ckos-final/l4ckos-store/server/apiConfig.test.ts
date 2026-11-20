@@ -212,3 +212,37 @@ describe("frontend API destination isolation", () => {
     })).toThrowError(expect.objectContaining({ code: "STAGING_API_ORIGIN_INVALID" }));
   });
 });
+
+describe("preview target (BFF-fronted, same-origin only)", () => {
+  const PREVIEW = "https://l4ckos-preview.vercel.app";
+
+  it("accepts only VITE_API_URL=same-origin at build time: no absolute URL, no relative path, no allowlist exception", () => {
+    expect(() => validateBuildApiConfig({ target: "preview", apiUrl: "same-origin" })).not.toThrow();
+    for (const apiUrl of [undefined, "", "/", "/api", "https://l4ckos-preview.vercel.app", "https://stock-v1-api.up.railway.app", "http://localhost:3010"]) {
+      expect(() => validateBuildApiConfig({ target: "preview", apiUrl, stagingApiAllowedOrigins: ISOLATED_API_ALLOWLIST })).toThrowError(
+        expect.objectContaining({ code: apiUrl ? "PREVIEW_API_SAME_ORIGIN_REQUIRED" : "API_URL_REQUIRED" }),
+      );
+    }
+  });
+
+  it("resolves to the page's own HTTPS origin, whatever it is, with no remote destination to configure", () => {
+    expect(resolveApiUrl({ target: "preview", apiUrl: "same-origin", currentOrigin: PREVIEW }).origin).toBe(PREVIEW);
+    expect(resolveApiUrl({ target: "preview", apiUrl: "same-origin", currentOrigin: "https://l4ckos-git-bff-team.vercel.app" }).origin).toBe("https://l4ckos-git-bff-team.vercel.app");
+  });
+
+  it("refuses to run outside HTTPS or on a production/staging L4CKOS host, and in local development", () => {
+    expect(() => resolveApiUrl({ target: "preview", apiUrl: "same-origin", currentOrigin: "http://l4ckos-preview.vercel.app" })).toThrowError(expect.objectContaining({ code: "PREVIEW_ORIGIN_INVALID" }));
+    expect(() => resolveApiUrl({ target: "preview", apiUrl: "same-origin" })).toThrowError(expect.objectContaining({ code: "API_URL_INVALID" }));
+    for (const host of ["l4ckos.com.br", "www.l4ckos.com.br", "api.l4ckos.com.br", "api-staging.l4ckos.com.br"]) {
+      expect(() => resolveApiUrl({ target: "preview", apiUrl: "same-origin", currentOrigin: `https://${host}` })).toThrowError(expect.objectContaining({ code: "PREVIEW_ORIGIN_FORBIDDEN" }));
+    }
+    expect(() => resolveApiUrl({ target: "preview", apiUrl: "same-origin", currentOrigin: "https://staging.l4ckos.com.br" })).toThrow();
+    expect(() => resolveApiUrl({ target: "preview", apiUrl: "same-origin", currentOrigin: "http://localhost:3000", isDevelopment: true })).toThrowError(expect.objectContaining({ code: "DEV_API_TARGET_DISABLED" }));
+  });
+
+  it("does not loosen the staging and production rules", () => {
+    expect(() => validateBuildApiConfig({ target: "staging", apiUrl: "same-origin", stagingApiAllowedOrigins: ISOLATED_API_ALLOWLIST })).toThrowError(expect.objectContaining({ code: "STAGING_API_ORIGIN_INVALID" }));
+    expect(() => validateBuildApiConfig({ target: "staging", apiUrl: "same-origin" })).toThrowError(expect.objectContaining({ code: "STAGING_API_ALLOWLIST_REQUIRED" }));
+    expect(() => validateBuildApiConfig({ target: "bogus" as never, apiUrl: "same-origin" })).toThrowError(expect.objectContaining({ code: "API_TARGET_INVALID" }));
+  });
+});

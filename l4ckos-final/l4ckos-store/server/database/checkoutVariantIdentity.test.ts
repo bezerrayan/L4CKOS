@@ -43,6 +43,10 @@ describe("checkout variant resolution", () => {
     codeOf(() => resolveCheckoutVariant({ productId: 2, quantity: 1 }, 2, "Camiseta Clã 14 Bis", []), "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
   });
 
+  it("rejects a QA-STAGING product with a valid variant ID resolved directly", () => {
+    codeOf(() => resolveCheckoutVariant(item, 2, "[QA-STAGING] Fixture", [activeVariant]), "CHECKOUT_PRODUCT_REQUIRES_AUTHORIZATION");
+  });
+
   it("rejects a SKU duplicated within the product catalog", () => {
     const duplicate = { ...activeVariant, id: 12, color: "Branco", size: "G", optionKey: createVariantOptionKey("Branco", "G"), sku: " shirt-blk-m " };
     codeOf(() => resolveCheckoutVariant(item, 2, "Shirt", [activeVariant, duplicate]), "CHECKOUT_VARIANT_SKU_DUPLICATE");

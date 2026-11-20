@@ -23,7 +23,7 @@ const base = {
   ASAAS_ENV: "sandbox",
   ASAAS_API_URL: "https://api-sandbox.asaas.com/v3",
   ASAAS_CHECKOUT_BASE_URL: "https://sandbox.asaas.com",
-  ASAAS_API_KEY: "synthetic-key-never-logged",
+  ASAAS_API_KEY: "$aact_hmlg_synthetic-key-never-logged",
 };
 const pid = 4312;
 

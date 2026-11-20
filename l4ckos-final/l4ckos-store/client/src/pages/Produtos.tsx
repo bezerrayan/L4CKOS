@@ -97,7 +97,7 @@ export default function Produtos() {
       >
         <div>
           <p className="l4-eyebrow">L4CKOS / COLEÇÃO</p>
-          <h1 style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Produtos</h1>
+          <h1 className="l4-display-title" style={{ ...styles.title, fontSize: isMobile ? 30 : styles.title.fontSize }}>Produtos</h1>
           <p style={{ ...styles.subtitle, fontSize: isMobile ? 15 : styles.subtitle.fontSize }}>
             {activeCategoryLabel
               ? `Você está vendo produtos em ${activeCategoryLabel}.`
@@ -109,7 +109,7 @@ export default function Produtos() {
       {activeCategoryLabel ? (
         <section style={styles.categoryHero}>
           <div style={styles.categoryHeroTag}>Categoria selecionada</div>
-          <h2 style={styles.categoryHeroTitle}>{activeCategoryLabel}</h2>
+          <h2 className="l4-display-title" style={styles.categoryHeroTitle}>{activeCategoryLabel}</h2>
           <p style={styles.categoryHeroText}>
             Veja as peças publicadas nesta categoria. As opções exibidas são atualizadas conforme o catálogo real.
           </p>

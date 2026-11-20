@@ -11,13 +11,13 @@ import { useCart as useCartLocal } from "../contexts/CartContext";
 import { useFavorites as useFavoritesLocal } from "../contexts/FavoritesContext";
 
 export function useSyncData() {
-  const { user } = useUser();
+  const { user, isAuthenticated } = useUser();
   const { cart } = useCartLocal();
   const { favorites } = useFavoritesLocal();
 
   // Queries do servidor
-  const cartServerQuery = useCartServer();
-  const favoritesServerQuery = useFavoritesSync();
+  const cartServerQuery = useCartServer({ enabled: isAuthenticated });
+  const favoritesServerQuery = useFavoritesSync({ enabled: isAuthenticated });
 
   // Mutations
   const addToCartMutation = useAddToCart();
@@ -44,7 +44,7 @@ export function useSyncData() {
         }
       });
     }
-  }, [user, cart.items.length]);
+  }, [user, cart.items.length, cartServerQuery.data]);
 
   // Sincronizar favoritos quando houver mudanças no localStorage
   useEffect(() => {
@@ -68,5 +68,5 @@ export function useSyncData() {
         }
       });
     }
-  }, [user, favorites.length]);
+  }, [user, favorites.length, favoritesServerQuery.data]);
 }

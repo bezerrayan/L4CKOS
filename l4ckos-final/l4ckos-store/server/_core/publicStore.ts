@@ -1,5 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { buildApiErrorResponse, createAppError } from "./appErrors";
+import { hasIsolatedHomologationIdentityMarker } from "./railwayEnvironment";
+import { resolveFinancialPhasePolicy } from "./financialPhasePolicy";
+import { assertStagingSyntheticBuyer } from "../payments/syntheticBuyerGate";
 
 export const PUBLIC_SITE_MODE_ENV = "PUBLIC_SITE_MODE";
 export const PUBLIC_STORE_CLOSED_CODE = "PUBLIC_STORE_CLOSED";
@@ -37,6 +40,35 @@ export class PublicCheckoutDisabledError extends Error {
 export function assertPublicCheckoutEnabled(env: Environment = process.env): void {
   assertPublicStoreOpen(env);
   if (!isPublicCheckoutEnabled(env)) throw new PublicCheckoutDisabledError();
+}
+
+/**
+ * Preserves public checkout behavior outside the isolated rehearsal service.
+ * In that service only the authenticated, allowlisted synthetic buyer can use
+ * STOCK checkout during an explicitly approved sandbox checkout/recovery phase.
+ */
+export function assertPublicOrSyntheticSandboxCheckoutEnabled(
+  authenticatedUserId: number | undefined,
+  env: Environment = process.env,
+): void {
+  if (!hasIsolatedHomologationIdentityMarker(env)) {
+    assertPublicCheckoutEnabled(env);
+    return;
+  }
+
+  const policy = resolveFinancialPhasePolicy(env);
+  if (policy.allowed && policy.checkoutEnabled &&
+      env.PUBLIC_SITE_MODE?.trim().toLowerCase() === "coming-soon" &&
+      env.PUBLIC_CHECKOUT_ENABLED === "false") {
+    try {
+      assertStagingSyntheticBuyer(authenticatedUserId, env as NodeJS.ProcessEnv);
+      return;
+    } catch {
+      // Keep the public error surface generic; identity never comes from input.
+    }
+  }
+  if (!isPublicStoreOpen(env)) throw new PublicStoreClosedError();
+  throw new PublicCheckoutDisabledError();
 }
 
 export function publicStoreClosedTrpcError() {

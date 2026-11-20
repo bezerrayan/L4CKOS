@@ -12,14 +12,15 @@ import { bootstrapReleaseDatabase } from '../../database/bootstrap/bootstrap';
 import { readReleaseContract, ROOT } from '../../database/schema/artifacts';
 import { readReleaseManifest, migrateDatabase } from '../../database/migrations/runner';
 import { rows, quote, structuralHash, readStructuralSchema } from '../../database/schema/fingerprint';
-import { persistWebhook, processStoredWebhook, receiveWebhook, recoverWebhooks, financialEnvelope, startWebhookRecovery } from '../payments/webhookInbox';
-import { processWebhookEnvelope, asaasWebhookHandler } from '../controllers/paymentController';
+import { persistWebhook as persistWebhookInternal, processStoredWebhook, receiveWebhook as receiveWebhookInternal, recoverWebhooks, financialEnvelope, digest, startWebhookRecovery } from '../payments/webhookInbox';
+import { attestAuthenticatedIngress, hasVerifiedIngressProvenance } from '../payments/ingressProvenance';
+import { processWebhookEnvelope, preflightAsaasWebhookEnvelope, asaasWebhookHandler, type AsaasWebhookPreflight } from '../controllers/paymentController';
 import { createStagingMaintenanceMiddleware } from '../_core/stagingMaintenance';
 import webhookRoutes from '../routes/webhookRoutes';
 import { TARGET } from '../../database/staging0022/policy';
 import { sql } from 'drizzle-orm';
 import { applyStockV6Migration, rollbackStockV6Migration } from "../stock/testing/applyStockV6Migration";
-const injected = vi.hoisted(() => ({ orm: null as unknown }));
+const injected = vi.hoisted(() => ({ orm: null as unknown, provider: vi.fn() }));
 vi.mock('drizzle-orm/mysql2', async original => ({ ...await original<typeof mysqlOrm>(), drizzle: () => injected.orm }));
 vi.mock('../services/emailService.js', () => ({
   sendPaymentApprovedEmail: vi.fn(async()=>{}), sendInternalNewSaleAlertEmail: vi.fn(async()=>{}),
@@ -27,15 +28,15 @@ vi.mock('../services/emailService.js', () => ({
 }));
 vi.mock('../services/asaasService', () => ({
   validateAsaasWebhookSignature: (headers: Record<string, unknown>) => headers['asaas-access-token'] === 'synthetic-token',
-  getAsaasPayment: vi.fn(async(id:string)=> ({ id, externalReference:'901', status:'RECEIVED', value:100, deleted:false })),
+  getAsaasPayment: injected.provider,
   createAsaasCheckout: vi.fn(()=> { throw Error('FORBIDDEN_EXTERNAL_CHARGE'); }),
   createAsaasCustomer: vi.fn(()=> { throw Error('FORBIDDEN_EXTERNAL_CUSTOMER'); }),
 }));
 const socketPath = process.env.L4CKOS_LOCAL_MYSQL_SOCKET ?? '/tmp/l4ckos-0022-socket/mysqld.sock';
 const name = 'l4ckos_test_inbox_' + randomUUID().replaceAll('-', '').slice(0,12);
 let root: Connection, c: Connection, pool: Pool;
-const event = (id = randomUUID(), type = 'PAYMENT_RECEIVED') => ({ id, event: type,
-  payment: { id: 'synthetic-payment', externalReference: '901', status: type === 'PAYMENT_DELETED' ? 'DELETED' : type === 'PAYMENT_REFUNDED' ? 'REFUNDED' : 'RECEIVED', ...(type === 'PAYMENT_DELETED' ? { deleted: true } : {}), value: 100, currency: 'BRL' } });
+const event = (id = randomUUID(), type = 'PAYMENT_RECEIVED') => ({ id, event: type, account: { id: 'sandbox-account-inbox', ownerId: null },
+  payment: { id: 'synthetic-payment', externalReference: '901', status: type === 'PAYMENT_DELETED' ? 'DELETED' : type === 'PAYMENT_REFUNDED' ? 'REFUNDED' : 'RECEIVED', ...(type === 'PAYMENT_DELETED' ? { deleted: true } : {}), value: 100, currency: 'BRL', billingType: 'PIX' } });
 async function state(id: string) { return (await rows(c, 'SELECT * FROM asaasWebhookInbox WHERE eventId=?', [id]))[0]; }
 async function paid() { return (await rows(c, 'SELECT status,paymentStatus FROM orders WHERE id=901'))[0]; }
 async function stock() { return Number((await rows(c,'SELECT stock FROM products WHERE id=901'))[0].stock); }
@@ -43,6 +44,19 @@ const maintenance = () => {
   for(const [key,value] of Object.entries({ NODE_ENV:'production', STAGING_MAINTENANCE_MODE:'true', RAILWAY_PROJECT_ID:TARGET.projectId,
     RAILWAY_ENVIRONMENT_ID:TARGET.environmentId, RAILWAY_SERVICE_ID:TARGET.serviceId })) vi.stubEnv(key,value);
 };
+const processEnvelopeWithPreflight = (payload: unknown, result?: unknown) =>
+  processWebhookEnvelope(payload, undefined, undefined, result as AsaasWebhookPreflight | undefined);
+const receiveWebhook = async (payload: unknown, process = processEnvelopeWithPreflight, preflight = preflightAsaasWebhookEnvelope) => {
+  await attestAuthenticatedIngress(payload);
+  return receiveWebhookInternal(payload, process === processWebhookEnvelope ? processEnvelopeWithPreflight : process, preflight);
+};
+const persistWebhook = async (payload: unknown) => {
+  await attestAuthenticatedIngress(payload);
+  return persistWebhookInternal(payload);
+};
+const recoverAsaasWebhooks = (limit = 25) => recoverWebhooks(processEnvelopeWithPreflight, limit, preflightAsaasWebhookEnvelope);
+const processStoredAsaasWebhook = (eventId: string, process = processEnvelopeWithPreflight) =>
+  processStoredWebhook(eventId, process === processWebhookEnvelope ? processEnvelopeWithPreflight : process, preflightAsaasWebhookEnvelope);
 describe('financial inbox envelope', () => {
   it('strips customer/headers/secrets and requires the unique provider event ID', () => {
     const payload = { ...event(), customer:{email:'private@example.invalid'}, token:'private', payment:{...event().payment,customer:'private',creditCard:{number:'private'}} };
@@ -66,13 +80,17 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');
   });
   beforeEach(async()=>{
-    vi.unstubAllEnvs(); vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');
+    vi.unstubAllEnvs(); vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic'); vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-token');
+    vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_ID','sandbox-account-inbox'); vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_CURRENCY','BRL');
+    injected.provider.mockReset(); injected.provider.mockResolvedValue({ id: 'synthetic-payment', externalReference: '901', status: 'RECEIVED',
+      value: 100, currency: 'BRL', customer: 'inbox-synthetic-customer', billingType: 'PIX', deleted: false });
     // The lineage-fingerprint test must see the pure V6 schema; every other test runs on V6 + the V6-aware STOCK candidate (idempotent).
     if(/migrates 0023 once/i.test(expect.getState().currentTestName??''))await rollbackStockV6Migration(c,name);else await applyStockV6Migration(c,name);
-    for(const table of ['asaasWebhookInbox','asaasWebhookEvents','auditLogs','stockReservations','orderItems','orders','products','users'])await c.query(`DELETE FROM ${quote(table)}`);
-    await c.query("INSERT INTO users (id,openId,name) VALUES (901,'inbox-synthetic','Synthetic')");
+    for(const table of ['asaasWebhookInbox','asaasWebhookEvents','auditLogs','stockReservations','orderItems','payments','orders','products','users'])await c.query(`DELETE FROM ${quote(table)}`);
+    await c.query("INSERT INTO users (id,openId,name,asaasCustomerId) VALUES (901,'inbox-synthetic','Synthetic','inbox-synthetic-customer')");
     await c.query("INSERT INTO products (id,name,category,price,stock) VALUES (901,'Synthetic','fixture',10000,5)");
     await c.query("INSERT INTO orders (id,userId,totalPrice) VALUES (901,901,10000)");
+    await c.query("INSERT INTO payments(orderId,providerPaymentId,providerCustomerId,billingType,amount,status,creationStatus,externalReference) VALUES(901,'synthetic-payment','inbox-synthetic-customer','PIX',10000,'pending','created','901')");
     await c.query("INSERT INTO orderItems (id,orderId,productId,productName,unitPrice,quantity,totalPrice) VALUES (901,901,901,'Synthetic',10000,1,10000)");
     await c.query("INSERT INTO stockReservations (userId,orderId,orderItemId,productId,quantity,status,expiresAt) VALUES (901,901,901,901,1,'active',DATE_ADD(NOW(),INTERVAL 1 HOUR))");
   });
@@ -87,22 +105,58 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     expect(await paid()).toMatchObject({status:'paid',paymentStatus:'confirmed'});expect(await stock()).toBe(4);
     expect((await state(e.id)).state).toBe('processed');expect(Number((await state(e.id)).attempts)).toBe(1);
   });
+  it('does not persist or ACK an unprovenanced internal PAYMENT_RECEIVED replay, then accepts authenticated delivery',async()=>{
+    const e=event('evt-internal-replay-no-provenance');
+    expect(await processWebhookEnvelope(e)).toMatchObject({status:503,body:{reason:'payment_replay_requires_authenticated_delivery',retryable:true}});
+    expect(await state(e.id)).toBeUndefined();expect(await stock()).toBe(5);
+    expect((await rows(c,"SELECT id FROM auditLogs WHERE JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.eventId'))=?",[e.id]))).toHaveLength(0);
+    expect((await rows(c,"SELECT id FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.providerEventId'))=?",[e.id]))).toHaveLength(0);
+    expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(200);
+    expect((await state(e.id)).state).toBe('processed');expect(await stock()).toBe(4);
+  });
+  it('accepts identical historical hash redelivery, fails closed on its missing type, and rejects changed billingType',async()=>{
+    const e=event('evt-historical-billing-type-compatibility');
+    const legacy:any=financialEnvelope(e);delete legacy.payment.billingType;
+    const legacyContent=JSON.stringify(legacy),legacyHash=digest(legacyContent);
+    await c.query("INSERT INTO asaasWebhookInbox(eventId,payload,payloadHash,state) VALUES(?,?,?,'received')",[e.id,legacyContent,legacyHash]);
+    await attestAuthenticatedIngress(e);
+    expect(await hasVerifiedIngressProvenance(legacy)).toBe(true);
+    const changedType={...legacy,payment:{...legacy.payment,billingType:'RECEIVED_IN_CASH'}};
+    const changedValue={...legacy,payment:{...legacy.payment,value:101}};
+    expect(await hasVerifiedIngressProvenance(changedType)).toBe(false);
+    expect(await hasVerifiedIngressProvenance(changedValue)).toBe(false);
+    const concurrent=await Promise.all([receiveWebhook(e,processWebhookEnvelope),receiveWebhook(e,processWebhookEnvelope)]);
+    expect(concurrent.every(result=>[200,503].includes(result.status))).toBe(true);
+    expect(concurrent.some(result=>result.status===200)).toBe(true);
+    expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(200);
+    expect((await state(e.id)).state).toBe('processed');expect(await stock()).toBe(5);
+    expect(await paid()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});
+    const [audit]=await rows(c,"SELECT metadata FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.eventId'))=?",[e.id]);
+    expect(JSON.parse(audit.metadata)).toMatchObject({reason:'PROVIDER_BILLING_TYPE_MISMATCH',observedBillingType:null,providerObservedBillingType:'PIX',financialMutation:false,stockMutation:false});
+    expect((await rows(c,"SELECT id FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.providerEventId'))=?",[e.id]))).toHaveLength(1);
+    expect(JSON.parse((await state(e.id)).payload).payment).not.toHaveProperty('billingType');
+    const changed={...e,payment:{...e.payment,billingType:'RECEIVED_IN_CASH'}};
+    expect((await receiveWebhook(changed,processWebhookEnvelope)).status).toBe(409);
+    expect((await state(e.id)).state).toBe('processed');expect(await stock()).toBe(5);
+    expect((await rows(c,"SELECT id FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.eventId'))=?",[e.id]))).toHaveLength(1);
+    expect((await rows(c,"SELECT id FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.providerEventId'))=?",[e.id]))).toHaveLength(1);
+  });
   it('recovers duplicate failed delivery instead of acknowledging a failed ledger marker',async()=>{
     const e=event();let calls=0;
-    const process=async(p:unknown)=>{calls++;if(calls===1)throw Error('synthetic failure');return processWebhookEnvelope(p);};
+    const process=async(p:unknown,proof?:unknown)=>{calls++;if(calls===1)throw Error('synthetic failure');return processEnvelopeWithPreflight(p,proof);};
     expect((await receiveWebhook(e,process)).status).toBe(503);expect((await state(e.id)).state).toBe('failed');
     expect((await receiveWebhook(e,process)).status).toBe(200);expect(calls).toBe(2);expect(await stock()).toBe(4);
   });
   it.each(['failed','processing'])('recovers historical %s ledger from authenticated redelivery',async status=>{
     const e=event();const hash=createHash('sha256').update(JSON.stringify(e)).digest('hex');
     await c.query('INSERT INTO asaasWebhookEvents (eventId,eventType,paymentId,orderId,payloadHash,status) VALUES (?,?,?,?,?,?)',[e.id,e.event,e.payment.id,901,hash,status]);
-    expect((await recoverWebhooks(processWebhookEnvelope)).legacyNeedsPayload).toBe(1);
+    expect((await recoverAsaasWebhooks()).legacyNeedsPayload).toBe(1);
     expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(200);expect(await stock()).toBe(4);
     expect((await rows(c,'SELECT status FROM asaasWebhookEvents WHERE eventId=?',[e.id]))[0].status).toBe('processed');
   });
   it('processes an orphan processing inbox after recovery',async()=>{
     const e=event();await persistWebhook(e);await c.query("UPDATE asaasWebhookInbox SET state='processing' WHERE eventId=?",[e.id]);
-    expect((await recoverWebhooks(processWebhookEnvelope)).completed).toBe(1);expect(await stock()).toBe(4);
+    expect((await recoverAsaasWebhooks()).completed).toBe(1);expect(await stock()).toBe(4);
   });
   it('does not ACK when persistence fails',async()=>{
     await c.query("CREATE TRIGGER fixture_inbox_fail BEFORE INSERT ON asaasWebhookInbox FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'");
@@ -111,21 +165,21 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
   });
   it('recovers persisted receipt after response/process interruption without any redelivery',async()=>{
     const e=event();await persistWebhook(e);expect((await state(e.id)).state).toBe('received');
-    expect((await recoverWebhooks(processWebhookEnvelope)).completed).toBe(1);expect(await stock()).toBe(4);
+    expect((await recoverAsaasWebhooks()).completed).toBe(1);expect(await stock()).toBe(4);
   });
   it('rolls back partial business effects and ledger together, then recovers once',async()=>{
     const e=event();await persistWebhook(e);
-    expect((await processStoredWebhook(e.id,async p=>{await processWebhookEnvelope(p);throw Error('after financial rule');})).status).toBe(503);
+    expect((await processStoredAsaasWebhook(e.id,async (p,proof)=>{await processEnvelopeWithPreflight(p,proof);throw Error('after financial rule');})).status).toBe(503);
     expect(await stock()).toBe(5);expect(await paid()).toMatchObject({status:'pending',paymentStatus:'unconfirmed'});
     expect(Number((await rows(c,'SELECT COUNT(*) n FROM asaasWebhookEvents'))[0].n)).toBe(0);
-    expect((await processStoredWebhook(e.id,processWebhookEnvelope)).status).toBe(200);expect(await stock()).toBe(4);
+    expect((await processStoredAsaasWebhook(e.id)).status).toBe(200);expect(await stock()).toBe(4);
   });
   it('after-commit notification failure cannot replay finances or blindly resend on redelivery/restart',async()=>{
     const e=event();let notifications=0;
     const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
     try {
-      expect((await receiveWebhook(e,async p=>{
-        const outcome=await processWebhookEnvelope(p);
+      expect((await receiveWebhook(e,async (p,proof)=>{
+        const outcome=await processEnvelopeWithPreflight(p,proof);
         await afterWebhookCommit(async()=>{
           expect((await state(e.id)).state).toBe('processed');
           notifications++;throw Error('synthetic uncertain notification result');
@@ -134,7 +188,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
       })).status).toBe(200);
       expect(notifications).toBe(1);expect(await stock()).toBe(4);
       expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(200);
-      expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);
+      expect((await recoverAsaasWebhooks()).examined).toBe(0);
       expect(notifications).toBe(1);expect(await stock()).toBe(4);
       expect(warn).toHaveBeenCalledWith('[Webhook] notification_failed_after_commit');
     }finally{warn.mockRestore();}
@@ -144,13 +198,13 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     await writeFile(file,`import mysql from ${JSON.stringify(ROOT+'node_modules/mysql2/promise.js')};\nimport {drizzle} from ${JSON.stringify(ROOT+'node_modules/drizzle-orm/mysql2/index.js')};\nimport {inWebhookTransaction} from ${JSON.stringify(ROOT+'server/database/webhookTransaction.ts')};\nimport {processStoredWebhook} from ${JSON.stringify(ROOT+'server/payments/webhookInbox.ts')};\nimport {markOrderPaid} from ${JSON.stringify(ROOT+'server/db.ts')};\n(async()=>{const pool=mysql.createPool(${JSON.stringify({user:'root',socketPath,database:name})});await inWebhookTransaction(drizzle(pool),()=>processStoredWebhook(${JSON.stringify(e.id)},async()=>{await markOrderPaid(901,{source:'asaas_webhook',reference:${JSON.stringify(e.id)}});process.exit(7);}),[]);})();`,{mode:0o600});
     const child=spawnSync(process.execPath,[ROOT+'node_modules/tsx/dist/cli.mjs',file],{env:{PATH:process.env.PATH,NODE_ENV:'test'},encoding:'utf8',timeout:15000});
     expect(child.status,child.stderr).toBe(7);expect(await stock()).toBe(5);
-    expect((await recoverWebhooks(processWebhookEnvelope)).completed).toBe(1);expect(await stock()).toBe(4);
+    expect((await recoverAsaasWebhooks()).completed).toBe(1);expect(await stock()).toBe(4);
   });
   it('two concurrent deliveries serialize or return non-ACK busy; business executes once',async()=>{
     const e=event();let entered!:()=>void,release!:()=>void;
     const ready=new Promise<void>(r=>entered=r),hold=new Promise<void>(r=>release=r);let calls=0;
-    const first=receiveWebhook(e,async p=>{calls++;entered();await hold;return processWebhookEnvelope(p);});await ready;
-    const second=await receiveWebhook(e,async p=>{calls++;return processWebhookEnvelope(p);});expect(second.status).toBe(503);
+    const first=receiveWebhook(e,async (p,proof)=>{calls++;entered();await hold;return processEnvelopeWithPreflight(p,proof);});await ready;
+    const second=await receiveWebhook(e,async (p,proof)=>{calls++;return processEnvelopeWithPreflight(p,proof);});expect(second.status).toBe(503);
     release();expect((await first).status).toBe(200);expect(calls).toBe(1);expect(await stock()).toBe(4);
   });
   it('same event ID with conflicting content is rejected without touching paid state',async()=>{
@@ -159,19 +213,25 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
   });
   it('payment racing cancellation cannot consume released reservations or reactivate order',async()=>{
     const e=event();await c.beginTransaction();await c.query('SELECT id FROM orders WHERE id=901 FOR UPDATE');
-    const processing=receiveWebhook(e,processWebhookEnvelope);
+    const processing=receiveWebhook(e);
     await c.query("UPDATE orders SET status='cancelled' WHERE id=901");await c.query("UPDATE stockReservations SET status='released' WHERE orderId=901");await c.commit();
     expect((await processing).status).toBe(200);expect((await paid()).status).toBe('cancelled');expect(await stock()).toBe(5);
     expect(Number((await rows(c,"SELECT COUNT(*) n FROM auditLogs WHERE action='payment.reconciliation_required'"))[0].n)).toBe(1);
   });
   it('out of order received/deleted/refunded only records reconciliation after payment',async()=>{
-    await receiveWebhook(event(),processWebhookEnvelope);
-    for(const type of ['PAYMENT_DELETED','PAYMENT_REFUNDED','PAYMENT_RECEIVED'])expect((await receiveWebhook(event(randomUUID(),type),processWebhookEnvelope)).status).toBe(200);
+    await receiveWebhook(event());
+    for(const type of ['PAYMENT_DELETED','PAYMENT_REFUNDED','PAYMENT_RECEIVED'])expect((await receiveWebhook(event(randomUUID(),type),processEnvelopeWithPreflight,preflightAsaasWebhookEnvelope)).status).toBe(200);
     expect(await stock()).toBe(4);expect(await paid()).toMatchObject({status:'paid',paymentStatus:'confirmed'});
   });
-  it('permanent validation rejection is retained, non-ACK and excluded from retries',async()=>{
-    const e=event();expect((await receiveWebhook({...e,payment:{...e.payment,value:1}},processWebhookEnvelope)).status).toBe(409);
-    expect((await state(e.id)).state).toBe('rejected');expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);expect(await stock()).toBe(5);
+  it('an authenticated amount mismatch is durably quarantined and ACKed without financial mutation or retry',async()=>{
+    const e=event();
+    expect(await receiveWebhook({...e,payment:{...e.payment,value:1}},processWebhookEnvelope)).toMatchObject({
+      status:200,body:{reconciliationRequired:true,financialMutation:false,stockMutation:false}
+    });
+    expect((await state(e.id)).state).toBe('processed');
+    expect((await rows(c,"SELECT id FROM auditLogs WHERE action='payment.webhook_reconciliation_required.v1'")).length).toBe(1);
+    expect((await rows(c,"SELECT id FROM notificationOutbox WHERE type='financial-reconciliation-alert-v1' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.providerEventId'))=?",[e.id])).length).toBe(1);
+    expect((await recoverAsaasWebhooks()).examined).toBe(0);expect(await stock()).toBe(5);
   });
   it('maintenance blocks both aliases without persistence and resumes pending receipts',async()=>{
     const e=event();await persistWebhook(e);maintenance();
@@ -179,9 +239,10 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     const server=createServer(app);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
     try {const base=`http://127.0.0.1:${(server.address() as any).port}`;
       for(const alias of ['/webhook/asaas','/api/webhooks/asaas'])expect((await fetch(base+alias,{method:'POST',headers:{'content-type':'application/json','asaas-access-token':'synthetic-token'},body:JSON.stringify(event())})).status).toBe(503);
-      expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);expect(await stock()).toBe(5);
-    }finally{await new Promise<void>(r=>server.close(()=>r()));vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');}
-    expect((await recoverWebhooks(processWebhookEnvelope)).completed).toBe(1);expect(await stock()).toBe(4);
+      expect((await recoverAsaasWebhooks()).examined).toBe(0);expect(await stock()).toBe(5);
+    }finally{await new Promise<void>(r=>server.close(()=>r()));vi.unstubAllEnvs();vi.stubEnv('DATABASE_URL','mysql://root@localhost/l4ckos_test_synthetic');
+      vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_ID','sandbox-account-inbox');vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_CURRENCY','BRL');vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-token');}
+    expect((await recoverAsaasWebhooks()).completed).toBe(1);expect(await stock()).toBe(4);
   });
   it('both aliases require authentication and share durable idempotency',async()=>{
     const app=express();app.use(express.json());app.post('/webhook/asaas',asaasWebhookHandler);app.use('/api/webhooks',webhookRoutes);
@@ -214,7 +275,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
       await restored.query('DELETE FROM homeHighlightSettings');
       await restoreDatabase(restored,artifact,{url:`mysql://root@localhost/${destination}`,socketPath});
       const actual=await vi.importActual<typeof mysqlOrm>('drizzle-orm/mysql2');
-      expect((await inWebhookTransaction(actual.drizzle(restored),()=>recoverWebhooks(processWebhookEnvelope),[])).completed).toBe(1);
+      expect((await inWebhookTransaction(actual.drizzle(restored),()=>recoverAsaasWebhooks(),[])).completed).toBe(1);
       expect((await rows(restored,'SELECT state FROM asaasWebhookInbox WHERE eventId=?',[e.id]))[0].state).toBe('processed');
       expect(Number((await rows(restored,'SELECT stock FROM products WHERE id=901'))[0].stock)).toBe(4);
       expect(await stock()).toBe(5);
@@ -225,17 +286,18 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
       for(const sql of ["DELETE FROM stockCheckoutItems","DELETE FROM stockCheckoutAttempts","DELETE FROM stockWebhookEvents","DELETE FROM productVariants WHERE id=902","DELETE FROM products WHERE id=902"])await c.query(sql);
     }
   });
-  it('startup recovery drains received without HTTP redelivery or provider calls',async()=>{
-    const e=event();await persistWebhook(e);const stop=startWebhookRecovery(processWebhookEnvelope);
+  it('startup recovery drains received after authoritative provider lookup without HTTP redelivery',async()=>{
+    const e=event();await persistWebhook(e);const stop=startWebhookRecovery(processEnvelopeWithPreflight,preflightAsaasWebhookEnvelope);
     try{await vi.waitFor(async()=>{expect((await state(e.id)).state).toBe('processed');});expect(await stock()).toBe(4);}
     finally{stop();}
+    expect(injected.provider).toHaveBeenCalledOnce();
     const service=await import('../services/asaasService');expect(service.createAsaasCheckout).not.toHaveBeenCalled();
     expect(service.createAsaasCustomer).not.toHaveBeenCalled();
   });
   it('legacy hash conflict is a durable rejection, never retried as a payment',async()=>{
     const e=event();await c.query("INSERT INTO asaasWebhookEvents (eventId,eventType,paymentId,orderId,payloadHash,status) VALUES (?,?,?,?,?,'failed')",[e.id,e.event,e.payment.id,901,'a'.repeat(64)]);
     expect((await receiveWebhook(e,processWebhookEnvelope)).status).toBe(409);expect((await state(e.id)).state).toBe('rejected');
-    expect((await recoverWebhooks(processWebhookEnvelope)).examined).toBe(0);expect(await stock()).toBe(5);
+    expect((await recoverAsaasWebhooks()).examined).toBe(0);expect(await stock()).toBe(5);
   });
   it('legacy case-insensitive unique key never ACKs a different provider event ID',async()=>{
     const first=event('evt-case-synthetic'),other={...first,id:'EVT-CASE-SYNTHETIC'};
@@ -247,7 +309,7 @@ describe.skipIf(process.env.L4CKOS_MYSQL_TEST !== '1')('MySQL durable financial 
     const done=event(),pending=event();await receiveWebhook(done,processWebhookEnvelope);await persistWebhook(pending);
     await c.query("UPDATE asaasWebhookInbox SET completedAt=DATE_SUB(NOW(),INTERVAL 31 DAY) WHERE eventId=?",[done.id]);
     await c.query("UPDATE asaasWebhookInbox SET state='failed',createdAt=DATE_SUB(NOW(),INTERVAL 31 DAY),nextAttemptAt=DATE_ADD(NOW(),INTERVAL 1 DAY) WHERE eventId=?",[pending.id]);
-    await recoverWebhooks(processWebhookEnvelope);expect((await state(done.id)).payload).toBe(null);expect((await state(pending.id)).payload).not.toBe(null);
+    await recoverAsaasWebhooks();expect((await state(done.id)).payload).toBe(null);expect((await state(pending.id)).payload).not.toBe(null);
     expect((await receiveWebhook(done,processWebhookEnvelope)).status).toBe(200);
   });
 });

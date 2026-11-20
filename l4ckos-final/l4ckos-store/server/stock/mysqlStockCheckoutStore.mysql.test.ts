@@ -515,7 +515,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
     expect(before[0]).toEqual(after[0]);
   });
 
-  it("correlates a signed webhook by order if provider payment persistence was interrupted", async () => {
+  it("does not adopt an ambiguous webhook when provider payment persistence was interrupted", async () => {
     const orderId = await seedReservedAttempt("mysql-webhook-recovery-order-01", 8);
     await store.transaction(async tx => {
       expect(await tx.beginProviderAttempt("mysql-webhook-recovery-order-01", true)).toBe(true);
@@ -527,9 +527,13 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("MySQL 9.7.2 STOCK checkout adapt
       payload: { id: "mysql-webhook-recovery-event", externalReference: orderId },
     };
     const result = await sendWebhook(event);
-    expect(result).toBe("processed");
-    expect(await attemptStatus("mysql-webhook-recovery-order-01")).toMatchObject({ status: "paid", paymentId: "recovered-payment-1" });
-    expect(await readInventory(8)).toMatchObject({ stock: 0, reservedStock: 0 });
+    expect(result).toBe("conflict");
+    expect(await attemptStatus("mysql-webhook-recovery-order-01")).toMatchObject({ status: "reserved", providerState: "ambiguous", paymentId: null });
+    expect(await readInventory(8)).toMatchObject({ stock: 1, reservedStock: 1 });
+    const [divergences] = await pool.execute<(Record<string, unknown> & { event: string })[]>(
+      "SELECT event FROM auditLogs WHERE action = 'stock.reconciliation.required' AND event = 'PAYMENT_WITHOUT_CORRELATION'",
+    );
+    expect(divergences).toHaveLength(1);
   });
 
   it("ignores pending events after payment and rejects a later failure without regressing state", async () => {

@@ -218,6 +218,8 @@ describe("local STOCK checkout core", () => {
 
   it.each([
     ["restricted product name", "Clã 14 Bis", [variant()]],
+    ["QA-STAGING product with a normal SKU", "[QA-STAGING] Fixture", [variant()]],
+    ["QA-STAGING product with a malformed QA SKU", "[QA-STAGING] Fixture", [variant({ sku: "not-a-valid-qa-sku" })]],
     ["selected 14B SKU", "Synthetic STOCK product", [variant({ sku: "14B-DROP-PT-M" })]],
     ["mixed SKUs with common selected", "Synthetic STOCK product", [variant(), variant({ id: 9, sku: "14B-DROP-BR-G", size: "G", active: true })]],
     ["inactive 14B SKU with common selected", "Synthetic STOCK product", [variant(), variant({ id: 9, sku: "14B-DROP-BR-G", size: "G", active: false })]],
@@ -276,6 +278,42 @@ describe("local STOCK checkout core", () => {
     const result = await createStockCheckout({ enabled: true, store, provider: provider(), request: request("attempt-price-00001") });
     expect(result.amountCents).toBe(12900);
     expect(result.snapshots[0]).toMatchObject({ id: 8, productId: 4, sku: "TSHIRT-BLK-M", size: "M", color: "Preto", unitPriceCents: 12900, quantity: 1, totalCents: 12900 });
+  });
+
+  it("enforces the owner test amount ceiling before order, reservation, or provider writes", async () => {
+    const store = new MemoryStockStore([variant({ unitPriceCents: 26000 })]);
+    const payments = provider(undefined, 26000);
+    await expect(createStockCheckout({
+      enabled: true,
+      ownerUserId: 71,
+      store,
+      provider: payments,
+      maximumAmountCents: 25000,
+      request: request("owner-pix-amount-limit-0001"),
+    })).rejects.toMatchObject({ code: "OWNER_PIX_TEST_AMOUNT_LIMIT" });
+    expect(store.attempts.size).toBe(0);
+    expect(store.reserved.size).toBe(0);
+    expect(store.expiryCalls).toBe(0);
+    expect(store.quotaCalls).toBe(0);
+    expect(payments.calls).toBe(0);
+  });
+
+  it("replays one owner attempt idempotently and rejects changed cart data", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const payments = provider();
+    const ownerAttemptId = "owner-pix-single-attempt-20261119-001";
+    const authorized = { enabled: true, ownerUserId: 71, store, provider: payments, maximumAmountCents: 25000 };
+    const first = await createStockCheckout({ ...authorized, request: request(ownerAttemptId) });
+    const replay = await createStockCheckout({ ...authorized, request: request(ownerAttemptId) });
+    expect(replay.replayed).toBe(true);
+    expect(replay.paymentId).toBe(first.paymentId);
+    expect(payments.calls).toBe(1);
+    await expect(createStockCheckout({
+      ...authorized,
+      request: request(ownerAttemptId, { items: [{ productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 2 }] }),
+    })).rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_CHANGED" });
+    expect(payments.calls).toBe(1);
+    expect(store.attempts.size).toBe(1);
   });
 
   it("accepts the V1 product/variant/quantity payload and snapshots dimensions from the server", async () => {
@@ -450,7 +488,9 @@ describe("local STOCK checkout core", () => {
     const ioBeforeInvalidSignature = store.ioCount;
     await expect(sendWebhook({ ...event, signatureVerified: false })).rejects.toBeInstanceOf(StockCheckoutError);
     expect(store.ioCount).toBe(ioBeforeInvalidSignature);
-    await expect(sendWebhook({ ...event, amountCents: 12899 })).rejects.toMatchObject({ code: "WEBHOOK_AMOUNT_MISMATCH" });
+    expect(await sendWebhook({ ...event, eventId: "evt-bad-amount", payload: { id: "evt-bad-amount" }, amountCents: 12899 })).toBe("conflict");
+    expect([...store.divergences.values()]).toContainEqual(expect.objectContaining({ kind: "PAID_AMOUNT_MISMATCH", observedAmountCents: 12899 }));
+    expect(store.attempts.get("attempt-webhook-0001")?.status).toBe("reserved");
     expect(await sendWebhook(event)).toBe("processed");
     expect(await sendWebhook(event)).toBe("duplicate");
     expect(store.attempts.get("attempt-webhook-0001")?.status).toBe("paid");

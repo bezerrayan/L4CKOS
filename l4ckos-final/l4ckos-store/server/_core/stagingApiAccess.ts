@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 import { ISOLATED_HOMOLOGATION_IDENTITY, matchesRailwayIdentity, type RailwayEnvironment } from "./railwayEnvironment";
+import { ASAAS_WEBHOOK_INBOUND_PATHS } from "./asaasWebhookIngress";
+import { resolveFinancialPhasePolicy } from "./financialPhasePolicy";
 
 export const STAGING_API_ACCESS_TOKEN_ENV = "STAGING_API_ACCESS_TOKEN";
 export const STAGING_API_ACCESS_HEADER = "x-l4ckos-staging-token";
@@ -23,16 +25,12 @@ export function assertStagingApiAccessConfiguration(env: RailwayEnvironment): vo
     throw new Error("STAGING_API_ACCESS_TOKEN_REQUIRED");
   }
 
-  const mustRemainClosed = [
-    "PUBLIC_CHECKOUT_ENABLED",
-    "STOCK_CHECKOUT_ENABLED",
-    "STOCK_RUNTIME_ENABLED",
-    "ASAAS_WEBHOOK_INBOUND_ENABLED",
-    "ASAAS_WEBHOOK_RECOVERY_WORKER_ENABLED",
-    "PAYMENT_NOTIFICATION_RECOVERY_WORKER_ENABLED",
-  ];
-  if (mustRemainClosed.some(name => env[name] !== "false")) {
-    throw new Error("STAGING_API_FEATURE_FLAGS_MUST_BE_EXPLICITLY_CLOSED");
+  const phasePolicy = resolveFinancialPhasePolicy(env);
+  if (!phasePolicy.allowed) {
+    if (phasePolicy.phase === "CLOSED") {
+      throw new Error("STAGING_API_FEATURE_FLAGS_MUST_BE_EXPLICITLY_CLOSED");
+    }
+    throw new Error("STAGING_API_FINANCIAL_PHASE_INVALID");
   }
 
   if (env.RESEND_API_KEY || env.GOOGLE_CLIENT_ID || env.GOOGLE_CLIENT_SECRET || env.OWNER_OPEN_ID) {
@@ -66,6 +64,8 @@ export function createStagingApiAccessMiddleware(
   const expectedToken = env[STAGING_API_ACCESS_TOKEN_ENV];
   const validIdentity = matchesRailwayIdentity(env, ISOLATED_HOMOLOGATION_IDENTITY) && env.NODE_ENV === "production";
   const configured = Boolean(expectedToken && Buffer.byteLength(expectedToken, "utf8") >= TOKEN_MIN_BYTES);
+  const phasePolicy = resolveFinancialPhasePolicy(env);
+  const normalizedWebhookPaths = new Set(ASAAS_WEBHOOK_INBOUND_PATHS.map(path => path.toLowerCase()));
 
   return (req, res, next) => {
     if (!protectedRuntime) {
@@ -75,6 +75,15 @@ export function createStagingApiAccessMiddleware(
 
     // The Railway health probe receives no application data and remains available.
     if (req.method === "GET" && req.path === "/health") {
+      next();
+      return;
+    }
+
+    const path = (req.path || req.originalUrl || req.url || "/").split("?", 1)[0].toLowerCase().replace(/\/+$/, "") || "/";
+    if (req.method.toUpperCase() === "POST" && phasePolicy.allowed && phasePolicy.webhookEnabled &&
+        normalizedWebhookPaths.has(path)) {
+      // The next middleware still enforces the phase ingress flag, and the
+      // controller verifies the Asaas MAC before inbox persistence.
       next();
       return;
     }

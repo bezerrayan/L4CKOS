@@ -5,9 +5,21 @@ import { trpc } from "../lib/trpc";
 import { hasHomeHighlightNavigation, homeHighlightRotationDelay, nextHomeHighlightIndex, shouldAutoAdvanceHomeHighlight } from "./homeHighlightRotation";
 import "./PromoCarousel.css";
 
+const IS_PREVIEW_TARGET = import.meta.env.VITE_DEPLOY_TARGET === "preview";
+
 function resolveImageUrl(raw?: string | null) {
   const value = raw?.trim() ?? "";
-  if (!value || value.startsWith("data:") || value.startsWith("//") || value.includes("\\")) return "";
+  const path = value.split(/[?#]/, 1)[0].toLowerCase();
+  const isAtmosphericBackground =
+    path.endsWith("/images/hero/montanhas-l4ckos-bg.webp") ||
+    path === "montanhas-l4ckos-bg.webp";
+  if (
+    !value ||
+    value.startsWith("data:") ||
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    (IS_PREVIEW_TARGET && isAtmosphericBackground)
+  ) return "";
   if (/^https?:\/\//i.test(value)) return value;
   return apiUrl(value.startsWith("/") ? value : `/${value}`);
 }
@@ -85,6 +97,8 @@ export default function PromoCarousel() {
 
   const desktopImage = resolveImageUrl(promo.imageUrl);
   const mobileImage = resolveImageUrl(promo.mobileImageUrl);
+  const hasImage = Boolean(desktopImage && !imageFailed);
+  const hideMediaSlot = IS_PREVIEW_TARGET && !hasImage;
   const destination = resolveDestination(promo.linkUrl);
   const imageAlt = promo.imageAlt?.trim() || promo.title;
 
@@ -101,7 +115,7 @@ export default function PromoCarousel() {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsPaused(false);
       }}
     >
-      <div className="l4-hero-editorial-frame" key={promo.id}>
+      <div className={`l4-hero-editorial-frame${hideMediaSlot ? "" : " has-media"}`} key={promo.id}>
         <div className="l4-hero-editorial-copy">
           {promo.badge?.trim() ? <span className="l4-hero-editorial-badge">{promo.badge}</span> : null}
           <h1>{promo.title}</h1>
@@ -126,8 +140,9 @@ export default function PromoCarousel() {
             </span>
           )}
         </div>
-        <div className="l4-hero-editorial-product">
-          {desktopImage && !imageFailed ? (
+        {hideMediaSlot ? null : (
+          <div className="l4-hero-editorial-product">
+          {hasImage ? (
             <picture>
               {mobileImage ? <source media="(max-width: 640px)" srcSet={mobileImage} /> : null}
               <img
@@ -145,7 +160,8 @@ export default function PromoCarousel() {
               Imagem indisponível
             </div>
           )}
-        </div>
+          </div>
+        )}
       </div>
       {canRotate ? <nav className="l4-hero-editorial-controls" aria-label="Navegação dos destaques">
         <button type="button" aria-label="Exibir destaque anterior" onClick={() => move(-1)}><ChevronLeft size={18} /></button>

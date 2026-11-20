@@ -1,6 +1,6 @@
-vi.mock("./payments/webhookInbox", () => ({ receiveWebhook: async (payload: unknown, process: (value: unknown) => Promise<unknown>) => process(payload) }));
+vi.mock("./payments/webhookInbox", () => ({ receiveWebhook: async (payload: unknown, process: (value: unknown, preflightResult?: unknown) => Promise<unknown>, preflight?: (value: unknown) => Promise<unknown>) => process(payload, preflight ? await preflight(payload) : undefined) }));
 vi.mock('./database/webhookTransaction',async original=>({...await original<typeof import('./database/webhookTransaction')>(),webhookDb:()=>({})}));
-vi.mock('./payments/webhookRecovery',()=>({assertNoRecoveryHold:vi.fn(async()=>{}),assertWebhookBusinessEffectsAllowed:vi.fn()}));
+vi.mock('./payments/webhookRecovery',()=>({captureRecoveryFence:vi.fn(()=>({reviewOnly:false})),assertNoRecoveryHold:vi.fn(async()=>{}),assertWebhookBusinessEffectsAllowed:vi.fn()}));
 import { describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";

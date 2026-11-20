@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {sql,type SQL} from 'drizzle-orm';
 import {canonical} from '../../database/schema/fingerprint';
+import {alertExecutorForDrizzle,recordReconciliationAlert} from './reconciliationAlerts';
 
 type Executor={execute:(query:SQL)=>Promise<unknown>};
 type Record={eventId:string,payload:string|null,payloadHash:string,errorCode:string|null};
@@ -46,5 +47,13 @@ export async function acknowledgeRejectedObservation(tx:Executor,record:Record){
       financialMutation:false,reservationMutation:false,notificationMutation:false});
     await tx.execute(sql`INSERT INTO auditLogs(actorType,action,entity,entityId,metadata) VALUES('system',${ACTION},'asaasWebhookInbox',${key},${metadata})`);
   }
+  // A durable audit alone is not an operational reconciliation alert. Write both
+  // in the caller's transaction so the provider is ACKed only after both persist.
+  await recordReconciliationAlert(alertExecutorForDrizzle(tx), {
+    kind:'ASAAS_WEBHOOK_RECONCILIATION',
+    subject:{orderId,paymentId:p.id,eventKey:key},
+    orderId,providerEventId:record.eventId,
+    reason:payment?'NONFINANCIAL_OBSERVATION':'HISTORICAL_PAYMENT_BINDING_REQUIRES_REVIEW',
+  });
   return {status:200,body:{handled:false,reason:'rejected_observation_recorded',reconciliationRequired:true}};
 }

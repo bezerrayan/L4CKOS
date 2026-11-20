@@ -85,7 +85,9 @@ describe("ProductDetail — variants (V6 UI over the server's sellable catalog)"
     await user.click(size("M"));
     await user.click(color(/Selecionar cor Branco/));
     expect(screen.getByText("Nenhum tamanho")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Adicionar à sacola" }) as HTMLButtonElement).disabled).toBe(true);
+    // Without a valid size the purchase cannot proceed: the button asks for the selection and adds nothing.
+    await user.click(screen.getByRole("button", { name: "Adicionar à sacola" }));
+    expect(cartInStorage()).toEqual([]);
   });
 
   it("supports keyboard selection (focus + Space/Enter)", async () => {
@@ -156,5 +158,29 @@ describe("ProductDetail — add to cart", () => {
       </MemoryRouter>,
     );
     expect((screen.getByRole("button", { name: "Adicionar à sacola" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("ProductDetail — API error handling", () => {
+  const renderWithError = (error: unknown) => {
+    setTrpc("products.getById.useQuery", () => ({ isLoading: false, isError: true, data: undefined, error }));
+    setTrpc("products.sellableVariants.useQuery", () => ({ isLoading: false, data: undefined }));
+    render(
+      <MemoryRouter initialEntries={["/produto/999"]}>
+        <ToastProvider><CartProvider><Routes><Route path="/produto/:id" element={<ProductDetail />} /></Routes></CartProvider></ToastProvider>
+      </MemoryRouter>,
+    );
+  };
+
+  it("says the product was not found when the API answers NOT_FOUND (not a connection problem)", () => {
+    renderWithError({ data: { code: "NOT_FOUND" } });
+    expect(screen.getByRole("heading", { name: "Produto não encontrado" })).toBeTruthy();
+    expect(screen.queryByText(/Verifique sua conexão/)).toBeNull();
+  });
+
+  it("keeps the connection message for other API/network failures", () => {
+    renderWithError({ data: { code: "SERVICE_UNAVAILABLE" } });
+    expect(screen.getByRole("heading", { name: "Não conseguimos carregar esta peça" })).toBeTruthy();
+    expect(screen.getByText(/Verifique sua conexão/)).toBeTruthy();
   });
 });

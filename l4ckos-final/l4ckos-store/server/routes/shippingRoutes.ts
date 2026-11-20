@@ -1,8 +1,28 @@
 import { Router } from "express";
 import { quoteShippingDetailed } from "../services/shippingService";
 import type { QuoteShippingResult } from "../services/shippingService";
+import { assertStagingSyntheticBuyer, syntheticBuyerGateHttpFailure } from "../payments/syntheticBuyerGate";
+import type { AuthenticatedRequest } from "../_core/httpAuth";
+import { authenticateHttpRequest } from "../_core/authz";
+import type { NextFunction, Request, Response } from "express";
+import { hasIsolatedHomologationIdentityMarker } from "../_core/railwayEnvironment";
 
 const shippingRoutes = Router();
+
+async function attachOptionalAuthenticatedBuyer(req: Request, _res: Response, next: NextFunction) {
+  if (!hasIsolatedHomologationIdentityMarker(process.env)) {
+    next();
+    return;
+  }
+  try {
+    const user = await authenticateHttpRequest(req);
+    (req as AuthenticatedRequest).authUser = { id: user.id, role: user.role, email: user.email ?? null };
+  } catch {
+    // Freight remains public in normal store operation. The isolated gate below
+    // requires this trusted identity before it calls an external carrier.
+  }
+  next();
+}
 
 /** Provider diagnostics can include upstream response content; keep them server-private. */
 export function toPublicShippingQuote(result: QuoteShippingResult) {
@@ -18,7 +38,7 @@ export function toPublicShippingQuote(result: QuoteShippingResult) {
   };
 }
 
-shippingRoutes.post("/quote", async (req, res) => {
+shippingRoutes.post("/quote", attachOptionalAuthenticatedBuyer, async (req, res) => {
   const cep = String(req.body?.cep || "").replace(/\D/g, "");
   const itemCount = Number(req.body?.itemCount);
   const subtotal = Number(req.body?.subtotal);
@@ -39,6 +59,7 @@ shippingRoutes.post("/quote", async (req, res) => {
   }
 
   try {
+    assertStagingSyntheticBuyer((req as AuthenticatedRequest).authUser?.id);
     const result = await quoteShippingDetailed({
       cep,
       itemCount,
@@ -52,6 +73,12 @@ shippingRoutes.post("/quote", async (req, res) => {
     });
     res.json(toPublicShippingQuote(result));
   } catch (error) {
+    const gateFailure = syntheticBuyerGateHttpFailure(error);
+    if (gateFailure) {
+      res.setHeader("Cache-Control", "no-store");
+      res.status(gateFailure.status).json({ error: gateFailure.code });
+      return;
+    }
     console.warn("[Shipping] quote failed", {
       errorName: error instanceof Error ? error.name : "UnknownError",
     });

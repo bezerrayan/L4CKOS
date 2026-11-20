@@ -5,12 +5,14 @@ import { sdk } from "../_core/sdk";
 import { ENV } from "../_core/env";
 import { isConfiguredAdmin } from "../_core/authz";
 import { assertRestrictedEmailRecipientsAllowed } from "../services/email/recipientPolicy.js";
+import { getAsaasPayment } from "../services/asaasService";
 import {
   admissionRows as rows,
   admissionHash as hash,
   auditRecord,
   json,
   requireAdmission,
+  AdmissionDenied,
   assertSelectiveStage,
   insertAdmissionAudit,
   loadSelectedGrant,
@@ -101,6 +103,13 @@ export async function administerCheckoutAdmission(
   assertSelectiveStage();
   const fence = captureRecoveryFence();
   const request = admissionRequest.parse(raw);
+  let providerPayment: Awaited<ReturnType<typeof getAsaasPayment>>;
+  try {
+    // Provider I/O must finish before the transaction locks the order, payment, inbox or user rows.
+    providerPayment = await getAsaasPayment(request.paymentId);
+  } catch {
+    throw new AdmissionDenied("SELECTIVE_PROVIDER_READ_REQUIRED");
+  }
   try {
     return await db.transaction(async tx => {
       let decision: any,
@@ -234,7 +243,7 @@ export async function administerCheckoutAdmission(
           const { verifySelectedProvider } = await import(
             "../payments/stagingCheckoutAdmission"
           );
-          await verifySelectedProvider(decision);
+          await verifySelectedProvider(decision, undefined, providerPayment);
         }
         action = GRANT;
         entity = "order";
@@ -263,7 +272,7 @@ export async function administerCheckoutAdmission(
               eventKey(record.eventId)
             ))
           );
-          const selected = await validateSelectedEvent(tx, record as any);
+          const selected = await validateSelectedEvent(tx, record as any, providerPayment);
           requireAdmission(
             selected.order.id === request.orderId &&
               selected.payment.providerPaymentId === request.paymentId

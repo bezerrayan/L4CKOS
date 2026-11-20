@@ -1,0 +1,11 @@
+.l4-reconciliation .l4-reconciliation-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 14px 0; }
+.l4-reconciliation .l4-reconciliation-summary > div { padding: 10px 12px; border: 1px solid #2c2c2c; border-radius: 3px; background: #101010; }
+.l4-reconciliation .l4-reconciliation-summary dt { color: #999; font-size: 12px; }
+.l4-reconciliation .l4-reconciliation-summary dd { margin: 4px 0 0; color: #eee; font: 400 24px/1.1 'Bebas Neue', sans-serif; }
+.l4-reconciliation .audit-table td small { display: block; margin-top: 3px; color: #999; font-size: 12px; }
+.l4-reconciliation .audit-table code { color: #ddd; font-size: 13px; overflow-wrap: anywhere; }
+.l4-reconciliation .l4-reconciliation-badge { display: inline-block; min-width: 34px; padding: 3px 8px; border-radius: 3px; text-align: center; font-size: 12px; font-weight: 700; color: #fff; }
+.l4-reconciliation .l4-reconciliation-p1 { background: #b0001f; }
+.l4-reconciliation .l4-reconciliation-p2 { background: #8a5a00; }
+.l4-reconciliation .l4-reconciliation-p3 { background: #3a3a3a; }
+.l4-reconciliation .l4-reconciliation-pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 14px; color: #aaa; font-size: 14px; }

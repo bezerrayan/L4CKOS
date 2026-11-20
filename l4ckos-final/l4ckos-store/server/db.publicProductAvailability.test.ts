@@ -7,7 +7,7 @@ describe("public product availability projection", () => {
       "Camiseta comum",
       [{ sku: "CAM-PT-M" }, { sku: "14B-CAM-BR-G" }],
       [91, 92],
-    )).toEqual({ hasVariants: true, hasSellableVariants: false });
+    )).toEqual({ hasVariants: true, hasSellableVariants: false, publicPurchaseAllowed: false });
   });
 
   it("keeps ordinary sellable variants available", () => {
@@ -15,13 +15,14 @@ describe("public product availability projection", () => {
       "Camiseta comum",
       [{ sku: "CAM-PT-M" }, { sku: "CAM-BR-G" }],
       [91],
-    )).toEqual({ hasVariants: true, hasSellableVariants: true });
+    )).toEqual({ hasVariants: true, hasSellableVariants: true, publicPurchaseAllowed: true });
   });
 
   it("does not fabricate variants for simple products", () => {
     expect(projectPublicProductAvailability("Camiseta comum", [], [])).toEqual({
       hasVariants: false,
       hasSellableVariants: false,
+      publicPurchaseAllowed: true,
     });
   });
 });

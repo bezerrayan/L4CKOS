@@ -53,6 +53,7 @@ import { AdminBackupPanel } from "../components/admin/system/AdminBackupPanel";
 import { AdminSettingsUI } from "../components/admin/settings/AdminSettingsUI";
 import { AdminReviewsPanel } from "../components/admin/reviews/AdminReviewsPanel";
 import { AdminAuditPanel } from "../components/admin/system/AdminAuditPanel";
+import { AdminReconciliationPanel, openCount, type ReconciliationFilters } from "../components/admin/system/AdminReconciliationPanel";
 import { AdminProductsPanel } from "../components/admin/products/AdminProductsPanel";
 import { AdminHomeHighlightsPanel } from "../components/admin/promotions/AdminHomeHighlightsPanel";
 import { AdminReportsPanel } from "../components/admin/reports/AdminReportsPanel";
@@ -76,6 +77,7 @@ type Section =
   | "drops"
   | "reports"
   | "audit"
+  | "reconciliation"
   | "backup"
   | "settings";
 
@@ -92,6 +94,7 @@ const adminSectionPaths: Record<Section, string> = {
   reviews: "/gestao/avaliacoes",
   reports: "/gestao/relatorios",
   audit: "/gestao/auditoria",
+  reconciliation: "/gestao/conciliacao",
   backup: "/gestao/backup",
   settings: "/gestao/configuracoes",
 };
@@ -108,6 +111,7 @@ function adminSectionFromPath(pathname: string): Section {
   if (pathname.startsWith("/gestao/avaliacoes")) return "reviews";
   if (pathname.startsWith("/gestao/relatorios")) return "reports";
   if (pathname.startsWith("/gestao/auditoria")) return "audit";
+  if (pathname.startsWith("/gestao/conciliacao")) return "reconciliation";
   if (pathname.startsWith("/gestao/backup")) return "backup";
   if (pathname.startsWith("/gestao/configuracoes")) return "settings";
   return "overview";
@@ -410,7 +414,7 @@ export default function Admin() {
     { heading: "Visão geral", items: [{ key: "overview", label: "Dashboard / KPIs" }] },
     { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "logistics", label: "Logística" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "batches", label: "Lotes / Pré-venda" }] },
     { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "drops", label: "Drops exclusivos" }, { key: "reviews", label: "Avaliações" }] },
-    { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
+    { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "reconciliation", label: "Conciliação" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
   ] as const;
   const sectionHeader = {
     overview: { title: "Painel", subtitle: "Visão geral da operação L4CKOS." },
@@ -425,6 +429,7 @@ export default function Admin() {
     reviews: { title: "Avaliações", subtitle: "Modere avaliações enviadas pelos clientes." },
     reports: { title: "Relatórios", subtitle: "Consulte indicadores e resultados da operação." },
     audit: { title: "Auditoria", subtitle: "Consulte o histórico de ações administrativas." },
+    reconciliation: { title: "Conciliação", subtitle: "Consulte divergências financeiras detectadas (somente leitura)." },
     backup: { title: "Backup", subtitle: "Consulte e gerencie os procedimentos de proteção de dados." },
     settings: { title: "Configurações", subtitle: "Revise as configurações da loja e dos serviços." },
   } satisfies Record<Section, { title: string; subtitle: string }>;
@@ -575,6 +580,15 @@ export default function Admin() {
   const homeHighlightSettingsQuery = trpc.admin.homeHighlightSettingsGet.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "promos" });
   const couponsQuery = trpc.admin.couponsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const auditQuery = trpc.admin.auditList.useQuery({ limit: 200 }, { enabled: isAuthenticated && isAdmin });
+  const [reconFilters, setReconFilters] = useState<ReconciliationFilters>({ state: "all", priority: "all", category: "all" });
+  const [reconCursors, setReconCursors] = useState<Array<number | null>>([null]);
+  const reconSummaryQuery = trpc.admin.reconciliationAlertsSummary.useQuery(undefined, { enabled: isAuthenticated && isAdmin, refetchInterval: 60_000 });
+  const reconListQuery = trpc.admin.reconciliationAlertsList.useQuery({
+    limit: 25, cursor: reconCursors[reconCursors.length - 1],
+    ...(reconFilters.state !== "all" ? { state: reconFilters.state as "pending" | "in_review" | "resolved" } : {}),
+    ...(reconFilters.priority !== "all" ? { priority: reconFilters.priority as "P1" | "P2" | "P3" } : {}),
+    ...(reconFilters.category !== "all" ? { category: reconFilters.category as never } : {}),
+  }, { enabled: isAuthenticated && isAdmin && section === "reconciliation" });
   const backupsQuery = trpc.admin.backupsList.useQuery(undefined, { enabled: isAuthenticated && isAdmin && section === "backup" });
   const settingsStatusQuery = trpc.admin.settingsStatus.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
 
@@ -971,7 +985,7 @@ export default function Admin() {
                   {group.items.map(item => (
                     <button key={item.key} type="button" aria-current={section === item.key ? "page" : undefined}
                       onClick={() => { navigateSection(item.key as Section); setMobileNavOpen(false); if (isMobile) menuButtonRef.current?.focus(); }}>
-                      {item.label}
+                      {item.label}{item.key === "reconciliation" && openCount(reconSummaryQuery.data) > 0 ? ` (${openCount(reconSummaryQuery.data)})` : ""}
                     </button>
                   ))}
                 </div>
@@ -1409,6 +1423,25 @@ export default function Admin() {
             isLoading={auditQuery.isLoading}
             isError={auditQuery.isError}
             onRefresh={() => { void auditQuery.refetch(); }}
+          />
+        </AdminSurface>
+      )}
+
+      {section === "reconciliation" && (
+        <AdminSurface title="Conciliação" description="Divergências financeiras detectadas pelo sistema. Esta seção é somente leitura.">
+          <AdminReconciliationPanel
+            rows={reconListQuery.data?.items ?? []}
+            summary={reconSummaryQuery.data}
+            isLoading={reconListQuery.isLoading}
+            isError={reconListQuery.isError}
+            filters={reconFilters}
+            onFiltersChange={next => { setReconFilters(next); setReconCursors([null]); }}
+            page={reconCursors.length}
+            hasPrevious={reconCursors.length > 1}
+            hasNext={reconListQuery.data?.nextCursor != null}
+            onPrevious={() => setReconCursors(stack => (stack.length > 1 ? stack.slice(0, -1) : stack))}
+            onNext={() => { const next = reconListQuery.data?.nextCursor; if (next != null) setReconCursors(stack => [...stack, next]); }}
+            onRefresh={() => { void reconListQuery.refetch(); void reconSummaryQuery.refetch(); }}
           />
         </AdminSurface>
       )}
