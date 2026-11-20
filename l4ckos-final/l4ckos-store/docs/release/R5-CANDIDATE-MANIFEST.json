@@ -33,6 +33,26 @@
     "typecheck": "pnpm check PASS",
     "clean_production_build": "dist removed; VITE_DEPLOY_TARGET=production VITE_API_URL=https://api.l4ckos.com.br pnpm build PASS"
   },
-  "release_status": "NOT_PRODUCTION_APPROVED: exact provenance/review of 112 snapshot files remains unresolved",
-  "remote_mutations": "NONE"
+  "release_status": "PROVENANCE_EXCEPTION_ACCEPTED; historical provenance remains unproven; production deployment not authorized",
+  "remote_mutations": "NONE",
+  "PROVENANCE_EXCEPTION": "ACCEPTED",
+  "PRODUCTION_DEPLOY": "NOT_YET_AUTHORIZED",
+  "provenance_exception_record": {
+    "status": "ACCEPTED",
+    "signed_document": "governance/R5-PROVENANCE-EXCEPTION.md",
+    "signed_document_sha256": "686b4a91ee52f28da8af36cfc5725371e7c3ee00e4891d2b7fb1cc62f0ad7dcd",
+    "signature": "governance/R5-PROVENANCE-EXCEPTION.md.sig",
+    "signature_sha256": "7d117c86ee3dfb50a3db88aaa9d0017d3c82d5e54e64b7f46b5d5fe1f8ae7cf5",
+    "signature_algorithm": "Ed25519",
+    "signature_verification": "PASS",
+    "signer_identity_asserted": "Yan Bezerra",
+    "verification_key": "governance/R5-PROVENANCE-VERIFICATION-KEY.pub",
+    "verification_key_pem_sha256": "d2ce58a6d32e7fbcc31c850785626d094d7f475c905201b3a541981a0f314dd8",
+    "verification_key_der_sha256": "f1ba2c80d76eb34e671124ce565559c304cfece6f23d0d6b045c85dbec149208",
+    "owner_decision_effective_at_utc": "2026-11-20T02:12:48Z",
+    "pre_exception_manifest_sha256": "f5b45034eb331bc7b602b13ea77b05c294f851c54bfc0e8795d9865449d8d392",
+    "pre_exception_inventory_sha256": "ff59728308ca17bbed8885898acb11b6b392703e956654a82ba8e1546e0098e2",
+    "current_inventory": "R5-CANDIDATE-SHA256SUMS",
+    "historical_provenance": "NOT_PROVEN"
+  }
 }
