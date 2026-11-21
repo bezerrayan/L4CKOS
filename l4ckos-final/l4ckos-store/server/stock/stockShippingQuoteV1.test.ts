@@ -36,7 +36,7 @@ const carrierTerms = {
   serviceName: "Package",
   providerQuoteId: "quote-synthetic-41",
   shippingPriceCents: 2345,
-  package: { heightCm: 6, widthCm: 18, lengthCm: 26, weightGrams: 300 },
+  package: { heightCm: 6, widthCm: 22, lengthCm: 32, weightGrams: 300 },
 };
 
 function quote(terms = carrierTerms, overrides: Record<string, unknown> = {}) {

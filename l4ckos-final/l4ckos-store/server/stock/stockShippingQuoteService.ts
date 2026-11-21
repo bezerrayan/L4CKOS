@@ -1,4 +1,5 @@
 import type { Pool, RowDataPacket } from "mysql2/promise";
+import { shippingPackageFor } from "../../shared/shippingPackage";
 import { stockShippingQuoteRequestV1Schema } from "../../shared/stockCheckoutV1";
 import { quoteShippingDetailed, type QuoteShippingResult } from "../services/shippingService";
 import { stockShippingCartFingerprint, StockCheckoutError } from "./stockCheckout";
@@ -16,8 +17,6 @@ export type StockShippingQuoteOption = {
   quoteToken: string;
   expiresAt: string;
 };
-
-const PARCEL = { heightCm: 6, widthCm: 18, lengthCm: 26, gramsPerItem: 300 };
 
 /**
  * Server-side freight quoting for the STOCK checkout. Everything the quote is bound to (variants, unit prices, quantities,
@@ -58,7 +57,7 @@ export function createStockShippingQuoteService(input: { pool: Pool; secret: str
             terms: {
               method: "carrier", optionId: option.id, carrier: option.description, serviceId: option.id.slice("melhor-envio-".length),
               serviceName: option.label, providerQuoteId: option.id, shippingPriceCents: priceCents,
-              package: { heightCm: PARCEL.heightCm, widthCm: PARCEL.widthCm, lengthCm: PARCEL.lengthCm, weightGrams: PARCEL.gramsPerItem * itemCount },
+              package: shippingPackageFor(itemCount),
             },
             address: parsed.address,
             cartFingerprint, itemCount, merchandiseSubtotalCents,

@@ -45,7 +45,7 @@ describe("shipping local territory fallback", () => {
     const expectedBody = {
       from: { postal_code: "44001000" },
       to: { postal_code: "01001000" },
-      volumes: [{ height: 6, width: 18, length: 26, weight: 0.6, insurance: 20 }],
+      volumes: [{ height: 6, width: 22, length: 32, weight: 0.6, insurance: 20 }],
       options: { receipt: false, own_hand: false },
     };
     const expectedConfig = expect.objectContaining({

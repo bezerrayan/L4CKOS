@@ -1,4 +1,17 @@
 import axios from "axios";
+import { shippingPackageFor } from "../../shared/shippingPackage";
+
+/** Documented Melhor Envio volume built from the single parcel source (shared/shippingPackage.ts). */
+function melhorEnvioVolume(itemCount: number, subtotal: number) {
+  const parcel = shippingPackageFor(itemCount);
+  return {
+    height: parcel.heightCm,
+    width: parcel.widthCm,
+    length: parcel.lengthCm,
+    weight: Number((parcel.weightGrams / 1000).toFixed(2)),
+    insurance: Number(subtotal.toFixed(2)),
+  };
+}
 
 type ShippingOption = {
   id: string;
@@ -150,13 +163,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
       {
         from: { postal_code: cfg.fromPostalCode },
         to: { postal_code: cep },
-        volumes: [{
-          height: 6,
-          width: 18,
-          length: 26,
-          weight: Number((0.3 * Math.max(1, input.itemCount)).toFixed(2)),
-          insurance: Number(input.subtotal.toFixed(2)),
-        }],
+        volumes: [melhorEnvioVolume(input.itemCount, input.subtotal)],
         options: {
           receipt: false,
           own_hand: false,
@@ -207,13 +214,7 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
       {
         from: { postal_code: cfg.fromPostalCode },
         to: { postal_code: cep },
-        volumes: [{
-          height: 6,
-          width: 18,
-          length: 26,
-          weight: Number((0.3 * Math.max(1, input.itemCount)).toFixed(2)),
-          insurance: Number(input.subtotal.toFixed(2)),
-        }],
+        volumes: [melhorEnvioVolume(input.itemCount, input.subtotal)],
         options: {
           receipt: false,
           own_hand: false,
