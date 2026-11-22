@@ -141,10 +141,19 @@ export const stockCheckoutRouter = router({
     .input(z.object({}).strict().optional())
     .query(async ({ ctx }) => {
       assertStagingSyntheticBuyerTrpc(ctx.user.id);
-      // resumeLatest could reveal another pending checkoutUrl, so it never uses the one-attempt owner exception.
-      assertGate(ctx.user.id);
+      const ownerPixTest = assertGateOrOwnerPixTest(ctx.user);
       const runtime = ctx.stockCheckoutRuntime;
-      if (!runtime?.resumeLatest) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Retomada STOCK indisponível neste runtime." });
+      if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Retomada STOCK indisponível neste runtime." });
+      if (ownerPixTest) {
+        // Keep the owner exception scoped to its configured attempt; never return another latest checkout URL.
+        try {
+          return stockAttemptResumeV1Schema.parse(await runtime.resume(ctx.user.id, ownerPixTest.attemptId));
+        } catch (error) {
+          if (error instanceof StockCheckoutError && error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") return null;
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível consultar a tentativa." });
+        }
+      }
+      if (!runtime.resumeLatest) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Retomada STOCK indisponível neste runtime." });
       return runtime.resumeLatest(ctx.user.id);
     }),
 });
