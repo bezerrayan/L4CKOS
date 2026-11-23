@@ -1,13 +1,15 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({
   observation:vi.fn(async()=>{}),paid:vi.fn(),trusted:vi.fn(),binding:vi.fn(),enqueue:vi.fn(),deliver:vi.fn(),
+  order:vi.fn(async()=>({id:901,status:'pending',totalPrice:9900})),
+  securityLog:vi.fn(),
   once:vi.fn(async(_input:unknown,execute:()=>Promise<unknown>)=>({duplicate:false,result:await execute()})),
   audit:vi.fn(async()=>{}),alert:vi.fn(async()=>'recorded'),
   receive:vi.fn(async(payload:unknown,process:(payload:unknown)=>Promise<unknown>)=>process(payload)),
   signature:vi.fn(()=>true),attest:vi.fn(async()=>true),
 }));
 vi.mock('../db',()=>({
-  getOrderById:vi.fn(async()=>({id:901,status:'pending',totalPrice:9900})),
+  getOrderById:mocks.order,
   runAsaasWebhookOnce:mocks.once,recordPaymentException:mocks.observation,markOrderPaid:mocks.paid,
 }));
 vi.mock('../payments/paymentRecord',()=>({validatePaymentBinding:mocks.binding,validatePaymentObservationBinding:vi.fn(async()=>{}),recordTrustedPaymentReceipt:mocks.trusted}));
@@ -29,10 +31,12 @@ vi.mock('../services/asaasService',()=>({
   validateAsaasWebhookSignature:mocks.signature,
 }));
 vi.mock('../services/emailService.js',()=>({}));
-vi.mock('../_core/security',()=>({securityLog:vi.fn()}));
+vi.mock('../_core/security',()=>({securityLog:mocks.securityLog}));
 import {createAsaasWebhookHandler,processWebhookEnvelope} from './paymentController';
 beforeEach(()=>{
   vi.clearAllMocks();
+  mocks.order.mockReset();
+  mocks.order.mockResolvedValue({id:901,status:'pending',totalPrice:9900} as any);
   mocks.audit.mockResolvedValue(undefined);
   mocks.alert.mockResolvedValue('recorded');
   mocks.signature.mockReturnValue(true);
@@ -90,4 +94,48 @@ it('returns a retryable server error when reconciliation persistence fails',asyn
   expect(mocks.audit).toHaveBeenCalledOnce();
   expect(mocks.alert).not.toHaveBeenCalled();
   for(const effect of [mocks.paid,mocks.trusted,mocks.enqueue,mocks.deliver])expect(effect).not.toHaveBeenCalled();
+});
+it('accepts an official currencyless PAYMENT_CREATED for the pinned account as pending only',async()=>{
+  vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-webhook-token');
+  vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_ID','account-pinned-synthetic');
+  vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_CURRENCY','BRL');
+  mocks.order.mockResolvedValue({id:901,status:'pending',totalPrice:1000,stockAttemptId:'attempt_synthetic'} as any);
+  let normalized:any;
+  const runtime={receiveWebhook:async({rawBody,boundary}:any)=>{
+    normalized=boundary.decodeSignedEvent(rawBody);
+    return 'processed';
+  }};
+  const body={
+    id:'evt_created_currencyless_synthetic',event:'PAYMENT_CREATED',
+    account:{id:'account-pinned-synthetic'},
+    payment:{id:'pay_created_currencyless_synthetic',externalReference:'901',status:'PENDING',billingType:'PIX',value:10},
+  };
+  const response={statusCode:0,body:undefined as unknown,status(code:number){this.statusCode=code;return this;},json(value:unknown){this.body=value;return this;}};
+  await createAsaasWebhookHandler(()=>runtime as any)({headers:{'asaas-access-token':'synthetic-webhook-token'},body,ip:'127.0.0.1'} as any,response as any);
+  expect(response.statusCode).toBe(200);
+  expect(normalized).toMatchObject({status:'pending',amountCents:1000});
+  expect(mocks.signature).toHaveBeenCalledOnce();
+  expect(mocks.attest).toHaveBeenCalledOnce();
+  for(const effect of [mocks.paid,mocks.trusted,mocks.binding,mocks.enqueue,mocks.deliver])expect(effect).not.toHaveBeenCalled();
+});
+it('keeps a currencyless PAYMENT_CREATED for a different account retryable and logs only a safe failure code',async()=>{
+  vi.stubEnv('ASAAS_WEBHOOK_TOKEN','synthetic-webhook-token');
+  vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_ID','account-pinned-synthetic');
+  vi.stubEnv('ASAAS_WEBHOOK_ACCOUNT_CURRENCY','BRL');
+  mocks.order.mockResolvedValue({id:901,status:'pending',totalPrice:1000,stockAttemptId:'attempt_synthetic'} as any);
+  const runtime={receiveWebhook:async({rawBody,boundary}:any)=>{
+    boundary.decodeSignedEvent(rawBody);
+    return 'processed';
+  }};
+  const body={
+    id:'evt_created_wrong_account_synthetic',event:'PAYMENT_CREATED',
+    account:{id:'another-account-synthetic'},
+    payment:{id:'pay_created_wrong_account_synthetic',externalReference:'901',status:'PENDING',billingType:'PIX',value:10},
+  };
+  const response={statusCode:0,body:undefined as unknown,status(code:number){this.statusCode=code;return this;},json(value:unknown){this.body=value;return this;}};
+  await createAsaasWebhookHandler(()=>runtime as any)({headers:{'asaas-access-token':'synthetic-webhook-token'},body,ip:'127.0.0.1'} as any,response as any);
+  expect(response.statusCode).toBe(503);
+  expect(mocks.securityLog).toHaveBeenCalledWith('error','payment.asaas_webhook_failed',expect.objectContaining({failureCode:'WEBHOOK_CURRENCY_MISMATCH'}));
+  expect(JSON.stringify(mocks.securityLog.mock.calls)).not.toContain('another-account-synthetic');
+  for(const effect of [mocks.paid,mocks.trusted,mocks.binding,mocks.enqueue,mocks.deliver])expect(effect).not.toHaveBeenCalled();
 });

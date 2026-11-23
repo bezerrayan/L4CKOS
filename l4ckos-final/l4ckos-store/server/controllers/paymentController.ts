@@ -932,9 +932,13 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
       const currentProviderCurrency = typeof providerPreflight?.currentPayment?.currency === "string"
         ? providerPreflight.currentPayment.currency.trim().toUpperCase() : "";
       const accountCurrencyFallback = pinnedAccountCurrencyForReceived(payload, event);
-      const baseBoundary = !currency && providerPreflight?.currencyVerification?.status === "verified"
-        ? createAsaasStockWebhookBoundary({ verifiedProviderCurrency: currentProviderCurrency || accountCurrencyFallback })
-        : createAsaasStockWebhookBoundary();
+      const baseBoundary = createAsaasStockWebhookBoundary({
+        ...(!currency && providerPreflight?.currencyVerification?.status === "verified"
+          ? { verifiedProviderCurrency: currentProviderCurrency || accountCurrencyFallback }
+          : {}),
+        configuredAccountId: process.env.ASAAS_WEBHOOK_ACCOUNT_ID,
+        configuredAccountCurrency: process.env.ASAAS_WEBHOOK_ACCOUNT_CURRENCY,
+      });
       let boundary = baseBoundary;
       if (!req.headers) boundary = { ...baseBoundary, verifySignature: async () => true };
       const result = await runtime.receiveWebhook({
@@ -1213,9 +1217,13 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
 
     res.status(200).json({ handled: true, event, orderId, ...((result as any).selectiveCardReview ? { selectiveCardReview: true } : {}), ...((result as any).reconciliationRequired ? { reconciliationRequired: true, financialMutation: false } : {}) });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "";
+    const failureCode = /^(?:WEBHOOK|PAYMENT|STOCK)_[A-Z0-9_]{2,80}$/.test(errorMessage)
+      ? errorMessage : "UNCLASSIFIED";
     securityLog("error", "payment.asaas_webhook_failed", {
       requestIp: req.ip || "unknown",
       reason: "webhook_processing_failed",
+      failureCode,
     });
     if (error instanceof Error && error.message === "PAYMENT_RECORD_BINDING_MISMATCH") {
       sendControllerError(res, 409, "PAYMENT_RECORD_BINDING_MISMATCH", "A cobrança não corresponde ao registro do pedido.");

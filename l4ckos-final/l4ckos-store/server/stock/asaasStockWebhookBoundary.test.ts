@@ -81,6 +81,47 @@ describe("Asaas STOCK webhook boundary", () => {
       .toThrow("WEBHOOK_CURRENCY_MISMATCH");
   });
 
+  it("accepts currencyless PAYMENT_CREATED only against the configured BRL account and keeps it non-settling", () => {
+    const created = {
+      id: "evt_created_synthetic_001",
+      event: "PAYMENT_CREATED",
+      account: { id: "account-pinned-synthetic" },
+      payment: {
+        id: "pay-created-synthetic-001",
+        externalReference: "L4CKOS-STOCK-ATTEMPT:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        value: 10,
+        billingType: "PIX",
+        status: "PENDING",
+      },
+    };
+    const verified = createAsaasStockWebhookBoundary({
+      configuredAccountId: "account-pinned-synthetic",
+      configuredAccountCurrency: "BRL",
+    }).decodeSignedEvent(JSON.stringify(created));
+    expect(verified).toMatchObject({
+      eventId: created.id,
+      paymentId: created.payment.id,
+      status: "pending",
+      amountCents: 1000,
+      strongReference: created.payment.externalReference,
+    });
+    expect(() => createAsaasStockWebhookBoundary({
+      configuredAccountId: "another-account-synthetic",
+      configuredAccountCurrency: "BRL",
+    }).decodeSignedEvent(JSON.stringify(created))).toThrow("WEBHOOK_CURRENCY_MISMATCH");
+    expect(() => createAsaasStockWebhookBoundary({
+      configuredAccountId: "account-pinned-synthetic",
+      configuredAccountCurrency: "USD",
+    }).decodeSignedEvent(JSON.stringify(created))).toThrow("WEBHOOK_CURRENCY_MISMATCH");
+    expect(() => createAsaasStockWebhookBoundary({
+      configuredAccountId: "account-pinned-synthetic",
+      configuredAccountCurrency: "BRL",
+    }).decodeSignedEvent(JSON.stringify({
+      ...created,
+      payment: { ...created.payment, currency: "USD" },
+    }))).toThrow("WEBHOOK_CURRENCY_MISMATCH");
+  });
+
   it.each([
     ["PAYMENT_REFUSED", "REFUSED"],
     ["PAYMENT_DELETED", "DELETED"],

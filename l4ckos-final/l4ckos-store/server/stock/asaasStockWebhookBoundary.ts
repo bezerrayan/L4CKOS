@@ -21,7 +21,11 @@ function requiredText(value: unknown, code: string): string {
 }
 
 /** Adapts the existing production token verifier, while making STOCK fail closed in every environment. */
-export function createAsaasStockWebhookBoundary(input: { verifiedProviderCurrency?: string | null } = {}): StockWebhookBoundary {
+export function createAsaasStockWebhookBoundary(input: {
+  verifiedProviderCurrency?: string | null;
+  configuredAccountId?: string | null;
+  configuredAccountCurrency?: string | null;
+} = {}): StockWebhookBoundary {
   return {
     async verifySignature({ headers }) {
       if (!process.env.ASAAS_WEBHOOK_TOKEN?.trim()) return false;
@@ -42,6 +46,22 @@ export function createAsaasStockWebhookBoundary(input: { verifiedProviderCurrenc
 
       const eventName = requiredText(payload.event, "WEBHOOK_EVENT_INVALID").toUpperCase();
       const paymentStatus = typeof payment.status === "string" ? payment.status.trim().toUpperCase() : "";
+      const eventAccount = record(payload.account);
+      const eventAccountId = typeof eventAccount?.id === "string" ? eventAccount.id.trim() : "";
+      const configuredAccountId = typeof input.configuredAccountId === "string" ? input.configuredAccountId.trim() : "";
+      const configuredAccountCurrency = typeof input.configuredAccountCurrency === "string"
+        ? input.configuredAccountCurrency.trim().toUpperCase() : "";
+      // Asaas's documented PAYMENT_CREATED envelope has account.id but no payment.currency.
+      // Only this non-settling event may use the explicitly pinned BRL account currency,
+      // and only when the envelope's account identity matches the configured account.
+      const pinnedCreatedCurrency = eventName === "PAYMENT_CREATED" && paymentStatus === "PENDING" &&
+        configuredAccountId && eventAccountId === configuredAccountId && configuredAccountCurrency === "BRL"
+        ? "BRL" : "";
+      const eventCurrency = typeof payment.currency === "string" && payment.currency.trim()
+        ? payment.currency.trim().toUpperCase() : "";
+      const verifiedProviderCurrency = typeof input.verifiedProviderCurrency === "string"
+        ? input.verifiedProviderCurrency.trim().toUpperCase() : "";
+      const currency = eventCurrency || verifiedProviderCurrency || pinnedCreatedCurrency;
       let status: StockNormalizedWebhook["status"];
       // PIX is settled only by a validated PAYMENT_RECEIVED. A CONFIRMED event
       // is an observation; accepting it as paid can release fulfilment early.
@@ -58,9 +78,6 @@ export function createAsaasStockWebhookBoundary(input: { verifiedProviderCurrenc
       if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) throw new Error("WEBHOOK_AMOUNT_INVALID");
       const amountCents = Math.round(amount * 100);
       if (!Number.isSafeInteger(amountCents) || Math.abs(amount * 100 - amountCents) > 1e-7) throw new Error("WEBHOOK_AMOUNT_INVALID");
-      const currency = typeof payment.currency === "string" && payment.currency.trim()
-        ? payment.currency.trim().toUpperCase()
-        : String(input.verifiedProviderCurrency ?? "").trim().toUpperCase();
       // These two authenticated PIX events are observations only. They never
       // settle an order, so an omitted currency must not turn a valid delivery
       // into a permanent retry. Explicit incompatible currency still fails.
