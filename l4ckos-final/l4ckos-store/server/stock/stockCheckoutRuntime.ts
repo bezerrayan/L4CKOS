@@ -55,12 +55,12 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
     quoteShipping(request: unknown) {
       return shippingQuotes ? shippingQuotes.quote(request) : null;
     },
-    resume(authenticatedUserId: number, attemptId: unknown) {
+    resume(authenticatedUserId: number, attemptId: unknown, expectedItems?: unknown) {
       // Authenticated read-only lookup is available while payment creation remains gated.
-      return resumeStockCheckout({ store, authenticatedUserId, attemptId });
+      return resumeStockCheckout({ store, authenticatedUserId, attemptId, expectedItems });
     },
-    resumeLatest(authenticatedUserId: number) {
-      return resumeLatestStockCheckout({ store, authenticatedUserId });
+    resumeLatest(authenticatedUserId: number, expectedItems?: unknown) {
+      return resumeLatestStockCheckout({ store, authenticatedUserId, expectedItems });
     },
     receiveWebhook(input: {
       rawBody: string;

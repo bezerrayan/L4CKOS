@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { stockAttemptResumeV1Schema, stockCheckoutHttpRequestV1Schema, stockCheckoutResponseV1Schema, stockShippingQuoteRequestV1Schema } from "../../shared/stockCheckoutV1";
+import { stockAttemptResumeV1Schema, stockCheckoutHttpRequestV1Schema, stockCheckoutResponseV1Schema, stockCheckoutItemV1Schema, stockShippingQuoteRequestV1Schema } from "../../shared/stockCheckoutV1";
 import {
   assertPublicOrSyntheticSandboxCheckoutEnabled,
   PublicCheckoutDisabledError,
@@ -15,7 +15,13 @@ import { toStockCheckoutResponseV1 } from "../stock/stockCheckoutHttpContract";
 import { toTrpcError } from "../exclusive/errors";
 import { ExclusiveError } from "../exclusive/store";
 import { assertStagingSyntheticBuyerTrpc } from "../payments/syntheticBuyerGate";
-import { resolveOwnerPixTestAuthorization } from "../stock/ownerPixTestGate";
+import { resolveOwnerPixTestAuthorization, resolveOwnerPixTestReadAuthorization } from "../stock/ownerPixTestGate";
+
+function isPublicCheckoutGateError(error: unknown): boolean {
+  if (!(error instanceof TRPCError)) return false;
+  const appCode = (error as TRPCError & { appCode?: unknown }).appCode;
+  return appCode === "PUBLIC_STORE_CLOSED" || appCode === "PUBLIC_CHECKOUT_DISABLED";
+}
 
 /** Same public gate as the legacy routers, surfaced with the V6 FORBIDDEN codes (never an internal error). */
 function assertGate(authenticatedUserId: number): void {
@@ -34,8 +40,22 @@ function assertGateOrOwnerPixTest(user: { id: number; openId: string; role: stri
     assertGate(user.id);
     return null;
   } catch (error) {
+    if (!isPublicCheckoutGateError(error)) throw error;
     const ownerTest = resolveOwnerPixTestAuthorization(user);
     if (ownerTest) return ownerTest;
+    throw error;
+  }
+}
+
+/** Closed-store recovery is read-only and can address only the one server-configured owner attempt. */
+function assertReadGateOrOwnerPixTest(user: { id: number; openId: string; role: string }) {
+  try {
+    assertGate(user.id);
+    return null;
+  } catch (error) {
+    if (!isPublicCheckoutGateError(error)) throw error;
+    const ownerRead = resolveOwnerPixTestReadAuthorization(user);
+    if (ownerRead) return ownerRead;
     throw error;
   }
 }
@@ -106,8 +126,9 @@ export const stockCheckoutRouter = router({
       if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Checkout STOCK indisponível neste runtime." });
       try {
         const effectiveAttemptId = ownerPixTest?.attemptId ?? input.attemptId;
+        const effectiveInput = ownerPixTest ? { ...input, attemptId: ownerPixTest.attemptId } : input;
         const result = ownerPixTest
-          ? await runtime.checkoutOwnerPixTest(input, ctx.user)
+          ? await runtime.checkoutOwnerPixTest(effectiveInput, ctx.user)
           : await runtime.checkout(input, ctx.user.id);
         return stockCheckoutResponseV1Schema.parse(toStockCheckoutResponseV1(effectiveAttemptId, result));
       } catch (error) {
@@ -117,15 +138,22 @@ export const stockCheckoutRouter = router({
     }),
 
   resume: protectedProcedure
-    .input(stockAttemptResumeV1Schema.pick({ attemptId: true }).strict())
+    .input(z.object({
+      attemptId: stockAttemptResumeV1Schema.shape.attemptId,
+      items: z.array(stockCheckoutItemV1Schema).min(1).max(30).optional(),
+    }).strict())
     .query(async ({ ctx, input }) => {
       assertStagingSyntheticBuyerTrpc(ctx.user.id);
-      const ownerPixTest = assertGateOrOwnerPixTest(ctx.user);
-      if (ownerPixTest && input.attemptId !== ownerPixTest.attemptId) throw publicCheckoutDisabledTrpcError();
+      const ownerPixRead = assertReadGateOrOwnerPixTest(ctx.user);
       const runtime = ctx.stockCheckoutRuntime;
       if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Retomada STOCK indisponível neste runtime." });
       try {
-        return stockAttemptResumeV1Schema.parse(await runtime.resume(ctx.user.id, input.attemptId));
+        // Ignore browser/local IDs whenever the public gate is closed. The owner can read only the configured attempt.
+        const attemptId = ownerPixRead?.attemptId ?? input.attemptId;
+        const resumed = input.items
+          ? await runtime.resume(ctx.user.id, attemptId, input.items)
+          : await runtime.resume(ctx.user.id, attemptId);
+        return stockAttemptResumeV1Schema.parse(resumed);
       } catch (error) {
         if (error instanceof StockCheckoutError && error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") {
           throw new TRPCError({ code: "NOT_FOUND", message: "Tentativa não encontrada." });
@@ -138,22 +166,25 @@ export const stockCheckoutRouter = router({
     }),
 
   resumeLatest: protectedProcedure
-    .input(z.object({}).strict().optional())
-    .query(async ({ ctx }) => {
+    .input(z.object({ items: z.array(stockCheckoutItemV1Schema).min(1).max(30).optional() }).strict().optional())
+    .query(async ({ ctx, input }) => {
       assertStagingSyntheticBuyerTrpc(ctx.user.id);
-      const ownerPixTest = assertGateOrOwnerPixTest(ctx.user);
+      const ownerPixRead = assertReadGateOrOwnerPixTest(ctx.user);
       const runtime = ctx.stockCheckoutRuntime;
       if (!runtime) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Retomada STOCK indisponível neste runtime." });
-      if (ownerPixTest) {
-        // Keep the owner exception scoped to its configured attempt; never return another latest checkout URL.
+      if (ownerPixRead) {
+        // Never return another latest checkout URL, even after the create window has closed.
         try {
-          return stockAttemptResumeV1Schema.parse(await runtime.resume(ctx.user.id, ownerPixTest.attemptId));
+          const resumed = input?.items
+            ? await runtime.resume(ctx.user.id, ownerPixRead.attemptId, input.items)
+            : await runtime.resume(ctx.user.id, ownerPixRead.attemptId);
+          return stockAttemptResumeV1Schema.parse(resumed);
         } catch (error) {
           if (error instanceof StockCheckoutError && error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") return null;
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível consultar a tentativa." });
         }
       }
       if (!runtime.resumeLatest) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Retomada STOCK indisponível neste runtime." });
-      return runtime.resumeLatest(ctx.user.id);
+      return input?.items ? runtime.resumeLatest(ctx.user.id, input.items) : runtime.resumeLatest(ctx.user.id);
     }),
 });

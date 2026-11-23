@@ -42,6 +42,11 @@ type ResumeRow = RowDataPacket & {
   reservationExpired: number;
   reconciliationRequired: number;
 };
+type ResumeCartItemRow = RowDataPacket & {
+  productId: number | string;
+  variantId: number | string;
+  quantity: number | string;
+};
 type ItemRow = RowDataPacket & {
   variantId: number;
   productId: number;
@@ -72,6 +77,33 @@ const asNumber = (value: number | string | bigint): number => {
   if (!Number.isSafeInteger(parsed)) throw new StockMySqlInvariantError("Unsafe integer returned by MySQL");
   return parsed;
 };
+
+async function toResumeRecord(pool: Pool, row: ResumeRow) {
+  const [items] = await pool.execute<ResumeCartItemRow[]>(
+    `SELECT productId, variantId, quantity
+       FROM stockCheckoutItems
+      WHERE attemptId = ?
+      ORDER BY lineNumber`,
+    [row.attemptId],
+  );
+  return {
+    attemptId: row.attemptId,
+    orderId: String(row.orderId),
+    status: row.status,
+    providerState: row.providerState,
+    paymentId: row.paymentId,
+    checkoutUrl: row.checkoutUrl,
+    amountCents: asNumber(row.amountCents),
+    reservationExpiresAt: row.reservationExpiresAt,
+    reservationExpired: Boolean(row.reservationExpired),
+    reconciliationRequired: Boolean(row.reconciliationRequired),
+    cartItems: items.map(item => ({
+      productId: asNumber(item.productId),
+      variantId: asNumber(item.variantId),
+      quantity: asNumber(item.quantity),
+    })),
+  };
+}
 
 async function findAttempt(connection: PoolConnection, attemptId: string): Promise<StockAttempt | null> {
   const [attemptRows] = await connection.execute<AttemptRow[]>(
@@ -886,18 +918,7 @@ export function createMysqlStockCheckoutStore(pool: Pool, options: { reservation
       );
       const row = rows[0];
       if (!row) return null;
-      return {
-        attemptId: row.attemptId,
-        orderId: String(row.orderId),
-        status: row.status,
-        providerState: row.providerState,
-        paymentId: row.paymentId,
-        checkoutUrl: row.checkoutUrl,
-        amountCents: asNumber(row.amountCents as number | string),
-        reservationExpiresAt: row.reservationExpiresAt,
-        reservationExpired: Boolean(row.reservationExpired),
-        reconciliationRequired: Boolean(row.reconciliationRequired),
-      };
+      return toResumeRecord(pool, row);
     },
     async findLatestAttemptForOwner(ownerUserId) {
       const [rows] = await pool.execute<ResumeRow[]>(
@@ -913,18 +934,7 @@ export function createMysqlStockCheckoutStore(pool: Pool, options: { reservation
       );
       const row = rows[0];
       if (!row) return null;
-      return {
-        attemptId: row.attemptId,
-        orderId: String(row.orderId),
-        status: row.status,
-        providerState: row.providerState,
-        paymentId: row.paymentId,
-        checkoutUrl: row.checkoutUrl,
-        amountCents: asNumber(row.amountCents as number | string),
-        reservationExpiresAt: row.reservationExpiresAt,
-        reservationExpired: Boolean(row.reservationExpired),
-        reconciliationRequired: Boolean(row.reconciliationRequired),
-      };
+      return toResumeRecord(pool, row);
     },
     async transaction<T>(work: (tx: StockCheckoutTransaction) => Promise<T>): Promise<T> {
       const webhookConnection = webhookMysqlConnection();

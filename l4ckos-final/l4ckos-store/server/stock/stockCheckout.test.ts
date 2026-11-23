@@ -172,7 +172,7 @@ const request = (attemptId: string, overrides: Record<string, unknown> = {}) => 
   items: [{ productId: 4, variantId: 8, size: "M", color: "Preto", quantity: 1 }],
   ...overrides,
 });
-const provider = (fn?: () => Promise<{ paymentId: string; checkoutUrl: string }>, expectedAmountCents = 12900) => ({
+const provider = (fn?: () => Promise<{ paymentId: string; checkoutUrl: string | null }>, expectedAmountCents = 12900) => ({
   calls: 0,
   supportsIdempotencyKey: true,
   async createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string }) {
@@ -278,6 +278,7 @@ describe("local STOCK checkout core", () => {
     const result = await createStockCheckout({ enabled: true, store, provider: provider(), request: request("attempt-price-00001") });
     expect(result.amountCents).toBe(12900);
     expect(result.snapshots[0]).toMatchObject({ id: 8, productId: 4, sku: "TSHIRT-BLK-M", size: "M", color: "Preto", unitPriceCents: 12900, quantity: 1, totalCents: 12900 });
+    expect(store.expiryCalls).toBe(1);
   });
 
   it("enforces the owner test amount ceiling before order, reservation, or provider writes", async () => {
@@ -304,6 +305,7 @@ describe("local STOCK checkout core", () => {
     const ownerAttemptId = "owner-pix-single-attempt-20261119-001";
     const authorized = { enabled: true, ownerUserId: 71, store, provider: payments, maximumAmountCents: 25000 };
     const first = await createStockCheckout({ ...authorized, request: request(ownerAttemptId) });
+    expect(store.expiryCalls).toBe(0);
     const replay = await createStockCheckout({ ...authorized, request: request(ownerAttemptId) });
     expect(replay.replayed).toBe(true);
     expect(replay.paymentId).toBe(first.paymentId);
@@ -474,11 +476,30 @@ describe("local STOCK checkout core", () => {
     expect(store.attempts.get("attempt-release-0001")?.status).toBe("released");
   });
 
-  it("retains inventory when provider outcome is ambiguous", async () => {
+  it("retains inventory and never repeats an ambiguous create without provider idempotency", async () => {
     const store = new MemoryStockStore([variant()]);
-    await expect(createStockCheckout({ enabled: true, store, provider: provider(async () => { throw new Error("timeout"); }), request: request("attempt-unknown-0001") }))
+    const payments = provider(async () => { throw new Error("timeout"); });
+    payments.supportsIdempotencyKey = false;
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-unknown-0001") }))
       .rejects.toMatchObject({ code: "CHECKOUT_PROVIDER_OUTCOME_UNKNOWN" });
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-unknown-0001") }))
+      .rejects.toMatchObject({ code: "CHECKOUT_PROVIDER_RECONCILIATION_REQUIRED" });
     expect(store.reserved.get(8)).toBe(1);
+    expect(payments.calls).toBe(1);
+  });
+
+  it("persists a returned payment ID without a checkout URL and replays it without another charge", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const payments = provider(async () => ({ paymentId: "pay-qr-unavailable", checkoutUrl: null }));
+    payments.supportsIdempotencyKey = false;
+    const requestBody = request("attempt-payment-id-retained-001");
+
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: requestBody }))
+      .resolves.toMatchObject({ paymentId: "pay-qr-unavailable", checkoutUrl: null, replayed: false });
+    expect(store.attempts.get("attempt-payment-id-retained-001")?.paymentId).toBe("pay-qr-unavailable");
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: requestBody }))
+      .resolves.toMatchObject({ paymentId: "pay-qr-unavailable", checkoutUrl: null, replayed: true });
+    expect(payments.calls).toBe(1);
   });
 
   it("rejects invalid webhooks, deduplicates delivery and consumes once after payment", async () => {

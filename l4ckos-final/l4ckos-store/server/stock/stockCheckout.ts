@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { stockDeliveryV1Schema, type StockDeliveryV1 } from "../../shared/stockCheckoutV1";
+import { stockDeliveryV1Schema, stockCheckoutItemV1Schema, type StockDeliveryV1 } from "../../shared/stockCheckoutV1";
 import { isLocalDeliveryCep } from "../../shared/localDeliveryTerritory";
 import type { StockShippingAcceptanceV1 } from "../../shared/stockShippingV1";
 import { StockShippingQuoteError, verifyStockShippingQuoteV1 } from "./stockShippingQuoteV1";
 import { isPublicProductUnavailable } from "../database/publicPurchasePolicy";
+import { StockProviderError } from "./stockProviderError";
+export { StockProviderError } from "./stockProviderError";
 
 export type StockVariant = {
   id: number;
@@ -56,6 +58,8 @@ export type StockAttemptResumeRecord = {
   reservationExpiresAt: string;
   reservationExpired: boolean;
   reconciliationRequired: boolean;
+  /** Persisted item identities used only to prove a latest-attempt/cart match on read. */
+  cartItems?: Array<{ productId: number; variantId: number; quantity: number }>;
 };
 
 /**
@@ -155,7 +159,7 @@ export interface StockCheckoutStore {
 export interface StockPaymentProvider {
   /** True only when the provider guarantees the idempotencyKey is enforced server-side. */
   supportsIdempotencyKey: boolean;
-  createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string; externalReference?: string }): Promise<{ paymentId: string; checkoutUrl: string; customerId?: string | null }>;
+  createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string; externalReference?: string }): Promise<{ paymentId: string; checkoutUrl: string | null; customerId?: string | null }>;
 }
 
 /**
@@ -166,13 +170,6 @@ export interface StockPaymentProvider {
 export function stockProviderIdempotencyKey(orderId: string, paymentReference: string | null): string {
   const token = paymentReference ? paymentReference.slice(paymentReference.lastIndexOf(":") + 1) : "";
   return token ? `stock:${orderId}:${token}` : `stock:${orderId}`;
-}
-
-export class StockProviderError extends Error {
-  constructor(message: string, public readonly definitelyNotCreated: boolean) {
-    super(message);
-    this.name = "StockProviderError";
-  }
 }
 
 export class StockCheckoutError extends Error {
@@ -275,7 +272,7 @@ export async function createStockCheckout(input: {
   shipping?: { secret: string };
   /** Server-only cap used by the temporary owner PIX test admission. */
   maximumAmountCents?: number;
-}): Promise<{ orderId: string; paymentId: string; checkoutUrl: string; amountCents: number; snapshots: StockSnapshot[]; replayed: boolean }> {
+}): Promise<{ orderId: string; paymentId: string; checkoutUrl: string | null; amountCents: number; snapshots: StockSnapshot[]; replayed: boolean }> {
   // Gate is deliberately the first operation; no repository, provider, or financial IO may precede it.
   if (!input.enabled) fail("PUBLIC_CHECKOUT_DISABLED");
   if (!Number.isSafeInteger(input.ownerUserId) || input.ownerUserId <= 0) fail("AUTHENTICATION_REQUIRED");
@@ -442,7 +439,7 @@ export async function createStockCheckout(input: {
   const amountCents = stockAttemptAmountCents(prepared.attempt);
   if (!Number.isSafeInteger(amountCents) || amountCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
   if (prepared.attempt.paymentId) {
-    return { orderId: prepared.attempt.orderId, paymentId: prepared.attempt.paymentId, checkoutUrl: prepared.attempt.checkoutUrl ?? "", amountCents, snapshots: prepared.attempt.snapshots, replayed: true };
+    return { orderId: prepared.attempt.orderId, paymentId: prepared.attempt.paymentId, checkoutUrl: prepared.attempt.checkoutUrl ?? null, amountCents, snapshots: prepared.attempt.snapshots, replayed: true };
   }
 
   const canRetryAmbiguous = prepared.attempt.providerState !== "not_started";
@@ -465,7 +462,7 @@ export async function createStockCheckout(input: {
       return {
         orderId: latest.orderId,
         paymentId: latest.paymentId,
-        checkoutUrl: latest.checkoutUrl ?? "",
+        checkoutUrl: latest.checkoutUrl ?? null,
         amountCents: latestAmount,
         snapshots: latest.snapshots,
         replayed: true,
@@ -475,13 +472,17 @@ export async function createStockCheckout(input: {
     fail("CHECKOUT_RECONCILIATION_REQUIRED");
   }
 
-  let payment: { paymentId: string; checkoutUrl: string; customerId?: string | null };
+  let payment: { paymentId: string; checkoutUrl: string | null; customerId?: string | null };
   try {
     payment = await input.provider.createPayment({
       orderId: prepared.attempt.orderId, amountCents, idempotencyKey: stockProviderIdempotencyKey(prepared.attempt.orderId, paymentReference),
       ...(paymentReference ? { externalReference: paymentReference } : {}),
     });
   } catch (error) {
+    const safeError = error instanceof StockProviderError
+      ? { phase: error.phase, category: error.category, ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}) }
+      : { phase: "payment_create", category: "unknown" };
+    console.warn("[StockPayment] create_failed", safeError);
     if (error instanceof StockProviderError && error.definitelyNotCreated) {
       await input.store.transaction(async tx => {
         const released = await tx.markProviderFailure(request.attemptId);
@@ -496,12 +497,14 @@ export async function createStockCheckout(input: {
     await input.store.transaction(tx => tx.recordPayment(request.attemptId, payment.paymentId, payment.checkoutUrl, payment.customerId ?? null));
   } catch {
     // The provider may have created a real charge. Keep the reservation for reconciliation.
+    console.error("[StockPayment] payment_correlation_persist_failed", { phase: "payment_correlation", category: "persistence" });
+    await input.store.transaction(tx => tx.markProviderAmbiguous(request.attemptId)).catch(() => undefined);
     fail("CHECKOUT_PAYMENT_CORRELATION_REQUIRED");
   }
   return { orderId: prepared.attempt.orderId, paymentId: payment.paymentId, checkoutUrl: payment.checkoutUrl, amountCents, snapshots: prepared.attempt.snapshots, replayed: prepared.replayed };
 }
 
-/** Formats an owner-scoped attempt after due reservations have been reconciled. */
+/** Formats an owner-scoped persisted attempt without changing expiry or reconciliation state. */
 function resumeRecord(attempt: StockAttemptResumeRecord): import("../../shared/stockCheckoutV1").StockAttemptResumeV1 {
   let status: import("../../shared/stockCheckoutV1").StockAttemptResumeV1["status"];
   if (attempt.status === "paid") status = "paid";
@@ -530,34 +533,39 @@ export async function resumeStockCheckout(input: {
   store: StockCheckoutStore;
   authenticatedUserId: number;
   attemptId: unknown;
+  expectedItems?: unknown;
 }): Promise<import("../../shared/stockCheckoutV1").StockAttemptResumeV1> {
   if (!Number.isSafeInteger(input.authenticatedUserId) || input.authenticatedUserId <= 0) fail("AUTHENTICATION_REQUIRED");
   if (typeof input.attemptId !== "string" || !/^[A-Za-z0-9_-]{16,120}$/.test(input.attemptId)) fail("STOCK_ATTEMPT_ID_INVALID");
-  await expireOwnerReservations(input.store, input.authenticatedUserId);
   const attempt = await input.store.findAttemptForOwner(input.attemptId, input.authenticatedUserId);
   if (!attempt) fail("CHECKOUT_ATTEMPT_NOT_FOUND");
+  assertResumeCartMatches(attempt, input.expectedItems);
 
   return resumeRecord(attempt);
 }
 
-export async function resumeLatestStockCheckout(input: { store: StockCheckoutStore; authenticatedUserId: number }) {
-  if (!Number.isSafeInteger(input.authenticatedUserId) || input.authenticatedUserId <= 0) fail("AUTHENTICATION_REQUIRED");
-  if (!input.store.findLatestAttemptForOwner) fail("CHECKOUT_RESUME_UNAVAILABLE");
-  await expireOwnerReservations(input.store, input.authenticatedUserId);
-  const attempt = await input.store.findLatestAttemptForOwner(input.authenticatedUserId);
-  return attempt ? resumeRecord(attempt) : null;
+function assertResumeCartMatches(attempt: StockAttemptResumeRecord, expectedItems: unknown): void {
+  if (expectedItems === undefined) return;
+  const parsedItems = stockCheckoutItemV1Schema.array().min(1).max(30).safeParse(expectedItems);
+  if (!parsedItems.success || !attempt.cartItems || canonicalCart(attempt.cartItems) !== canonicalCart(parsedItems.data)) {
+    // Keep the same not-found result for a missing attempt and a cart mismatch.
+    fail("CHECKOUT_ATTEMPT_NOT_FOUND");
+  }
 }
 
-/**
- * Resume also advances due, definitively unstarted attempts. The store performs
- * release and inventory accounting in one transaction; attempts whose provider
- * outcome may exist are only marked for reconciliation and keep their stock.
- */
-async function expireOwnerReservations(store: StockCheckoutStore, ownerUserId: number): Promise<void> {
-  for (let batch = 0; batch < 10; batch += 1) {
-    const result = await store.transaction(tx => tx.expireDueReservations(500, ownerUserId));
-    if (result.releasedAttemptIds.length + result.reconciliationAttemptIds.length < 500) return;
+export async function resumeLatestStockCheckout(input: { store: StockCheckoutStore; authenticatedUserId: number; expectedItems?: unknown }) {
+  if (!Number.isSafeInteger(input.authenticatedUserId) || input.authenticatedUserId <= 0) fail("AUTHENTICATION_REQUIRED");
+  if (!input.store.findLatestAttemptForOwner) fail("CHECKOUT_RESUME_UNAVAILABLE");
+  const attempt = await input.store.findLatestAttemptForOwner(input.authenticatedUserId);
+  if (attempt) {
+    try {
+      assertResumeCartMatches(attempt, input.expectedItems);
+    } catch (error) {
+      if (error instanceof StockCheckoutError && error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") return null;
+      throw error;
+    }
   }
+  return attempt ? resumeRecord(attempt) : null;
 }
 
 async function processStockPaymentWebhook(input: {

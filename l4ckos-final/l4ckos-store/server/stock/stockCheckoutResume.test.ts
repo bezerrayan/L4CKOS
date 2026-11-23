@@ -35,55 +35,84 @@ describe("authenticated STOCK checkout resume", () => {
       attemptId: "stock-server-recovery-0001", orderId: "order-recovered", status: "reserved", providerState: "created",
       paymentId: "payment-recovered", checkoutUrl: "https://checkout.example.invalid/recovered", amountCents: 12900,
       reservationExpiresAt: new Date(Date.now() + 60_000).toISOString(), reservationExpired: false, reconciliationRequired: false,
+      cartItems: [{ productId: 7, variantId: 31, quantity: 1 }],
     };
+    const transaction = vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work({ expireDueReservations: vi.fn() }));
     const store: StockCheckoutStore = {
       ...readableStore(null),
+      transaction: transaction as StockCheckoutStore["transaction"],
       findLatestAttemptForOwner: vi.fn(async ownerUserId => ownerUserId === 71 ? record : null),
     };
     await expect(resumeLatestStockCheckout({ store, authenticatedUserId: 71 })).resolves.toMatchObject({
       attemptId: record.attemptId, status: "pending", paymentId: "payment-recovered",
     });
+    await expect(resumeLatestStockCheckout({ store, authenticatedUserId: 71, expectedItems: [{ productId: 7, variantId: 31, quantity: 1 }] }))
+      .resolves.toMatchObject({ attemptId: record.attemptId, status: "pending" });
+    await expect(resumeLatestStockCheckout({ store, authenticatedUserId: 71, expectedItems: [{ productId: 8, variantId: 32, quantity: 1 }] }))
+      .resolves.toBeNull();
     await expect(resumeLatestStockCheckout({ store, authenticatedUserId: 72 })).resolves.toBeNull();
-    expect(store.findLatestAttemptForOwner).toHaveBeenCalledTimes(2);
+    expect(store.findLatestAttemptForOwner).toHaveBeenCalledTimes(4);
+    expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("releases a due not-started reservation before resume and allows a fresh attempt", async () => {
+  it("does not resume the configured owner's attempt when it belongs to a different cart", async () => {
+    const record: StockAttemptResumeRecord = {
+      attemptId: "owner-cart-a-attempt-000001", orderId: "owner-order", status: "reserved", providerState: "ambiguous",
+      paymentId: null, checkoutUrl: null, amountCents: 1000,
+      reservationExpiresAt: new Date(Date.now() + 60_000).toISOString(), reservationExpired: false, reconciliationRequired: false,
+      cartItems: [{ productId: 7, variantId: 31, quantity: 1 }],
+    };
+    const transaction = vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work({ expireDueReservations: vi.fn() }));
+    const store: StockCheckoutStore = {
+      ...readableStore(record),
+      transaction: transaction as StockCheckoutStore["transaction"],
+    };
+
+    await expect(resumeStockCheckout({
+      store,
+      authenticatedUserId: 71,
+      attemptId: record.attemptId,
+      expectedItems: [{ productId: 8, variantId: 32, quantity: 1 }],
+    })).rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_NOT_FOUND" });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("reports a due not-started reservation without releasing it during a read", async () => {
     const record: StockAttemptResumeRecord = {
       attemptId: "stock-expiry-resume-0001", orderId: "order-expired", status: "reserved", providerState: "not_started",
       paymentId: null, checkoutUrl: null, amountCents: 12900,
       reservationExpiresAt: new Date(Date.now() - 1_000).toISOString(), reservationExpired: true, reconciliationRequired: false,
     };
-    let released = false;
+    const expireDueReservations = vi.fn(async () => ({ releasedAttemptIds: [record.attemptId], reconciliationAttemptIds: [] }));
+    const transaction = vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work({ expireDueReservations }));
     const store: StockCheckoutStore = {
-      transaction: async work => work({
-        expireDueReservations: async () => {
-          if (!released) { released = true; return { releasedAttemptIds: [record.attemptId], reconciliationAttemptIds: [] }; }
-          return { releasedAttemptIds: [], reconciliationAttemptIds: [] };
-        },
-      } as never),
-      findAttemptForOwner: async () => ({ ...record, status: released ? "released" : "reserved" }),
+      transaction: transaction as StockCheckoutStore["transaction"],
+      findAttemptForOwner: async () => record,
     };
     await expect(resumeStockCheckout({ store, authenticatedUserId: 71, attemptId: record.attemptId })).resolves.toMatchObject({
-      status: "expired", canStartNewAttempt: true,
+      status: "expired", canStartNewAttempt: false,
     });
-    expect(released).toBe(true);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(expireDueReservations).not.toHaveBeenCalled();
   });
 
-  it("keeps expired attempts with uncertain provider outcomes reserved for reconciliation", async () => {
+  it("does not automatically mark or reconcile an expired ambiguous attempt during a read", async () => {
     const record: StockAttemptResumeRecord = {
       attemptId: "stock-expiry-uncertain-0001", orderId: "order-uncertain", status: "reserved", providerState: "ambiguous",
       paymentId: null, checkoutUrl: null, amountCents: 12900,
-      reservationExpiresAt: new Date(Date.now() - 1_000).toISOString(), reservationExpired: true, reconciliationRequired: true,
+      reservationExpiresAt: new Date(Date.now() - 1_000).toISOString(), reservationExpired: true, reconciliationRequired: false,
     };
+    const expireDueReservations = vi.fn(async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [record.attemptId] }));
+    const transaction = vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work({ expireDueReservations }));
     const store: StockCheckoutStore = {
-      transaction: async work => work({
-        expireDueReservations: async () => ({ releasedAttemptIds: [], reconciliationAttemptIds: [record.attemptId] }),
-      } as never),
+      transaction: transaction as StockCheckoutStore["transaction"],
       findAttemptForOwner: async () => record,
     };
     await expect(resumeStockCheckout({ store, authenticatedUserId: 71, attemptId: record.attemptId })).resolves.toMatchObject({
       status: "ambiguous", canStartNewAttempt: false,
     });
+    expect(transaction).not.toHaveBeenCalled();
+    expect(expireDueReservations).not.toHaveBeenCalled();
   });
 
   it("returns only the authenticated owner's pending attempt and ignores body userId", async () => {

@@ -130,9 +130,9 @@ function PagamentoContent() {
     storage: attemptStorage,
     transport: {
       create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
-      resume: attemptId => trpcUtils.stockCheckout.resume.fetch({ attemptId }),
+      resume: (attemptId, items) => trpcUtils.stockCheckout.resume.fetch({ attemptId, items: [...items] }),
       // Without a local attempt ID the backend (owner-scoped) is asked before any new attempt is allowed.
-      resumeLatest: () => trpcUtils.stockCheckout.resumeLatest.fetch(),
+      resumeLatest: items => trpcUtils.stockCheckout.resumeLatest.fetch({ items: [...items] }),
     },
   }), [attemptStorage, stockCreate.mutateAsync, trpcUtils]);
   const clearedOrdersRef = useRef<Set<number>>(new Set());

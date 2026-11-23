@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ASAAS_SANDBOX_API_URL, createSandboxAsaasStockPaymentProvider } from "./asaasStockPaymentProvider";
+import { AsaasRequestFailure } from "../services/asaasRequestFailure";
 
 const sandbox = {
   STOCK_ASAAS_MODE: "sandbox",
@@ -39,26 +40,60 @@ describe("STOCK Asaas sandbox provider", () => {
     expect(createCharge).toHaveBeenCalledOnce();
   });
 
-  it("does not retry or hide an ambiguous/incomplete charge result", async () => {
+  it("preserves a valid payment ID when no safe checkout URL is available", async () => {
     const createCharge = vi.fn(async () => ({ paymentId: "pay-maybe-created", checkoutUrl: null }));
     const provider = createSandboxAsaasStockPaymentProvider({
       environment: sandbox,
       loadBuyer: vi.fn(async () => ({ name: "A", email: "a@example.invalid", cpfCnpj: "11111111111" })),
       createCharge,
     });
-    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).rejects.toThrow("STOCK_PAYMENT_RESPONSE_INCOMPLETE");
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .resolves.toMatchObject({ paymentId: "pay-maybe-created", checkoutUrl: null });
     expect(createCharge).toHaveBeenCalledOnce();
   });
 
-  it("rejects a returned production checkout URL", async () => {
+  it("preserves the payment ID but suppresses a URL from the wrong environment", async () => {
     const createCharge = vi.fn(async () => ({ paymentId: "pay-maybe-created", checkoutUrl: "https://www.asaas.com/checkout" }));
     const provider = createSandboxAsaasStockPaymentProvider({
       environment: sandbox,
       loadBuyer: vi.fn(async () => ({ name: "A", email: "a@example.invalid", cpfCnpj: "11111111111" })),
       createCharge,
     });
-    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).rejects.toThrow("STOCK_PAYMENT_RESPONSE_INCOMPLETE");
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .resolves.toMatchObject({ paymentId: "pay-maybe-created", checkoutUrl: null });
     expect(createCharge).toHaveBeenCalledOnce();
+  });
+
+  it("classifies buyer lookup failures as pre-payment and never calls the charge adapter", async () => {
+    const createCharge = vi.fn();
+    const provider = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: vi.fn(async () => { throw Error("private lookup detail"); }), createCharge });
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .rejects.toMatchObject({ name: "StockProviderError", definitelyNotCreated: true, phase: "buyer_lookup", category: "unknown" });
+    expect(createCharge).not.toHaveBeenCalled();
+  });
+
+  it("preserves a documented structured payment validation rejection as definitive", async () => {
+    const createCharge = vi.fn(async () => { throw new AsaasRequestFailure("payment_create", "provider_rejection", true, 400); });
+    const provider = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: async () => ({ name: "N", email: "b@example.invalid", cpfCnpj: "11111111111" }), createCharge });
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .rejects.toMatchObject({ name: "StockProviderError", definitelyNotCreated: true, phase: "payment_create", category: "provider_rejection", httpStatus: 400 });
+  });
+
+  it("classifies an untyped timeout during create as uncertain", async () => {
+    const createCharge = vi.fn(async () => { throw Error("synthetic timeout"); });
+    const provider = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: async () => ({ name: "N", email: "b@example.invalid", cpfCnpj: "11111111111" }), createCharge });
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .rejects.toMatchObject({ name: "StockProviderError", definitelyNotCreated: false, phase: "payment_create", category: "unknown" });
+    expect(createCharge).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed if the payment ID itself is missing", async () => {
+    const provider = createSandboxAsaasStockPaymentProvider({
+      environment: sandbox, loadBuyer: async () => ({ name: "N", email: "b@example.invalid", cpfCnpj: "11111111111" }),
+      createCharge: async () => ({ paymentId: " ", checkoutUrl: null }),
+    });
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .rejects.toMatchObject({ definitelyNotCreated: false, phase: "payment_create", category: "invalid_response" });
   });
 });
 

@@ -4,7 +4,7 @@ import { resumeStockCheckout, StockCheckoutError, type StockCheckoutStore } from
 export type StockCheckoutDomainResult = {
   orderId: string;
   paymentId: string;
-  checkoutUrl: string;
+  checkoutUrl: string | null;
   amountCents: number;
   replayed: boolean;
 };
@@ -24,7 +24,7 @@ export function toStockCheckoutResponseV1(
     orderId: result.orderId,
     status: "pending",
     paymentId: result.paymentId,
-    checkoutUrl: result.checkoutUrl,
+    ...(result.checkoutUrl ? { checkoutUrl: result.checkoutUrl } : {}),
     amountCents: result.amountCents,
     replayed: result.replayed,
   };

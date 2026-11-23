@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MYSQL_TLS_HOST } from "../database/mysqlTls.mjs";
 import { PRODUCTION_RAILWAY_IDENTITY } from "../_core/productionFinancialPolicy";
 import { ISOLATED_HOMOLOGATION_IDENTITY } from "../_core/railwayEnvironment";
+import { getOrderById, getUserById, getUserPhoneById } from "../db";
+import { createAsaasStockChargeForOrder } from "../services/asaas";
+import { AsaasRequestFailure } from "../services/asaasRequestFailure";
+import { StockProviderError } from "./stockProviderError";
 import {
   ASAAS_SANDBOX_API_URL, createProductionAsaasStockPaymentProvider, createSandboxAsaasStockPaymentProvider,
 } from "./asaasStockPaymentProvider";
 
 vi.mock("../db", () => ({ getOrderById: vi.fn(), getUserById: vi.fn(), getUserPhoneById: vi.fn() }));
-vi.mock("../services/asaas", () => ({ createAsaasChargeForOrder: vi.fn() }));
+vi.mock("../services/asaas", () => ({ createAsaasStockChargeForOrder: vi.fn() }));
 
 const production: NodeJS.ProcessEnv = {
   NODE_ENV: "production", APP_ENV: "production",
@@ -35,7 +39,8 @@ describe("production STOCK Asaas provider", () => {
     await expect(ok.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).resolves.toMatchObject({ paymentId: "pay-fixture", checkoutUrl: "https://www.asaas.com/i/abc123" });
     for (const url of ["https://sandbox.asaas.com/i/abc", "http://www.asaas.com/i/abc", "https://www.asaas.com.evil.example/i/abc", "https://evil.example/www.asaas.com", null, ""]) {
       const bad = createProductionAsaasStockPaymentProvider({ environment: production, loadBuyer: buyer, createCharge: mk(url) });
-      await expect(bad.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }), String(url)).rejects.toThrow("STOCK_PAYMENT_RESPONSE_INCOMPLETE");
+      await expect(bad.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }), String(url))
+        .resolves.toMatchObject({ paymentId: "pay-fixture", checkoutUrl: null });
     }
   });
 
@@ -58,10 +63,11 @@ describe("production STOCK Asaas provider", () => {
 });
 
 describe("sandbox provider remains sandbox-only", () => {
-  it("rejects production configuration and production checkout URLs", async () => {
+  it("rejects production configuration and suppresses a URL from production", async () => {
     expect(() => createSandboxAsaasStockPaymentProvider({ environment: production, loadBuyer: buyer, createCharge: mk(null) })).toThrow("STOCK_ASAAS_SANDBOX_REQUIRED");
     const p = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: buyer, createCharge: mk("https://www.asaas.com/i/abc") });
-    await expect(p.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).rejects.toThrow("STOCK_PAYMENT_RESPONSE_INCOMPLETE");
+    await expect(p.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
+      .resolves.toMatchObject({ paymentId: "pay-fixture", checkoutUrl: null });
     const ok = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: buyer, createCharge: mk("https://sandbox.asaas.com/i/abc") });
     await expect(ok.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" })).resolves.toMatchObject({ checkoutUrl: "https://sandbox.asaas.com/i/abc" });
   });
@@ -81,5 +87,23 @@ describe("configured provider selection follows the runtime identity", () => {
     for (const k of Object.keys(process.env)) delete process.env[k];
     Object.assign(process.env, production, { RAILWAY_PROJECT_ID: ISOLATED_HOMOLOGATION_IDENTITY.projectId });
     expect(() => createConfiguredStockAsaasProvider()).toThrow("STOCK_ASAAS_SANDBOX_REQUIRED"); // never production adapter outside production
+  });
+
+  it("maps the configured production Asaas rejection into StockProviderError", async () => {
+    Object.assign(process.env, production);
+    vi.mocked(getOrderById).mockResolvedValueOnce({ stockAttemptId: "stock-attempt-fixture" } as any);
+    vi.mocked(getUserById).mockResolvedValueOnce({ name: "Synthetic", email: "buyer@example.invalid", cpf: "11111111111" } as any);
+    vi.mocked(getUserPhoneById).mockResolvedValueOnce(null as any);
+    vi.mocked(createAsaasStockChargeForOrder).mockRejectedValueOnce(new AsaasRequestFailure("payment_create", "provider_rejection", true, 400));
+    const { createConfiguredStockAsaasProvider } = await import("./configuredStockAsaasProvider");
+    const configuredProvider = createConfiguredStockAsaasProvider();
+    const reference = `L4CKOS-STOCK-ATTEMPT:v1:${"C".repeat(32)}`;
+
+    await expect(configuredProvider.createPayment({
+      orderId: "12345", amountCents: 1000, idempotencyKey: `stock:12345:${"C".repeat(32)}`, externalReference: reference,
+    })).rejects.toMatchObject({
+      name: "StockProviderError", definitelyNotCreated: true, phase: "payment_create", category: "provider_rejection", httpStatus: 400,
+    });
+    expect(createAsaasStockChargeForOrder).toHaveBeenCalledOnce();
   });
 });

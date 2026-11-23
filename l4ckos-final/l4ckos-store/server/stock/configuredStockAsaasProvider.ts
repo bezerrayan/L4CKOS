@@ -1,5 +1,5 @@
 import { getOrderById, getUserById, getUserPhoneById } from "../db";
-import { createAsaasChargeForOrder } from "../services/asaas";
+import { createAsaasStockChargeForOrder } from "../services/asaas";
 import { createProductionAsaasStockPaymentProvider, createSandboxAsaasStockPaymentProvider } from "./asaasStockPaymentProvider";
 import { isProductionStockRuntimeIdentity } from "../_core/productionFinancialPolicy";
 
@@ -20,7 +20,7 @@ export function createConfiguredStockAsaasProvider() {
       };
     },
     createCharge: async args => {
-      const result = await createAsaasChargeForOrder(args);
+      const result = await createAsaasStockChargeForOrder(args);
       return { paymentId: result.paymentId, checkoutUrl: result.invoiceUrl, customerId: result.customerId ?? null };
     },
   });

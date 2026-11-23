@@ -1,4 +1,6 @@
 import type { StockPaymentProvider } from "./stockCheckout";
+import { StockProviderError, type StockProviderErrorCategory, type StockProviderPhase } from "./stockProviderError";
+import { AsaasRequestFailure } from "../services/asaasRequestFailure";
 import { parseStockPaymentReference } from "./stockPaymentReference";
 import { isFinancialSandboxPhase, resolveFinancialPhasePolicy } from "../_core/financialPhasePolicy";
 import { ASAAS_PRODUCTION_CHECKOUT_HOST, assertProductionStockPolicy } from "../_core/productionFinancialPolicy";
@@ -58,35 +60,69 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
   return {
     supportsIdempotencyKey: false,
     async createPayment({ orderId, amountCents, idempotencyKey, externalReference }) {
-      mode.assertConfiguration(environment);
+      try {
+        mode.assertConfiguration(environment);
+      } catch {
+        const code = environment.STOCK_ASAAS_MODE === "production"
+          ? "STOCK_ASAAS_PRODUCTION_CONFIGURATION_INVALID"
+          : "STOCK_ASAAS_CONFIGURATION_INVALID";
+        throw new StockProviderError(code, true, { phase: "preflight", category: "configuration" });
+      }
       const referenceToken = externalReference ? (parseStockPaymentReference(externalReference).kind === "strong" ? externalReference.slice(externalReference.lastIndexOf(":") + 1) : null) : "";
-      if (referenceToken === null) throw new Error("STOCK_PAYMENT_REFERENCE_INVALID"); // a non-strong custom reference is never accepted
-      if (idempotencyKey !== (referenceToken ? `stock:${orderId}:${referenceToken}` : `stock:${orderId}`)) throw new Error("STOCK_PAYMENT_KEY_MISMATCH");
+      if (referenceToken === null) throw new StockProviderError("STOCK_PAYMENT_REFERENCE_INVALID", true, { phase: "preflight", category: "invalid_request" }); // a non-strong custom reference is never accepted
+      if (idempotencyKey !== (referenceToken ? `stock:${orderId}:${referenceToken}` : `stock:${orderId}`)) throw new StockProviderError("STOCK_PAYMENT_KEY_MISMATCH", true, { phase: "preflight", category: "invalid_request" });
       const numericOrderId = Number(orderId);
-      if (!Number.isSafeInteger(numericOrderId) || numericOrderId <= 0) throw new Error("STOCK_ORDER_ID_INVALID");
-      if (!Number.isSafeInteger(amountCents) || amountCents <= 0) throw new Error("STOCK_PAYMENT_AMOUNT_INVALID");
+      if (!Number.isSafeInteger(numericOrderId) || numericOrderId <= 0) throw new StockProviderError("STOCK_ORDER_ID_INVALID", true, { phase: "preflight", category: "invalid_request" });
+      if (!Number.isSafeInteger(amountCents) || amountCents <= 0) throw new StockProviderError("STOCK_PAYMENT_AMOUNT_INVALID", true, { phase: "preflight", category: "invalid_request" });
 
-      const buyer = await input.loadBuyer(orderId);
+      let buyer: StockAsaasBuyer | null;
+      try {
+        buyer = await input.loadBuyer(orderId);
+      } catch {
+        throw new StockProviderError("STOCK_PAYMENT_BUYER_LOOKUP_FAILED", true, { phase: "buyer_lookup", category: "unknown" });
+      }
       if (!buyer?.name.trim() || !buyer.email.trim() || !buyer.cpfCnpj.trim()) {
-        throw new Error("STOCK_PAYMENT_BUYER_INCOMPLETE");
+        throw new StockProviderError("STOCK_PAYMENT_BUYER_INCOMPLETE", true, { phase: "buyer_lookup", category: "invalid_request" });
       }
-      const charge = await input.createCharge({
-        orderId: numericOrderId,
-        value: amountCents / 100,
-        method: "PIX",
-        customer: buyer,
-        description: `Pedido STOCK #${numericOrderId}`,
-        ...(externalReference ? { externalReference } : {}),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!charge.paymentId.trim() || !mode.isCheckoutUrl(charge.checkoutUrl)) {
-        // The remote charge may exist. Let the caller persist an ambiguous state;
-        // never make a second create request to try to repair the response.
-        throw new Error("STOCK_PAYMENT_RESPONSE_INCOMPLETE");
+      let charge: StockAsaasChargeResult;
+      try {
+        charge = await input.createCharge({
+          orderId: numericOrderId,
+          value: amountCents / 100,
+          method: "PIX",
+          customer: buyer,
+          description: `Pedido STOCK #${numericOrderId}`,
+          ...(externalReference ? { externalReference } : {}),
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch (error) {
+        if (error instanceof AsaasRequestFailure) {
+          const phase = toStockPhase(error.phase);
+          const category = toStockCategory(error.category);
+          throw new StockProviderError("STOCK_ASAAS_REQUEST_FAILED", error.definitelyNotCreated, {
+            phase, category, ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}),
+          });
+        }
+        // Untyped exceptions around the financial adapter could be post-POST. Keep them ambiguous.
+        throw new StockProviderError("STOCK_ASAAS_OUTCOME_UNKNOWN", false, { phase: "payment_create", category: "unknown" });
       }
-      return { paymentId: charge.paymentId, checkoutUrl: charge.checkoutUrl, customerId: charge.customerId ?? null };
+      if (typeof charge.paymentId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(charge.paymentId.trim())) {
+        throw new StockProviderError("STOCK_PAYMENT_RESPONSE_INCOMPLETE", false, { phase: "payment_create", category: "invalid_response" });
+      }
+      const checkoutUrl = mode.isCheckoutUrl(charge.checkoutUrl) ? charge.checkoutUrl : null;
+      if (!checkoutUrl) console.warn("[StockPayment] checkout_url_unavailable", { phase: "payment_create", category: "invalid_response" });
+      // A valid provider ID must survive missing/invalid checkout URL; caller persists the correlation and never recreates.
+      return { paymentId: charge.paymentId, checkoutUrl, customerId: charge.customerId ?? null };
     },
   };
+}
+
+function toStockPhase(phase: AsaasRequestFailure["phase"]): StockProviderPhase {
+  return phase;
+}
+
+function toStockCategory(category: AsaasRequestFailure["category"]): StockProviderErrorCategory {
+  return category;
 }
 
 function isSandboxCheckoutUrl(value: string | null): value is string {

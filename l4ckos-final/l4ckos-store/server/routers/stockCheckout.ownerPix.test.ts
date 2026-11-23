@@ -44,7 +44,7 @@ describe("STOCK routes keep public checkout closed during the owner PIX test", (
     await expect(caller.quoteShipping({ items: [{ productId: 4, variantId: 8, quantity: 1 }], address })).resolves.toEqual([{ optionId: "quote" }]);
     const created = await caller.create(checkoutInput as any);
     expect(created.attemptId).toBe(ATTEMPT);
-    expect(runtime.checkoutOwnerPixTest).toHaveBeenCalledWith(checkoutInput, expect.objectContaining(OWNER));
+    expect(runtime.checkoutOwnerPixTest).toHaveBeenCalledWith({ ...checkoutInput, attemptId: ATTEMPT }, expect.objectContaining(OWNER));
     expect(runtime.checkout).not.toHaveBeenCalled();
   });
 
@@ -71,10 +71,17 @@ describe("STOCK routes keep public checkout closed during the owner PIX test", (
   it("resumes only the configured owner attempt while public checkout remains closed", async () => {
     const { caller, runtime } = setup(OWNER);
     await expect(caller.resume({ attemptId: ATTEMPT })).resolves.toMatchObject({ attemptId: ATTEMPT, checkoutUrl: "https://pay.invalid/owner" });
-    await expect(caller.resume({ attemptId: "some-other-attempt-00000001" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Browser IDs are ignored under the closed-store owner read gate; only the server-configured ID reaches storage.
+    await expect(caller.resume({ attemptId: "some-other-attempt-00000001" })).resolves.toMatchObject({ attemptId: ATTEMPT, checkoutUrl: "https://pay.invalid/owner" });
+    const items = [{ productId: 4, variantId: 8, quantity: 1 }];
+    await expect(caller.resume({ attemptId: "browser-local-attempt-00000001", items })).resolves.toMatchObject({ attemptId: ATTEMPT, checkoutUrl: "https://pay.invalid/owner" });
     await expect(caller.resumeLatest()).resolves.toMatchObject({ attemptId: ATTEMPT, checkoutUrl: "https://pay.invalid/owner" });
+    await expect(caller.resumeLatest({ items })).resolves.toMatchObject({ attemptId: ATTEMPT, checkoutUrl: "https://pay.invalid/owner" });
     expect(runtime.resume).toHaveBeenNthCalledWith(1, OWNER.id, ATTEMPT);
     expect(runtime.resume).toHaveBeenNthCalledWith(2, OWNER.id, ATTEMPT);
+    expect(runtime.resume).toHaveBeenNthCalledWith(3, OWNER.id, ATTEMPT, items);
+    expect(runtime.resume).toHaveBeenNthCalledWith(4, OWNER.id, ATTEMPT);
+    expect(runtime.resume).toHaveBeenNthCalledWith(5, OWNER.id, ATTEMPT, items);
     expect(runtime.resumeLatest).not.toHaveBeenCalled();
   });
 
@@ -97,19 +104,33 @@ describe("STOCK routes keep public checkout closed during the owner PIX test", (
     expect(runtime.resume).not.toHaveBeenCalled();
   });
 
-  it("blocks an expired authorization without querying or returning a payment URL", async () => {
+  it("keeps read-only owner recovery available after the create authorization expires", async () => {
     const { caller, runtime } = setup(OWNER, { OWNER_PIX_TEST_EXPIRES_AT: new Date(Date.now() - 1000).toISOString() });
-    await expect(caller.resume({ attemptId: ATTEMPT })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(caller.resumeLatest()).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(runtime.resume).not.toHaveBeenCalled();
+    await expect(caller.create(checkoutInput as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.resume({ attemptId: "client-controlled-attempt-0001" })).resolves.toMatchObject({ attemptId: ATTEMPT });
+    await expect(caller.resumeLatest()).resolves.toMatchObject({ attemptId: ATTEMPT });
+    expect(runtime.resume).toHaveBeenCalledTimes(2);
     expect(runtime.resumeLatest).not.toHaveBeenCalled();
+    expect(runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
   });
 
-  it("blocks owner resume when the configured financial limit is invalid", async () => {
+  it("keeps read-only owner recovery independent of the create amount limit", async () => {
     const { caller, runtime } = setup(OWNER, { OWNER_PIX_TEST_MAX_AMOUNT_CENTS: "0" });
-    await expect(caller.resumeLatest()).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(runtime.resume).not.toHaveBeenCalled();
+    await expect(caller.create(checkoutInput as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.resumeLatest()).resolves.toMatchObject({ attemptId: ATTEMPT });
+    expect(runtime.resume).toHaveBeenCalledWith(OWNER.id, ATTEMPT);
     expect(runtime.resumeLatest).not.toHaveBeenCalled();
+    expect(runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
+  });
+
+  it("allows exact owner read recovery when the temporary PIX gate is disabled, without opening checkout", async () => {
+    const { caller, runtime } = setup(OWNER, { OWNER_PIX_TEST_ENABLED: "false" });
+    await expect(caller.create(checkoutInput as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.resume({ attemptId: "browser-local-attempt-00000001" })).resolves.toMatchObject({ attemptId: ATTEMPT });
+    await expect(caller.resumeLatest()).resolves.toMatchObject({ attemptId: ATTEMPT });
+    expect(runtime.resume).toHaveBeenCalledTimes(2);
+    expect(runtime.resumeLatest).not.toHaveBeenCalled();
+    expect(runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
   });
 
   it("keeps the owner exception unavailable if any public or runtime checkout flag is enabled", async () => {

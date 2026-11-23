@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveOwnerPixTestAuthorization } from "./ownerPixTestGate";
+import { resolveOwnerPixTestAuthorization, resolveOwnerPixTestReadAuthorization } from "./ownerPixTestGate";
 
 const now = Date.parse("2026-11-19T12:00:00.000Z");
 const env = () => ({
@@ -54,5 +54,34 @@ describe("temporary owner PIX test admission", () => {
     ["regular user", { ...owner, role: "user" }],
   ])("rejects %s", (_case, actor) => {
     expect(resolveOwnerPixTestAuthorization(actor, env(), now)).toBeNull();
+  });
+});
+
+describe("owner PIX read-only recovery authorization", () => {
+  it("allows only the configured owner to read the pinned attempt after the create window closes", () => {
+    expect(resolveOwnerPixTestReadAuthorization(owner, {
+      ...env(),
+      OWNER_PIX_TEST_ENABLED: "false",
+      OWNER_PIX_TEST_EXPIRES_AT: "2026-11-19T11:59:00.000Z",
+      OWNER_PIX_TEST_MAX_AMOUNT_CENTS: "invalid-for-create",
+    })).toEqual({ attemptId: "owner-pix-single-attempt-20261119-001" });
+  });
+
+  it.each([
+    ["wrong production service", { RAILWAY_SERVICE_ID: "wrong" }],
+    ["public checkout open", { PUBLIC_CHECKOUT_ENABLED: "true" }],
+    ["stock checkout open", { STOCK_CHECKOUT_ENABLED: "true" }],
+    ["wrong site mode", { PUBLIC_SITE_MODE: "store" }],
+    ["missing attempt", { OWNER_PIX_TEST_ATTEMPT_ID: "" }],
+    ["wrong owner identity", { OWNER_OPEN_ID: "other-owner" }],
+  ] as const)("fails closed for %s", (_case, overrides) => {
+    expect(resolveOwnerPixTestReadAuthorization(owner, { ...env(), ...overrides })).toBeNull();
+  });
+
+  it.each([
+    ["another admin", { ...owner, id: 72, openId: "other" }],
+    ["a non-admin owner account", { ...owner, role: "user" }],
+  ])("rejects %s", (_case, actor) => {
+    expect(resolveOwnerPixTestReadAuthorization(actor, env())).toBeNull();
   });
 });

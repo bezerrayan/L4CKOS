@@ -376,7 +376,7 @@ describe("Pagamento — resume safety with a full cart (localStorage lost / othe
     mountPagamento({ attempt: { status: "pending" } });
     const status = await screen.findByRole("status");
     expect(status.getAttribute("data-stock-status")).toBe("pending");
-    expect(resume).toHaveBeenCalledWith({ attemptId: ATTEMPT });
+    expect(resume).toHaveBeenCalledWith({ attemptId: ATTEMPT, items: ITEMS });
     expect(create).not.toHaveBeenCalled();
   });
 });
