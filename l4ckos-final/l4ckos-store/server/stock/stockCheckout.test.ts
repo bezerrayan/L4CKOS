@@ -54,6 +54,10 @@ class MemoryStockStore implements StockCheckoutStore {
         }));
       },
       findAttempt: async id => this.attempts.get(id) ?? null,
+      findAttemptByPaymentReference: async reference =>
+        [...this.attempts.values()].find(attempt =>
+          reference === `L4CKOS-STOCK-ATTEMPT:v1:${"A".repeat(32)}`
+        ) ?? null,
       findOpenAttemptsForOwner: async ownerUserId => [...this.attempts.values()].filter(attempt => attempt.ownerUserId === ownerUserId && attempt.status === "reserved"),
       findVariant: async id => this.variants.get(id) ?? null,
       isSkuUnique: async (sku, variantId) => ![...this.variants.values()].some(row => row.id !== variantId && row.sku.normalize("NFKC").trim().toLowerCase() === sku.normalize("NFKC").trim().toLowerCase()),
@@ -192,6 +196,7 @@ function sendWebhook(input: {
   status: "pending" | "paid" | "failed";
   amountCents: number;
   payload: unknown;
+  strongReference?: string;
 }) {
   const { signatureVerified, store, ...event } = input;
   return processSignedStockWebhook({
@@ -525,5 +530,29 @@ describe("local STOCK checkout core", () => {
     expect(await sendWebhook({ ...base, eventId: "evt-fail-1", payload: 1 })).toBe("processed");
     expect(store.reserved.get(8)).toBe(0);
     expect(store.attempts.get("attempt-failed-00001")?.status).toBe("released");
+  });
+
+  it("rejects a late payment for a released ambiguous attempt without consuming inventory", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const payments = provider(async () => { throw new Error("timeout"); });
+    payments.supportsIdempotencyKey = false;
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-owner-pix-close-late-001") }))
+      .rejects.toMatchObject({ code: "CHECKOUT_PROVIDER_OUTCOME_UNKNOWN" });
+
+    const attempt = store.attempts.get("attempt-owner-pix-close-late-001")!;
+    attempt.status = "released";
+    attempt.providerState = "ambiguous";
+    attempt.paymentId = null;
+    store.reserved.set(8, 0); // Mirrors the one-time supervised release under test.
+    const before = { status: attempt.status, providerState: attempt.providerState, paymentId: attempt.paymentId, reserved: store.reserved.get(8) };
+    const strongReference = `L4CKOS-STOCK-ATTEMPT:v1:${"A".repeat(32)}`;
+
+    await expect(sendWebhook({
+      signatureVerified: true, store, eventId: "evt-owner-pix-late-synthetic", orderId: strongReference,
+      paymentId: "pay-late-synthetic", status: "paid", amountCents: 12900, payload: { id: "evt-owner-pix-late-synthetic" },
+      strongReference,
+    })).resolves.toBe("conflict");
+    expect({ status: attempt.status, providerState: attempt.providerState, paymentId: attempt.paymentId, reserved: store.reserved.get(8) }).toEqual(before);
+    expect([...store.divergences.values()]).toContainEqual(expect.objectContaining({ kind: "PAYMENT_WITHOUT_CORRELATION" }));
   });
 });
