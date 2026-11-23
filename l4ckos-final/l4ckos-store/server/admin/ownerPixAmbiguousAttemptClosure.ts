@@ -82,6 +82,13 @@ type OrderRow = DbRow & {
 const fail = (code: string): never => {
   throw new OwnerPixClosureError(code);
 };
+function readLock(
+  mode: OwnerPixClosureMode,
+  strength: "exclusive" | "shared" = "shared"
+): string {
+  if (mode !== "apply") return "";
+  return strength === "exclusive" ? " FOR UPDATE" : " FOR SHARE";
+}
 const n = (value: unknown): number => {
   const valueAsNumber = Number(value);
   if (!Number.isSafeInteger(valueAsNumber))
@@ -159,7 +166,8 @@ async function assertTables(connection: PoolConnection): Promise<Set<string>> {
 
 async function readAttempt(
   connection: PoolConnection,
-  attemptId: string
+  attemptId: string,
+  mode: OwnerPixClosureMode
 ): Promise<AttemptRow> {
   const [attempt] = await rows<AttemptRow>(
     connection,
@@ -168,7 +176,7 @@ async function readAttempt(
             (expiryReviewedAt IS NOT NULL) AS expiryReviewed,
             (reconciliationRequiredAt IS NOT NULL) AS reconciliationRequired,
             (createdAt <= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ${MAX_IN_FLIGHT_AGE_SECONDS} SECOND)) AS oldEnough
-       FROM stockCheckoutAttempts WHERE attemptId = ? FOR UPDATE`,
+       FROM stockCheckoutAttempts WHERE attemptId = ?${readLock(mode, "exclusive")}`,
     [attemptId]
   );
   if (!attempt) fail("OWNER_PIX_CLOSE_ATTEMPT_NOT_FOUND");
@@ -177,11 +185,12 @@ async function readAttempt(
 
 async function readOwner(
   connection: PoolConnection,
-  ownerOpenId: string
+  ownerOpenId: string,
+  mode: OwnerPixClosureMode
 ): Promise<number> {
   const owners = await rows<DbRow & { id: number | string }>(
     connection,
-    `SELECT id FROM users WHERE openId = ? AND role = ? AND isBlocked = 0 ORDER BY id LIMIT 2 FOR UPDATE`,
+    `SELECT id FROM users WHERE openId = ? AND role = ? AND isBlocked = 0 ORDER BY id LIMIT 2${readLock(mode)}`,
     [ownerOpenId, EXPECTED.ownerRole]
   );
   if (owners.length !== 1) fail("OWNER_PIX_CLOSE_AUTHORIZED_OWNER_NOT_UNIQUE");
@@ -191,13 +200,14 @@ async function readOwner(
 async function readOrder(
   connection: PoolConnection,
   orderId: number,
-  fulfillmentColumn: boolean
+  fulfillmentColumn: boolean,
+  mode: OwnerPixClosureMode
 ): Promise<OrderRow> {
   const fulfillment = fulfillmentColumn ? ", fulfillmentStatus" : "";
   const [order] = await rows<OrderRow>(
     connection,
     `SELECT id, userId, stockAttemptId, stockPaymentId, asaasCheckoutId, status, paymentStatus, totalPrice${fulfillment}
-       FROM orders WHERE id = ? FOR UPDATE`,
+       FROM orders WHERE id = ?${readLock(mode, "exclusive")}`,
     [orderId]
   );
   if (!order) fail("OWNER_PIX_CLOSE_ORDER_NOT_FOUND");
@@ -211,17 +221,18 @@ async function assertNoFinancialOrWebhookEvidence(
     orderId: number;
     paymentReference: string;
     tables: Set<string>;
+    mode: OwnerPixClosureMode;
   }
 ): Promise<void> {
   const payments = await rows<DbRow>(
     connection,
-    `SELECT id FROM payments WHERE orderId = ? FOR UPDATE`,
+    `SELECT orderId FROM payments WHERE orderId = ?${readLock(input.mode)}`,
     [input.orderId]
   );
   if (payments.length) fail("OWNER_PIX_CLOSE_PAYMENT_ROW_FOUND");
   const paymentsByStrongReference = await rows<DbRow>(
     connection,
-    `SELECT id FROM payments WHERE externalReference = ? FOR UPDATE`,
+    `SELECT externalReference FROM payments WHERE externalReference = ?${readLock(input.mode)}`,
     [input.paymentReference]
   );
   if (paymentsByStrongReference.length)
@@ -230,7 +241,7 @@ async function assertNoFinancialOrWebhookEvidence(
   if (input.tables.has("paymentEvents")) {
     const paymentEvents = await rows<DbRow>(
       connection,
-      `SELECT id FROM paymentEvents WHERE orderId = ? FOR UPDATE`,
+      `SELECT id FROM paymentEvents WHERE orderId = ?${readLock(input.mode)}`,
       [input.orderId]
     );
     if (paymentEvents.length) fail("OWNER_PIX_CLOSE_PAYMENT_EVENT_FOUND");
@@ -238,7 +249,7 @@ async function assertNoFinancialOrWebhookEvidence(
 
   const asaasEvents = await rows<DbRow>(
     connection,
-    `SELECT id FROM asaasWebhookEvents WHERE orderId = ? FOR UPDATE`,
+    `SELECT id FROM asaasWebhookEvents WHERE orderId = ?${readLock(input.mode)}`,
     [input.orderId]
   );
   if (asaasEvents.length) fail("OWNER_PIX_CLOSE_ASAAS_EVENT_FOUND");
@@ -299,8 +310,16 @@ async function inspectAndValidate(
   const orderColumns = await columnsFor(connection, "orders");
   const fulfillColumn = orderColumns.has("fulfillmentStatus");
 
-  const ownerUserId = await readOwner(connection, input.ownerOpenId);
-  const attempt = await readAttempt(connection, input.attemptId);
+  const ownerUserId = await readOwner(
+    connection,
+    input.ownerOpenId,
+    input.mode
+  );
+  const attempt = await readAttempt(
+    connection,
+    input.attemptId,
+    input.mode
+  );
   const orderId = n(attempt.orderId);
 
   const expectedOperationId = input.auditReference
@@ -346,7 +365,12 @@ async function inspectAndValidate(
   )
     fail("OWNER_PIX_CLOSE_ATTEMPT_FINANCIAL_STATE_MISMATCH");
 
-  const order = await readOrder(connection, orderId, fulfillColumn);
+  const order = await readOrder(
+    connection,
+    orderId,
+    fulfillColumn,
+    input.mode
+  );
   if (
     n(order.userId) !== ownerUserId ||
     order.stockAttemptId !== input.attemptId ||
@@ -446,7 +470,7 @@ async function inspectAndValidate(
     >(
       connection,
       `SELECT id, orderId, userId, productId, variantId, quantity, status
-         FROM stockReservations WHERE attemptId = ? ORDER BY id FOR UPDATE`,
+         FROM stockReservations WHERE attemptId = ? ORDER BY id${readLock(input.mode)}`,
       [input.attemptId]
     );
     if (
@@ -468,7 +492,7 @@ async function inspectAndValidate(
       }
     >(
       connection,
-      `SELECT productId, stock, reservedStock FROM productVariants WHERE id = ? FOR UPDATE`,
+      `SELECT productId, stock, reservedStock FROM productVariants WHERE id = ?${readLock(input.mode)}`,
       [EXPECTED.variantId]
     );
     if (
@@ -484,6 +508,7 @@ async function inspectAndValidate(
       orderId,
       paymentReference,
       tables,
+      mode: input.mode,
     });
     return {
       orderId,
@@ -506,7 +531,7 @@ async function inspectAndValidate(
     }
   >(
     connection,
-    `SELECT id, productId, variantId, quantity, unitPrice, totalPrice FROM orderItems WHERE orderId = ? ORDER BY id FOR UPDATE`,
+    `SELECT id, productId, variantId, quantity, unitPrice, totalPrice FROM orderItems WHERE orderId = ? ORDER BY id${readLock(input.mode)}`,
     [orderId]
   );
   const snapshots = await rows<
@@ -519,7 +544,7 @@ async function inspectAndValidate(
     }
   >(
     connection,
-    `SELECT productId, variantId, quantity, unitPriceCents, totalCents FROM stockCheckoutItems WHERE attemptId = ? ORDER BY lineNumber FOR UPDATE`,
+    `SELECT productId, variantId, quantity, unitPriceCents, totalCents FROM stockCheckoutItems WHERE attemptId = ? ORDER BY lineNumber${readLock(input.mode)}`,
     [input.attemptId]
   );
   if (items.length !== 1 || snapshots.length !== 1)
@@ -558,7 +583,7 @@ async function inspectAndValidate(
     connection,
     `SELECT id, orderId, userId, productId, attemptId, variantId, orderItemId, quantity, status,
             (expiresAt <= UTC_TIMESTAMP(3)) AS expired
-       FROM stockReservations WHERE attemptId = ? ORDER BY id FOR UPDATE`,
+       FROM stockReservations WHERE attemptId = ? ORDER BY id${readLock(input.mode, "exclusive")}`,
     [input.attemptId]
   );
   if (allReservations.length !== 1)
@@ -584,7 +609,7 @@ async function inspectAndValidate(
     }
   >(
     connection,
-    `SELECT id, attemptId, quantity FROM stockReservations WHERE variantId = ? AND status = 'active' ORDER BY id FOR UPDATE`,
+    `SELECT id, attemptId, quantity FROM stockReservations WHERE variantId = ? AND status = 'active' ORDER BY id${readLock(input.mode, "exclusive")}`,
     [EXPECTED.variantId]
   );
   if (
@@ -605,7 +630,7 @@ async function inspectAndValidate(
     }
   >(
     connection,
-    `SELECT id, productId, stock, reservedStock FROM productVariants WHERE id = ? FOR UPDATE`,
+    `SELECT id, productId, stock, reservedStock FROM productVariants WHERE id = ?${readLock(input.mode, "exclusive")}`,
     [EXPECTED.variantId]
   );
   if (
@@ -635,6 +660,7 @@ async function inspectAndValidate(
     orderId,
     paymentReference,
     tables,
+    mode: input.mode,
   });
   if (input.mode === "status")
     return {

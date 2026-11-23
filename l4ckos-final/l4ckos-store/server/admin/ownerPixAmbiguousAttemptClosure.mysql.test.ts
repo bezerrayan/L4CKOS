@@ -11,7 +11,7 @@ const isolatedNetworkMode =
   process.env.OWNER_PIX_CLOSE_MYSQL_NETWORK_MODE ?? "";
 const host = process.env.OWNER_PIX_CLOSE_MYSQL_HOST ?? "";
 const port = Number(process.env.OWNER_PIX_CLOSE_MYSQL_PORT ?? 0);
-const database = "l4ckos_owner_pix_close_test";
+const database = process.env.OWNER_PIX_CLOSE_MYSQL_DATABASE ?? "";
 const attemptId = "synthetic-owner-pix-ambiguous-attempt-0001";
 const ownerOpenId = "synthetic-owner-admin";
 const auditReference = "owner-review-synthetic-2026-11-23";
@@ -30,11 +30,62 @@ const applyInput = () => ({
 });
 
 function assertDisposableNetworkTarget() {
-  if (isolatedNetworkMode !== "none" || host !== "127.0.0.1" || port !== 3306) {
+  const loopbackTarget =
+    host === "127.0.0.1" &&
+    Number.isInteger(port) &&
+    port >= 32768 &&
+    port <= 65535;
+  const uniqueSyntheticDatabase =
+    /^l4ckos_owner_pix_close_test_[a-f0-9]{12}$/.test(database);
+  if (
+    isolatedNetworkMode !== "local-loopback" ||
+    !loopbackTarget ||
+    !uniqueSyntheticDatabase
+  ) {
     throw new Error(
-      "Owner PIX closure integration requires the isolated Docker network-none namespace"
+      "Owner PIX closure integration requires a unique synthetic database on a local loopback port"
     );
   }
+}
+
+function disposableConnectionTarget() {
+  return { host, port };
+}
+
+function recordingPool(source: Pool, statements: string[], transactions: string[]) {
+  return {
+    async getConnection() {
+      const connection = await source.getConnection();
+      return new Proxy(connection, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          if (property === "query" || property === "execute") {
+            return (...args: unknown[]) => {
+              if (typeof args[0] === "string") statements.push(args[0]);
+              return (value as (...values: unknown[]) => unknown).apply(
+                target,
+                args
+              );
+            };
+          }
+          if (
+            property === "beginTransaction" ||
+            property === "rollback" ||
+            property === "commit"
+          ) {
+            return (...args: unknown[]) => {
+              transactions.push(String(property));
+              return (value as (...values: unknown[]) => unknown).apply(
+                target,
+                args
+              );
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+  } as Pool;
 }
 
 async function hasTable(name: string): Promise<boolean> {
@@ -150,14 +201,13 @@ async function count(sql: string, values: unknown[] = []) {
   return Number(rows[0]?.n ?? 0);
 }
 
-describe.skipIf(isolatedNetworkMode !== "none")(
+describe.skipIf(isolatedNetworkMode !== "local-loopback")(
   "owner PIX ambiguous attempt closure (disposable MySQL only)",
   () => {
     beforeAll(async () => {
       assertDisposableNetworkTarget();
       pool = createPool({
-        host,
-        port,
+        ...disposableConnectionTarget(),
         user: "root",
         database,
         connectionLimit: 6,
@@ -205,6 +255,153 @@ describe.skipIf(isolatedNetworkMode !== "none")(
           [attemptId]
         )
       ).toBe(1);
+    });
+
+    it("uses only granted read privileges for inspection and applies under restricted row locks", async () => {
+      const restrictedUser = "owner_pix_close_limited";
+      const restrictedHost = "%";
+      const restrictedPassword = "owner-pix-close-synthetic-only-20261123";
+      let restrictedPool: Pool | null = null;
+      try {
+        await pool.query(
+          `DROP USER IF EXISTS '${restrictedUser}'@'${restrictedHost}'`
+        );
+        await pool.query(
+          `CREATE USER '${restrictedUser}'@'${restrictedHost}' IDENTIFIED BY '${restrictedPassword}'`
+        );
+        const selectTables = [
+          "users",
+          "orders",
+          "orderItems",
+          "productVariants",
+          "stockCheckoutAttempts",
+          "stockCheckoutItems",
+          "stockReservations",
+          "auditLogs",
+          "asaasWebhookInbox",
+          "asaasWebhookEvents",
+          "stockWebhookEvents",
+        ];
+        for (const table of selectTables) {
+          await pool.query(
+            `GRANT SELECT ON \`${database}\`.\`${table}\` TO '${restrictedUser}'@'${restrictedHost}'`
+          );
+        }
+        await pool.query(
+          `GRANT SELECT (orderId, externalReference) ON \`${database}\`.payments TO '${restrictedUser}'@'${restrictedHost}'`
+        );
+        await pool.query(
+          `GRANT UPDATE (status, releasedAt) ON \`${database}\`.stockCheckoutAttempts TO '${restrictedUser}'@'${restrictedHost}'`
+        );
+        await pool.query(
+          `GRANT UPDATE (status) ON \`${database}\`.stockReservations TO '${restrictedUser}'@'${restrictedHost}'`
+        );
+        await pool.query(
+          `GRANT UPDATE (reservedStock) ON \`${database}\`.productVariants TO '${restrictedUser}'@'${restrictedHost}'`
+        );
+        await pool.query(
+          `GRANT UPDATE (status, fulfillmentStatus) ON \`${database}\`.orders TO '${restrictedUser}'@'${restrictedHost}'`
+        );
+        await pool.query(
+          `GRANT INSERT ON \`${database}\`.auditLogs TO '${restrictedUser}'@'${restrictedHost}'`
+        );
+
+        restrictedPool = createPool({
+          ...disposableConnectionTarget(),
+          user: restrictedUser,
+          password: restrictedPassword,
+          database,
+          connectionLimit: 2,
+          waitForConnections: true,
+          queueLimit: 0,
+          multipleStatements: false,
+        });
+
+        const preflightStatements: string[] = [];
+        const preflightTransactions: string[] = [];
+        await expect(
+          closeOwnerPixAmbiguousAttempt(
+            recordingPool(
+              restrictedPool,
+              preflightStatements,
+              preflightTransactions
+            ),
+            { mode: "preflight", attemptId, ownerOpenId }
+          )
+        ).resolves.toMatchObject({ result: "ready" });
+        expect(preflightStatements.join("\n")).not.toMatch(
+          /\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE)\b/i
+        );
+        expect(preflightStatements.join("\n")).not.toMatch(
+          /\bFOR\s+(?:UPDATE|SHARE)\b/i
+        );
+        expect(preflightTransactions).toEqual(["beginTransaction", "rollback"]);
+
+        const statusStatements: string[] = [];
+        const statusTransactions: string[] = [];
+        await expect(
+          closeOwnerPixAmbiguousAttempt(
+            recordingPool(
+              restrictedPool,
+              statusStatements,
+              statusTransactions
+            ),
+            { mode: "status", attemptId, ownerOpenId, auditReference }
+          )
+        ).resolves.toMatchObject({ result: "commit_not_observed" });
+        expect(statusStatements.join("\n")).not.toMatch(
+          /\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE)\b/i
+        );
+        expect(statusStatements.join("\n")).not.toMatch(
+          /\bFOR\s+(?:UPDATE|SHARE)\b/i
+        );
+        expect(statusTransactions).toEqual(["beginTransaction", "rollback"]);
+
+        const applyStatements: string[] = [];
+        const applyTransactions: string[] = [];
+        await expect(
+          closeOwnerPixAmbiguousAttempt(
+            recordingPool(
+              restrictedPool,
+              applyStatements,
+              applyTransactions
+            ),
+            applyInput()
+          )
+        ).resolves.toMatchObject({ result: "closed", financialOutcome: "unknown" });
+        const hasLockOn = (table: string, mode: "UPDATE" | "SHARE") =>
+          applyStatements.some(
+            statement =>
+              statement.includes(`FROM ${table}`) &&
+              new RegExp(`\\bFOR\\s+${mode}\\b`, "i").test(statement)
+          );
+        for (const table of [
+          "stockCheckoutAttempts",
+          "orders",
+          "stockReservations",
+          "productVariants",
+        ]) {
+          expect(hasLockOn(table, "UPDATE")).toBe(true);
+        }
+        expect(hasLockOn("stockCheckoutItems", "SHARE")).toBe(true);
+        expect(hasLockOn("payments", "SHARE")).toBe(true);
+        expect(applyStatements.join("\n")).not.toMatch(
+          /SELECT\s+id\s+FROM\s+payments/i
+        );
+        expect(applyTransactions).toContain("commit");
+
+        expect(
+          await count(
+            "SELECT COUNT(*) n FROM auditLogs WHERE action=? AND entityId=?",
+            [OWNER_PIX_CLOSE_ACTION, attemptId]
+          )
+        ).toBe(1);
+      } finally {
+        if (restrictedPool) await restrictedPool.end();
+        await pool.query(
+          `DROP USER IF EXISTS '${restrictedUser}'@'${restrictedHost}'`
+        );
+      }
     });
 
     it("closes only the linked order and one reservation, records uncertainty, and is idempotent", async () => {
