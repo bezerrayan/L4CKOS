@@ -57,10 +57,10 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
     },
     resume(authenticatedUserId: number, attemptId: unknown, expectedItems?: unknown) {
       // Authenticated read-only lookup is available while payment creation remains gated.
-      return resumeStockCheckout({ store, authenticatedUserId, attemptId, expectedItems });
+      return resumeStockCheckout({ store, authenticatedUserId, attemptId, expectedItems, provider: input.provider });
     },
     resumeLatest(authenticatedUserId: number, expectedItems?: unknown) {
-      return resumeLatestStockCheckout({ store, authenticatedUserId, expectedItems });
+      return resumeLatestStockCheckout({ store, authenticatedUserId, expectedItems, provider: input.provider });
     },
     receiveWebhook(input: {
       rawBody: string;

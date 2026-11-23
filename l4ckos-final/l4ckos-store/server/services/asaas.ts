@@ -239,6 +239,18 @@ async function createAsaasCharge(input: {
   }
 }
 
+/**
+ * Read-only PIX QR/copy-paste lookup for an EXISTING charge (GET /payments/{id}/pixQrCode). It never creates or changes a
+ * charge, so a failure is always safe to retry. Returns null when Asaas has no usable payload.
+ */
+export async function fetchAsaasPixQrCode(paymentId: string, signal?: AbortSignal): Promise<{ qrCodeBase64: string | null; copyPaste: string | null } | null> {
+  if (!isValidPaymentId(paymentId)) return null;
+  const data = await asaasRequest<AsaasPixQrCodeResponse>(`/payments/${encodeURIComponent(paymentId.trim())}/pixQrCode`, { signal }, "pix_qr_lookup", true);
+  const image = typeof data?.encodedImage === "string" ? data.encodedImage.replace(/^data:image\/png;base64,/, "") : null;
+  const payload = typeof data?.payload === "string" ? data.payload : null;
+  return image || payload ? { qrCodeBase64: image || null, copyPaste: payload || null } : null;
+}
+
 /** Existing charge adapter. Its error contract is kept for non-STOCK callers. */
 export function createAsaasChargeForOrder(input: {
   orderId: number;

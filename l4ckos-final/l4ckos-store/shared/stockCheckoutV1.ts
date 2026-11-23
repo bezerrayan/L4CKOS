@@ -41,12 +41,24 @@ export const stockCheckoutHttpRequestV1Schema = stockCheckoutRequestV1Schema.ext
   delivery: stockDeliveryV1Schema,
 }).strict();
 
+/**
+ * Inline PIX instructions for a pending charge. Never persisted: the server fetches them from the provider by the stored
+ * payment id (read-only) and returns them on create/resume. Both parts are optional so a partial provider answer still helps.
+ */
+export const stockPixPaymentV1Schema = z.object({
+  /** Base64 PNG body (no `data:` prefix). */
+  qrCodeBase64: z.string().max(200_000).regex(/^[A-Za-z0-9+/\s]+={0,2}$/).optional(),
+  /** "Pix Copia e Cola" EMV payload (printable ASCII; the merchant-name field can legitimately contain spaces). */
+  copyPaste: z.string().min(10).max(2048).regex(/^[\x20-\x7E]+$/).optional(),
+}).strict().refine(value => Boolean(value.qrCodeBase64 || value.copyPaste), { message: "PIX payload is empty" });
+
 export const stockCheckoutResponseV1Schema = z.object({
   attemptId: z.string(),
   orderId: z.string(),
   status: z.enum(["pending", "paid", "reconciliation_required"]),
   paymentId: z.string().optional(),
   checkoutUrl: z.string().url().optional(),
+  pix: stockPixPaymentV1Schema.optional(),
   amountCents: z.number().int().nonnegative(),
   replayed: z.boolean(),
 }).strict();
@@ -57,11 +69,14 @@ export const stockAttemptResumeV1Schema = z.object({
   orderId: z.string().nullable(),
   paymentId: z.string().optional(),
   checkoutUrl: z.string().url().optional(),
+  // Tolerant on read: a malformed/unknown PIX block must never make the attempt itself unreadable.
+  pix: stockPixPaymentV1Schema.optional().catch(undefined),
   amountCents: z.number().int().nonnegative(),
   reservationExpiresAt: z.string().datetime(),
   canStartNewAttempt: z.boolean(),
 }).strict();
 
+export type StockPixPaymentV1 = z.infer<typeof stockPixPaymentV1Schema>;
 export type StockCheckoutItemV1 = z.infer<typeof stockCheckoutItemV1Schema>;
 export type StockDeliveryV1 = z.infer<typeof stockDeliveryV1Schema>;
 export type StockCarrierDeliveryV1 = z.infer<typeof stockCarrierDeliveryV1Schema>;

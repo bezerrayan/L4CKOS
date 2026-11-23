@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createStockCheckout as createStockCheckoutDomain,
   processSignedStockWebhook,
@@ -321,6 +321,48 @@ describe("local STOCK checkout core", () => {
     })).rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_CHANGED" });
     expect(payments.calls).toBe(1);
     expect(store.attempts.size).toBe(1);
+  });
+
+  it("returns inline PIX on create and re-reads it by the stored payment id on replay without a second charge", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const pix = { qrCodeBase64: "iVBORw0KGgo=", copyPaste: "00020126580014br.gov.bcb.pix0136synthetic" };
+    const payments = {
+      ...provider(async () => ({ paymentId: "pay-pix-1", checkoutUrl: "https://sandbox.example.test/pay/1", pix })),
+      getPixPayment: vi.fn(async () => pix),
+    };
+    const authorized = { enabled: true, ownerUserId: 71, store, provider: payments, maximumAmountCents: 25000 };
+    const first = await createStockCheckout({ ...authorized, request: request("attempt-pix-inline-0000001") });
+    expect(first.pix).toEqual(pix);
+    expect(payments.getPixPayment).not.toHaveBeenCalled();
+    // Unknown reservation TTL: fail closed (no lookup, no PIX).
+    const unknownTtl = await createStockCheckout({ ...authorized, request: request("attempt-pix-inline-0000001") });
+    expect(unknownTtl).toMatchObject({ replayed: true, paymentId: "pay-pix-1" });
+    expect(unknownTtl).not.toHaveProperty("pix");
+    expect(payments.getPixPayment).not.toHaveBeenCalled();
+    // Expired reservation: no PIX even though the worker has not released it yet.
+    store.attempts.get("attempt-pix-inline-0000001")!.reservationExpiresAt = new Date(Date.now() - 1000).toISOString();
+    expect(await createStockCheckout({ ...authorized, request: request("attempt-pix-inline-0000001") })).not.toHaveProperty("pix");
+    expect(payments.getPixPayment).not.toHaveBeenCalled();
+    // Valid reservation: re-read by the stored payment id only.
+    store.attempts.get("attempt-pix-inline-0000001")!.reservationExpiresAt = new Date(Date.now() + 600_000).toISOString();
+    const replay = await createStockCheckout({ ...authorized, request: request("attempt-pix-inline-0000001") });
+    expect(replay).toMatchObject({ replayed: true, paymentId: "pay-pix-1", pix });
+    expect(payments.getPixPayment).toHaveBeenCalledTimes(1);
+    expect(payments.getPixPayment).toHaveBeenCalledWith("pay-pix-1");
+    expect(payments.calls).toBe(1);
+  });
+
+  it("replays without pix (and without a new charge) when the PIX lookup fails", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const payments = { ...provider(), getPixPayment: vi.fn(async () => { throw new Error("asaas unavailable"); }) };
+    const authorized = { enabled: true, ownerUserId: 71, store, provider: payments, maximumAmountCents: 25000 };
+    await createStockCheckout({ ...authorized, request: request("attempt-pix-inline-0000002") });
+    store.attempts.get("attempt-pix-inline-0000002")!.reservationExpiresAt = new Date(Date.now() + 600_000).toISOString();
+    const replay = await createStockCheckout({ ...authorized, request: request("attempt-pix-inline-0000002") });
+    expect(replay).toMatchObject({ replayed: true, paymentId: "pay-1" });
+    expect(replay).not.toHaveProperty("pix");
+    expect(payments.getPixPayment).toHaveBeenCalledTimes(1);
+    expect(payments.calls).toBe(1);
   });
 
   it("accepts the V1 product/variant/quantity payload and snapshots dimensions from the server", async () => {

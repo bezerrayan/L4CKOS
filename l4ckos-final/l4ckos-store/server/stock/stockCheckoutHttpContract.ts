@@ -1,10 +1,11 @@
-import { stockAttemptResumeV1Schema, stockCheckoutRequestV1Schema, type StockAttemptResumeV1, type StockCheckoutRequestV1, type StockCheckoutResponseV1 } from "../../shared/stockCheckoutV1";
+import { stockAttemptResumeV1Schema, stockCheckoutRequestV1Schema, type StockAttemptResumeV1, type StockCheckoutRequestV1, type StockCheckoutResponseV1, type StockPixPaymentV1 } from "../../shared/stockCheckoutV1";
 import { resumeStockCheckout, StockCheckoutError, type StockCheckoutStore } from "./stockCheckout";
 
 export type StockCheckoutDomainResult = {
   orderId: string;
   paymentId: string;
   checkoutUrl: string | null;
+  pix?: StockPixPaymentV1;
   amountCents: number;
   replayed: boolean;
 };
@@ -25,6 +26,7 @@ export function toStockCheckoutResponseV1(
     status: "pending",
     paymentId: result.paymentId,
     ...(result.checkoutUrl ? { checkoutUrl: result.checkoutUrl } : {}),
+    ...(result.pix ? { pix: result.pix } : {}),
     amountCents: result.amountCents,
     replayed: result.replayed,
   };

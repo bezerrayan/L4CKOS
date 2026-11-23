@@ -1,4 +1,5 @@
 import type { StockPaymentProvider } from "./stockCheckout";
+import { stockPixPaymentV1Schema, type StockPixPaymentV1 } from "../../shared/stockCheckoutV1";
 import { StockProviderError, type StockProviderErrorCategory, type StockProviderPhase } from "./stockProviderError";
 import { AsaasRequestFailure } from "../services/asaasRequestFailure";
 import { parseStockPaymentReference } from "./stockPaymentReference";
@@ -18,6 +19,9 @@ export type StockAsaasBuyer = {
 export type StockAsaasChargeResult = {
   paymentId: string;
   checkoutUrl: string | null;
+  /** Raw PIX data when the charge adapter already obtained it (best effort; absent when the QR lookup failed). */
+  pixQrCode?: string | null;
+  pixCopyPaste?: string | null;
   /** Provider customer created for this charge (identifier only); persisted as the durable customer link. */
   customerId?: string | null;
 };
@@ -41,7 +45,24 @@ type StockProviderInput = {
     externalReference?: string;
     signal?: AbortSignal;
   }): Promise<StockAsaasChargeResult>;
+  /** Read-only PIX lookup for an existing charge. Never creates anything. */
+  getPixQrCode?(paymentId: string, signal?: AbortSignal): Promise<{ qrCodeBase64: string | null; copyPaste: string | null } | null>;
 };
+
+/** Normalizes provider PIX data to the strict wire shape; anything malformed is dropped (never trusted, never logged). */
+export function toStockPixPayment(qrCodeBase64: string | null | undefined, copyPaste: string | null | undefined): StockPixPaymentV1 | undefined {
+  const image = typeof qrCodeBase64 === "string" ? qrCodeBase64.replace(/^data:image\/png;base64,/, "").trim() : "";
+  const text = typeof copyPaste === "string" ? copyPaste.trim() : "";
+  const full = stockPixPaymentV1Schema.safeParse({ ...(image ? { qrCodeBase64: image } : {}), ...(text ? { copyPaste: text } : {}) });
+  if (full.success) return full.data;
+  // One malformed half must not discard the other.
+  for (const part of [text ? { copyPaste: text } : null, image ? { qrCodeBase64: image } : null]) {
+    if (!part) continue;
+    const parsed = stockPixPaymentV1Schema.safeParse(part);
+    if (parsed.success) return parsed.data;
+  }
+  return undefined;
+}
 type StockProviderMode = { assertConfiguration(environment: NodeJS.ProcessEnv): void; isCheckoutUrl(value: string | null): value is string };
 
 export function createSandboxAsaasStockPaymentProvider(input: StockProviderInput): StockPaymentProvider {
@@ -59,6 +80,17 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
 
   return {
     supportsIdempotencyKey: false,
+    async getPixPayment(paymentId, signal) {
+      if (!input.getPixQrCode) return null;
+      try {
+        const pix = await input.getPixQrCode(paymentId, signal ?? AbortSignal.timeout(10_000));
+        return pix ? toStockPixPayment(pix.qrCodeBase64, pix.copyPaste) ?? null : null;
+      } catch {
+        // Read-only and best effort: the Asaas link remains the fallback and nothing is created or retried.
+        console.warn("[StockPayment] pix_lookup_unavailable", { phase: "pix_qr_lookup" });
+        return null;
+      }
+    },
     async createPayment({ orderId, amountCents, idempotencyKey, externalReference }) {
       try {
         mode.assertConfiguration(environment);
@@ -112,7 +144,8 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
       const checkoutUrl = mode.isCheckoutUrl(charge.checkoutUrl) ? charge.checkoutUrl : null;
       if (!checkoutUrl) console.warn("[StockPayment] checkout_url_unavailable", { phase: "payment_create", category: "invalid_response" });
       // A valid provider ID must survive missing/invalid checkout URL; caller persists the correlation and never recreates.
-      return { paymentId: charge.paymentId, checkoutUrl, customerId: charge.customerId ?? null };
+      const pix = toStockPixPayment(charge.pixQrCode, charge.pixCopyPaste);
+      return { paymentId: charge.paymentId, checkoutUrl, customerId: charge.customerId ?? null, ...(pix ? { pix } : {}) };
     },
   };
 }

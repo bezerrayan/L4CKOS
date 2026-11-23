@@ -1,5 +1,5 @@
 import { getOrderById, getUserById, getUserPhoneById } from "../db";
-import { createAsaasStockChargeForOrder } from "../services/asaas";
+import { createAsaasStockChargeForOrder, fetchAsaasPixQrCode } from "../services/asaas";
 import { createProductionAsaasStockPaymentProvider, createSandboxAsaasStockPaymentProvider } from "./asaasStockPaymentProvider";
 import { isProductionStockRuntimeIdentity } from "../_core/productionFinancialPolicy";
 
@@ -21,7 +21,8 @@ export function createConfiguredStockAsaasProvider() {
     },
     createCharge: async args => {
       const result = await createAsaasStockChargeForOrder(args);
-      return { paymentId: result.paymentId, checkoutUrl: result.invoiceUrl, customerId: result.customerId ?? null };
+      return { paymentId: result.paymentId, checkoutUrl: result.invoiceUrl, customerId: result.customerId ?? null, pixQrCode: result.pixQrCode, pixCopyPaste: result.pixCopyPaste };
     },
+    getPixQrCode: (paymentId, signal) => fetchAsaasPixQrCode(paymentId, signal),
   });
 }
