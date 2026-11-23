@@ -24,6 +24,7 @@ import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } f
 import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/attemptStorage";
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
 import { StockAttemptRecovery } from "../components/StockAttemptRecovery";
+import { StockPixInstructions } from "../components/StockPixInstructions";
 import { authPageUrl } from "../utils/safeNext";
 import { buildShippingQuoteRequest, interpretShippingQuote, sanitizeCep, SHIPPING_UNAVAILABLE_MESSAGE, type ShippingOption, type ShippingQuoteResponse } from "../lib/shippingQuote";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
@@ -993,7 +994,7 @@ function PagamentoContent() {
               <p>{stockView.message}</p>
               {stockPaymentData.orderId ? <p>Pedido #{stockPaymentData.orderId}</p> : null}
               {stockPaymentData.amountCents > 0 ? <p>Total calculado pelo servidor: {formatPrice(stockPaymentData.amountCents / 100)}</p> : null}
-              {stockView.canContinuePayment && stockPaymentData.checkoutUrl ? <a href={stockPaymentData.checkoutUrl} target="_blank" rel="noreferrer">Continuar pagamento</a> : null}
+              {stockView.canContinuePayment ? <StockPixInstructions pix={stockPaymentData.pix} checkoutUrl={stockPaymentData.checkoutUrl} /> : null}
               {stockView.canRefresh ? <button type="button" onClick={() => void refreshStockAttempt()}>Atualizar status</button> : null}
             </section> : null}
           </main>

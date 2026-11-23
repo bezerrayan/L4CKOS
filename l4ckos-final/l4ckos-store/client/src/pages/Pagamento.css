@@ -115,6 +115,11 @@
 .l4-checkout-charge.is-warning { border-color: #8a6a1c; background: #1a150a; }
 .l4-checkout-charge.is-error { border-color: #e8002a; }
 .l4-checkout-charge p { margin: 0; font-size: 13px; line-height: 1.5; color: #d8d4cd; }
+.l4-checkout-pix { display: grid; gap: 10px; justify-items: start; }
+.l4-checkout-pix img { width: min(220px, 100%); height: auto; aspect-ratio: 1; padding: 8px; box-sizing: border-box; }
+.l4-checkout-pix textarea { width: 100%; box-sizing: border-box; resize: none; word-break: break-all; }
+.l4-checkout-pix-label { font-size: 12px; font-weight: 700; color: #d8d4cd; }
+.l4-checkout-pix-feedback { min-height: 1.2em; }
 .l4-checkout-charge button:focus-visible, .l4-checkout-charge a:focus-visible { outline: 2px solid #f0ede8; outline-offset: 3px; }
 @keyframes l4-checkout-reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 

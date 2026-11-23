@@ -28,6 +28,8 @@ export type StockAttemptViewInput = {
   canStartNewAttempt?: boolean;
   paymentId?: string;
   checkoutUrl?: string | null;
+  /** Inline PIX data (QR / copy-paste) returned by the server for a pending charge. */
+  pix?: unknown;
 };
 
 const BLOCKING: ReadonlySet<StockResumeStatus> = new Set(["reserved", "creating", "pending", "ambiguous", "paid"]);
@@ -53,10 +55,10 @@ export function describeStockAttempt(input: StockAttemptViewInput): StockAttempt
         ...base,
         tone: "pending",
         title: "Aguardando confirmação do pagamento",
-        message: input.paymentId?.trim() && !input.checkoutUrl
+        message: input.paymentId?.trim() && !input.checkoutUrl && !input.pix
           ? "A cobrança foi criada, mas o pagamento está indisponível para continuação neste momento. Não inicie outra tentativa; atualize o status ou contate o suporte."
           : "Seu pedido só será confirmado depois que o pagamento for aprovado. Isto pode levar alguns minutos.",
-        canContinuePayment: Boolean(input.checkoutUrl),
+        canContinuePayment: Boolean(input.checkoutUrl || input.pix),
       };
     case "ambiguous":
       return {
