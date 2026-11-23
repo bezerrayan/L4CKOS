@@ -206,9 +206,9 @@ export function saveStockAttemptStatus(input: {
 
 export type StockCheckoutTransport = {
   create(request: StockCheckoutRequestV1): Promise<unknown>;
-  resume(attemptId: string): Promise<unknown>;
+  resume(attemptId: string, items: readonly StockCheckoutItemV1[]): Promise<unknown>;
   /** Owner-scoped backend recovery when this browser has lost its attempt ID. */
-  resumeLatest?(): Promise<unknown>;
+  resumeLatest?(items: readonly StockCheckoutItemV1[]): Promise<unknown>;
 };
 
 /** Local client adapter only. The caller must keep enabled=false until the HTTP/schema gates are approved. */
@@ -253,7 +253,8 @@ export function createStockCheckoutClient(input: {
       }
       const response = stockCheckoutResponseV1Schema.parse(raw);
       const status: StockAttemptRecord["status"] = response.status === "reconciliation_required" ? "ambiguous" : response.status;
-      saveStockAttemptStatus({ storage: input.storage, items, attemptId, status, now: input.now?.(), canStartNewAttempt: false });
+      // The backend may replace the browser handle with the server-authorized owner attempt ID.
+      saveStockAttemptStatus({ storage: input.storage, items, attemptId: response.attemptId, status, now: input.now?.(), canStartNewAttempt: false });
       return response;
     },
     async resume(lines: readonly StockCartLine[]): Promise<StockAttemptResumeV1> {
@@ -264,28 +265,50 @@ export function createStockCheckoutClient(input: {
       // dead attempt (paid/failed/expired/cancelled) belongs to an older purchase and must never be
       // shown as pending, confirm this cart, or clear it.
       const fromServerLatest = async (): Promise<StockAttemptResumeV1> => {
-        const latest = await input.transport.resumeLatest!();
+        const latest = await input.transport.resumeLatest!(items);
         if (latest == null) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
         const parsed = stockAttemptResumeV1Schema.parse(latest);
         if (!OPEN_STATUSES.has(parsed.status)) return fail("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
         return parsed;
       };
+      const remember = (response: StockAttemptResumeV1) => saveStockAttemptStatus({
+        storage: input.storage,
+        items,
+        attemptId: response.attemptId,
+        status: response.status,
+        now: input.now?.(),
+        canStartNewAttempt: response.canStartNewAttempt,
+      });
       if (!attemptId) {
         if (!input.transport.resumeLatest) return fail("STOCK_ATTEMPT_NOT_FOUND_LOCALLY");
-        return fromServerLatest();
+        const latest = await fromServerLatest();
+        remember(latest);
+        return latest;
       }
       let raw: unknown;
       try {
-        raw = await input.transport.resume(attemptId);
+        raw = await input.transport.resume(attemptId, items);
       } catch (error) {
         // The local id never reached the server (e.g. the server rejected it because the owner already has an
         // equivalent open cart under another id). Ask the server for that attempt instead of looping on a ghost id.
-        if (isNotFoundError(error) && input.transport.resumeLatest) return fromServerLatest();
+        if (isNotFoundError(error) && input.transport.resumeLatest) {
+          const latest = await fromServerLatest();
+          remember(latest);
+          return latest;
+        }
         throw error;
       }
       const response = stockAttemptResumeV1Schema.parse(raw);
-      if (response.attemptId !== attemptId) return fail("STOCK_ATTEMPT_CORRELATION_MISMATCH");
-      saveStockAttemptStatus({ storage: input.storage, items, attemptId, status: response.status, now: input.now?.(), canStartNewAttempt: response.canStartNewAttempt });
+      if (response.attemptId !== attemptId) {
+        // The owner route can substitute only its server-configured ID. Confirm the same attempt through
+        // the owner-scoped latest endpoint before accepting it or replacing browser storage.
+        if (!input.transport.resumeLatest) return fail("STOCK_ATTEMPT_CORRELATION_MISMATCH");
+        const latest = await fromServerLatest();
+        if (latest.attemptId !== response.attemptId) return fail("STOCK_ATTEMPT_CORRELATION_MISMATCH");
+        remember(latest);
+        return latest;
+      }
+      remember(response);
       return response;
     },
     async startNewAfterTerminal(lines: readonly StockCartLine[]): Promise<string> {

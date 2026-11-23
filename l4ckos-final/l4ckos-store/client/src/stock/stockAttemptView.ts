@@ -26,6 +26,7 @@ export type StockAttemptView = {
 export type StockAttemptViewInput = {
   status: StockResumeStatus;
   canStartNewAttempt?: boolean;
+  paymentId?: string;
   checkoutUrl?: string | null;
 };
 
@@ -52,7 +53,9 @@ export function describeStockAttempt(input: StockAttemptViewInput): StockAttempt
         ...base,
         tone: "pending",
         title: "Aguardando confirmação do pagamento",
-        message: "Seu pedido só será confirmado depois que o pagamento for aprovado. Isto pode levar alguns minutos.",
+        message: input.paymentId?.trim() && !input.checkoutUrl
+          ? "A cobrança foi criada, mas o pagamento está indisponível para continuação neste momento. Não inicie outra tentativa; atualize o status ou contate o suporte."
+          : "Seu pedido só será confirmado depois que o pagamento for aprovado. Isto pode levar alguns minutos.",
         canContinuePayment: Boolean(input.checkoutUrl),
       };
     case "ambiguous":

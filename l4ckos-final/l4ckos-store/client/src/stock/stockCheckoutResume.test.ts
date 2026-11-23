@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { createUserAttemptStorage } from "./attemptStorage";
-import { createStockCheckoutClient, listOpenStockAttempts, type StockCartLine } from "./stockCheckoutClient";
+import { createStockCheckoutClient, findStoredStockAttemptId, listOpenStockAttempts, stockCartFingerprint, type StockCartLine } from "./stockCheckoutClient";
 
 const LINES: StockCartLine[] = [{ productId: 1, variantId: 11, quantity: 1, variants: [{ id: 11, productId: 1, size: "M", color: "Preto", active: true }] }];
+const OTHER_CART_LINES: StockCartLine[] = [{ productId: 2, variantId: 22, quantity: 1, variants: [{ id: 22, productId: 2, size: "G", color: "Branco", active: true }] }];
 const DELIVERY = { optionId: "local-plano-piloto" as const, address: { recipient: "Maria", zipCode: "70040010", street: "SQS 308", number: "10", neighborhood: "Asa Sul", city: "Brasília", state: "DF" } };
 const idSeq = () => { let n = 0; return () => `attempt-${String(++n).padStart(16, "0")}`; };
 const appError = (code: string, trpc = "CONFLICT") => Object.assign(new Error("texto qualquer"), { data: { code: trpc, appError: { code } } });
@@ -32,6 +33,20 @@ describe("resumeLatest fallback (browser lost its attempt ID)", () => {
   it("returns an attempt that is still in flight so a second charge is not started", async () => {
     const { api } = client({ resumeLatest: async () => attemptBody({ status: "pending" }) });
     expect((await api.resume(LINES)).status).toBe("pending");
+  });
+
+  it("does not associate one owner's latest attempt with a different cart", async () => {
+    const { api, storage } = client({
+      create: async () => created("owner-cart-a-attempt-00000001"),
+      resumeLatest: async items => stockCartFingerprint(items) === stockCartFingerprint([{ productId: 1, variantId: 11, quantity: 1 }])
+        ? attemptBody({ attemptId: "owner-cart-a-attempt-00000001" })
+        : null,
+    });
+    await api.create(LINES, DELIVERY);
+
+    await expect(api.resume(OTHER_CART_LINES)).rejects.toThrow("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
+    expect(findStoredStockAttemptId({ storage, items: [{ productId: 1, variantId: 11, quantity: 1 }] })).toBe("owner-cart-a-attempt-00000001");
+    expect(findStoredStockAttemptId({ storage, items: [{ productId: 2, variantId: 22, quantity: 1 }] })).toBeNull();
   });
 
   it.each(["paid", "failed", "expired", "cancelled"])("never surfaces a %s attempt from an older purchase as the current one", async status => {
@@ -70,6 +85,59 @@ describe("resumeLatest fallback (browser lost its attempt ID)", () => {
     const { api } = client({
       create: async r => created((r as { attemptId: string }).attemptId),
       resume: async () => attemptBody({ attemptId: "attempt-OTHER0000000001" }),
+    });
+    await api.create(LINES, DELIVERY);
+    await expect(api.resume(LINES)).rejects.toThrow("STOCK_ATTEMPT_CORRELATION_MISMATCH");
+  });
+
+  it("stores the server-authorized attempt ID returned by create", async () => {
+    const serverAttemptId = "owner-server-attempt-000000000001";
+    const { api, storage } = client({ create: async () => created(serverAttemptId) });
+    await api.create(LINES, DELIVERY);
+    expect(listOpenStockAttempts(storage).map(attempt => attempt.attemptId)).toEqual([serverAttemptId]);
+  });
+
+  it("recovers a failed owner create through the server-pinned attempt without another create", async () => {
+    const serverAttempt = attemptBody({ attemptId: "owner-server-attempt-000000000001", status: "ambiguous", checkoutUrl: undefined });
+    const create = vi.fn().mockRejectedValue(appError("PAYMENT_UNDER_ANALYSIS"));
+    const resume = vi.fn(async () => serverAttempt);
+    const resumeLatest = vi.fn(async () => serverAttempt);
+    const { api, storage } = client({ create, resume, resumeLatest });
+
+    await expect(api.create(LINES, DELIVERY)).rejects.toThrow();
+    const browserAttemptId = listOpenStockAttempts(storage)[0]?.attemptId;
+    expect(browserAttemptId).toBeTruthy();
+    const recovered = await api.resume(LINES);
+
+    expect(resume).toHaveBeenCalledWith(browserAttemptId, [{ productId: 1, variantId: 11, quantity: 1 }]);
+    expect(resumeLatest).toHaveBeenCalledOnce();
+    expect(resumeLatest).toHaveBeenCalledWith([{ productId: 1, variantId: 11, quantity: 1 }]);
+    expect(recovered).toMatchObject({ attemptId: serverAttempt.attemptId, status: "ambiguous" });
+    expect(listOpenStockAttempts(storage).map(attempt => attempt.attemptId)).toEqual([serverAttempt.attemptId]);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("does not attach an owner-only 409 recovery to a changed cart", async () => {
+    const create = vi.fn().mockRejectedValue(appError("PAYMENT_UNDER_ANALYSIS"));
+    const resume = vi.fn(async () => attemptBody({ attemptId: "owner-server-attempt-000000000001", status: "ambiguous" }));
+    const resumeLatest = vi.fn(async items => stockCartFingerprint(items) === stockCartFingerprint([{ productId: 1, variantId: 11, quantity: 1 }])
+      ? attemptBody({ attemptId: "owner-server-attempt-000000000001", status: "ambiguous" })
+      : null);
+    const { api, storage } = client({ create, resume, resumeLatest });
+
+    await expect(api.create(LINES, DELIVERY)).rejects.toThrow();
+    await expect(api.resume(OTHER_CART_LINES)).rejects.toThrow("STOCK_ATTEMPT_NOT_FOUND_ON_SERVER");
+
+    expect(resumeLatest).toHaveBeenCalledWith([{ productId: 2, variantId: 22, quantity: 1 }]);
+    expect(findStoredStockAttemptId({ storage, items: [{ productId: 2, variantId: 22, quantity: 1 }] })).toBeNull();
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a mismatched resume unless owner-scoped latest confirms the same server attempt", async () => {
+    const { api } = client({
+      create: async r => created((r as { attemptId: string }).attemptId),
+      resume: async () => attemptBody({ attemptId: "unrelated-server-attempt-00001" }),
+      resumeLatest: async () => attemptBody({ attemptId: "different-owner-latest-00000001" }),
     });
     await api.create(LINES, DELIVERY);
     await expect(api.resume(LINES)).rejects.toThrow("STOCK_ATTEMPT_CORRELATION_MISMATCH");

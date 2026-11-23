@@ -15,6 +15,12 @@ describe("describeStockAttempt", () => {
     expect(describeStockAttempt({ status: "pending", checkoutUrl: null }).canContinuePayment).toBe(false);
   });
 
+  it("blocks a persisted payment with no checkout URL and explains that payment cannot continue", () => {
+    const view = describeStockAttempt({ status: "pending", paymentId: "pay-persisted", checkoutUrl: null });
+    expect(view.message).toMatch(/pagamento está indisponível para continuação/i);
+    expect(view).toMatchObject({ canContinuePayment: false, canStartNewAttempt: false, blocksCheckout: true });
+  });
+
   it("only paid is success, and it stops polling actions", () => {
     const view = describeStockAttempt({ status: "paid" });
     expect(view.tone).toBe("success");

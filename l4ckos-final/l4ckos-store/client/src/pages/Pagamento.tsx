@@ -19,7 +19,7 @@ import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
 import { trackStoreEvent } from "../lib/analytics";
 import { appErrorCodeOf, createStockCheckoutClient, stockAttemptStatusLabel, stockLinesFromCart } from "../stock/stockCheckoutClient";
-import { stockCheckoutHttpRequestV1Schema } from "../../../shared/stockCheckoutV1";
+import { stockCheckoutHttpRequestV1Schema, type StockCheckoutItemV1 } from "../../../shared/stockCheckoutV1";
 import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } from "../stock/stockAttemptView";
 import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/attemptStorage";
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
@@ -124,17 +124,28 @@ function PagamentoContent() {
   // Recovery screen only for an empty cart: with items, the same data feeds the status card on the form instead.
   const serverOpenAttempt = isAuthenticated && cart.items.length === 0 && latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
   const [stockConfirmation, setStockConfirmation] = useState<{ orderId: string | number | null; amountCents: number } | null>(null);
-  const stockClient = useMemo(() => createStockCheckoutClient({
-    enabled: true,
-    // Attempt IDs are local resume handles; keep browser accounts isolated.
-    storage: attemptStorage,
-    transport: {
-      create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
-      resume: attemptId => trpcUtils.stockCheckout.resume.fetch({ attemptId }),
-      // Without a local attempt ID the backend (owner-scoped) is asked before any new attempt is allowed.
-      resumeLatest: () => trpcUtils.stockCheckout.resumeLatest.fetch(),
-    },
-  }), [attemptStorage, stockCreate.mutateAsync, trpcUtils]);
+  const stockClient = useMemo(() => {
+    // This Vercel base carries an older AppRouter type; R5 accepts these optional, server-validated cart inputs.
+    type ResumeWithItemsInput = { attemptId: string; items: StockCheckoutItemV1[] };
+    type ResumeLatestWithItemsInput = { items: StockCheckoutItemV1[] };
+    const resumeWithItems = (input: ResumeWithItemsInput) => trpcUtils.stockCheckout.resume.fetch(
+      input as unknown as Parameters<typeof trpcUtils.stockCheckout.resume.fetch>[0],
+    );
+    const resumeLatestWithItems = (input: ResumeLatestWithItemsInput) => trpcUtils.stockCheckout.resumeLatest.fetch(
+      input as unknown as Parameters<typeof trpcUtils.stockCheckout.resumeLatest.fetch>[0],
+    );
+    return createStockCheckoutClient({
+      enabled: true,
+      // Attempt IDs are local resume handles; keep browser accounts isolated.
+      storage: attemptStorage,
+      transport: {
+        create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
+        resume: (attemptId, items) => resumeWithItems({ attemptId, items: [...items] }),
+        // Without a local attempt ID the backend (owner-scoped) is asked before any new attempt is allowed.
+        resumeLatest: items => resumeLatestWithItems({ items: [...items] }),
+      },
+    });
+  }, [attemptStorage, stockCreate.mutateAsync, trpcUtils]);
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const lastCepLookupRef = useRef<string | null>(null);
   const loadedSavedAddressRef = useRef(false);
