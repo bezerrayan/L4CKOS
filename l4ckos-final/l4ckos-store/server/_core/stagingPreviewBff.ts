@@ -138,11 +138,28 @@ function validateOriginAndHost(request: StagingBffRequest, env: StagingBffEnviro
   return true;
 }
 
+function resolveFunctionRewrite(rawUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(rawUrl, STAGING_PREVIEW_ORIGIN);
+  } catch {
+    return rawUrl;
+  }
+
+  if (url.pathname !== "/api/staging-bff") return rawUrl;
+  const rewrittenPaths = url.searchParams.getAll("__bff_path");
+  if (rewrittenPaths.length !== 1 || !rewrittenPaths[0].startsWith("/api/")) return rawUrl;
+
+  const pathname = rewrittenPaths[0];
+  url.searchParams.delete("__bff_path");
+  return `${pathname}${url.search}`;
+}
+
 function parseAllowedRequest(request: StagingBffRequest): AllowedRequest | null {
   const method = (request.method ?? "").toUpperCase();
   if (method !== "GET" && method !== "POST") return null;
 
-  const rawUrl = request.url ?? "";
+  const rawUrl = resolveFunctionRewrite(request.url ?? "");
   if (!rawUrl.startsWith("/") || rawUrl.startsWith("//") || rawUrl.includes("\\") || rawUrl.includes("#")) return null;
   const rawPath = rawUrl.split("?", 1)[0];
   if (rawPath.includes("%") || rawPath.includes("//") || rawPath.split("/").some(segment => segment === "." || segment === "..")) return null;

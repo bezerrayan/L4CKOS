@@ -51,6 +51,28 @@ describe("staging Preview BFF", () => {
     expect(headers.get(STAGING_API_ACCESS_HEADER)).not.toBe(request().headers[STAGING_API_ACCESS_HEADER]);
   });
 
+  it("resolves the Vercel static-function rewrite before applying the allowlist", async () => {
+    const fetcher = vi.fn(async () => jsonResponse("{\"result\":true}"));
+    const result = await handleStagingPreviewBff(request({
+      url: "/api/staging-bff?__bff_path=%2Fapi%2Ftrpc%2Fauth.me&batch=1&input=%7B%7D",
+    }), env, fetcher as typeof fetch);
+
+    expect(result.statusCode).toBe(200);
+    expect(String(fetcher.mock.calls[0][0])).toBe(`${STAGING_API_ORIGIN}/api/trpc/auth.me?batch=1&input=%7B%7D`);
+  });
+
+  it("rejects duplicate internal rewrite markers and still checks the rewritten path", async () => {
+    const fetcher = vi.fn();
+    for (const url of [
+      "/api/staging-bff?__bff_path=%2Fapi%2Fcsrf&__bff_path=%2Fapi%2Ftrpc%2Fauth.me",
+      "/api/staging-bff?__bff_path=%2Fapi%2Ftrpc%2Fadmin.dashboard",
+    ]) {
+      const result = await handleStagingPreviewBff(request({ url }), env, fetcher as typeof fetch);
+      expect(result.statusCode).toBe(404);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it.each([
     { url: "/api/trpc/admin.dashboard", method: "GET" },
     { url: "/api/trpc/stockCheckout.create", method: "GET" },
