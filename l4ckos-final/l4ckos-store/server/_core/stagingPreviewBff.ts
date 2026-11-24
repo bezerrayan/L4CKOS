@@ -148,11 +148,13 @@ function resolveFunctionRewrite(rawUrl: string): string {
   }
 
   if (url.pathname !== "/api/staging-bff") return rawUrl;
-  const rewrittenPaths = url.searchParams.getAll("__bff_path");
-  if (rewrittenPaths.length !== 1 || !rewrittenPaths[0].startsWith("/api/")) return rawUrl;
+  const rewrittenPaths = url.searchParams.getAll("bffpath");
+  if (rewrittenPaths.length !== 1 || !rewrittenPaths[0] || rewrittenPaths[0].startsWith("//")) return rawUrl;
 
-  const pathname = rewrittenPaths[0];
-  url.searchParams.delete("__bff_path");
+  const pathname = rewrittenPaths[0].startsWith("/api/")
+    ? rewrittenPaths[0]
+    : `/api/${rewrittenPaths[0]}`;
+  url.searchParams.delete("bffpath");
   return `${pathname}${url.search}`;
 }
 

@@ -54,7 +54,17 @@ describe("staging Preview BFF", () => {
   it("resolves the Vercel static-function rewrite before applying the allowlist", async () => {
     const fetcher = vi.fn(async () => jsonResponse("{\"result\":true}"));
     const result = await handleStagingPreviewBff(request({
-      url: "/api/staging-bff?__bff_path=%2Fapi%2Ftrpc%2Fauth.me&batch=1&input=%7B%7D",
+      url: "/api/staging-bff?bffpath=%2Fapi%2Ftrpc%2Fauth.me&batch=1&input=%7B%7D",
+    }), env, fetcher as typeof fetch);
+
+    expect(result.statusCode).toBe(200);
+    expect(String(fetcher.mock.calls[0][0])).toBe(`${STAGING_API_ORIGIN}/api/trpc/auth.me?batch=1&input=%7B%7D`);
+  });
+
+  it("resolves a Vercel named rewrite parameter passed through the query string", async () => {
+    const fetcher = vi.fn(async () => jsonResponse("{\"result\":true}"));
+    const result = await handleStagingPreviewBff(request({
+      url: "/api/staging-bff?bffpath=trpc%2Fauth.me&batch=1&input=%7B%7D",
     }), env, fetcher as typeof fetch);
 
     expect(result.statusCode).toBe(200);
@@ -64,8 +74,8 @@ describe("staging Preview BFF", () => {
   it("rejects duplicate internal rewrite markers and still checks the rewritten path", async () => {
     const fetcher = vi.fn();
     for (const url of [
-      "/api/staging-bff?__bff_path=%2Fapi%2Fcsrf&__bff_path=%2Fapi%2Ftrpc%2Fauth.me",
-      "/api/staging-bff?__bff_path=%2Fapi%2Ftrpc%2Fadmin.dashboard",
+      "/api/staging-bff?bffpath=csrf&bffpath=trpc%2Fauth.me",
+      "/api/staging-bff?bffpath=trpc%2Fadmin.dashboard",
     ]) {
       const result = await handleStagingPreviewBff(request({ url }), env, fetcher as typeof fetch);
       expect(result.statusCode).toBe(404);

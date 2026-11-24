@@ -5,8 +5,8 @@
   "outputDirectory": "dist/public",
   "rewrites": [
     {
-      "source": "/api/:path((?!staging-bff(?:/|$)).*)",
-      "destination": "/api/staging-bff?__bff_path=/api/:path"
+      "source": "/api/:bffpath((?!staging-bff(?:/|$)).*)",
+      "destination": "/api/staging-bff"
     },
     {
       "source": "/:path*",
