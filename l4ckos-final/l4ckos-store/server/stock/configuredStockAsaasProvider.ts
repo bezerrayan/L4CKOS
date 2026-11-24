@@ -2,6 +2,24 @@ import { getOrderById, getUserById, getUserPhoneById } from "../db";
 import { createAsaasStockChargeForOrder, fetchAsaasPixQrCode } from "../services/asaas";
 import { createProductionAsaasStockPaymentProvider, createSandboxAsaasStockPaymentProvider } from "./asaasStockPaymentProvider";
 import { isProductionStockRuntimeIdentity } from "../_core/productionFinancialPolicy";
+import { getAllowedOrigins } from "../_core/corsPolicy";
+
+/** Uses only the configured storefront origin and returns to the existing Coming Soon page. */
+export function getStockHostedCardReturnUrl(environment: NodeJS.ProcessEnv = process.env): string | null {
+  const configured = environment.FRONTEND_URL?.trim();
+  if (!configured) return null;
+  try {
+    const url = new URL(configured);
+    const allowedOrigins = getAllowedOrigins({
+      isProduction: environment.NODE_ENV === "production",
+      configuredOrigins: environment.CORS_ORIGINS,
+    });
+    if (url.protocol !== "https:" || !allowedOrigins.some(origin => new URL(origin).origin === url.origin)) return null;
+    return new URL("/em-breve", url.origin).toString();
+  } catch {
+    return null;
+  }
+}
 
 /** Bridges STOCK's stable provider contract to the existing Asaas charge code. */
 export function createConfiguredStockAsaasProvider() {
@@ -23,6 +41,7 @@ export function createConfiguredStockAsaasProvider() {
       const result = await createAsaasStockChargeForOrder(args);
       return { paymentId: result.paymentId, checkoutUrl: result.invoiceUrl, customerId: result.customerId ?? null, pixQrCode: result.pixQrCode, pixCopyPaste: result.pixCopyPaste };
     },
+    getCardReturnUrl: () => getStockHostedCardReturnUrl(),
     getPixQrCode: (paymentId, signal) => fetchAsaasPixQrCode(paymentId, signal),
   });
 }

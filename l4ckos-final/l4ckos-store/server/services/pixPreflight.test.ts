@@ -1,5 +1,5 @@
 import {afterEach,describe,it,expect,vi} from "vitest";
-import {createAsaasChargeForOrder} from "./asaas";
+import {createAsaasChargeForOrder,createAsaasStockChargeForOrder} from "./asaas";
 import {createAsaasCheckout,createAsaasCustomer} from "./asaasService";
 import {normalizeBuyerDocument} from "../../shared/buyerDocument";
 import {assertSelectiveFinancialBuyer} from "../payments/stagingFinancialBuyer";
@@ -20,6 +20,27 @@ describe('PIX preflight customer/provider guard',()=>{
  it.each([false,undefined])('never charges an existing customer with setting %s',async flag=>{config();ax.get.mockResolvedValueOnce({data:{id:'cus_fixture',notificationDisabled:flag}});await expect(createAsaasCheckout({name:'Synthetic',value:99,billingTypes:['PIX'],customer:'cus_fixture',redirectUrl:'https://staging.l4ckos.com.br'})).rejects.toThrow('NOTIFICATIONS_NOT_DISABLED');expect(ax.post).not.toHaveBeenCalled();});
  it('allows an existing silent customer after GET, without a customer mutation',async()=>{config();ax.get.mockResolvedValueOnce({data:{id:'cus_fixture',notificationDisabled:true}});ax.post.mockResolvedValueOnce({data:{id:'checkout_fixture'}});await createAsaasCheckout({name:'Synthetic',value:99,billingTypes:['PIX'],customer:'cus_fixture',redirectUrl:'https://staging.l4ckos.com.br'});expect(ax.get).toHaveBeenCalledTimes(1);expect(ax.post.mock.calls[0][0]).toBe('/checkouts');});
  it('blocks alternate hosted checkout in the supervised staging scope',async()=>{scope();ax.get.mockResolvedValueOnce({data:{id:'cus_fixture',notificationDisabled:true}});await expect(createAsaasCheckout({name:'Synthetic',value:99,billingTypes:['PIX'],customer:'cus_fixture',redirectUrl:'https://staging.l4ckos.com.br'})).rejects.toThrow('STAGING_OFFICIAL_CHECKOUT_REQUIRED');expect(ax.post).not.toHaveBeenCalled();});
+});
+describe('STOCK hosted Asaas card invoice — sandbox fixture only',()=>{
+ it('creates one CREDIT_CARD invoice with a server callback and never sends PAN or CVV',async()=>{
+  config();const calls:any[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init:any)=>{
+   const body=init.body&&JSON.parse(init.body);calls.push({url,method:init.method,body});
+   if(url.endsWith('/customers'))return{ok:true,json:async()=>({id:'cus_stock_card_fixture',notificationDisabled:true})};
+   if(url.includes('/customers/'))return{ok:true,json:async()=>({id:'cus_stock_card_fixture',notificationDisabled:true})};
+   return{ok:true,json:async()=>({id:'pay_stock_card_fixture',invoiceUrl:'https://sandbox.asaas.com/i/fixture',billingType:'CREDIT_CARD'})};
+  }));
+  await createAsaasStockChargeForOrder({orderId:999902,method:'CARD',value:10,customer:{name:'Cliente Sintético',email:'buyer@example.invalid',cpfCnpj:'11144477735'},description:'STOCK sandbox fixture',externalReference:'L4CKOS-STOCK-ATTEMPT:v2:CARD:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',successUrl:'https://store.example.invalid/em-breve'});
+  expect(calls.map(x=>x.method)).toEqual(['POST','GET','POST']);
+  expect(calls[2].body).toMatchObject({billingType:'CREDIT_CARD',value:10,externalReference:'L4CKOS-STOCK-ATTEMPT:v2:CARD:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',callback:{successUrl:'https://store.example.invalid/em-breve',autoRedirect:true}});
+  expect(calls[2].body).not.toHaveProperty('creditCard');expect(calls[2].body).not.toHaveProperty('creditCardHolderInfo');
+  expect(calls[2].body).not.toHaveProperty('creditCardToken');expect(JSON.stringify(calls[2].body)).not.toMatch(/\b(number|ccv|expiryMonth|expiryYear)\b/i);
+ });
+ it('requires an HTTPS return path before creating a STOCK card payment',async()=>{
+  config();const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+  await expect(createAsaasStockChargeForOrder({orderId:999903,method:'CARD',value:10,customer:{name:'Synthetic',cpfCnpj:'11144477735'},description:'fixture',successUrl:'http://unsafe.example.invalid/em-breve'})).rejects.toMatchObject({phase:'preflight',definitelyNotCreated:true});
+  expect(fetch).not.toHaveBeenCalled();
+ });
 });
 describe('exact financial permission is never permission to email',()=>{
  it('permits only the named buyer with notifications=false and exact supported methods',()=>{scope();expect(()=>assertSelectiveFinancialBuyer(buyer,false,'PIX')).not.toThrow();expect(()=>assertSelectiveFinancialBuyer('other@example.invalid',false,'PIX')).toThrow();expect(()=>assertSelectiveFinancialBuyer(buyer,true,'PIX')).toThrow();expect(()=>assertSelectiveFinancialBuyer(buyer,false,'BOLETO')).not.toThrow();expect(()=>assertSelectiveFinancialBuyer(buyer,false,'CARD')).not.toThrow();expect(()=>assertSelectiveFinancialBuyer(buyer,false,'OTHER')).toThrow();expect(()=>assertEmailRecipientsAllowed({to:buyer})).toThrow();});

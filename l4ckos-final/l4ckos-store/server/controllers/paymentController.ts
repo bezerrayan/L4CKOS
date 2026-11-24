@@ -79,6 +79,9 @@ const PAID_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "PAYMENT_O
 const FAILED_EVENTS = new Set(["PAYMENT_REFUSED", "PAYMENT_REPROVED", "PAYMENT_FAILED"]);
 // STOCK-only provider states: processed solely by the STOCK webhook owner; legacy orders never consume them.
 const STOCK_PENDING_EVENTS = new Set(["PAYMENT_CREATED", "PAYMENT_AWAITING_RISK_ANALYSIS", "PAYMENT_PENDING"]);
+const STOCK_CARD_TERMINAL_FAILURE_EVENTS = new Set([
+  "PAYMENT_REFUSED", "PAYMENT_FAILED", "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "PAYMENT_REPROVED_BY_RISK_ANALYSIS",
+]);
 const PAID_PAYMENT_STATUSES = new Set(["RECEIVED", "CONFIRMED"]);
 const PAYMENT_RECEIVED_PROVIDER_STATUS_PENDING_CODE = "PAYMENT_RECEIVED_PROVIDER_STATUS_PENDING";
 const FAILED_PAYMENT_STATUSES = new Set(["REFUSED", "DELETED", "REPROVED", "FAILED"]);
@@ -504,15 +507,16 @@ export const preflightAsaasWebhookEnvelope: WebhookPreflight = async payload => 
     if (!db || !await resolveStrongStockReferenceOrderId(alertExecutorForDrizzle(db), parsedReference.reference))
       isStockPayment = false;
   }
-  // STOCK runs on PIX: only PAYMENT_RECEIVED can settle it, but every eligible
-  // receipt requires an authoritative provider read even when the webhook
-  // asserts currency: "BRL". Legacy paid events keep the same provider proof.
+  // STOCK PIX receipts and hosted-card settlement/failure events require an
+  // authoritative provider GET before any inventory transition.
+  const stockPaymentMethod = parsedReference.kind === "strong" ? parsedReference.paymentMethod : "PIX";
   const requiresPaidProviderProof = isStockPayment
-    ? event === "PAYMENT_RECEIVED"
+    ? event === "PAYMENT_RECEIVED" || (stockPaymentMethod === "CARD" && event === "PAYMENT_CONFIRMED") ||
+      (stockPaymentMethod === "CARD" && STOCK_CARD_TERMINAL_FAILURE_EVENTS.has(event))
     : isKnownLegacyOrder && PAID_EVENTS.has(event);
   if (requiresPaidProviderProof) {
     const observedStatus = parsePaymentStatusFromWebhook(body);
-    if (observedStatus && !PAID_PAYMENT_STATUSES.has(observedStatus))
+    if (PAID_EVENTS.has(event) && observedStatus && !PAID_PAYMENT_STATUSES.has(observedStatus))
       return { currencyVerification: { status: "unverifiable", reason: "WEBHOOK_EVENT_STATUS_CONFLICT" } };
     const expectedAccount = process.env.ASAAS_WEBHOOK_ACCOUNT_ID?.trim();
     const accountId = typeof body?.account?.id === "string" ? body.account.id.trim() : "";
@@ -533,10 +537,18 @@ export const preflightAsaasWebhookEnvelope: WebhookPreflight = async payload => 
       throw failure;
     }
     const providerObservedStatus = String(currentPayment.status ?? "").trim().toUpperCase();
+    const cardFailureIsTerminal = stockPaymentMethod === "CARD" && STOCK_CARD_TERMINAL_FAILURE_EVENTS.has(event) &&
+      ["REFUSED", "REPROVED", "FAILED"].includes(providerObservedStatus);
     if (event === "PAYMENT_RECEIVED" && providerObservedStatus === "PENDING") {
       const failure = new Error(PAYMENT_RECEIVED_PROVIDER_STATUS_PENDING_CODE);
       Object.assign(failure, { providerObservedStatus });
       throw failure;
+    }
+    if (stockPaymentMethod === "CARD" && event === "PAYMENT_CONFIRMED" && !["CONFIRMED", "RECEIVED"].includes(providerObservedStatus)) {
+      return { currencyVerification: { status: "unverifiable", reason: "PROVIDER_STATUS_NOT_CONFIRMED" } };
+    }
+    if (stockPaymentMethod === "CARD" && STOCK_CARD_TERMINAL_FAILURE_EVENTS.has(event) && !cardFailureIsTerminal) {
+      return { currencyVerification: { status: "unverifiable", reason: "PROVIDER_FAILURE_NOT_TERMINAL" } };
     }
     return { currentPayment,
       currencyVerification: { status: "verified", reason: "PROVIDER_PAYMENT_READ" } } satisfies AsaasWebhookPreflight;
@@ -687,6 +699,7 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
     // New STOCK charges carry a strong, non-reusable attempt reference (not a numeric order id). Resolve it from its persisted record.
     const rawEventReference = payload?.payment?.externalReference ?? payload?.externalReference;
     const parsedEventReference = parseStockPaymentReference(typeof rawEventReference === "string" ? rawEventReference.trim() : rawEventReference);
+    const stockPaymentMethod = parsedEventReference.kind === "strong" ? parsedEventReference.paymentMethod : "PIX";
     let strongReference: string | null = null;
     if (!orderId && parsedEventReference.kind === "strong") {
       const db = webhookDb();
@@ -857,31 +870,25 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
         }
       }
 
-      if (PAYMENT_EXCEPTION_EVENTS.has(event)) {
-        const eventId = String(payload.id ?? "");
-        await recordPaymentException({ orderId: order.id, eventId, event, paymentId, checkoutId });
-        await persistAsaasReconciliationObservation(payload, {
-          event, reason: "PROVIDER_FINANCIAL_OBSERVATION", orderId: order.id, attemptId: stockAttemptId, paymentId,
-          alertKind: reconciliationAlertKindForEvent(event),
-        });
-        res.status(200).json({ handled: false, reason: "payment_reconciliation_required", reconciliationRequired: true,
-          financialMutation: false, stockMutation: false });
-        return;
-      }
-
-      // Asaas's documented billing payload omits `payment.currency`. For STOCK receipts,
-      // only an exact read through the configured Asaas account may supply that evidence.
-      // The read ran in preflight, before inbox/business locks. Missing or ambiguous evidence
-      // becomes an idempotent durable reconciliation record; it never changes payment or stock.
-      if (event === "PAYMENT_RECEIVED") {
+      // PIX receipts and hosted-card confirmations/refusals/deletions require an exact provider
+      // GET and customer/account/reference binding before any inventory transition.
+      const cardSettlementEvent = stockPaymentMethod === "CARD" && event === "PAYMENT_CONFIRMED";
+      const cardTerminalFailureEvent = stockPaymentMethod === "CARD" && STOCK_CARD_TERMINAL_FAILURE_EVENTS.has(event);
+      const cardDeletionEvent = stockPaymentMethod === "CARD" && event === "PAYMENT_DELETED";
+      const stockBindingProofRequired = event === "PAYMENT_RECEIVED" || cardSettlementEvent || cardTerminalFailureEvent || cardDeletionEvent;
+      let cardTerminalFailureVerified = false;
+      if (stockBindingProofRequired) {
         const current = providerPreflight?.currentPayment;
         const eventAmountCents = parsePaidValueCentsFromWebhook(payload);
         const currentAmountCents = typeof current?.value === "number" && Number.isFinite(current.value)
           ? Math.round(current.value * 100) : null;
         const currentCurrency = typeof current?.currency === "string" ? current.currency.trim().toUpperCase() : "";
-        const verifiedCurrency = currentCurrency || pinnedAccountCurrencyForReceived(payload, event) || "";
-        const currentCustomer = typeof current?.customer === "string" ? current.customer.trim() : "";
         const eventReference = payload?.payment?.externalReference ?? payload?.externalReference;
+        const accountId = typeof payload?.account?.id === "string" ? payload.account.id.trim() : "";
+        const expectedAccount = process.env.ASAAS_WEBHOOK_ACCOUNT_ID?.trim() ?? "";
+        const verifiedCurrency = currentCurrency ||
+          (accountId && accountId === expectedAccount && process.env.ASAAS_WEBHOOK_ACCOUNT_CURRENCY?.trim().toUpperCase() === "BRL" ? "BRL" : "");
+        const currentCustomer = typeof current?.customer === "string" ? current.customer.trim() : "";
         let expectedCustomer = "";
         const db = webhookDb();
         if (!db) throw Error("PAYMENT_RECORD_TRANSACTION_REQUIRED");
@@ -894,25 +901,32 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
             if (metadata.paymentId === paymentId && typeof metadata.providerCustomerId === "string") expectedCustomer = metadata.providerCustomerId;
           } catch { /* missing or malformed durable customer binding remains unverified */ }
         }
-        const accountId = typeof payload?.account?.id === "string" ? payload.account.id.trim() : "";
-        const expectedAccount = process.env.ASAAS_WEBHOOK_ACCOUNT_ID?.trim() ?? "";
         const proof = providerPreflight?.currencyVerification;
         const providerStatus = String(current?.status ?? "").trim().toUpperCase();
         const observedBillingType = typeof payload?.payment?.billingType === "string"
           ? payload.payment.billingType.trim().toUpperCase() : "";
         const providerObservedBillingType = typeof current?.billingType === "string"
           ? current.billingType.trim().toUpperCase() : "";
-        const billingTypeMatches = observedBillingType === "PIX" && providerObservedBillingType === "PIX";
-        const verified = proof?.status === "verified" && current && expectedAccount && accountId === expectedAccount &&
+        const expectedBillingType = stockPaymentMethod === "CARD" ? "CREDIT_CARD" : "PIX";
+        const billingTypeMatches = observedBillingType === expectedBillingType && providerObservedBillingType === expectedBillingType;
+        const statusMatches = event === "PAYMENT_RECEIVED" ? providerStatus === "RECEIVED"
+          : cardSettlementEvent ? ["CONFIRMED", "RECEIVED"].includes(providerStatus)
+            : cardTerminalFailureEvent ? (event === "PAYMENT_REPROVED_BY_RISK_ANALYSIS"
+              ? providerStatus === "REPROVED" : ["REFUSED", "FAILED"].includes(providerStatus))
+              : cardDeletionEvent ? (current?.deleted === true || FAILED_PAYMENT_STATUSES.has(providerStatus)) && !PAID_PAYMENT_STATUSES.has(providerStatus)
+                : false;
+        const providerReadVerified = event === "PAYMENT_DELETED" ? Boolean(current) : proof?.status === "verified";
+        const deletionFlagMatches = cardDeletionEvent ? current?.deleted === true : current?.deleted !== true;
+        const verified = providerReadVerified && current && expectedAccount && accountId === expectedAccount &&
           current.id === paymentId && String(current.externalReference ?? "").trim() === String(eventReference ?? "").trim() &&
+          (strongReference === null || String(current.externalReference ?? "").trim() === strongReference) &&
           eventAmountCents !== null && currentAmountCents === eventAmountCents && verifiedCurrency === "BRL" &&
           (!currency || currency === verifiedCurrency) &&
-          Boolean(expectedCustomer) && currentCustomer === expectedCustomer && providerStatus === "RECEIVED" &&
-          billingTypeMatches && current.deleted !== true;
+          Boolean(expectedCustomer) && currentCustomer === expectedCustomer && statusMatches && billingTypeMatches && deletionFlagMatches;
         if (!verified) {
           await persistAsaasReconciliationObservation(payload, {
-            event, reason: proof?.status === "verified"
-              ? providerStatus !== "RECEIVED" ? "PROVIDER_STATUS_NOT_RECEIVED"
+            event, reason: providerReadVerified
+              ? !statusMatches ? (event === "PAYMENT_RECEIVED" ? "PROVIDER_STATUS_NOT_RECEIVED" : "PROVIDER_STATUS_NOT_TERMINAL")
                 : !billingTypeMatches ? "PROVIDER_BILLING_TYPE_MISMATCH" : "PROVIDER_PAYMENT_BINDING_UNVERIFIED"
               : proof?.reason ?? "PROVIDER_PAYMENT_BINDING_UNVERIFIED", orderId: order.id,
             providerObservedStatus: providerStatus || null,
@@ -925,15 +939,47 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
             financialMutation: false, stockMutation: false });
           return;
         }
+        cardTerminalFailureVerified = cardTerminalFailureEvent;
+      }
+
+      if (event === "PAYMENT_APPROVED_BY_RISK_ANALYSIS") {
+        const db = webhookDb();
+        if (!db) throw Error("PAYMENT_RECORD_TRANSACTION_REQUIRED");
+        const eventId = String(payload.id ?? "");
+        await insertAdmissionAudit(db, "payment.stock_card_risk_approved.v1", "asaasWebhookInbox", eventKey(eventId), {
+          eventId, orderId, paymentId, event, reconciliationRequired: false,
+          financialMutation: false, stockMutation: false, notificationMutation: false,
+        });
+        res.status(200).json({ handled: false, reason: "card_risk_approved_waiting_for_confirmation", reconciliationRequired: false,
+          financialMutation: false, stockMutation: false });
+        return;
+      }
+
+      if (PAYMENT_EXCEPTION_EVENTS.has(event) && !cardTerminalFailureVerified) {
+        const eventId = String(payload.id ?? "");
+        await recordPaymentException({ orderId: order.id, eventId, event, paymentId, checkoutId });
+        await persistAsaasReconciliationObservation(payload, {
+          event, reason: "PROVIDER_FINANCIAL_OBSERVATION", orderId: order.id, attemptId: stockAttemptId, paymentId,
+          alertKind: reconciliationAlertKindForEvent(event),
+        });
+        res.status(200).json({ handled: false, reason: "payment_reconciliation_required", reconciliationRequired: true,
+          financialMutation: false, stockMutation: false });
+        return;
       }
 
       // The STOCK owner re-verifies the provider token from the ORIGINAL delivery headers. A stored envelope replayed by
       // recovery has none, so it can never be authenticated here: fail closed (retryable) and wait for an authenticated redelivery.
       const currentProviderCurrency = typeof providerPreflight?.currentPayment?.currency === "string"
         ? providerPreflight.currentPayment.currency.trim().toUpperCase() : "";
-      const accountCurrencyFallback = pinnedAccountCurrencyForReceived(payload, event);
+      const eventAccountId = typeof payload?.account?.id === "string" ? payload.account.id.trim() : "";
+      const expectedAccountId = process.env.ASAAS_WEBHOOK_ACCOUNT_ID?.trim() ?? "";
+      const accountCurrencyFallback = pinnedAccountCurrencyForReceived(payload, event) ??
+        (stockPaymentMethod === "CARD" && (providerPreflight?.currencyVerification?.status === "verified" || event === "PAYMENT_DELETED") &&
+          eventAccountId && eventAccountId === expectedAccountId &&
+          process.env.ASAAS_WEBHOOK_ACCOUNT_CURRENCY?.trim().toUpperCase() === "BRL" ? "BRL" : null);
+      const hasVerifiedStockProviderCurrency = providerPreflight?.currencyVerification?.status === "verified" || event === "PAYMENT_DELETED";
       const baseBoundary = createAsaasStockWebhookBoundary({
-        ...(!currency && providerPreflight?.currencyVerification?.status === "verified"
+        ...(!currency && hasVerifiedStockProviderCurrency
           ? { verifiedProviderCurrency: currentProviderCurrency || accountCurrencyFallback }
           : {}),
         configuredAccountId: process.env.ASAAS_WEBHOOK_ACCOUNT_ID,

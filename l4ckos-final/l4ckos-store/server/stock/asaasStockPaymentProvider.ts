@@ -2,7 +2,7 @@ import type { StockPaymentProvider } from "./stockCheckout";
 import { stockPixPaymentV1Schema, type StockPixPaymentV1 } from "../../shared/stockCheckoutV1";
 import { StockProviderError, type StockProviderErrorCategory, type StockProviderPhase } from "./stockProviderError";
 import { AsaasRequestFailure } from "../services/asaasRequestFailure";
-import { parseStockPaymentReference } from "./stockPaymentReference";
+import { parseStockPaymentReference, type StockPaymentMethod } from "./stockPaymentReference";
 import { isFinancialSandboxPhase, resolveFinancialPhasePolicy } from "../_core/financialPhasePolicy";
 import { ASAAS_PRODUCTION_CHECKOUT_HOST, assertProductionStockPolicy } from "../_core/productionFinancialPolicy";
 
@@ -38,13 +38,16 @@ type StockProviderInput = {
   createCharge(args: {
     orderId: number;
     value: number;
-    method: "PIX";
+    method: StockPaymentMethod;
     customer: { name: string; cpfCnpj: string; email: string; mobilePhone?: string };
     description: string;
+    successUrl?: string;
     /** Strong attempt reference. When absent the legacy numeric order reference is used. */
     externalReference?: string;
     signal?: AbortSignal;
   }): Promise<StockAsaasChargeResult>;
+  /** Trusted, server-derived storefront return URL. Required for hosted card payments. */
+  getCardReturnUrl?(): string | null;
   /** Read-only PIX lookup for an existing charge. Never creates anything. */
   getPixQrCode?(paymentId: string, signal?: AbortSignal): Promise<{ qrCodeBase64: string | null; copyPaste: string | null } | null>;
 };
@@ -91,7 +94,7 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
         return null;
       }
     },
-    async createPayment({ orderId, amountCents, idempotencyKey, externalReference }) {
+    async createPayment({ orderId, amountCents, idempotencyKey, externalReference, paymentMethod = "PIX" }) {
       try {
         mode.assertConfiguration(environment);
       } catch {
@@ -100,12 +103,16 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
           : "STOCK_ASAAS_CONFIGURATION_INVALID";
         throw new StockProviderError(code, true, { phase: "preflight", category: "configuration" });
       }
-      const referenceToken = externalReference ? (parseStockPaymentReference(externalReference).kind === "strong" ? externalReference.slice(externalReference.lastIndexOf(":") + 1) : null) : "";
+      const parsedReference = externalReference ? parseStockPaymentReference(externalReference) : null;
+      const referenceToken = parsedReference?.kind === "strong" ? externalReference!.slice(externalReference!.lastIndexOf(":") + 1) : externalReference ? null : "";
       if (referenceToken === null) throw new StockProviderError("STOCK_PAYMENT_REFERENCE_INVALID", true, { phase: "preflight", category: "invalid_request" }); // a non-strong custom reference is never accepted
+      if (parsedReference?.kind === "strong" && parsedReference.paymentMethod !== paymentMethod) throw new StockProviderError("STOCK_PAYMENT_METHOD_REFERENCE_MISMATCH", true, { phase: "preflight", category: "invalid_request" });
       if (idempotencyKey !== (referenceToken ? `stock:${orderId}:${referenceToken}` : `stock:${orderId}`)) throw new StockProviderError("STOCK_PAYMENT_KEY_MISMATCH", true, { phase: "preflight", category: "invalid_request" });
       const numericOrderId = Number(orderId);
       if (!Number.isSafeInteger(numericOrderId) || numericOrderId <= 0) throw new StockProviderError("STOCK_ORDER_ID_INVALID", true, { phase: "preflight", category: "invalid_request" });
       if (!Number.isSafeInteger(amountCents) || amountCents <= 0) throw new StockProviderError("STOCK_PAYMENT_AMOUNT_INVALID", true, { phase: "preflight", category: "invalid_request" });
+      const successUrl = paymentMethod === "CARD" ? input.getCardReturnUrl?.() : undefined;
+      if (paymentMethod === "CARD" && !successUrl) throw new StockProviderError("STOCK_CARD_RETURN_URL_UNAVAILABLE", true, { phase: "preflight", category: "configuration" });
 
       let buyer: StockAsaasBuyer | null;
       try {
@@ -121,9 +128,10 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
         charge = await input.createCharge({
           orderId: numericOrderId,
           value: amountCents / 100,
-          method: "PIX",
+          method: paymentMethod,
           customer: buyer,
           description: `Pedido STOCK #${numericOrderId}`,
+          ...(successUrl ? { successUrl } : {}),
           ...(externalReference ? { externalReference } : {}),
           signal: AbortSignal.timeout(15_000),
         });
@@ -144,7 +152,7 @@ function createAsaasStockPaymentProvider(input: StockProviderInput, mode: StockP
       const checkoutUrl = mode.isCheckoutUrl(charge.checkoutUrl) ? charge.checkoutUrl : null;
       if (!checkoutUrl) console.warn("[StockPayment] checkout_url_unavailable", { phase: "payment_create", category: "invalid_response" });
       // A valid provider ID must survive missing/invalid checkout URL; caller persists the correlation and never recreates.
-      const pix = toStockPixPayment(charge.pixQrCode, charge.pixCopyPaste);
+      const pix = paymentMethod === "PIX" ? toStockPixPayment(charge.pixQrCode, charge.pixCopyPaste) : undefined;
       return { paymentId: charge.paymentId, checkoutUrl, customerId: charge.customerId ?? null, ...(pix ? { pix } : {}) };
     },
   };

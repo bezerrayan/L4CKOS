@@ -26,11 +26,17 @@ describe("strong STOCK payment reference", () => {
   it("is server-random, well-formed, unique and exact-parsed", () => {
     const refs = new Set(Array.from({ length: 2000 }, () => generateStockPaymentReference()));
     expect(refs.size).toBe(2000);
-    for (const r of refs) { expect(parseStockPaymentReference(r)).toEqual({ kind: "strong", reference: r }); expect(r.length).toBeLessThan(191); }
+    for (const r of refs) { expect(parseStockPaymentReference(r)).toEqual({ kind: "strong", reference: r, paymentMethod: "PIX" }); expect(r.length).toBeLessThan(191); }
+  });
+  it("binds hosted card references to CARD while preserving the legacy PIX version", () => {
+    const reference = generateStockPaymentReference(undefined, "CARD");
+    expect(parseStockPaymentReference(reference)).toEqual({ kind: "strong", reference, paymentMethod: "CARD" });
+    expect(reference).toMatch(/^L4CKOS-STOCK-ATTEMPT:v2:CARD:/);
+    expect(reference.length).toBeLessThan(191);
   });
   it.each(["12", "1"])("keeps the legacy numeric reference parseable as legacy only (%s)", v => expect(parseStockPaymentReference(v)).toEqual({ kind: "legacy-numeric", orderId: v }));
   it.each([" L4CKOS-STOCK-ATTEMPT:v1:" + "a".repeat(32), "L4CKOS-STOCK-ATTEMPT:v1:" + "a".repeat(31), "L4CKOS-STOCK-ATTEMPT:v2:" + "a".repeat(32),
-    "l4ckos-stock-attempt:v1:" + "a".repeat(32), "L4CKOS-STOCK-ATTEMPT:v1:" + "a".repeat(32) + "x", "L4CKOS-ORDER-12", "012", "", null, 12, ["12"]])("rejects %j", v =>
+    "L4CKOS-STOCK-ATTEMPT:v2:" + "a".repeat(32), "L4CKOS-STOCK-ATTEMPT:v2:PIX:" + "a".repeat(32), "l4ckos-stock-attempt:v1:" + "a".repeat(32), "L4CKOS-STOCK-ATTEMPT:v1:" + "a".repeat(32) + "x", "L4CKOS-ORDER-12", "012", "", null, 12, ["12"]])("rejects %j", v =>
     expect(parseStockPaymentReference(v).kind).toBe("invalid"));
 });
 

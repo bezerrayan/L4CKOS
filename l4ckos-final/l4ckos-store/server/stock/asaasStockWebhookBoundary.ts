@@ -3,7 +3,10 @@ import type { StockNormalizedWebhook, StockWebhookBoundary } from "./stockChecko
 import { parseStockPaymentReference } from "./stockPaymentReference";
 
 const PAID_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"]);
-const FAILED_EVENTS = new Set(["PAYMENT_REFUSED", "PAYMENT_DELETED", "PAYMENT_REPROVED", "PAYMENT_FAILED"]);
+const FAILED_EVENTS = new Set([
+  "PAYMENT_REFUSED", "PAYMENT_DELETED", "PAYMENT_REPROVED", "PAYMENT_FAILED",
+  "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "PAYMENT_REPROVED_BY_RISK_ANALYSIS",
+]);
 const PENDING_EVENTS = new Set(["PAYMENT_CREATED", "PAYMENT_AWAITING_RISK_ANALYSIS", "PAYMENT_PENDING"]);
 const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
 const FAILED_STATUSES = new Set(["REFUSED", "DELETED", "REPROVED", "FAILED"]);
@@ -63,10 +66,14 @@ export function createAsaasStockWebhookBoundary(input: {
         ? input.verifiedProviderCurrency.trim().toUpperCase() : "";
       const currency = eventCurrency || verifiedProviderCurrency || pinnedCreatedCurrency;
       let status: StockNormalizedWebhook["status"];
-      // PIX is settled only by a validated PAYMENT_RECEIVED. A CONFIRMED event
-      // is an observation; accepting it as paid can release fulfilment early.
+      const reference = parseStockPaymentReference(payment.externalReference);
+      const isHostedCard = reference.kind === "strong" && reference.paymentMethod === "CARD";
+      // PIX settles only on RECEIVED. A hosted credit-card payment can settle
+      // inventory on CONFIRMED after the controller's authoritative provider GET.
       if (eventName === "PAYMENT_RECEIVED" && (!paymentStatus || PAID_STATUSES.has(paymentStatus))) status = "paid";
+      else if (eventName === "PAYMENT_CONFIRMED" && isHostedCard && ["CONFIRMED", "RECEIVED"].includes(paymentStatus)) status = "paid";
       else if (PAID_EVENTS.has(eventName) && (!paymentStatus || PAID_STATUSES.has(paymentStatus))) status = "pending";
+      else if (eventName === "PAYMENT_DELETED" && payment.deleted === true) status = "failed";
       else if (FAILED_EVENTS.has(eventName) && FAILED_STATUSES.has(paymentStatus)) status = "failed";
       else if (PENDING_EVENTS.has(eventName) && (!paymentStatus || PENDING_STATUSES.has(paymentStatus))) status = "pending";
       else throw new Error("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
@@ -86,8 +93,8 @@ export function createAsaasStockWebhookBoundary(input: {
         status === "pending";
       if (currency !== "BRL" && !currencylessNonSettlement) throw new Error("WEBHOOK_CURRENCY_MISMATCH");
 
-      const reference = parseStockPaymentReference(orderId);
-      if (reference.kind === "strong") return { eventId, orderId, paymentId, status, amountCents, payload: parsed, strongReference: reference.reference, referenceKind: "strong" };
+      const parsedReference = parseStockPaymentReference(orderId);
+      if (parsedReference.kind === "strong") return { eventId, orderId, paymentId, status, amountCents, payload: parsed, strongReference: parsedReference.reference, referenceKind: "strong" };
       return { eventId, orderId, paymentId, status, amountCents, payload: parsed, referenceKind: "legacy" };
     },
   };

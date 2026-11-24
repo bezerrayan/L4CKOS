@@ -221,6 +221,42 @@ describe("local STOCK checkout core", () => {
     expect(store.purchaseCatalogLockModes).toEqual([false, true]);
   });
 
+  it("rejects hosted card for PREORDER at the server boundary before provider creation", async () => {
+    const store = new MemoryStockStore([variant({ salesMode: "PREORDER", productionBatchId: 91 })]);
+    const payments = provider();
+    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-card-preorder-0001", { paymentMethod: "CARD" }) }))
+      .rejects.toMatchObject({ code: "CHECKOUT_PAYMENT_METHOD_UNSUPPORTED" });
+    expect(store.attempts.size).toBe(0);
+    expect(store.reserved.size).toBe(0);
+    expect(payments.calls).toBe(0);
+  });
+
+  it("uses the existing reservation transitions for hosted card confirmation and terminal refusal", async () => {
+    const store = new MemoryStockStore([variant()]);
+    const createPayment = vi.fn(async (input: { orderId: string; amountCents: number; paymentMethod?: "PIX" | "CARD" }) => {
+      expect(input.paymentMethod).toBe("CARD");
+      return { paymentId: "pay-card-sandbox-fixture", checkoutUrl: "https://sandbox.asaas.com/i/fixture" };
+    });
+    const paymentProvider = { supportsIdempotencyKey: true, createPayment };
+    const created = await createStockCheckout({
+      enabled: true, store, provider: paymentProvider,
+      request: request("attempt-card-settlement-0001", { paymentMethod: "CARD" }),
+    });
+    expect(store.reserved.get(8)).toBe(1);
+    await sendWebhook({ signatureVerified: true, store, eventId: "evt-card-confirmed-synthetic", orderId: created.orderId,
+      paymentId: created.paymentId, status: "paid", amountCents: created.amountCents, payload: { event: "PAYMENT_CONFIRMED" } });
+    expect(store.attempts.get("attempt-card-settlement-0001")?.status).toBe("paid");
+    expect(store.reserved.get(8)).toBe(0);
+
+    const refusedStore = new MemoryStockStore([variant()]);
+    const refused = await createStockCheckout({ enabled: true, store: refusedStore, provider: paymentProvider,
+      request: request("attempt-card-refused-00001", { paymentMethod: "CARD" }) });
+    await sendWebhook({ signatureVerified: true, store: refusedStore, eventId: "evt-card-refused-synthetic", orderId: refused.orderId,
+      paymentId: refused.paymentId, status: "failed", amountCents: refused.amountCents, payload: { event: "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED" } });
+    expect(refusedStore.attempts.get("attempt-card-refused-00001")?.status).toBe("released");
+    expect(refusedStore.reserved.get(8)).toBe(0);
+  });
+
   it.each([
     ["restricted product name", "Clã 14 Bis", [variant()]],
     ["QA-STAGING product with a normal SKU", "[QA-STAGING] Fixture", [variant()]],

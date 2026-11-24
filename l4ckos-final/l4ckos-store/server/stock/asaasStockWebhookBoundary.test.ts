@@ -72,6 +72,33 @@ describe("Asaas STOCK webhook boundary", () => {
     expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(observation))).toMatchObject({ status: "pending" });
   });
 
+  it("settles a method-bound hosted credit card only on confirmed/received and releases deleted invoices only with deleted=true", () => {
+    const token = "A".repeat(32);
+    const cardReference = `L4CKOS-STOCK-ATTEMPT:v2:CARD:${token}`;
+    const confirmed = {
+      id: "evt_card_confirmed_synthetic", event: "PAYMENT_CONFIRMED",
+      payment: { id: "pay_card_synthetic", externalReference: cardReference, value: 10, currency: "BRL", billingType: "CREDIT_CARD", status: "CONFIRMED" },
+    };
+    expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(confirmed))).toMatchObject({ status: "paid", strongReference: cardReference });
+    const pixConfirmed = { ...confirmed, payment: { ...confirmed.payment, externalReference: `L4CKOS-STOCK-ATTEMPT:v1:${token}`, billingType: "PIX" } };
+    expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(pixConfirmed))).toMatchObject({ status: "pending" });
+    const deleted = { id: "evt_card_deleted_synthetic", event: "PAYMENT_DELETED", payment: { ...confirmed.payment, status: "PENDING", deleted: true } };
+    expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(deleted))).toMatchObject({ status: "failed" });
+    expect(() => createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify({ ...deleted, payment: { ...deleted.payment, deleted: false } })))
+      .toThrow("WEBHOOK_EVENT_UNSUPPORTED_OR_CONFLICTING");
+  });
+
+  it.each([
+    ["PAYMENT_REFUSED", "REFUSED"], ["PAYMENT_FAILED", "FAILED"],
+    ["PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "REFUSED"], ["PAYMENT_REPROVED_BY_RISK_ANALYSIS", "REPROVED"],
+  ])("normalizes only provider-confirmed terminal card event %s", (eventName, status) => {
+    const terminal = {
+      id: `evt_${eventName.toLowerCase()}_synthetic`, event: eventName,
+      payment: { id: "pay_card_synthetic", externalReference: `L4CKOS-STOCK-ATTEMPT:v2:CARD:${"A".repeat(32)}`, value: 10, currency: "BRL", billingType: "CREDIT_CARD", status },
+    };
+    expect(createAsaasStockWebhookBoundary().decodeSignedEvent(JSON.stringify(terminal))).toMatchObject({ status: "failed" });
+  });
+
   it.each(["PAYMENT_CONFIRMED", "PAYMENT_OVERDUE_RECEIVED"])("accepts currencyless %s as a non-settling observation", eventName => {
     const observation: any = { ...event, event: eventName, payment: { ...event.payment, status: "CONFIRMED" } };
     delete observation.payment.currency;
