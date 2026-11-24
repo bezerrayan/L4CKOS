@@ -2,7 +2,7 @@ import {
   handleStagingPreviewBff,
   STAGING_BFF_BODY_LIMIT,
   type StagingBffRequest,
-} from "../server/_core/stagingPreviewBff";
+} from "../server/_core/stagingPreviewBff.js";
 
 function tooLargeResponse(): Response {
   return new Response(JSON.stringify({ error: "REQUEST_BODY_TOO_LARGE" }), {
