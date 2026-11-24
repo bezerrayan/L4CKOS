@@ -121,6 +121,15 @@ describe("staging Preview BFF", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("preserves the encoded values of the two forwarded application cookies", async () => {
+    const fetcher = vi.fn(async () => jsonResponse("{}"));
+    await handleStagingPreviewBff(request({
+      headers: { ...request().headers, cookie: "app_session_id=session%2Fvalue; l4ckos_csrf=csrf%3Dvalue" },
+    }), env, fetcher as typeof fetch);
+    const [, init] = fetcher.mock.calls[0];
+    expect(new Headers(init?.headers).get("cookie")).toBe("app_session_id=session%2Fvalue; l4ckos_csrf=csrf%3Dvalue");
+  });
+
   it("forwards a permitted mutation without caller-controlled headers and keeps same-origin cookies host-only", async () => {
     const body = new TextEncoder().encode("{\"json\":{\"attemptId\":\"synthetic-attempt\"}}");
     const fetcher = vi.fn(async () => new Response("{\"result\":true}", {

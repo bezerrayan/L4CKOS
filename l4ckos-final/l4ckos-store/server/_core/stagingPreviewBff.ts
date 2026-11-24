@@ -1,5 +1,3 @@
-import { parse as parseCookies } from "cookie";
-
 /** Fixed to the isolated Railway homologation service. Never derive this from request input or environment. */
 export const STAGING_API_ORIGIN = "https://api-stock-homologation-homologation.up.railway.app";
 /** Stable Vercel Preview branch alias. The function refuses every other host and origin. */
@@ -94,6 +92,7 @@ function readOnlyCookies(header: string | undefined): string | null {
   if (!header) return "";
   const allowedNames = new Set([SESSION_COOKIE, CSRF_COOKIE]);
   const seen = new Set<string>();
+  const selectedValues = new Map<string, string>();
   for (const part of header.split(";")) {
     const separator = part.indexOf("=");
     if (separator < 1) continue;
@@ -101,11 +100,13 @@ function readOnlyCookies(header: string | undefined): string | null {
     if (!allowedNames.has(name)) continue;
     if (seen.has(name)) return null;
     seen.add(name);
+    const value = part.slice(separator + 1).trim();
+    if (!value || /[\u0000-\u0020;,\\]/.test(value)) return null;
+    selectedValues.set(name, value);
   }
-  const parsed = parseCookies(header);
   const selected = [SESSION_COOKIE, CSRF_COOKIE]
-    .filter(name => typeof parsed[name] === "string" && parsed[name].length > 0)
-    .map(name => `${name}=${parsed[name]}`);
+    .filter(name => selectedValues.has(name))
+    .map(name => `${name}=${selectedValues.get(name)}`);
   return selected.join("; ");
 }
 
