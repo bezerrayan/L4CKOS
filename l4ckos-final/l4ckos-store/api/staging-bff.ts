@@ -69,6 +69,15 @@ export default async function stagingPreviewBff(request: VercelIncomingMessage, 
     body,
   };
   const result = await handleStagingPreviewBff(input, process.env);
+  if (process.env.VERCEL_ENV === "preview" && result.statusCode === 404 &&
+      Buffer.from(result.body).toString("utf8").includes("PREVIEW_BFF_ROUTE_NOT_ALLOWED")) {
+    const route = new URL(request.url ?? "/", "https://preview.invalid");
+    const queryKeys = [...new Set([
+      ...route.searchParams.keys(),
+      ...Object.keys(request.query ?? {}),
+    ])].filter(key => /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(key)).sort();
+    response.setHeader("x-preview-bff-route-shape", `${route.pathname};query-keys=${queryKeys.join(",")}`);
+  }
   response.statusCode = result.statusCode;
   for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
   response.end(Buffer.from(result.body));
