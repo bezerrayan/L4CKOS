@@ -55,6 +55,16 @@ describe("staging Preview BFF", () => {
       batch: "1",
       input: "{}",
     })).toBe("/api/trpc/auth.me?batch=1&input=%7B%7D");
+    expect(includeVercelRewriteQuery("/api/trpc/auth.me?batch=1&input=%7B%7D&bffpath=trpc%2Fauth.me&procedure=auth.me", {
+      bffpath: "trpc/auth.me",
+      procedure: "auth.me",
+      batch: "1",
+      input: "{}",
+    })).toBe("/api/trpc/auth.me?batch=1&input=%7B%7D");
+    expect(includeVercelRewriteQuery("/api/cep/12345678?bffpath=cep%2F12345678&cep=12345678", {
+      bffpath: "cep/12345678",
+      cep: "12345678",
+    })).toBe("/api/cep/12345678");
     expect(includeVercelRewriteQuery("/api/csrf?bffpath=trpc%2Fadmin.dashboard", {
       bffpath: "trpc/admin.dashboard",
     })).toBe("/api/csrf?bffpath=trpc%2Fadmin.dashboard");

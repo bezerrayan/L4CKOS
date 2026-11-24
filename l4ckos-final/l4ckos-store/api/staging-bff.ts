@@ -20,12 +20,17 @@ export function includeVercelRewriteQuery(requestUrl: string | undefined, query:
     return requestUrl;
   }
   if (url.pathname !== "/api/staging-bff") {
+    const cepMatch = url.pathname.match(/^\/api\/cep\/([0-9]{8})$/);
+    const trpcMatch = url.pathname.match(/^\/api\/trpc\/(.+)$/);
     const expectedMarker = url.pathname === "/api/csrf"
       ? "csrf"
       : url.pathname === "/api/shipping/quote"
         ? "shipping/quote"
-        : url.pathname.match(/^\/api\/cep\/([0-9]{8})$/)?.[0]?.replace(/^\/api\//, "")
-          ?? url.pathname.match(/^\/api\/trpc\/(.+)$/)?.[0]?.replace(/^\/api\//, "");
+        : cepMatch
+          ? `cep/${cepMatch[1]}`
+          : trpcMatch
+            ? `trpc/${trpcMatch[1]}`
+            : undefined;
     const urlMarkers = url.searchParams.getAll("bffpath");
     const queryMarker = vercelQuery.bffpath;
     const queryMarkers = typeof queryMarker === "string" ? [queryMarker] : Array.isArray(queryMarker) ? queryMarker : [];
@@ -33,6 +38,19 @@ export function includeVercelRewriteQuery(requestUrl: string | undefined, query:
     if (!expectedMarker || markers.length !== 1 || markers[0] !== expectedMarker ||
         queryMarkers.length > 0 && (queryMarkers.length !== 1 || queryMarkers[0] !== expectedMarker)) return requestUrl;
     url.searchParams.delete("bffpath");
+    const rewriteParam = cepMatch
+      ? { key: "cep", value: cepMatch[1] }
+      : trpcMatch
+        ? { key: "procedure", value: trpcMatch[1] }
+        : undefined;
+    if (rewriteParam) {
+      const urlValues = url.searchParams.getAll(rewriteParam.key);
+      const queryValue = vercelQuery[rewriteParam.key];
+      const queryValues = typeof queryValue === "string" ? [queryValue] : Array.isArray(queryValue) ? queryValue : [];
+      if (urlValues.length > 0 && (urlValues.length !== 1 || urlValues[0] !== rewriteParam.value) ||
+          queryValues.length > 0 && (queryValues.length !== 1 || queryValues[0] !== rewriteParam.value)) return requestUrl;
+      url.searchParams.delete(rewriteParam.key);
+    }
     return `${url.pathname}${url.search}`;
   }
 
