@@ -5,8 +5,20 @@
   "outputDirectory": "dist/public",
   "rewrites": [
     {
-      "source": "/api/:bffpath((?!staging-bff(?:/|$)).*)",
-      "destination": "/api/staging-bff"
+      "source": "/api/csrf",
+      "destination": "/api/staging-bff?bffpath=csrf"
+    },
+    {
+      "source": "/api/shipping/quote",
+      "destination": "/api/staging-bff?bffpath=shipping/quote"
+    },
+    {
+      "source": "/api/cep/:cep(\\d{8})",
+      "destination": "/api/staging-bff?bffpath=cep/:cep"
+    },
+    {
+      "source": "/api/trpc/:procedure*",
+      "destination": "/api/staging-bff?bffpath=trpc/:procedure*"
     },
     {
       "source": "/:path*",
