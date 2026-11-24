@@ -142,6 +142,8 @@ async function createAsaasCharge(input: {
   description: string;
   dueDate?: string;
   externalReference?: string;
+  /** Trusted store return path for Asaas-hosted card checkout; never provided by the browser. */
+  successUrl?: string;
   signal?: AbortSignal;
 }, options: { stockMode: boolean; bestEffortPixQrLookup: boolean }) {
   let phase: AsaasRequestPhase = "preflight";
@@ -151,6 +153,9 @@ async function createAsaasCharge(input: {
     if (!document) {
       if (options.stockMode) throw new AsaasRequestFailure("preflight", "invalid_request", true);
       throw Error("CHECKOUT_DOCUMENT_INVALID");
+    }
+    if (options.stockMode && input.method === "CARD" && (!input.successUrl || !/^https:\/\//i.test(input.successUrl))) {
+      throw new AsaasRequestFailure("preflight", "invalid_request", true);
     }
 
     const silent = sandboxSilenceRequired();
@@ -192,6 +197,7 @@ async function createAsaasCharge(input: {
         dueDate: input.dueDate || getDefaultDueDate(),
         description: input.description,
         externalReference: input.externalReference ?? String(input.orderId),
+        ...(input.successUrl ? { callback: { successUrl: input.successUrl, autoRedirect: true } } : {}),
       },
     }, phase, options.stockMode);
 
@@ -275,6 +281,7 @@ export function createAsaasStockChargeForOrder(input: {
   description: string;
   dueDate?: string;
   externalReference?: string;
+  successUrl?: string;
   signal?: AbortSignal;
 }) {
   return createAsaasCharge(input, { stockMode: true, bestEffortPixQrLookup: true });

@@ -64,6 +64,42 @@ describe("STOCK Asaas sandbox provider", () => {
     expect(createCharge).toHaveBeenCalledOnce();
   });
 
+  it("creates a hosted credit-card invoice without card data and requires a trusted return URL", async () => {
+    const createCharge = vi.fn(async () => ({ paymentId: "pay-card-sandbox-fixture", checkoutUrl: "https://sandbox.asaas.com/i/fixture" }));
+    const provider = createSandboxAsaasStockPaymentProvider({
+      environment: sandbox,
+      loadBuyer: async () => ({ name: "Cliente Sintético", email: "buyer@example.invalid", cpfCnpj: "11111111111" }),
+      getCardReturnUrl: () => "https://store.example.invalid/em-breve",
+      createCharge,
+    });
+    const token = "A".repeat(32);
+    await expect(provider.createPayment({
+      orderId: "12345", amountCents: 1000, idempotencyKey: `stock:12345:${token}`,
+      externalReference: `L4CKOS-STOCK-ATTEMPT:v2:CARD:${token}`, paymentMethod: "CARD",
+    })).resolves.toMatchObject({ paymentId: "pay-card-sandbox-fixture", checkoutUrl: "https://sandbox.asaas.com/i/fixture", customerId: null });
+    const args = createCharge.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(args).toMatchObject({ method: "CARD", value: 10, successUrl: "https://store.example.invalid/em-breve" });
+    expect(args).not.toHaveProperty("creditCard");
+    expect(args).not.toHaveProperty("creditCardHolderInfo");
+    expect(args).not.toHaveProperty("number");
+    expect(args).not.toHaveProperty("ccv");
+  });
+
+  it("fails closed before provider I/O when card reference or return URL is not bound", async () => {
+    const createCharge = vi.fn(async () => ({ paymentId: "pay-card-sandbox-fixture", checkoutUrl: "https://sandbox.asaas.com/i/fixture" }));
+    const provider = createSandboxAsaasStockPaymentProvider({
+      environment: sandbox,
+      loadBuyer: async () => ({ name: "Cliente Sintético", email: "buyer@example.invalid", cpfCnpj: "11111111111" }),
+      createCharge,
+    });
+    const token = "A".repeat(32);
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 1000, idempotencyKey: `stock:12345:${token}`, externalReference: `L4CKOS-STOCK-ATTEMPT:v2:CARD:${token}`, paymentMethod: "CARD" }))
+      .rejects.toMatchObject({ message: "STOCK_CARD_RETURN_URL_UNAVAILABLE", definitelyNotCreated: true });
+    await expect(provider.createPayment({ orderId: "12345", amountCents: 1000, idempotencyKey: `stock:12345:${token}`, externalReference: `L4CKOS-STOCK-ATTEMPT:v1:${token}`, paymentMethod: "CARD", getCardReturnUrl: "untrusted" } as any))
+      .rejects.toMatchObject({ message: "STOCK_PAYMENT_METHOD_REFERENCE_MISMATCH", definitelyNotCreated: true });
+    expect(createCharge).not.toHaveBeenCalled();
+  });
+
   it("classifies buyer lookup failures as pre-payment and never calls the charge adapter", async () => {
     const createCharge = vi.fn();
     const provider = createSandboxAsaasStockPaymentProvider({ environment: sandbox, loadBuyer: vi.fn(async () => { throw Error("private lookup detail"); }), createCharge });
@@ -94,6 +130,22 @@ describe("STOCK Asaas sandbox provider", () => {
     });
     await expect(provider.createPayment({ orderId: "12345", amountCents: 12900, idempotencyKey: "stock:12345" }))
       .rejects.toMatchObject({ definitelyNotCreated: false, phase: "payment_create", category: "invalid_response" });
+  });
+
+  it("rejects a mismatch between the attempt-bound method and requested provider method", async () => {
+    const createCharge = vi.fn(async () => ({ paymentId: "pay-x", checkoutUrl: "https://sandbox.asaas.com/i/x" }));
+    const provider = createSandboxAsaasStockPaymentProvider({
+      environment: sandbox,
+      loadBuyer: async () => ({ name: "N", email: "b@example.invalid", cpfCnpj: "11111111111" }),
+      getCardReturnUrl: () => "https://store.example.invalid/em-breve",
+      createCharge,
+    });
+    const token = "A".repeat(32);
+    await expect(provider.createPayment({
+      orderId: "9", amountCents: 1000, idempotencyKey: `stock:9:${token}`,
+      externalReference: `L4CKOS-STOCK-ATTEMPT:v1:${token}`, paymentMethod: "CARD",
+    })).rejects.toMatchObject({ message: "STOCK_PAYMENT_METHOD_REFERENCE_MISMATCH", definitelyNotCreated: true });
+    expect(createCharge).not.toHaveBeenCalled();
   });
 });
 

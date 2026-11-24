@@ -208,6 +208,10 @@ function PagamentoContent() {
   // Own reservations lower the visible stock, so catalog issues only gate *new* attempts.
   const catalogBlocksNewAttempt = catalogIssues.length > 0 && !stockCheckoutBlocked;
 
+  useEffect(() => {
+    if (hasStockCheckoutItems && !stockCartCompatible && checkoutMethod === "CARD") setCheckoutMethod("PIX");
+  }, [hasStockCheckoutItems, stockCartCompatible, checkoutMethod]);
+
   const refreshStockAttempt = async () => {
     if (!isAuthenticated || !stockCheckoutCompatible) return;
     stockConsultCountRef.current += 1;
@@ -648,8 +652,12 @@ function PagamentoContent() {
           setPaymentError(stockCartInvalidMessage);
           return;
         }
-        if (checkoutMethod !== "PIX") {
-          setPaymentError("Pedidos STOCK e pré-vendas devem ser pagos via PIX neste checkout.");
+        if (checkoutMethod !== "PIX" && checkoutMethod !== "CARD") {
+          setPaymentError("Pedidos STOCK e pré-vendas aceitam PIX; cartão de crédito está disponível somente para itens STOCK.");
+          return;
+        }
+        if (checkoutMethod === "CARD" && !stockCartCompatible) {
+          setPaymentError("Cartão está disponível apenas para itens STOCK. Pré-vendas devem ser pagas via PIX neste checkout.");
           return;
         }
         const stockAddress = {
@@ -665,7 +673,7 @@ function PagamentoContent() {
         const stockLines = stockLinesFromCart(cart.items);
         if (selectedShipping.id === "local-plano-piloto") {
           // Price and stock stay server-authoritative; this is only a delivery snapshot.
-          await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress });
+          await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress }, checkoutMethod);
         } else if (selectedShipping.id.startsWith("melhor-envio-")) {
           // Carrier freight: the server re-quotes from ITS catalog and signs the terms; the charge uses only that signed quote.
           const signed = await stockShippingQuote.mutateAsync({
@@ -681,7 +689,7 @@ function PagamentoContent() {
             setPaymentError(`O valor do frete mudou para ${formatPrice(option.priceCents / 100)}. Recalcule o frete para revisar o total antes de finalizar.`);
             return;
           }
-          await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress });
+          await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress }, checkoutMethod);
         } else {
           setPaymentError("Esta modalidade de entrega ainda não está disponível para pedidos STOCK.");
           return;
@@ -936,14 +944,19 @@ function PagamentoContent() {
 
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
               <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
-              {hasStockCheckoutItems ? <div className="l4-checkout-payment-methods"><button type="button" className="is-selected" aria-pressed="true">
-                <span className="l4-checkout-payment-icon" aria-hidden="true"><QrCode size={18} /></span><span><strong>PIX</strong><small>Confirmação após validação do recebimento</small></span>
-              </button></div> : <div className="l4-checkout-payment-methods">
+              {hasStockCheckoutItems ? <div className="l4-checkout-payment-methods">
+                <button type="button" className={checkoutMethod === "PIX" ? "is-selected" : ""} onClick={() => setCheckoutMethod("PIX")} aria-pressed={checkoutMethod === "PIX"}>
+                  <span className="l4-checkout-payment-icon" aria-hidden="true"><QrCode size={18} /></span><span><strong>PIX</strong><small>Confirmação após validação do recebimento</small></span>
+                </button>
+                {stockCartCompatible ? <button type="button" className={checkoutMethod === "CARD" ? "is-selected" : ""} onClick={() => setCheckoutMethod("CARD")} aria-pressed={checkoutMethod === "CARD"}>
+                  <span className="l4-checkout-payment-icon" aria-hidden="true"><CreditCard size={18} /></span><span><strong>Cartão de crédito</strong><small>À vista na página segura da Asaas</small></span>
+                </button> : null}
+              </div> : <div className="l4-checkout-payment-methods">
                 {ENABLED_CHECKOUT_METHODS.map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => { setCheckoutMethod(method); trackStoreEvent("payment_method_selected", { method }); }} aria-pressed={checkoutMethod === method}>
                   <span className="l4-checkout-payment-icon" aria-hidden="true">{method === "PIX" ? <QrCode size={18} /> : method === "CARD" ? <CreditCard size={18} /> : <Barcode size={18} />}</span><span><strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small></span>
                 </button>)}
               </div>}
-              <p className="l4-checkout-payment-hint">{hasStockCheckoutItems ? "A confirmação depende da validação do recebimento do PIX." : checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
+              <p className="l4-checkout-payment-hint">{hasStockCheckoutItems ? checkoutMethod === "CARD" ? "O cartão é informado somente na página hospedada da Asaas; o pedido só é confirmado por webhook validado." : "A confirmação depende da validação do recebimento do PIX." : checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
             </section>
 
             <section className="l4-checkout-coupon">

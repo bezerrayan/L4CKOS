@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export type StockPaymentMethodV1 = "PIX" | "CARD";
+
 export const stockCheckoutItemV1Schema = z.object({
   productId: z.number().int().positive(),
   variantId: z.number().int().positive(),
@@ -34,6 +36,8 @@ export const stockDeliveryV1Schema = z.union([stockLocalDeliveryV1Schema, stockC
 export const stockCheckoutRequestV1Schema = z.object({
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{16,120}$/),
   items: z.array(stockCheckoutItemV1Schema).min(1).max(30),
+  /** Omitted by older clients; STOCK keeps PIX as the backwards-compatible default. */
+  paymentMethod: z.enum(["PIX", "CARD"]).optional(),
   delivery: stockDeliveryV1Schema.optional(),
 }).strict();
 
@@ -66,6 +70,7 @@ export const stockCheckoutResponseV1Schema = z.object({
 export const stockAttemptResumeV1Schema = z.object({
   attemptId: z.string(),
   status: z.enum(["reserved", "creating", "pending", "ambiguous", "paid", "failed", "expired", "cancelled"]),
+  paymentMethod: z.enum(["PIX", "CARD"]).optional(),
   orderId: z.string().nullable(),
   paymentId: z.string().optional(),
   checkoutUrl: z.string().url().optional(),

@@ -7,6 +7,7 @@ import {
   type StockCheckoutRequestV1,
   type StockCheckoutResponseV1,
   type StockDeliveryV1,
+  type StockPaymentMethodV1,
 } from "../../../shared/stockCheckoutV1";
 import type { CartItem } from "../types/cart";
 
@@ -221,7 +222,7 @@ export function createStockCheckoutClient(input: {
 }) {
   const buildItems = (lines: readonly StockCartLine[]) => checkoutItems(lines);
   return {
-    async create(lines: readonly StockCartLine[], delivery?: StockDeliveryV1): Promise<StockCheckoutResponseV1> {
+    async create(lines: readonly StockCartLine[], delivery?: StockDeliveryV1, paymentMethod: StockPaymentMethodV1 = "PIX"): Promise<StockCheckoutResponseV1> {
       if (!input.enabled) return fail("PUBLIC_CHECKOUT_DISABLED");
       const items = buildItems(lines);
       const now = input.now?.() ?? Date.now();
@@ -236,7 +237,7 @@ export function createStockCheckoutClient(input: {
       } else {
         attemptId = getOrCreateStockAttemptId({ storage: input.storage, items, createId: input.createId ?? (() => globalThis.crypto.randomUUID()), now });
       }
-      const request = stockCheckoutRequestV1Schema.parse({ attemptId, items, ...(delivery ? { delivery } : {}) });
+      const request = stockCheckoutRequestV1Schema.parse({ attemptId, items, paymentMethod, ...(delivery ? { delivery } : {}) });
       let raw: unknown;
       try {
         raw = await input.transport.create(request);

@@ -5,6 +5,7 @@ import type { StockShippingAcceptanceV1 } from "../../shared/stockShippingV1";
 import { StockShippingQuoteError, verifyStockShippingQuoteV1 } from "./stockShippingQuoteV1";
 import { isPublicProductUnavailable } from "../database/publicPurchasePolicy";
 import { StockProviderError } from "./stockProviderError";
+import type { StockPaymentMethod } from "./stockPaymentReference";
 export { StockProviderError } from "./stockProviderError";
 
 export type StockVariant = {
@@ -45,6 +46,8 @@ export type StockAttempt = {
   shipping?: StockShippingAcceptanceV1;
   /** Authoritative amount charged: merchandise + accepted freight. Persisted rows carry it; absent only on legacy in-memory attempts. */
   amountCents?: number;
+  /** Derived from the persisted strong provider reference; old references are PIX. */
+  paymentMethod?: StockPaymentMethod;
 };
 
 export type StockAttemptResumeRecord = {
@@ -58,6 +61,7 @@ export type StockAttemptResumeRecord = {
   reservationExpiresAt: string;
   reservationExpired: boolean;
   reconciliationRequired: boolean;
+  paymentMethod?: StockPaymentMethod;
   /** Persisted item identities used only to prove a latest-attempt/cart match on read. */
   cartItems?: Array<{ productId: number; variantId: number; quantity: number }>;
 };
@@ -127,7 +131,7 @@ export interface StockCheckoutTransaction {
    * Called in the SAME transaction that starts the provider attempt, i.e. committed BEFORE any provider call. A store without it
    * keeps the legacy numeric reference (historical behaviour).
    */
-  ensurePaymentReference?(attemptId: string): Promise<string>;
+  ensurePaymentReference?(attemptId: string, paymentMethod?: StockPaymentMethod): Promise<string>;
   /** Exact lookup of the attempt that owns a strong reference (null when unknown, e.g. a charge from before a restore). */
   findAttemptByPaymentReference?(reference: string): Promise<StockAttempt | null>;
   claimWebhook(eventId: string, payloadHash: string): Promise<"claimed" | "duplicate" | "conflict">;
@@ -159,7 +163,7 @@ export interface StockCheckoutStore {
 export interface StockPaymentProvider {
   /** True only when the provider guarantees the idempotencyKey is enforced server-side. */
   supportsIdempotencyKey: boolean;
-  createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string; externalReference?: string }): Promise<{ paymentId: string; checkoutUrl: string | null; customerId?: string | null; pix?: StockPixPaymentV1 }>;
+  createPayment(input: { orderId: string; amountCents: number; idempotencyKey: string; externalReference?: string; paymentMethod?: StockPaymentMethod }): Promise<{ paymentId: string; checkoutUrl: string | null; customerId?: string | null; pix?: StockPixPaymentV1 }>;
   /**
    * Read-only PIX lookup (QR + copy/paste) for an ALREADY persisted payment id. Must never create, change or cancel a charge and
    * must resolve null (not throw) when the data is unavailable.
@@ -252,7 +256,7 @@ function normalizeText(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/g, " ");
 }
 
-function parseRequest(input: unknown): { attemptId: string; items: Array<{ productId: number; variantId: number; size?: string; color?: string; quantity: number }>; delivery?: StockDeliveryV1 } {
+function parseRequest(input: unknown): { attemptId: string; items: Array<{ productId: number; variantId: number; size?: string; color?: string; quantity: number }>; paymentMethod: StockPaymentMethod; delivery?: StockDeliveryV1 } {
   if (!input || typeof input !== "object") return fail("CHECKOUT_INPUT_INVALID");
   const value = input as Record<string, unknown>;
   if (typeof value.attemptId !== "string" || !/^[A-Za-z0-9_-]{16,120}$/.test(value.attemptId)) fail("CHECKOUT_ATTEMPT_INVALID");
@@ -276,7 +280,9 @@ function parseRequest(input: unknown): { attemptId: string; items: Array<{ produ
   const delivery = value.delivery === undefined ? undefined : stockDeliveryV1Schema.parse(value.delivery);
   // Local scheduled delivery only inside the local territory; carrier delivery is authorized solely by a signed quote.
   if (delivery && !("quoteToken" in delivery) && !isLocalDeliveryCep(delivery.address.zipCode)) fail("CHECKOUT_DELIVERY_UNAVAILABLE");
-  return { attemptId: value.attemptId, items, ...(delivery ? { delivery } : {}) };
+  const paymentMethod = value.paymentMethod === undefined ? "PIX" : value.paymentMethod;
+  if (paymentMethod !== "PIX" && paymentMethod !== "CARD") fail("CHECKOUT_PAYMENT_METHOD_INVALID");
+  return { attemptId: value.attemptId, items, paymentMethod, ...(delivery ? { delivery } : {}) };
 }
 
 export async function createStockCheckout(input: {
@@ -300,7 +306,9 @@ export async function createStockCheckout(input: {
   const request = parseRequest(input.request);
   const cartFingerprint = canonicalCart(request.items);
   // The quote token is a bearer credential with a fresh nonce: it is verified, never part of the idempotency fingerprint.
-  const fingerprint = sha256({ cart: cartFingerprint, delivery: request.delivery ? { optionId: request.delivery.optionId, address: request.delivery.address } : null });
+  const fingerprintInput = { cart: cartFingerprint, delivery: request.delivery ? { optionId: request.delivery.optionId, address: request.delivery.address } : null };
+  // Keep the historical PIX fingerprint byte-for-byte compatible; CARD attempts are separately bound to the chosen method.
+  const fingerprint = sha256(request.paymentMethod === "CARD" ? { ...fingerprintInput, paymentMethod: "CARD" } : fingerprintInput);
   let prepared: { attempt: StockAttempt; replayed: boolean };
   try {
     prepared = await input.store.transaction(async tx => {
@@ -371,6 +379,7 @@ export async function createStockCheckout(input: {
       // Public PREORDER and STOCK purchases are separate checkouts. Enforce
       // this at the server boundary as well as in the storefront UI.
       if (new Set(snapshots.map(snapshot => snapshot.salesMode)).size > 1) fail("CHECKOUT_MIXED_SALES_MODE");
+      if (request.paymentMethod === "CARD" && snapshots.some(snapshot => snapshot.salesMode !== "STOCK")) fail("CHECKOUT_PAYMENT_METHOD_UNSUPPORTED");
 
       const merchandiseCents = snapshots.reduce((sum, item) => sum + item.totalCents, 0);
       if (!Number.isSafeInteger(merchandiseCents) || merchandiseCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
@@ -416,6 +425,7 @@ export async function createStockCheckout(input: {
       const orderId = `stock-${sha256([request.attemptId, fingerprint]).slice(0, 32)}`;
       const attempt: StockAttempt = {
         attemptId: request.attemptId, ownerUserId: input.ownerUserId, fingerprint, orderId, status: "reserved", providerState: "not_started", snapshots,
+        paymentMethod: request.paymentMethod,
         ...(request.delivery ? { delivery: request.delivery } : {}),
         ...(shipping ? { shipping } : {}),
         amountCents,
@@ -457,7 +467,7 @@ export async function createStockCheckout(input: {
   if (!Number.isSafeInteger(amountCents) || amountCents > MYSQL_SIGNED_INT_MAX) fail("CHECKOUT_MONEY_INVALID");
   if (prepared.attempt.paymentId) {
     // Replay of a persisted charge: re-read the PIX data by the stored payment id. Never creates another charge.
-    const pix = await loadPixForExistingPayment(input.provider, prepared.attempt.paymentId, prepared.attempt.reservationExpiresAt);
+    const pix = request.paymentMethod === "PIX" ? await loadPixForExistingPayment(input.provider, prepared.attempt.paymentId, prepared.attempt.reservationExpiresAt) : undefined;
     return { orderId: prepared.attempt.orderId, paymentId: prepared.attempt.paymentId, checkoutUrl: prepared.attempt.checkoutUrl ?? null, amountCents, snapshots: prepared.attempt.snapshots, replayed: true, ...(pix ? { pix } : {}) };
   }
 
@@ -471,14 +481,14 @@ export async function createStockCheckout(input: {
   let paymentReference: string | null = null;
   const providerStarted = await input.store.transaction(async tx => {
     const started = await tx.beginProviderAttempt(request.attemptId, input.provider.supportsIdempotencyKey);
-    if (started && tx.ensurePaymentReference) paymentReference = await tx.ensurePaymentReference(request.attemptId);
+    if (started && tx.ensurePaymentReference) paymentReference = await tx.ensurePaymentReference(request.attemptId, request.paymentMethod);
     return started;
   });
   if (!providerStarted) {
     const latest = await input.store.transaction(tx => tx.findAttempt(request.attemptId));
     if (latest?.status === "reserved" && latest.paymentId) {
       const latestAmount = stockAttemptAmountCents(latest);
-      const latestPix = await loadPixForExistingPayment(input.provider, latest.paymentId, latest.reservationExpiresAt);
+      const latestPix = request.paymentMethod === "PIX" ? await loadPixForExistingPayment(input.provider, latest.paymentId, latest.reservationExpiresAt) : undefined;
       return {
         orderId: latest.orderId,
         paymentId: latest.paymentId,
@@ -498,6 +508,7 @@ export async function createStockCheckout(input: {
     payment = await input.provider.createPayment({
       orderId: prepared.attempt.orderId, amountCents, idempotencyKey: stockProviderIdempotencyKey(prepared.attempt.orderId, paymentReference),
       ...(paymentReference ? { externalReference: paymentReference } : {}),
+      paymentMethod: request.paymentMethod,
     });
   } catch (error) {
     const safeError = error instanceof StockProviderError
@@ -542,6 +553,7 @@ function resumeRecord(attempt: StockAttemptResumeRecord): import("../../shared/s
     attemptId: attempt.attemptId,
     orderId: attempt.orderId,
     status,
+    paymentMethod: attempt.paymentMethod ?? "PIX",
     ...(attempt.paymentId ? { paymentId: attempt.paymentId } : {}),
     ...(attempt.checkoutUrl && status === "pending" ? { checkoutUrl: attempt.checkoutUrl } : {}),
     amountCents: attempt.amountCents,
@@ -578,7 +590,7 @@ function assertResumeCartMatches(attempt: StockAttemptResumeRecord, expectedItem
 
 /** Adds inline PIX data only to a still-payable pending attempt; every other state is returned unchanged. */
 async function withPixForPending(resume: import("../../shared/stockCheckoutV1").StockAttemptResumeV1, provider: Pick<StockPaymentProvider, "getPixPayment"> | undefined) {
-  if (resume.status !== "pending" || !resume.paymentId) return resume;
+  if (resume.status !== "pending" || !resume.paymentId || resume.paymentMethod === "CARD") return resume;
   const pix = await loadPixForExistingPayment(provider, resume.paymentId, resume.reservationExpiresAt);
   return pix ? { ...resume, pix } : resume;
 }

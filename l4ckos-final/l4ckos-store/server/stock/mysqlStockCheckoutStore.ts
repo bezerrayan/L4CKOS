@@ -9,7 +9,7 @@ import {
   type StockSnapshot,
   type StockVariant,
 } from "./stockCheckout";
-import { generateStockPaymentReference, STOCK_PAYMENT_CUSTOMER_ACTION, STOCK_PAYMENT_REFERENCE_ACTION } from "./stockPaymentReference";
+import { generateStockPaymentReference, parseStockPaymentReference, STOCK_PAYMENT_CUSTOMER_ACTION, STOCK_PAYMENT_REFERENCE_ACTION } from "./stockPaymentReference";
 import { alertExecutorForConnection, recordReconciliationAlert } from "../payments/reconciliationAlerts";
 import { purchasedSalesMode, purchasedScheduleMessages } from "../../shared/preorder";
 import { formatCurrency } from "../utils/email/formatCurrency.js";
@@ -86,6 +86,11 @@ async function toResumeRecord(pool: Pool, row: ResumeRow) {
       ORDER BY lineNumber`,
     [row.attemptId],
   );
+  const [referenceRows] = await pool.execute<(RowDataPacket & { correlationId: string | null })[]>(
+    `SELECT correlationId FROM auditLogs WHERE orderId = ? AND action = ? AND entityId = ? ORDER BY id LIMIT 1`,
+    [row.orderId, STOCK_PAYMENT_REFERENCE_ACTION, row.attemptId],
+  );
+  const parsedReference = parseStockPaymentReference(referenceRows[0]?.correlationId);
   return {
     attemptId: row.attemptId,
     orderId: String(row.orderId),
@@ -97,6 +102,7 @@ async function toResumeRecord(pool: Pool, row: ResumeRow) {
     reservationExpiresAt: row.reservationExpiresAt,
     reservationExpired: Boolean(row.reservationExpired),
     reconciliationRequired: Boolean(row.reconciliationRequired),
+    paymentMethod: parsedReference.kind === "strong" ? parsedReference.paymentMethod : "PIX",
     cartItems: items.map(item => ({
       productId: asNumber(item.productId),
       variantId: asNumber(item.variantId),
@@ -118,6 +124,11 @@ async function findAttempt(connection: PoolConnection, attemptId: string): Promi
        FROM stockCheckoutItems WHERE attemptId = ? ORDER BY lineNumber`,
     [attemptId],
   );
+  const [referenceRows] = await connection.execute<(RowDataPacket & { correlationId: string | null })[]>(
+    `SELECT correlationId FROM auditLogs WHERE orderId = ? AND action = ? AND entityId = ? ORDER BY id LIMIT 1`,
+    [row.orderId, STOCK_PAYMENT_REFERENCE_ACTION, attemptId],
+  );
+  const parsedReference = parseStockPaymentReference(referenceRows[0]?.correlationId);
   return {
     attemptId: row.attemptId,
     ownerUserId: asNumber(row.ownerUserId),
@@ -129,6 +140,7 @@ async function findAttempt(connection: PoolConnection, attemptId: string): Promi
     ...(row.checkoutUrl ? { checkoutUrl: row.checkoutUrl } : {}),
     reconciliationRequiredAt: row.reconciliationRequiredAt,
     amountCents: asNumber(row.amountCents as number | string),
+    paymentMethod: parsedReference.kind === "strong" ? parsedReference.paymentMethod : "PIX",
     snapshots: itemRows.map(item => ({
       id: asNumber(item.variantId),
       productId: asNumber(item.productId),
@@ -543,7 +555,7 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       }
     },
 
-    async ensurePaymentReference(attemptId): Promise<string> {
+    async ensurePaymentReference(attemptId, paymentMethod = "PIX"): Promise<string> {
       const attempt = await lockAttempt(connection, attemptId); // serializes concurrent creators of the same attempt
       if (!attempt) throw new StockMySqlInvariantError("Payment reference requires an existing attempt");
       const [existing] = await connection.execute<(RowDataPacket & { correlationId: string })[]>(
@@ -552,7 +564,7 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
       );
       if (existing[0]?.correlationId) return existing[0].correlationId;
       for (let tries = 0; tries < 3; tries += 1) {
-        const reference = generateStockPaymentReference();
+        const reference = generateStockPaymentReference(undefined, paymentMethod);
         // The token is random (192 bits); this check only makes a (practically impossible) collision loud instead of silent.
         const [taken] = await connection.execute<(RowDataPacket & { id: number })[]>(
           `SELECT id FROM auditLogs WHERE correlationId = ? AND action = ? LIMIT 1`, [reference, STOCK_PAYMENT_REFERENCE_ACTION],
@@ -561,7 +573,7 @@ function createTransaction(connection: PoolConnection, reservationTtlSeconds: nu
         await connection.execute(
           `INSERT INTO auditLogs (actorUserId, actorType, action, entity, entityId, orderId, event, correlationId, metadata)
            VALUES (NULL, 'system', ?, 'stockCheckoutAttempt', ?, ?, 'STOCK_PAYMENT_REFERENCE', ?, ?)`,
-          [STOCK_PAYMENT_REFERENCE_ACTION, attemptId, attempt.orderId, reference, JSON.stringify({ attemptId, orderId: String(attempt.orderId), referenceVersion: 1 })],
+           [STOCK_PAYMENT_REFERENCE_ACTION, attemptId, attempt.orderId, reference, JSON.stringify({ attemptId, orderId: String(attempt.orderId), referenceVersion: paymentMethod === "CARD" ? 2 : 1, paymentMethod })],
         );
         return reference;
       }
