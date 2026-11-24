@@ -5,6 +5,30 @@ import {
   type StagingBffRequest,
 } from "../server/_core/stagingPreviewBff.js";
 
+type VercelIncomingMessage = IncomingMessage & {
+  query?: Record<string, string | string[] | undefined>;
+};
+
+export function includeVercelRewriteQuery(requestUrl: string | undefined, query: VercelIncomingMessage["query"]): string | undefined {
+  if (!requestUrl || !query) return requestUrl;
+
+  let url: URL;
+  try {
+    url = new URL(requestUrl, "https://preview.invalid");
+  } catch {
+    return requestUrl;
+  }
+  if (url.pathname !== "/api/staging-bff") return requestUrl;
+
+  for (const [key, value] of Object.entries(query)) {
+    if (url.searchParams.has(key)) continue;
+    if (typeof value === "string") url.searchParams.append(key, value);
+    else if (Array.isArray(value)) value.forEach(item => url.searchParams.append(key, item));
+  }
+
+  return `${url.pathname}${url.search}`;
+}
+
 async function readRequestBody(request: IncomingMessage): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -17,7 +41,7 @@ async function readRequestBody(request: IncomingMessage): Promise<Uint8Array> {
   return Buffer.concat(chunks, size);
 }
 
-export default async function stagingPreviewBff(request: IncomingMessage, response: ServerResponse) {
+export default async function stagingPreviewBff(request: VercelIncomingMessage, response: ServerResponse) {
   const contentLength = Number(request.headers["content-length"] ?? 0);
   if (Number.isFinite(contentLength) && contentLength > STAGING_BFF_BODY_LIMIT) {
     response.statusCode = 413;
@@ -40,7 +64,7 @@ export default async function stagingPreviewBff(request: IncomingMessage, respon
 
   const input: StagingBffRequest = {
     method: request.method,
-    url: request.url,
+    url: includeVercelRewriteQuery(request.url, request.query),
     headers: request.headers,
     body,
   };

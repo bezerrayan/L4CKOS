@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { includeVercelRewriteQuery } from "../../api/staging-bff";
 import {
   handleStagingPreviewBff,
   STAGING_API_ACCESS_HEADER,
@@ -35,6 +36,17 @@ function jsonResponse(body: string, init: ResponseInit = {}) {
 }
 
 describe("staging Preview BFF", () => {
+  it("includes Vercel's rewrite query helper when the raw URL omits it", () => {
+    expect(includeVercelRewriteQuery("/api/staging-bff", { bffpath: "csrf" }))
+      .toBe("/api/staging-bff?bffpath=csrf");
+    expect(includeVercelRewriteQuery("/api/staging-bff?input=%7B%7D", {
+      bffpath: "trpc/auth.me",
+      input: "{}",
+      batch: "1",
+    })).toBe("/api/staging-bff?input=%7B%7D&bffpath=trpc%2Fauth.me&batch=1");
+    expect(includeVercelRewriteQuery("/api/csrf", { bffpath: "csrf" })).toBe("/api/csrf");
+  });
+
   it("forwards only allowlisted same-origin query with fixed upstream and server token", async () => {
     const fetcher = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => jsonResponse("{\"result\":true}"));
     const result = await handleStagingPreviewBff(request(), env, fetcher as typeof fetch);
