@@ -1,0 +1,51 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  handleStagingPreviewBff,
+  STAGING_BFF_BODY_LIMIT,
+  type StagingBffRequest,
+} from "../server/_core/stagingPreviewBff";
+
+async function readRequestBody(request: IncomingMessage): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    size += bytes.byteLength;
+    if (size > STAGING_BFF_BODY_LIMIT) throw new Error("REQUEST_BODY_TOO_LARGE");
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks, size);
+}
+
+export default async function stagingPreviewBff(request: IncomingMessage, response: ServerResponse) {
+  const contentLength = Number(request.headers["content-length"] ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > STAGING_BFF_BODY_LIMIT) {
+    response.statusCode = 413;
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("cache-control", "no-store, private");
+    response.end(JSON.stringify({ error: "REQUEST_BODY_TOO_LARGE" }));
+    return;
+  }
+
+  let body: Uint8Array;
+  try {
+    body = await readRequestBody(request);
+  } catch {
+    response.statusCode = 413;
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("cache-control", "no-store, private");
+    response.end(JSON.stringify({ error: "REQUEST_BODY_TOO_LARGE" }));
+    return;
+  }
+
+  const input: StagingBffRequest = {
+    method: request.method,
+    url: request.url,
+    headers: request.headers,
+    body,
+  };
+  const result = await handleStagingPreviewBff(input, process.env);
+  response.statusCode = result.statusCode;
+  for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
+  response.end(Buffer.from(result.body));
+}
