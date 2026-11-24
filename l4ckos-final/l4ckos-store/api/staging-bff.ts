@@ -10,7 +10,8 @@ type VercelIncomingMessage = IncomingMessage & {
 };
 
 export function includeVercelRewriteQuery(requestUrl: string | undefined, query: VercelIncomingMessage["query"]): string | undefined {
-  if (!requestUrl || !query) return requestUrl;
+  if (!requestUrl) return requestUrl;
+  const vercelQuery = query ?? {};
 
   let url: URL;
   try {
@@ -18,9 +19,24 @@ export function includeVercelRewriteQuery(requestUrl: string | undefined, query:
   } catch {
     return requestUrl;
   }
-  if (url.pathname !== "/api/staging-bff") return requestUrl;
+  if (url.pathname !== "/api/staging-bff") {
+    const expectedMarker = url.pathname === "/api/csrf"
+      ? "csrf"
+      : url.pathname === "/api/shipping/quote"
+        ? "shipping/quote"
+        : url.pathname.match(/^\/api\/cep\/([0-9]{8})$/)?.[0]?.replace(/^\/api\//, "")
+          ?? url.pathname.match(/^\/api\/trpc\/(.+)$/)?.[0]?.replace(/^\/api\//, "");
+    const urlMarkers = url.searchParams.getAll("bffpath");
+    const queryMarker = vercelQuery.bffpath;
+    const queryMarkers = typeof queryMarker === "string" ? [queryMarker] : Array.isArray(queryMarker) ? queryMarker : [];
+    const markers = urlMarkers.length ? urlMarkers : queryMarkers;
+    if (!expectedMarker || markers.length !== 1 || markers[0] !== expectedMarker ||
+        queryMarkers.length > 0 && (queryMarkers.length !== 1 || queryMarkers[0] !== expectedMarker)) return requestUrl;
+    url.searchParams.delete("bffpath");
+    return `${url.pathname}${url.search}`;
+  }
 
-  for (const [key, value] of Object.entries(query)) {
+  for (const [key, value] of Object.entries(vercelQuery)) {
     if (url.searchParams.has(key)) continue;
     if (typeof value === "string") url.searchParams.append(key, value);
     else if (Array.isArray(value)) value.forEach(item => url.searchParams.append(key, item));
@@ -69,15 +85,6 @@ export default async function stagingPreviewBff(request: VercelIncomingMessage, 
     body,
   };
   const result = await handleStagingPreviewBff(input, process.env);
-  if (process.env.VERCEL_ENV === "preview" && result.statusCode === 404 &&
-      Buffer.from(result.body).toString("utf8").includes("PREVIEW_BFF_ROUTE_NOT_ALLOWED")) {
-    const route = new URL(request.url ?? "/", "https://preview.invalid");
-    const queryKeys = [...new Set([
-      ...route.searchParams.keys(),
-      ...Object.keys(request.query ?? {}),
-    ])].filter(key => /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(key)).sort();
-    response.setHeader("x-preview-bff-route-shape", `${route.pathname};query-keys=${queryKeys.join(",")}`);
-  }
   response.statusCode = result.statusCode;
   for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
   response.end(Buffer.from(result.body));

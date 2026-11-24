@@ -47,6 +47,19 @@ describe("staging Preview BFF", () => {
     expect(includeVercelRewriteQuery("/api/csrf", { bffpath: "csrf" })).toBe("/api/csrf");
   });
 
+  it("removes only a matching Vercel marker while preserving the public route and app query", () => {
+    expect(includeVercelRewriteQuery("/api/csrf?bffpath=csrf", { bffpath: "csrf" }))
+      .toBe("/api/csrf");
+    expect(includeVercelRewriteQuery("/api/trpc/auth.me?batch=1&input=%7B%7D&bffpath=trpc%2Fauth.me", {
+      bffpath: "trpc/auth.me",
+      batch: "1",
+      input: "{}",
+    })).toBe("/api/trpc/auth.me?batch=1&input=%7B%7D");
+    expect(includeVercelRewriteQuery("/api/csrf?bffpath=trpc%2Fadmin.dashboard", {
+      bffpath: "trpc/admin.dashboard",
+    })).toBe("/api/csrf?bffpath=trpc%2Fadmin.dashboard");
+  });
+
   it("forwards only allowlisted same-origin query with fixed upstream and server token", async () => {
     const fetcher = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => jsonResponse("{\"result\":true}"));
     const result = await handleStagingPreviewBff(request(), env, fetcher as typeof fetch);
