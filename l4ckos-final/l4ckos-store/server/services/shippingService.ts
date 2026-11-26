@@ -150,17 +150,16 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
       {
         from: { postal_code: cfg.fromPostalCode },
         to: { postal_code: cep },
-        package: {
-          height: "6",
-          width: "18",
-          length: "26",
-          weight: (0.3 * Math.max(1, input.itemCount)).toFixed(2),
-        },
+        volumes: [{
+          height: 6,
+          width: 18,
+          length: 26,
+          weight: Number((0.3 * Math.max(1, input.itemCount)).toFixed(2)),
+          insurance: Number(input.subtotal.toFixed(2)),
+        }],
         options: {
-          insurance_value: Number(input.subtotal.toFixed(2)),
           receipt: false,
           own_hand: false,
-          collect: false,
         },
       },
       {
@@ -168,7 +167,7 @@ export async function quoteShipping(input: QuoteInput): Promise<ShippingOption[]
           Authorization: `Bearer ${cfg.token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
-          "User-Agent": "L4CKOS/1.0",
+          "User-Agent": "L4CKOS/1.0 (contato@l4ckos.com.br)",
         },
         timeout: 12000,
       },
@@ -208,17 +207,16 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
       {
         from: { postal_code: cfg.fromPostalCode },
         to: { postal_code: cep },
-        package: {
-          height: "6",
-          width: "18",
-          length: "26",
-          weight: (0.3 * Math.max(1, input.itemCount)).toFixed(2),
-        },
+        volumes: [{
+          height: 6,
+          width: 18,
+          length: 26,
+          weight: Number((0.3 * Math.max(1, input.itemCount)).toFixed(2)),
+          insurance: Number(input.subtotal.toFixed(2)),
+        }],
         options: {
-          insurance_value: Number(input.subtotal.toFixed(2)),
           receipt: false,
           own_hand: false,
-          collect: false,
         },
       },
       {
@@ -226,7 +224,7 @@ export async function quoteShippingDetailed(input: QuoteInput): Promise<QuoteShi
           Authorization: `Bearer ${cfg.token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
-          "User-Agent": "L4CKOS/1.0",
+          "User-Agent": "L4CKOS/1.0 (contato@l4ckos.com.br)",
         },
         timeout: 12000,
       },

@@ -30,4 +30,37 @@ describe("shipping local territory fallback", () => {
     expect(result.options).toEqual([]);
     expect(result.source).toBe("unavailable");
   });
+
+  it("uses the documented Melhor Envio volumes contract for both quote paths", async () => {
+    vi.stubEnv("MELHOR_ENVIO_TOKEN", "synthetic-test-token");
+    vi.stubEnv("MELHOR_ENVIO_API_URL", "https://sandbox.melhorenvio.com.br/api/v2/");
+    vi.stubEnv("MELHOR_ENVIO_FROM_POSTAL_CODE", "44001-000");
+    const post = vi.spyOn(axios, "post").mockResolvedValue({
+      data: [{ id: 1, name: "PAC", price: "12.50", company: { name: "Correios" }, delivery_time: 2 }],
+    } as any);
+
+    const detailed = await quoteShippingDetailed({ cep: "01001-000", itemCount: 2, subtotal: 20 });
+    const simple = await quoteShipping({ cep: "01001-000", itemCount: 2, subtotal: 20 });
+
+    const expectedBody = {
+      from: { postal_code: "44001000" },
+      to: { postal_code: "01001000" },
+      volumes: [{ height: 6, width: 18, length: 26, weight: 0.6, insurance: 20 }],
+      options: { receipt: false, own_hand: false },
+    };
+    const expectedConfig = expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer synthetic-test-token",
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "L4CKOS/1.0 (contato@l4ckos.com.br)",
+      }),
+      timeout: 12000,
+    });
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenNthCalledWith(1, "https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate", expectedBody, expectedConfig);
+    expect(post).toHaveBeenNthCalledWith(2, "https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate", expectedBody, expectedConfig);
+    expect(detailed).toMatchObject({ source: "melhor-envio", options: [{ id: "melhor-envio-1", price: 12.5 }] });
+    expect(simple).toMatchObject([{ id: "melhor-envio-1", price: 12.5 }]);
+  });
 });
