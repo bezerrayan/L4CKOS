@@ -592,6 +592,41 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("FINANCIAL RECOVERY P1-P5 (MySQL 
     expect(afterDelete.attempt).toMatchObject({ status: "paid" });
   });
 
+  it("P4-CARD a debit-card payment on the hosted invoice settles exactly once (CONFIRMED then RECEIVED), consistent webhook and provider labels", async () => {
+    const c = await createCard("fr-p4card-debit-settles-001");
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), billingType: "DEBIT_CARD", status: "CONFIRMED", confirmedDate: "2026-11-26" });
+    const confirmed = await post(cardHook("evt-p4card-debit-confirmed", "PAYMENT_CONFIRMED", "CONFIRMED", c, { billingType: "DEBIT_CARD" }));
+    const afterConfirmed = await snap(c.attemptId, c.orderId);
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), status: "RECEIVED" });
+    const received = await post(cardHook("evt-p4card-debit-received", "PAYMENT_RECEIVED", "RECEIVED", c, { billingType: "DEBIT_CARD" }));
+    const afterReceived = await snap(c.attemptId, c.orderId);
+    ev("P4card.debit", { confirmed, received, afterConfirmed, afterReceived });
+    expect(confirmed.status).toBe(200);
+    expect(afterConfirmed.order).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+    expect(afterConfirmed.reservations).toEqual(["consumed"]);
+    expect(afterConfirmed.variant).toEqual({ stock: 0, reserved: 0 });
+    expect(received.status).toBe(200);
+    expect(afterReceived.order).toEqual(afterConfirmed.order);
+    expect(afterReceived.reservations).toEqual(afterConfirmed.reservations);
+    expect(afterReceived.variant).toEqual(afterConfirmed.variant);
+  });
+
+  it.each([
+    ["webhook says credit but the provider read says debit", "CREDIT_CARD", "DEBIT_CARD"],
+    ["the provider read says PIX for a card attempt", "DEBIT_CARD", "PIX"],
+    ["the provider read says BOLETO", "DEBIT_CARD", "BOLETO"],
+    ["the provider read says UNDEFINED", "CREDIT_CARD", "UNDEFINED"],
+  ] as const)("P4-CARD settlement fails closed when %s", async (label, webhookType, providerType) => {
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 36);
+    const c = await createCard(`fr-p4card-bt-${slug}`);
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), billingType: providerType, status: "CONFIRMED", confirmedDate: "2026-11-26" });
+    const res = await post(cardHook(`evt-p4card-bt-${slug}`, "PAYMENT_CONFIRMED", "CONFIRMED", c, { billingType: webhookType }));
+    const after = await snap(c.attemptId, c.orderId);
+    expect(res.body).toMatchObject({ handled: false, reconciliationRequired: true, financialMutation: false, stockMutation: false });
+    expect(after.order).toMatchObject({ status: "pending", paymentStatus: "unconfirmed" });
+    expect(after.variant).toEqual({ stock: 1, reserved: 1 });
+  });
+
   it.each([
     ["risk analysis / authorization in progress", { status: "AWAITING_RISK_ANALYSIS" }],
     ["a payment date is already present", { status: "PENDING", paymentDate: "2026-11-26" }],

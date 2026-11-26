@@ -358,6 +358,17 @@ describe("local STOCK checkout core", () => {
       });
     });
 
+    it("settles a hosted-card attempt once when CONFIRMED is followed by a later RECEIVED (the debit-card sequence)", async () => {
+      const store = new MemoryStockStore([variant()]);
+      const created = await createStockCheckout({ enabled: true, cardCheckoutEnabled: true, store, provider: provider(), request: cardRequest("attempt-card-debit-seq-001") });
+      expect(store.reserved.get(8)).toBe(1);
+      await sendWebhook({ signatureVerified: true, store, eventId: "evt-debit-confirmed", orderId: created.orderId, paymentId: created.paymentId, status: "paid", amountCents: created.amountCents, payload: { event: "PAYMENT_CONFIRMED" } });
+      const afterConfirmed = { status: store.attempts.get("attempt-card-debit-seq-001")?.status, reserved: store.reserved.get(8) };
+      expect(afterConfirmed).toEqual({ status: "paid", reserved: 0 });
+      await sendWebhook({ signatureVerified: true, store, eventId: "evt-debit-received", orderId: created.orderId, paymentId: created.paymentId, status: "paid", amountCents: created.amountCents, payload: { event: "PAYMENT_RECEIVED" } });
+      expect({ status: store.attempts.get("attempt-card-debit-seq-001")?.status, reserved: store.reserved.get(8) }).toEqual(afterConfirmed);
+    });
+
     it("keeps a card attempt that already started working after the switch is turned off: replay, webhook settlement and refusal", async () => {
       const store = new MemoryStockStore([variant()]);
       const payments = provider();

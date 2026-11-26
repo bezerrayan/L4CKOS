@@ -43,6 +43,19 @@ describe("Asaas STOCK webhook boundary", () => {
     });
   });
 
+  it.each([
+    ["PAYMENT_CONFIRMED", "CONFIRMED"],
+    ["PAYMENT_RECEIVED", "RECEIVED"],
+  ])("settles a debit-card payment (billingType DEBIT_CARD) on %s exactly like credit: billingType is never a settlement input", (name, status) => {
+    const boundary = createAsaasStockWebhookBoundary();
+    const cardReference = `L4CKOS-STOCK-ATTEMPT:v2:CARD:${"A".repeat(32)}`;
+    const debit = { ...event, id: `evt_debit_${status}`, event: name, payment: { ...event.payment, externalReference: cardReference, status, billingType: "DEBIT_CARD" } };
+    const credit = { ...event, id: `evt_debit_${status}`, event: name, payment: { ...event.payment, externalReference: cardReference, status, billingType: "CREDIT_CARD" } };
+    const decodedDebit = boundary.decodeSignedEvent(JSON.stringify(debit));
+    expect(decodedDebit).toMatchObject({ status: "paid", orderId: cardReference, amountCents: 12990 });
+    expect({ ...decodedDebit, payload: null }).toEqual({ ...boundary.decodeSignedEvent(JSON.stringify(credit)), payload: null });
+  });
+
   it("does not infer BRL from the official webhook shape when payment.currency is absent", () => {
     const official = {
       id: "evt_05b708f961d739ea7eba7e4db318f621&368604920",

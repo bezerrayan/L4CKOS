@@ -928,8 +928,10 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
           ? payload.payment.billingType.trim().toUpperCase() : "";
         const providerObservedBillingType = typeof current?.billingType === "string"
           ? current.billingType.trim().toUpperCase() : "";
-        const expectedBillingType = stockPaymentMethod === "CARD" ? "CREDIT_CARD" : "PIX";
-        const billingTypeMatches = observedBillingType === expectedBillingType && providerObservedBillingType === expectedBillingType;
+        // A hosted-card invoice can be paid with credit or debit; the provider labels the payment accordingly. The webhook and the
+        // authoritative GET must still agree with each other, and PIX keeps requiring exactly PIX. Boleto/UNDEFINED/missing never match.
+        const allowedBillingTypes = stockPaymentMethod === "CARD" ? ["CREDIT_CARD", "DEBIT_CARD"] : ["PIX"];
+        const billingTypeMatches = observedBillingType === providerObservedBillingType && allowedBillingTypes.includes(observedBillingType);
         const statusMatches = event === "PAYMENT_RECEIVED" ? providerStatus === "RECEIVED"
           : cardSettlementEvent ? ["CONFIRMED", "RECEIVED"].includes(providerStatus)
             : cardTerminalFailureEvent ? (event === "PAYMENT_REPROVED_BY_RISK_ANALYSIS"
