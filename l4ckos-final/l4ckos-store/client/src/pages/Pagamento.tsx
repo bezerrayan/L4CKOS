@@ -25,6 +25,9 @@ import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/atte
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
 import { StockAttemptRecovery } from "../components/StockAttemptRecovery";
 import { StockPixInstructions } from "../components/StockPixInstructions";
+import { StockCardContinue } from "../components/StockCardContinue";
+import { cardCheckoutEnabled } from "../config/cardCheckout";
+import { isTrustedHostedInvoiceUrl } from "../stock/hostedInvoice";
 import { authPageUrl } from "../utils/safeNext";
 import { buildShippingQuoteRequest, interpretShippingQuote, sanitizeCep, SHIPPING_UNAVAILABLE_MESSAGE, type ShippingOption, type ShippingQuoteResponse } from "../lib/shippingQuote";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
@@ -152,6 +155,9 @@ function PagamentoContent() {
   const loadedSavedAddressRef = useRef(false);
   const checkoutTrackedRef = useRef(false);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>(DEFAULT_CHECKOUT_METHOD);
+  // New card purchases: closed in the build unless enabled, and closed for the session if the server says so.
+  const [cardUnavailable, setCardUnavailable] = useState(false);
+  const cardAllowed = cardCheckoutEnabled && !cardUnavailable;
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [cpfCnpj, setCpfCnpj] = useState("");
@@ -219,6 +225,10 @@ function PagamentoContent() {
   const stockCheckoutBlocked = Boolean(stockView?.blocksCheckout);
   // Own reservations lower the visible stock, so catalog issues only gate *new* attempts.
   const catalogBlocksNewAttempt = catalogIssues.length > 0 && !stockCheckoutBlocked;
+
+  useEffect(() => {
+    if (hasStockCheckoutItems && (!stockCartCompatible || !cardAllowed) && checkoutMethod === "CARD") setCheckoutMethod("PIX");
+  }, [hasStockCheckoutItems, stockCartCompatible, cardAllowed, checkoutMethod]);
 
   const refreshStockAttempt = async () => {
     if (!isAuthenticated || !stockCheckoutCompatible) return;
@@ -660,8 +670,17 @@ function PagamentoContent() {
           setPaymentError(stockCartInvalidMessage);
           return;
         }
-        if (checkoutMethod !== "PIX") {
-          setPaymentError("Pedidos STOCK e pré-vendas devem ser pagos via PIX neste checkout.");
+        if (checkoutMethod !== "PIX" && checkoutMethod !== "CARD") {
+          setPaymentError("Pedidos STOCK e pré-vendas aceitam PIX; cartão de crédito está disponível somente para itens STOCK.");
+          return;
+        }
+        if (checkoutMethod === "CARD" && !cardAllowed) {
+          setCheckoutMethod("PIX");
+          setPaymentError("Pagamento com cartão indisponível no momento. Escolha PIX para finalizar a compra.");
+          return;
+        }
+        if (checkoutMethod === "CARD" && !stockCartCompatible) {
+          setPaymentError("Cartão está disponível apenas para itens STOCK. Pré-vendas devem ser pagas via PIX neste checkout.");
           return;
         }
         const stockAddress = {
@@ -675,9 +694,10 @@ function PagamentoContent() {
           state: addressState.trim(),
         };
         const stockLines = stockLinesFromCart(cart.items);
+        let createdStockCharge: Awaited<ReturnType<typeof stockClient.create>> | null = null;
         if (selectedShipping.id === "local-plano-piloto") {
           // Price and stock stay server-authoritative; this is only a delivery snapshot.
-          await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress });
+          createdStockCharge = await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress }, checkoutMethod);
         } else if (selectedShipping.id.startsWith("melhor-envio-")) {
           // Carrier freight: the server re-quotes from ITS catalog and signs the terms; the charge uses only that signed quote.
           const signed = await stockShippingQuote.mutateAsync({
@@ -693,9 +713,15 @@ function PagamentoContent() {
             setPaymentError(`O valor do frete mudou para ${formatPrice(option.priceCents / 100)}. Recalcule o frete para revisar o total antes de finalizar.`);
             return;
           }
-          await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress });
+          createdStockCharge = await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress }, checkoutMethod);
         } else {
           setPaymentError("Esta modalidade de entrega ainda não está disponível para pedidos STOCK.");
+          return;
+        }
+        // Hosted card: the customer pays on the Asaas page (never here). Redirect only to the exact Asaas host of this
+        // build; a redirect proves nothing, the order is confirmed solely by the validated provider event.
+        if (checkoutMethod === "CARD" && createdStockCharge && isTrustedHostedInvoiceUrl(createdStockCharge.checkoutUrl, import.meta.env.VITE_DEPLOY_TARGET)) {
+          window.location.assign(createdStockCharge.checkoutUrl);
           return;
         }
         await refreshStockAttempt();
@@ -751,6 +777,7 @@ function PagamentoContent() {
         setPaymentError(view.message);
         trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
         if (view.needsCartReview) void revalidateCart();
+        if (view.cardUnavailable) { setCardUnavailable(true); setCheckoutMethod("PIX"); }
         if (appErrorCodeOf(error) === "PAYMENT_UNDER_ANALYSIS") setStockUnderAnalysis(true);
         if (view.outcomeUnknown) void refreshStockAttempt();
         return;
@@ -948,14 +975,19 @@ function PagamentoContent() {
 
             <section className="l4-checkout-section" aria-labelledby="checkout-payment-title">
               <div className="l4-checkout-section-heading"><span>03</span><div><h2 id="checkout-payment-title">Pagamento</h2><p>Escolha como deseja pagar.</p></div></div>
-              {hasStockCheckoutItems ? <div className="l4-checkout-payment-methods"><button type="button" className="is-selected" aria-pressed="true">
-                <span className="l4-checkout-payment-icon" aria-hidden="true"><QrCode size={18} /></span><span><strong>PIX</strong><small>Confirmação após validação do recebimento</small></span>
-              </button></div> : <div className="l4-checkout-payment-methods">
+              {hasStockCheckoutItems ? <div className="l4-checkout-payment-methods">
+                <button type="button" className={checkoutMethod === "PIX" ? "is-selected" : ""} onClick={() => setCheckoutMethod("PIX")} aria-pressed={checkoutMethod === "PIX"}>
+                  <span className="l4-checkout-payment-icon" aria-hidden="true"><QrCode size={18} /></span><span><strong>PIX</strong><small>Confirmação após validação do recebimento</small></span>
+                </button>
+                {stockCartCompatible && cardAllowed ? <button type="button" className={checkoutMethod === "CARD" ? "is-selected" : ""} onClick={() => setCheckoutMethod("CARD")} aria-pressed={checkoutMethod === "CARD"}>
+                  <span className="l4-checkout-payment-icon" aria-hidden="true"><CreditCard size={18} /></span><span><strong>Cartão de crédito</strong><small>Crédito à vista na página segura da Asaas</small></span>
+                </button> : null}
+              </div> : <div className="l4-checkout-payment-methods">
                 {ENABLED_CHECKOUT_METHODS.map(method => <button key={method} type="button" className={checkoutMethod === method ? "is-selected" : ""} onClick={() => { setCheckoutMethod(method); trackStoreEvent("payment_method_selected", { method }); }} aria-pressed={checkoutMethod === method}>
                   <span className="l4-checkout-payment-icon" aria-hidden="true">{method === "PIX" ? <QrCode size={18} /> : method === "CARD" ? <CreditCard size={18} /> : <Barcode size={18} />}</span><span><strong>{method === "CARD" ? "Cartão" : method === "BOLETO" ? "Boleto" : "PIX"}</strong><small>{method === "PIX" ? "Aprovação imediata" : method === "CARD" ? "Parcelamento disponível" : "Compensação bancária"}</small></span>
                 </button>)}
               </div>}
-              <p className="l4-checkout-payment-hint">{hasStockCheckoutItems ? "A confirmação depende da validação do recebimento do PIX." : checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
+              <p className="l4-checkout-payment-hint">{hasStockCheckoutItems ? checkoutMethod === "CARD" ? "O cartão de crédito é informado somente na página segura da Asaas. O pedido só é confirmado depois da aprovação do pagamento." : "A confirmação depende da validação do recebimento do PIX." : checkoutMethod === "PIX" ? "Você receberá o QR Code após gerar a cobrança." : checkoutMethod === "CARD" ? "O pagamento é concluído de forma segura na página da Asaas." : "O boleto será disponibilizado após a cobrança."}</p>
             </section>
 
             <section className="l4-checkout-coupon">
@@ -994,7 +1026,11 @@ function PagamentoContent() {
               <p>{stockView.message}</p>
               {stockPaymentData.orderId ? <p>Pedido #{stockPaymentData.orderId}</p> : null}
               {stockPaymentData.amountCents > 0 ? <p>Total calculado pelo servidor: {formatPrice(stockPaymentData.amountCents / 100)}</p> : null}
-              {stockView.canContinuePayment ? <StockPixInstructions pix={stockPaymentData.pix} checkoutUrl={stockPaymentData.checkoutUrl} /> : null}
+              {stockView.canContinuePayment
+                ? (stockPaymentData.paymentMethod === "CARD"
+                  ? <StockCardContinue checkoutUrl={stockPaymentData.checkoutUrl} />
+                  : <StockPixInstructions pix={stockPaymentData.pix} checkoutUrl={stockPaymentData.checkoutUrl} />)
+                : null}
               {stockView.canRefresh ? <button type="button" onClick={() => void refreshStockAttempt()}>Atualizar status</button> : null}
             </section> : null}
           </main>

@@ -30,6 +30,8 @@ export type StockAttemptViewInput = {
   checkoutUrl?: string | null;
   /** Inline PIX data (QR / copy-paste) returned by the server for a pending charge. */
   pix?: unknown;
+  /** Payment method of the attempt as reported by the server (absent on older servers = PIX). */
+  paymentMethod?: "PIX" | "CARD";
 };
 
 const BLOCKING: ReadonlySet<StockResumeStatus> = new Set(["reserved", "creating", "pending", "ambiguous", "paid"]);
@@ -50,16 +52,21 @@ export function describeStockAttempt(input: StockAttemptViewInput): StockAttempt
       return { ...base, tone: "pending", title: "Pedido criado", message: "Reservamos seu pedido. O pagamento ainda não foi iniciado." };
     case "creating":
       return { ...base, tone: "pending", title: "Preparando pagamento", message: "Estamos gerando a cobrança. Aguarde alguns instantes e atualize o status." };
-    case "pending":
+    case "pending": {
+      const card = input.paymentMethod === "CARD";
       return {
         ...base,
         tone: "pending",
         title: "Aguardando confirmação do pagamento",
         message: input.paymentId?.trim() && !input.checkoutUrl && !input.pix
           ? "A cobrança foi criada, mas o pagamento está indisponível para continuação neste momento. Não inicie outra tentativa; atualize o status ou contate o suporte."
-          : "Seu pedido só será confirmado depois que o pagamento for aprovado. Isto pode levar alguns minutos.",
-        canContinuePayment: Boolean(input.checkoutUrl || input.pix),
+          : card
+            ? "Conclua o pagamento na página segura da Asaas. Seu pedido só será confirmado depois que o pagamento for aprovado, o que pode levar alguns minutos. Voltar da página de pagamento não confirma o pedido."
+            : "Seu pedido só será confirmado depois que o pagamento for aprovado. Isto pode levar alguns minutos.",
+        // A card charge continues only on the hosted invoice: inline PIX data never applies to it.
+        canContinuePayment: card ? Boolean(input.checkoutUrl) : Boolean(input.checkoutUrl || input.pix),
       };
+    }
     case "ambiguous":
       return {
         ...base,
@@ -106,6 +113,8 @@ export type StockCheckoutErrorView = {
   outcomeUnknown: boolean;
   /** True when the cart should be refreshed from the catalog. */
   needsCartReview: boolean;
+  /** True when the server closed NEW card purchases: the storefront falls back to PIX. */
+  cardUnavailable?: boolean;
 };
 
 type ErrorLike = { message?: unknown; data?: { code?: unknown; httpStatus?: unknown; appError?: { code?: unknown } | null } | null; name?: unknown };
@@ -136,6 +145,8 @@ export function describeStockCheckoutError(error: unknown): StockCheckoutErrorVi
   if (appCode === "EXCLUSIVE_ACCESS_UNVERIFIABLE") return { message: "Não foi possível verificar o seu acesso agora. Nada foi cobrado; tente novamente em instantes.", outcomeUnknown: false, needsCartReview: false };
   if (appCode === "STOCK_UNAVAILABLE") return { message: "Esse item acabou de ficar indisponível. Ajuste a quantidade ou escolha outra variação.", outcomeUnknown: false, needsCartReview: true };
   if (appCode === "CHECKOUT_ATTEMPT_EXPIRED") return { message: "A reserva expirou. Atualize o carrinho e inicie uma nova tentativa.", outcomeUnknown: false, needsCartReview: true };
+  // Rejected before any reservation or charge: safe to offer PIX instead.
+  if (appCode === "CARD_CHECKOUT_DISABLED") return { message: "Pagamento com cartão indisponível no momento. Escolha PIX para finalizar a compra.", outcomeUnknown: false, needsCartReview: false, cardUnavailable: true };
   if (appCode === "PAYMENT_UNDER_ANALYSIS") return { message: "O pagamento está em análise. Não inicie outra tentativa.", outcomeUnknown: true, needsCartReview: false };
 
   const trpcCode = typeof like.data?.code === "string" ? like.data.code : "";

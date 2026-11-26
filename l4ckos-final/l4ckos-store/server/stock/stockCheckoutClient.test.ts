@@ -73,8 +73,17 @@ describe("STOCK frontend and HTTP V1 contract", () => {
     expect(first.attemptId).toBe(retry.attemptId);
     expect(resumed.attemptId).toBe(first.attemptId);
     expect(create).toHaveBeenCalledTimes(2);
-    expect(resume).toHaveBeenCalledWith(first.attemptId);
+    expect(resume).toHaveBeenCalledWith(first.attemptId, [{ productId: 7, variantId: 31, quantity: 2 }]);
     expect(createId).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends CARD as an explicit STOCK method while preserving the same reservation client flow", async () => {
+    const storage = new MemoryStorage();
+    const create = vi.fn(async request => pendingResponse(request.attemptId));
+    const client = createStockCheckoutClient({ enabled: true, storage, transport: { create, resume: vi.fn() }, createId: () => "stock-card-attempt-synthetic-01" });
+    await client.create(lines, undefined, "CARD");
+    expect(create).toHaveBeenCalledOnce();
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ paymentMethod: "CARD" });
   });
 
   it("rejects missing, invented, cross-product, and inactive variant ids before transport", async () => {

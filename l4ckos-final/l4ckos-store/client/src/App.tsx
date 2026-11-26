@@ -13,6 +13,7 @@ const Produtos = lazy(() => import("./pages/Produtos"));
 const ProductDetail = lazy(() => import("./pages/ProductDetail"));
 const Carrinho = lazy(() => import("./pages/Carrinho"));
 const Pagamento = lazy(() => import("./pages/Pagamento"));
+const PedidoRetorno = lazy(() => import("./pages/PedidoRetorno"));
 const Favoritos = lazy(() => import("./pages/Favoritos"));
 const Login = lazy(() => import("./pages/Login"));
 const Cadastro = lazy(() => import("./pages/Cadastro"));
@@ -143,6 +144,7 @@ function AppRoutes() {
             <Route path="/esqueci-senha" element={<EsqueciSenha />} />
             <Route path="/redefinir-senha" element={<RedefinirSenha />} />
             <Route path="/perfil" element={<Perfil />} />
+            <Route path="/pedido/retorno" element={<PedidoRetorno />} />
             <Route path="/meus-pedidos" element={<MeusPedidos />} />
             <Route path="/meus-pedidos/:id" element={<PedidoDetalhe />} />
             <Route path="/acompanhar-pedido" element={<AcompanharPedido />} />
