@@ -20,7 +20,7 @@ import { COOKIE_NAME } from "../../shared/const";
 import { createStockCheckoutRuntime } from "./stockCheckoutRuntime";
 import { createExclusiveStore } from "../exclusive/store";
 import { configureExclusiveStoreForLocalHarness } from "../exclusive/runtime";
-import { processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
+import { createStockCheckout, processSignedStockWebhook, type StockCheckoutStore } from "./stockCheckout";
 import { createMysqlStockCheckoutStore } from "./mysqlStockCheckoutStore";
 import { inWebhookTransaction } from "../database/webhookTransaction";
 import { createAsaasStockWebhookBoundary } from "./asaasStockWebhookBoundary";
@@ -178,6 +178,7 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("FINANCIAL RECOVERY P1-P5 (MySQL 
     };
     runtime = createStockCheckoutRuntime({
       pool,
+      cardCheckoutEnabled: true,
       exclusiveStore: createExclusiveStore(pool),
       shipping: { secret: SHIPPING_SECRET, quote: fakeShippingQuote },
       provider: {
@@ -677,6 +678,28 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("FINANCIAL RECOVERY P1-P5 (MySQL 
     expect(after.attempt).toMatchObject({ status: "reserved", providerState: "created" });
     expect(after.reservations).toEqual(["active"]);
     expect(after.order).toMatchObject({ status: "pending" });
+  });
+
+  it("P4-CARD-SWITCH a NEW card attempt is rejected by the real MySQL store before any write while the switch is off; PIX is unaffected", async () => {
+    // Same composition the runtime uses (exclusive-drops quota guard), so PIX can run through it.
+    const exclusive = createExclusiveStore(pool);
+    const store = createMysqlStockCheckoutStore(pool, { reserveExclusiveQuota: (connection, claim) => exclusive.reserveForCheckoutInTransaction(connection, claim) });
+    const createPayment = vi.fn(async () => ({ paymentId: "must-not-exist", checkoutUrl: "https://sandbox.invalid/never" }));
+    const spy = { supportsIdempotencyKey: true, createPayment };
+    const card = { attemptId: "fr-card-switch-off-000001", paymentMethod: "CARD", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery };
+    await expect(createStockCheckout({ enabled: true, store, provider: spy, request: card, ownerUserId: 81 }))
+      .rejects.toMatchObject({ code: "CHECKOUT_CARD_DISABLED" });
+    const [[attempts]] = await pool.query<any[]>("SELECT COUNT(*) AS n FROM stockCheckoutAttempts");
+    const [[orders]] = await pool.query<any[]>("SELECT COUNT(*) AS n FROM orders");
+    const [[variant]] = await pool.query<any[]>("SELECT stock, reservedStock FROM productVariants WHERE id=8");
+    ev("P4card.switch-off", { attempts: Number(attempts.n), orders: Number(orders.n), variant, providerCalls: createPayment.mock.calls.length });
+    expect(Number(attempts.n)).toBe(0);
+    expect(Number(orders.n)).toBe(0);
+    expect({ stock: Number(variant.stock), reserved: Number(variant.reservedStock) }).toEqual({ stock: 1, reserved: 0 });
+    expect(createPayment).not.toHaveBeenCalled();
+    // PIX through the same store and the same flags is not interrupted (and does call the provider).
+    const pix = await createStockCheckout({ enabled: true, store, provider: spy, request: { ...card, attemptId: "fr-pix-switch-off-0000001", paymentMethod: "PIX" }, ownerUserId: 81 });
+    expect(pix).toMatchObject({ replayed: false });
   });
 
   it("P4-oversell-chain DELETED(released) → unit resold → late RECEIVED of the first charge: stock never negative, divergence open", async () => {

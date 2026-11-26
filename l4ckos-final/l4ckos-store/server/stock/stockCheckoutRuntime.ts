@@ -31,7 +31,7 @@ function isCheckoutAdmitted(authenticatedUserId: number | undefined): boolean {
 }
 
 /** Composition boundary for a future STOCK-only route; this factory does not mount or enable any route. */
-export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean; exclusiveStore?: ExclusiveStore; shipping?: { secret: string; quote?: typeof quoteShippingDetailed } }) {
+export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean; cardCheckoutEnabled?: boolean; exclusiveStore?: ExclusiveStore; shipping?: { secret: string; quote?: typeof quoteShippingDetailed } }) {
   const shippingQuotes = input.shipping ? createStockShippingQuoteService({ pool: input.pool, secret: input.shipping.secret, quote: input.shipping.quote }) : undefined;
   const exclusiveStore = input.exclusiveStore ?? createExclusiveStore(input.pool);
   const store = createMysqlStockCheckoutStore(input.pool, {
@@ -46,7 +46,7 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
     },
     checkout(request: unknown, authenticatedUserId?: number) {
       // Gate check occurs before the domain can acquire a connection or invoke the provider.
-      return createStockCheckout({ enabled: isCheckoutAdmitted(authenticatedUserId) && input.checkoutEnabled !== false, ownerUserId: authenticatedUserId as number, store, provider: input.provider, request, ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}) });
+      return createStockCheckout({ enabled: isCheckoutAdmitted(authenticatedUserId) && input.checkoutEnabled !== false, ownerUserId: authenticatedUserId as number, store, provider: input.provider, request, cardCheckoutEnabled: input.cardCheckoutEnabled === true, ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}) });
     },
     checkoutOwnerPixTest(request: unknown, actor: OwnerPixTestActor) {
       // Revalidate the complete server-side admission at the runtime boundary as well as in the router.

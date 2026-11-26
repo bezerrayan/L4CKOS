@@ -295,6 +295,11 @@ export async function createStockCheckout(input: {
   shipping?: { secret: string };
   /** Server-only cap used by the temporary owner PIX test admission. */
   maximumAmountCents?: number;
+  /**
+   * Independent switch for NEW hosted-card purchases (STOCK_CARD_CHECKOUT_ENABLED). Fail-closed: anything but `true`
+   * rejects a new CARD attempt. It never affects PIX, replays of an attempt that already exists, webhooks or recovery.
+   */
+  cardCheckoutEnabled?: boolean;
 }): Promise<{ orderId: string; paymentId: string; checkoutUrl: string | null; amountCents: number; snapshots: StockSnapshot[]; replayed: boolean; pix?: StockPixPaymentV1 }> {
   // Gate is deliberately the first operation; no repository, provider, or financial IO may precede it.
   if (!input.enabled) fail("PUBLIC_CHECKOUT_DISABLED");
@@ -328,6 +333,10 @@ export async function createStockCheckout(input: {
         }
         return { attempt: existing, replayed: true };
       }
+
+      // A NEW card purchase needs its own switch. Evaluated only here, after the replay branch above, so an attempt that
+      // already started keeps working, and before any expiry write, quota, order, reservation or provider call.
+      if (request.paymentMethod === "CARD" && input.cardCheckoutEnabled !== true) fail("CHECKOUT_CARD_DISABLED");
 
       // Fail before expiry maintenance writes, and recheck under locks before quota/order/reservation writes.
       await assertPublicPurchaseAllowed(tx, request.items.map(item => item.productId), false);

@@ -190,3 +190,17 @@ describe("isolated G4 financial phase policy", () => {
     expect(() => assertIsolatedHomologationDatabaseIdentity({ databaseName: HOMOLOGATION_DATABASE_NAME, version: "8.4.11" }, HOMOLOGATION_DATABASE_NAME)).toThrow("HOMOLOGATION_DATABASE_IDENTITY_MISMATCH");
   });
 });
+
+describe("independent card checkout switch in the financial policies", () => {
+  it("is optional (absent = off) and can only be true where STOCK checkout is enabled", () => {
+    expect(resolveFinancialPhasePolicy(base("SANDBOX_WEBHOOK")).issues).toEqual([]);
+    expect(resolveFinancialPhasePolicy({ ...base("SANDBOX_WEBHOOK"), STOCK_CARD_CHECKOUT_ENABLED: "false" }).issues).toEqual([]);
+    expect(resolveFinancialPhasePolicy({ ...base("SANDBOX_WEBHOOK"), STOCK_CARD_CHECKOUT_ENABLED: "true" }).issues).toContain("STOCK_CARD_CHECKOUT_ENABLED_MISMATCH");
+    expect(resolveFinancialPhasePolicy({ ...base("SANDBOX_CHECKOUT"), STOCK_CARD_CHECKOUT_ENABLED: "true" }).issues).toEqual([]);
+    expect(resolveFinancialPhasePolicy({ ...base("SANDBOX_CHECKOUT"), STOCK_CARD_CHECKOUT_ENABLED: "false" }).issues).toEqual([]);
+  });
+
+  it("rejects malformed values", () => {
+    expect(resolveFinancialPhasePolicy({ ...base("SANDBOX_CHECKOUT"), STOCK_CARD_CHECKOUT_ENABLED: "yes" }).issues).toContain("STOCK_CARD_CHECKOUT_ENABLED_INVALID");
+  });
+});

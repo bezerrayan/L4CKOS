@@ -236,6 +236,8 @@ export async function startServer() {
       pool,
       provider: createConfiguredStockAsaasProvider(),
       checkoutEnabled: process.env.STOCK_CHECKOUT_ENABLED === "true",
+      // New card purchases need their own explicit switch; absent/anything else keeps the card dormant.
+      cardCheckoutEnabled: process.env.STOCK_CARD_CHECKOUT_ENABLED === "true",
       // Carrier freight is available only with a dedicated signing secret (>= 32 bytes); otherwise it fails closed.
       ...(process.env.STOCK_SHIPPING_SIGNING_SECRET && Buffer.byteLength(process.env.STOCK_SHIPPING_SIGNING_SECRET) >= 32 ? { shipping: { secret: process.env.STOCK_SHIPPING_SIGNING_SECRET } } : {}),
     });

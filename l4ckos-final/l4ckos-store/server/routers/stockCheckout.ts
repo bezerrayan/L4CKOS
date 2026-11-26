@@ -69,6 +69,9 @@ function mapCheckoutError(error: unknown): never {
       message: "Este produto está temporariamente indisponível para compra pública.",
     });
   }
+  if (error.code === "CHECKOUT_CARD_DISABLED") {
+    throw createAppError({ trpcCode: "FORBIDDEN", appCode: "CARD_CHECKOUT_DISABLED", message: "Pagamento com cartão indisponível no momento. Use PIX." });
+  }
   if (error.code === "CHECKOUT_ATTEMPT_NOT_FOUND") {
     throw new TRPCError({ code: "NOT_FOUND", message: "Tentativa não encontrada." });
   }

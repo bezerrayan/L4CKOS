@@ -165,8 +165,11 @@ describe("production STOCK financial contract", () => {
       ["invalid recovery mode", { ASAAS_WEBHOOK_RECOVERY_MODE: "on" }, "WEBHOOK_RECOVERY_MODE_FORBIDDEN"],
       ["invalid boolean flag", { STOCK_CHECKOUT_ENABLED: "yes" }, "STOCK_CHECKOUT_ENABLED_INVALID"],
       ["invalid public flag", { PUBLIC_CHECKOUT_ENABLED: "1" }, "PUBLIC_CHECKOUT_ENABLED_INVALID"],
+      ["invalid card switch", { STOCK_CARD_CHECKOUT_ENABLED: "yes" }, "STOCK_CARD_CHECKOUT_ENABLED_INVALID"],
     ];
     it.each(cases)("rejects %s", (_n, over, code) => expect(issues(production(over))).toContain(code));
+    it.each([undefined, "false", "true"])("accepts the card switch as %s (dormant by default when unset)", value =>
+      expect(resolveProductionStockPolicy(production({ STOCK_CARD_CHECKOUT_ENABLED: value })).allowed).toBe(true));
     it("accepts an unset recovery mode (default off)", () => expect(resolveProductionStockPolicy(production({ ASAAS_WEBHOOK_RECOVERY_MODE: undefined })).allowed).toBe(true));
     it("never leaks a secret value in the error", () => {
       let message = "";

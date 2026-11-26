@@ -86,7 +86,7 @@ export function resolveProductionStockPolicy(env: RuntimeEnvironment): Productio
   if (env.ASAAS_WEBHOOK_INBOUND_ENABLED !== "true") issues.push("ASAAS_WEBHOOK_INBOUND_REQUIRED");
   if ((env.ASAAS_WEBHOOK_RECOVERY_MODE ?? "") !== "" && env.ASAAS_WEBHOOK_RECOVERY_MODE !== "off") issues.push("WEBHOOK_RECOVERY_MODE_FORBIDDEN");
 
-  for (const name of ["PUBLIC_CHECKOUT_ENABLED", "STOCK_RUNTIME_ENABLED", "STOCK_CHECKOUT_ENABLED"]) booleanFlag(env, name, issues);
+  for (const name of ["PUBLIC_CHECKOUT_ENABLED", "STOCK_RUNTIME_ENABLED", "STOCK_CHECKOUT_ENABLED", "STOCK_CARD_CHECKOUT_ENABLED"]) booleanFlag(env, name, issues);
   return {
     allowed: issues.length === 0,
     issues,

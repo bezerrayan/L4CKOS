@@ -224,7 +224,7 @@ describe("local STOCK checkout core", () => {
   it("rejects hosted card for PREORDER at the server boundary before provider creation", async () => {
     const store = new MemoryStockStore([variant({ salesMode: "PREORDER", productionBatchId: 91 })]);
     const payments = provider();
-    await expect(createStockCheckout({ enabled: true, store, provider: payments, request: request("attempt-card-preorder-0001", { paymentMethod: "CARD" }) }))
+    await expect(createStockCheckout({ enabled: true, cardCheckoutEnabled: true, store, provider: payments, request: request("attempt-card-preorder-0001", { paymentMethod: "CARD" }) }))
       .rejects.toMatchObject({ code: "CHECKOUT_PAYMENT_METHOD_UNSUPPORTED" });
     expect(store.attempts.size).toBe(0);
     expect(store.reserved.size).toBe(0);
@@ -239,7 +239,7 @@ describe("local STOCK checkout core", () => {
     });
     const paymentProvider = { supportsIdempotencyKey: true, createPayment };
     const created = await createStockCheckout({
-      enabled: true, store, provider: paymentProvider,
+      enabled: true, cardCheckoutEnabled: true, store, provider: paymentProvider,
       request: request("attempt-card-settlement-0001", { paymentMethod: "CARD" }),
     });
     expect(store.reserved.get(8)).toBe(1);
@@ -249,12 +249,66 @@ describe("local STOCK checkout core", () => {
     expect(store.reserved.get(8)).toBe(0);
 
     const refusedStore = new MemoryStockStore([variant()]);
-    const refused = await createStockCheckout({ enabled: true, store: refusedStore, provider: paymentProvider,
+    const refused = await createStockCheckout({ enabled: true, cardCheckoutEnabled: true, store: refusedStore, provider: paymentProvider,
       request: request("attempt-card-refused-00001", { paymentMethod: "CARD" }) });
     await sendWebhook({ signatureVerified: true, store: refusedStore, eventId: "evt-card-refused-synthetic", orderId: refused.orderId,
       paymentId: refused.paymentId, status: "failed", amountCents: refused.amountCents, payload: { event: "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED" } });
     expect(refusedStore.attempts.get("attempt-card-refused-00001")?.status).toBe("released");
     expect(refusedStore.reserved.get(8)).toBe(0);
+  });
+
+  describe("independent card checkout switch (STOCK_CARD_CHECKOUT_ENABLED)", () => {
+    const cardRequest = (id: string) => request(id, { paymentMethod: "CARD" });
+
+    it.each([undefined, false] as const)("keeps NEW hosted-card purchases closed when the switch is %s, before any reservation or provider call", async flag => {
+      const store = new MemoryStockStore([variant()]);
+      const payments = provider();
+      await expect(createStockCheckout({ enabled: true, ...(flag === undefined ? {} : { cardCheckoutEnabled: flag }), store, provider: payments, request: cardRequest("attempt-card-disabled-0001") }))
+        .rejects.toMatchObject({ code: "CHECKOUT_CARD_DISABLED" });
+      expect(store.attempts.size).toBe(0);
+      expect(store.reserved.size).toBe(0);
+      expect(payments.calls).toBe(0);
+    });
+
+    it("never interrupts PIX, whether the card switch is off or on", async () => {
+      for (const flag of [undefined, false, true]) {
+        const store = new MemoryStockStore([variant()]);
+        const payments = provider();
+        await expect(createStockCheckout({ enabled: true, ...(flag === undefined ? {} : { cardCheckoutEnabled: flag }), store, provider: payments, request: request(`attempt-pix-flag-${String(flag)}-01`) }))
+          .resolves.toMatchObject({ replayed: false });
+        expect(payments.calls).toBe(1);
+      }
+    });
+
+    it("cannot open a closed public checkout: the card switch only narrows the gate", async () => {
+      const store = new MemoryStockStore([variant()]);
+      const payments = provider();
+      await expect(createStockCheckout({ enabled: false, cardCheckoutEnabled: true, store, provider: payments, request: cardRequest("attempt-card-closed-gate-01") }))
+        .rejects.toMatchObject({ code: "PUBLIC_CHECKOUT_DISABLED" });
+      expect(store.attempts.size).toBe(0);
+      expect(payments.calls).toBe(0);
+    });
+
+    it("keeps a card attempt that already started working after the switch is turned off: replay, webhook settlement and refusal", async () => {
+      const store = new MemoryStockStore([variant()]);
+      const payments = provider();
+      const first = await createStockCheckout({ enabled: true, cardCheckoutEnabled: true, store, provider: payments, request: cardRequest("attempt-card-switched-off-01") });
+      expect(store.reserved.get(8)).toBe(1);
+
+      const replay = await createStockCheckout({ enabled: true, cardCheckoutEnabled: false, store, provider: payments, request: cardRequest("attempt-card-switched-off-01") });
+      expect(replay).toMatchObject({ replayed: true, orderId: first.orderId, paymentId: first.paymentId });
+      expect(payments.calls).toBe(1);
+
+      // A different NEW card attempt is closed...
+      await expect(createStockCheckout({ enabled: true, cardCheckoutEnabled: false, store, provider: payments, request: { ...cardRequest("attempt-card-switched-off-02") } }))
+        .rejects.toMatchObject({ code: "CHECKOUT_CARD_DISABLED" });
+
+      // ...while webhooks for the attempt that already started are independent of the switch.
+      await sendWebhook({ signatureVerified: true, store, eventId: "evt-card-switched-off-paid", orderId: first.orderId,
+        paymentId: first.paymentId, status: "paid", amountCents: first.amountCents, payload: { event: "PAYMENT_CONFIRMED" } });
+      expect(store.attempts.get("attempt-card-switched-off-01")?.status).toBe("paid");
+      expect(store.reserved.get(8)).toBe(0);
+    });
   });
 
   it.each([

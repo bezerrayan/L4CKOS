@@ -52,6 +52,7 @@ export type FinancialRuntimeAttestation = {
   stockRuntimeEnabled: boolean;
   stockCheckoutEnabled: boolean;
   stockCheckoutEffective: boolean;
+  stockCardCheckoutEnabled: boolean;
   stockReservationExpirySchedulerEnabled: boolean;
   automaticBackupSchedulerEnabled: boolean;
   asaasWebhookInboundEnabled: boolean | null;
@@ -150,6 +151,7 @@ export function resolveFinancialRuntimeAttestation(
   const publicCheckoutEnabled = isPublicCheckoutEnabled(env);
   const stockRuntimeEnabled = env.STOCK_RUNTIME_ENABLED === "true";
   const stockCheckoutEnabled = env.STOCK_CHECKOUT_ENABLED === "true";
+  const stockCardCheckoutEnabled = env.STOCK_CARD_CHECKOUT_ENABLED === "true";
   let asaasWebhookInboundEnabled: boolean | null = null;
   let asaasWebhookRecoveryWorkerEnabled: boolean | null = null;
   let paymentNotificationRecoveryWorkerEnabled: boolean | null = null;
@@ -172,7 +174,8 @@ export function resolveFinancialRuntimeAttestation(
   if (
     hasInvalidBoolean(env, "PUBLIC_CHECKOUT_ENABLED") ||
     hasInvalidBoolean(env, "STOCK_RUNTIME_ENABLED") ||
-    hasInvalidBoolean(env, "STOCK_CHECKOUT_ENABLED")
+    hasInvalidBoolean(env, "STOCK_CHECKOUT_ENABLED") ||
+    hasInvalidBoolean(env, "STOCK_CARD_CHECKOUT_ENABLED")
   )
     financialFlagsInvalid = true;
   if (financialFlagsInvalid) addIssue(issues, "FINANCIAL_FLAG_INVALID");
@@ -250,6 +253,7 @@ export function resolveFinancialRuntimeAttestation(
     stockRuntimeEnabled,
     stockCheckoutEnabled,
     stockCheckoutEffective: stockRuntimeEnabled && stockCheckoutEnabled,
+    stockCardCheckoutEnabled,
     stockReservationExpirySchedulerEnabled: stockRuntimeEnabled,
     automaticBackupSchedulerEnabled: !isIsolatedHomologationIdentity(env),
     asaasWebhookInboundEnabled,
@@ -307,6 +311,7 @@ export function serializeFinancialRuntimeAttestation(
     stockRuntimeEnabled: report.stockRuntimeEnabled,
     stockCheckoutEnabled: report.stockCheckoutEnabled,
     stockCheckoutEffective: report.stockCheckoutEffective,
+    stockCardCheckoutEnabled: report.stockCardCheckoutEnabled,
     stockReservationExpirySchedulerEnabled:
       report.stockReservationExpirySchedulerEnabled,
     automaticBackupSchedulerEnabled: report.automaticBackupSchedulerEnabled,

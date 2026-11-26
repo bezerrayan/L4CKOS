@@ -56,6 +56,16 @@ function bool(env: RuntimeEnvironment, name: string, expected: boolean, issues: 
   if (env[name] !== String(expected)) issues.push(`${name}_MISMATCH`);
 }
 
+/**
+ * Independent switch for NEW hosted-card purchases. Absent equals false (the pre-card contract needs no new variable).
+ * It can only be true where STOCK checkout itself is enabled, so it can never open a closed phase.
+ */
+function validCardCheckoutFlag(env: RuntimeEnvironment, checkoutEnabled: boolean, issues: string[]) {
+  const value = env.STOCK_CARD_CHECKOUT_ENABLED;
+  if (value !== undefined && value !== "true" && value !== "false") issues.push("STOCK_CARD_CHECKOUT_ENABLED_INVALID");
+  else if (value === "true" && !checkoutEnabled) issues.push("STOCK_CARD_CHECKOUT_ENABLED_MISMATCH");
+}
+
 function validDatabaseTarget(env: RuntimeEnvironment, issues: string[]) {
   const expected = env.STOCK_EXPECTED_DATABASE?.trim();
   let databaseUrl: URL | null = null;
@@ -114,6 +124,7 @@ export function resolveFinancialPhasePolicy(env: RuntimeEnvironment): FinancialP
     }
     if (env.PUBLIC_SITE_MODE?.trim().toLowerCase() !== "coming-soon") issues.push("PUBLIC_SITE_MUST_REMAIN_CLOSED");
     for (const name of CLOSED_FLAGS) bool(env, name, false, issues);
+    validCardCheckoutFlag(env, false, issues);
     return { phase, allowed: issues.length === 0, issues, checkoutEnabled: false, webhookEnabled: false, recoveryEnabled: false };
   }
 
@@ -126,6 +137,7 @@ export function resolveFinancialPhasePolicy(env: RuntimeEnvironment): FinancialP
   const recoveryEnabled = phase === "SANDBOX_RECOVERY";
   bool(env, "STOCK_RUNTIME_ENABLED", checkoutEnabled, issues);
   bool(env, "STOCK_CHECKOUT_ENABLED", checkoutEnabled, issues);
+  validCardCheckoutFlag(env, checkoutEnabled, issues);
   bool(env, "ASAAS_WEBHOOK_INBOUND_ENABLED", true, issues);
   bool(env, "ASAAS_WEBHOOK_RECOVERY_WORKER_ENABLED", recoveryEnabled, issues);
   bool(env, "PAYMENT_NOTIFICATION_RECOVERY_WORKER_ENABLED", false, issues);
