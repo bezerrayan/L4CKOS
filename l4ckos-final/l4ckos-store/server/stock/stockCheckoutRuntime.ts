@@ -62,6 +62,8 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
         provider: input.provider,
         request: serverRequest,
         maximumAmountCents: authorization.maxAmountCents,
+        // The owner window never bypasses the independent card switch: a CARD attempt needs STOCK_CARD_CHECKOUT_ENABLED=true too.
+        cardCheckoutEnabled: input.cardCheckoutEnabled === true,
         ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}),
       });
     },

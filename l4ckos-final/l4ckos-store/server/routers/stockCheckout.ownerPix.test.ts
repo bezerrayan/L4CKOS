@@ -48,6 +48,24 @@ describe("STOCK routes keep public checkout closed during the owner PIX test", (
     expect(runtime.checkout).not.toHaveBeenCalled();
   });
 
+  it("routes an owner CARD request through the owner window only, never through the public checkout, with the server attempt id", async () => {
+    const { caller, runtime } = setup(OWNER);
+    const created = await caller.create({ ...checkoutInput, paymentMethod: "CARD" } as any);
+    expect(created.attemptId).toBe(ATTEMPT);
+    expect(runtime.checkoutOwnerPixTest).toHaveBeenCalledWith({ ...checkoutInput, paymentMethod: "CARD", attemptId: ATTEMPT }, expect.objectContaining(OWNER));
+    expect(runtime.checkout).not.toHaveBeenCalled();
+  });
+
+  it("refuses an owner CARD request once the window has closed or for any other account, before the runtime", async () => {
+    const closed = setup(OWNER, { OWNER_PIX_TEST_EXPIRES_AT: new Date(Date.now() - 1000).toISOString() });
+    await expect(closed.caller.create({ ...checkoutInput, paymentMethod: "CARD" } as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(closed.runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
+    const other = setup({ id: 72, openId: "other-user", role: "admin" });
+    await expect(other.caller.create({ ...checkoutInput, paymentMethod: "CARD" } as any)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(other.runtime.checkoutOwnerPixTest).not.toHaveBeenCalled();
+    expect(other.runtime.checkout).not.toHaveBeenCalled();
+  });
+
   it("rejects non-owner and different-account attempts before runtime calls", async () => {
     const { caller, runtime } = setup({ id: 72, openId: "other-user", role: "admin" });
     await expect(caller.create(checkoutInput as any)).rejects.toMatchObject({ code: "FORBIDDEN" });

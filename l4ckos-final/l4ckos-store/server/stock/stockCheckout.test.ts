@@ -289,6 +289,75 @@ describe("local STOCK checkout core", () => {
       expect(payments.calls).toBe(0);
     });
 
+    describe("owner window (maximumAmountCents) with the card switch", () => {
+      const ownerCard = (store: MemoryStockStore, payments: ReturnType<typeof provider>, id: string, extra: Record<string, unknown> = {}) =>
+        createStockCheckout({ enabled: true, maximumAmountCents: 13000, store, provider: payments, request: cardRequest(id), ...extra });
+
+      it("rejects CARD inside the owner window while the card switch is off, before any reservation or provider call", async () => {
+        const store = new MemoryStockStore([variant()]);
+        const payments = provider();
+        await expect(ownerCard(store, payments, "attempt-owner-card-off-001")).rejects.toMatchObject({ code: "CHECKOUT_CARD_DISABLED" });
+        expect(store.attempts.size).toBe(0);
+        expect(store.reserved.size).toBe(0);
+        expect(payments.calls).toBe(0);
+      });
+
+      it("creates exactly one hosted-card charge inside the owner window when the switch is on, and enforces the amount ceiling before any write", async () => {
+        const store = new MemoryStockStore([variant()]);
+        const payments = provider();
+        await expect(ownerCard(store, payments, "attempt-owner-card-low-001", { cardCheckoutEnabled: true, maximumAmountCents: 100 }))
+          .rejects.toMatchObject({ code: "OWNER_PIX_TEST_AMOUNT_LIMIT" });
+        expect(store.attempts.size).toBe(0);
+        expect(payments.calls).toBe(0);
+        await expect(ownerCard(store, payments, "attempt-owner-card-ok-0001", { cardCheckoutEnabled: true })).resolves.toMatchObject({ replayed: false });
+        expect(payments.calls).toBe(1);
+      });
+
+      it("serializes concurrent creates of the same owner attempt: one order, one reservation, one idempotency key", async () => {
+        const store = new MemoryStockStore([variant()]);
+        const keys = new Set<string>();
+        const payments = provider();
+        const recording = { ...payments, supportsIdempotencyKey: true, createPayment: async (input: { orderId: string; amountCents: number; idempotencyKey: string; paymentMethod?: "PIX" | "CARD" }) => {
+          expect(input.paymentMethod).toBe("CARD");
+          keys.add(input.idempotencyKey);
+          return payments.createPayment(input);
+        } };
+        const outcomes = await Promise.all([1, 2, 3].map(() =>
+          createStockCheckout({ enabled: true, maximumAmountCents: 13000, cardCheckoutEnabled: true, store, provider: recording, request: cardRequest("attempt-owner-card-race-001") })));
+        expect(keys.size).toBe(1);
+        expect(new Set(outcomes.map(o => o.orderId)).size).toBe(1);
+        expect(new Set(outcomes.map(o => o.paymentId)).size).toBe(1);
+        expect(outcomes.filter(o => !o.replayed)).toHaveLength(1);
+        expect(store.attempts.size).toBe(1);
+        expect(store.reserved.get(8)).toBe(1);
+      });
+
+      it("replays without a second charge even after the switch is turned off, and refuses to turn a PIX attempt into CARD or vice versa", async () => {
+        const store = new MemoryStockStore([variant()]);
+        const payments = provider();
+        await ownerCard(store, payments, "attempt-owner-card-replay-01", { cardCheckoutEnabled: true });
+        await expect(ownerCard(store, payments, "attempt-owner-card-replay-01", { cardCheckoutEnabled: false })).resolves.toMatchObject({ replayed: true });
+        expect(payments.calls).toBe(1);
+        await expect(createStockCheckout({ enabled: true, maximumAmountCents: 13000, cardCheckoutEnabled: true, store, provider: payments, request: request("attempt-owner-card-replay-01") }))
+          .rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_CHANGED" });
+        const pixStore = new MemoryStockStore([variant()]);
+        const pixPayments = provider();
+        await createStockCheckout({ enabled: true, maximumAmountCents: 13000, store: pixStore, provider: pixPayments, request: request("attempt-owner-pix-then-card1") });
+        await expect(createStockCheckout({ enabled: true, maximumAmountCents: 13000, cardCheckoutEnabled: true, store: pixStore, provider: pixPayments, request: cardRequest("attempt-owner-pix-then-card1") }))
+          .rejects.toMatchObject({ code: "CHECKOUT_ATTEMPT_CHANGED" });
+        expect(pixPayments.calls).toBe(1);
+      });
+
+      it("keeps the owner window closed to everyone else: a disabled gate rejects before any IO even with the switch on", async () => {
+        const store = new MemoryStockStore([variant()]);
+        const payments = provider();
+        await expect(createStockCheckout({ enabled: false, maximumAmountCents: 13000, cardCheckoutEnabled: true, store, provider: payments, request: cardRequest("attempt-owner-card-gate-001") }))
+          .rejects.toMatchObject({ code: "PUBLIC_CHECKOUT_DISABLED" });
+        expect(store.ioCount).toBe(0);
+        expect(payments.calls).toBe(0);
+      });
+    });
+
     it("keeps a card attempt that already started working after the switch is turned off: replay, webhook settlement and refusal", async () => {
       const store = new MemoryStockStore([variant()]);
       const payments = provider();
