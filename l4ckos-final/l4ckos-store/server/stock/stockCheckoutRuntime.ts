@@ -1,5 +1,5 @@
 import type { Pool } from "mysql2/promise";
-import { isPublicCheckoutEnabled } from "../_core/publicStore";
+import { assertPublicOrSyntheticSandboxCheckoutEnabled, isPublicCheckoutEnabled } from "../_core/publicStore";
 import {
   createStockCheckout,
   expireStockReservations,
@@ -15,6 +15,20 @@ import { createStockShippingQuoteService } from "./stockShippingQuoteService";
 import type { quoteShippingDetailed } from "../services/shippingService";
 import { resolveOwnerPixTestAuthorization, type OwnerPixTestActor } from "./ownerPixTestGate";
 import { StockCheckoutError } from "./stockCheckout";
+
+/**
+ * Same admission the router applies: public checkout, or (isolated homologation only) the allowlisted synthetic buyer
+ * during an approved sandbox checkout phase. Anything else stays closed.
+ */
+function isCheckoutAdmitted(authenticatedUserId: number | undefined): boolean {
+  if (isPublicCheckoutEnabled()) return true;
+  try {
+    assertPublicOrSyntheticSandboxCheckoutEnabled(authenticatedUserId);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Composition boundary for a future STOCK-only route; this factory does not mount or enable any route. */
 export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockPaymentProvider; checkoutEnabled?: boolean; exclusiveStore?: ExclusiveStore; shipping?: { secret: string; quote?: typeof quoteShippingDetailed } }) {
@@ -32,7 +46,7 @@ export function createStockCheckoutRuntime(input: { pool: Pool; provider: StockP
     },
     checkout(request: unknown, authenticatedUserId?: number) {
       // Gate check occurs before the domain can acquire a connection or invoke the provider.
-      return createStockCheckout({ enabled: isPublicCheckoutEnabled() && input.checkoutEnabled !== false, ownerUserId: authenticatedUserId as number, store, provider: input.provider, request, ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}) });
+      return createStockCheckout({ enabled: isCheckoutAdmitted(authenticatedUserId) && input.checkoutEnabled !== false, ownerUserId: authenticatedUserId as number, store, provider: input.provider, request, ...(input.shipping ? { shipping: { secret: input.shipping.secret } } : {}) });
     },
     checkoutOwnerPixTest(request: unknown, actor: OwnerPixTestActor) {
       // Revalidate the complete server-side admission at the runtime boundary as well as in the router.
