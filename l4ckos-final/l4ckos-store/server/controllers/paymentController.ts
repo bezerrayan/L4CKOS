@@ -83,6 +83,11 @@ const STOCK_CARD_TERMINAL_FAILURE_EVENTS = new Set([
   "PAYMENT_REFUSED", "PAYMENT_FAILED", "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "PAYMENT_REPROVED_BY_RISK_ANALYSIS",
 ]);
 const PAID_PAYMENT_STATUSES = new Set(["RECEIVED", "CONFIRMED"]);
+/**
+ * A hosted-card charge may be closed by deletion only while the provider still shows it as an unpaid, non-captured charge.
+ * Anything else (risk analysis, authorization/capture in progress, refunds, chargebacks) stays for reconciliation.
+ */
+const STOCK_CARD_DELETABLE_PROVIDER_STATUSES = new Set(["PENDING", "OVERDUE", "DELETED"]);
 const PAYMENT_RECEIVED_PROVIDER_STATUS_PENDING_CODE = "PAYMENT_RECEIVED_PROVIDER_STATUS_PENDING";
 const FAILED_PAYMENT_STATUSES = new Set(["REFUSED", "DELETED", "REPROVED", "FAILED"]);
 
@@ -847,9 +852,25 @@ async function processAsaasWebhook(req: Request, res: Response, resolveStockRunt
         const bindingMatches = current.id === paymentId &&
           String(current.externalReference ?? "").trim() === String(eventReference ?? "").trim() &&
           (strongReference !== null ? String(current.externalReference ?? "").trim() === strongReference : parseAsaasOrderReference(current.externalReference) === orderId);
+        // The official PAYMENT_DELETED envelope omits payment.currency. For hosted-card charges only, accept the
+        // account-pinned BRL currency when the envelope's account is the configured one (same rule as the settlement path).
+        const deletedEventAccountId = typeof payload?.account?.id === "string" ? payload.account.id.trim() : "";
+        const deletedExpectedAccountId = process.env.ASAAS_WEBHOOK_ACCOUNT_ID?.trim() ?? "";
+        const cardAccountPinnedCurrency = stockPaymentMethod === "CARD" && !currency && !currentCurrency &&
+          deletedEventAccountId !== "" && deletedEventAccountId === deletedExpectedAccountId &&
+          process.env.ASAAS_WEBHOOK_ACCOUNT_CURRENCY?.trim().toUpperCase() === "BRL" ? "BRL" : null;
+        const effectiveDeletedCurrency = currency ?? currentCurrency ?? cardAccountPinnedCurrency;
         const moneyMatches = currentAmountCents !== null && currentAmountCents === eventAmountCents &&
-          currency === "BRL" && (currentCurrency === null || currentCurrency === "BRL");
-        const failedNow = (current.deleted === true || FAILED_PAYMENT_STATUSES.has(currentStatus)) && !PAID_PAYMENT_STATUSES.has(currentStatus);
+          effectiveDeletedCurrency === "BRL" && (currentCurrency === null || currentCurrency === "BRL");
+        const currentExtras = current as typeof current & { paymentDate?: unknown; clientPaymentDate?: unknown };
+        const cardDeletionProvenUnpaid = stockPaymentMethod !== "CARD" || (
+          current.deleted === true &&
+          STOCK_CARD_DELETABLE_PROVIDER_STATUSES.has(currentStatus) &&
+          !current.confirmedDate && !currentExtras.paymentDate && !currentExtras.clientPaymentDate &&
+          (!Array.isArray(current.refunds) || current.refunds.length === 0) &&
+          !current.chargeback && !current.chargebackStatus);
+        const failedNow = (current.deleted === true || FAILED_PAYMENT_STATUSES.has(currentStatus)) && !PAID_PAYMENT_STATUSES.has(currentStatus) &&
+          cardDeletionProvenUnpaid;
         if (!bindingMatches || !moneyMatches || !failedNow) {
           const db = webhookDb();
           if (!db) throw Error("PAYMENT_RECORD_TRANSACTION_REQUIRED");

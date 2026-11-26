@@ -540,6 +540,145 @@ describe.skipIf(!process.env.STOCK_MYSQL_HOST)("FINANCIAL RECOVERY P1-P5 (MySQL 
     expect(rows.find((row: any) => row.eventId === "evt-p4-del-unavail")).toMatchObject({ state: "failed", errorCode: "PAYMENT_CURRENT_STATE_UNAVAILABLE" });
   });
 
+  // ---------------------------------------------------------------- P4-CARD
+  // Real Asaas PAYMENT_DELETED envelope for a hosted-card charge: no payment.currency, provider keeps status PENDING with deleted=true.
+  const createCard = async (attemptId: string, session = "owner-81") => {
+    const created = await httpClient(session).stockCheckout.create.mutate({ attemptId, paymentMethod: "CARD", items: [{ productId: 4, variantId: 8, quantity: 1 }], delivery: syntheticDelivery });
+    const [a] = (await pool.execute<any[]>("SELECT paymentId FROM stockCheckoutAttempts WHERE attemptId=?", [attemptId]))[0];
+    const paymentId = String(a.paymentId);
+    simulatedProviderPayments.set(paymentId, { ...simulatedProviderPayments.get(paymentId), billingType: "CREDIT_CARD" });
+    return { orderId: String(created.orderId), paymentId, attemptId };
+  };
+  const cardHook = (id: string, event: string, status: string, c: { orderId: string; paymentId: string }, extra: Record<string, unknown> = {}) =>
+    hook(id, event, status, c.orderId, c.paymentId, { billingType: "CREDIT_CARD", currency: undefined, ...extra });
+  const providerDeleted = (c: { paymentId: string }, over: Record<string, unknown> = {}) =>
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), status: "PENDING", deleted: true, ...over });
+
+  it("P4-CARD deletion confirmed unpaid releases exactly once; duplicate and re-delivered events never change stock again", async () => {
+    const c = await createCard("fr-p4card-deleted-ok-001");
+    providerDeleted(c);
+    const del = await post(cardHook("evt-p4card-del", "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const afterDelete = await snap(c.attemptId, c.orderId);
+    const dup = await post(cardHook("evt-p4card-del", "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const redelivered = await post(cardHook("evt-p4card-del-2", "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const afterReplays = await snap(c.attemptId, c.orderId);
+    ev("P4card.green", { del, dup, redelivered, afterDelete, afterReplays });
+    expect(del.status).toBe(200);
+    expect(afterDelete.variant).toEqual({ stock: 1, reserved: 0 });
+    expect(afterDelete.attempt).toMatchObject({ status: "released", providerState: "definitive_failure" });
+    expect(afterDelete.reservations).toEqual(["released"]);
+    expect(afterDelete.order).toMatchObject({ status: "cancelled" });
+    expect(afterReplays.variant).toEqual(afterDelete.variant);
+    expect(afterReplays.attempt).toEqual(afterDelete.attempt);
+    expect(afterReplays.reservations).toEqual(afterDelete.reservations);
+    expect(afterReplays.order).toEqual(afterDelete.order);
+  });
+
+  it("P4-CARD an already paid card order is preserved when a DELETED event arrives", async () => {
+    const c = await createCard("fr-p4card-paid-first-001");
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), status: "CONFIRMED", confirmedDate: "2026-11-26" });
+    const paid = await post(cardHook("evt-p4card-paid", "PAYMENT_CONFIRMED", "CONFIRMED", c));
+    const afterPaid = await snap(c.attemptId, c.orderId);
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), deleted: true });
+    const del = await post(cardHook("evt-p4card-paid-del", "PAYMENT_DELETED", "CONFIRMED", c, { deleted: true }));
+    const afterDelete = await snap(c.attemptId, c.orderId);
+    ev("P4card.paid-preserved", { paid, del, afterPaid, afterDelete });
+    expect(afterPaid.order).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+    expect(afterPaid.reservations).toEqual(["consumed"]);
+    expect(afterDelete.order).toMatchObject({ status: "paid", paymentStatus: "confirmed" });
+    expect(afterDelete.reservations).toEqual(["consumed"]);
+    expect(afterDelete.variant).toEqual(afterPaid.variant);
+    expect(afterDelete.attempt).toMatchObject({ status: "paid" });
+  });
+
+  it.each([
+    ["risk analysis / authorization in progress", { status: "AWAITING_RISK_ANALYSIS" }],
+    ["a payment date is already present", { status: "PENDING", paymentDate: "2026-11-26" }],
+    ["a confirmation date is already present", { status: "PENDING", confirmedDate: "2026-11-26" }],
+    ["a refund is recorded", { status: "PENDING", refunds: [{ id: "ref-1" }] }],
+    ["the provider did not mark the charge as deleted", { status: "PENDING", deleted: false }],
+  ] as const)("P4-CARD ambiguous provider state keeps the reservation and records reconciliation: %s", async (_label, over) => {
+    const slug = String(_label).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+    const c = await createCard(`fr-p4card-ambig-${slug}`);
+    providerDeleted(c, over as Record<string, unknown>);
+    const id = `evt-p4card-ambig-${slug}`;
+    const del = await post(cardHook(id, "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const after = await snap(c.attemptId, c.orderId);
+    ev("P4card.ambiguous", { label: _label, del, after });
+    expect(del.body).toMatchObject({ handled: false, reconciliationRequired: true });
+    expect(after.variant).toEqual({ stock: 1, reserved: 1 });
+    expect(after.attempt).toMatchObject({ status: "reserved", providerState: "created" });
+    expect(after.reservations).toEqual(["active"]);
+    expect(after.order).toMatchObject({ status: "pending" });
+  });
+
+  it("P4-CARD provider read failure fails closed and retryable; a later authenticated redelivery of the same event then reconciles once", async () => {
+    const c = await createCard("fr-p4card-provider-fail-1");
+    providerDeleted(c);
+    unavailableProviderPaymentIds.add(c.paymentId);
+    const id = "evt-p4card-unavail";
+    const failed = await post(cardHook(id, "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const whileDown = await snap(c.attemptId, c.orderId);
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    expect(whileDown.variant).toEqual({ stock: 1, reserved: 1 });
+    expect((await inbox() as any[]).find((row: any) => row.eventId === id)).toMatchObject({ state: "failed", errorCode: "PAYMENT_CURRENT_STATE_UNAVAILABLE" });
+    unavailableProviderPaymentIds.delete(c.paymentId);
+    const retried = await post(cardHook(id, "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const released = await snap(c.attemptId, c.orderId);
+    const again = await post(cardHook(id, "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const afterAgain = await snap(c.attemptId, c.orderId);
+    ev("P4card.provider-retry", { failed, retried, again, whileDown, released });
+    expect(retried.status).toBe(200);
+    expect(released.variant).toEqual({ stock: 1, reserved: 0 });
+    expect(released.order).toMatchObject({ status: "cancelled" });
+    expect(afterAgain.variant).toEqual(released.variant);
+    expect(afterAgain.attempt).toEqual(released.attempt);
+  });
+
+  it("P4-CARD a late confirmation after the deletion cannot consume stock or reopen the order", async () => {
+    const c = await createCard("fr-p4card-late-confirm-01");
+    providerDeleted(c);
+    await post(cardHook("evt-p4card-late-del", "PAYMENT_DELETED", "PENDING", c, { deleted: true }));
+    const released = await snap(c.attemptId, c.orderId);
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), status: "CONFIRMED", confirmedDate: "2026-11-26", deleted: false });
+    const late = await post(cardHook("evt-p4card-late-confirm", "PAYMENT_CONFIRMED", "CONFIRMED", c));
+    const after = await snap(c.attemptId, c.orderId);
+    ev("P4card.late-confirm", { late, released, after });
+    expect(released.variant).toEqual({ stock: 1, reserved: 0 });
+    expect(after.variant).toEqual({ stock: 1, reserved: 0 });
+    expect(after.reservations).toEqual(["released"]);
+    expect(after.order).toMatchObject({ status: "cancelled" });
+    expect(after.attempt).toMatchObject({ status: "released", providerState: "definitive_failure" });
+  });
+
+  it("P4-CARD concurrent deletion and confirmation deliveries never double-apply: stock is never consumed and never negative", async () => {
+    const c = await createCard("fr-p4card-concurrent-001");
+    providerDeleted(c);
+    const [del, confirm] = await Promise.all([
+      post(cardHook("evt-p4card-conc-del", "PAYMENT_DELETED", "PENDING", c, { deleted: true })),
+      post(cardHook("evt-p4card-conc-confirm", "PAYMENT_CONFIRMED", "CONFIRMED", c)),
+    ]);
+    const after = await snap(c.attemptId, c.orderId);
+    ev("P4card.concurrent", { del, confirm, after });
+    expect(after.variant.stock).toBeGreaterThanOrEqual(0);
+    expect(after.variant.reserved).toBeGreaterThanOrEqual(0);
+    expect(after.order?.status).not.toBe("paid");
+    expect(after.reservations).not.toContain("consumed");
+    expect(after.variant).toEqual({ stock: 1, reserved: 0 });
+  });
+
+  it("P4-CARD a card refusal while the charge is still payable keeps the reservation", async () => {
+    const c = await createCard("fr-p4card-refused-payable");
+    simulatedProviderPayments.set(c.paymentId, { ...simulatedProviderPayments.get(c.paymentId), status: "PENDING", deleted: false });
+    const refused = await post(cardHook("evt-p4card-refused", "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "PENDING", c));
+    const after = await snap(c.attemptId, c.orderId);
+    ev("P4card.refused-payable", { refused, after });
+    expect(after.variant).toEqual({ stock: 1, reserved: 1 });
+    expect(after.attempt).toMatchObject({ status: "reserved", providerState: "created" });
+    expect(after.reservations).toEqual(["active"]);
+    expect(after.order).toMatchObject({ status: "pending" });
+  });
+
   it("P4-oversell-chain DELETED(released) → unit resold → late RECEIVED of the first charge: stock never negative, divergence open", async () => {
     const a = await create("fr-p4-chain-first-00001");
     simulatedProviderPayments.set(a.paymentId, { ...simulatedProviderPayments.get(a.paymentId), status: "DELETED", deleted: true });
