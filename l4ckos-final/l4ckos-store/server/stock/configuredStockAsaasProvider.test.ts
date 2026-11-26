@@ -7,7 +7,7 @@ describe("hosted card return URL", () => {
       NODE_ENV: "production",
       FRONTEND_URL: "https://l4ckos.com.br",
       CORS_ORIGINS: "https://l4ckos.com.br,https://www.l4ckos.com.br",
-    } as NodeJS.ProcessEnv)).toBe("https://l4ckos.com.br/em-breve");
+    } as NodeJS.ProcessEnv)).toBe("https://l4ckos.com.br/pedido/retorno");
   });
 
   it.each([

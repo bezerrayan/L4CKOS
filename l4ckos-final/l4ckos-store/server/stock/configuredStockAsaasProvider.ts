@@ -4,7 +4,7 @@ import { createProductionAsaasStockPaymentProvider, createSandboxAsaasStockPayme
 import { isProductionStockRuntimeIdentity } from "../_core/productionFinancialPolicy";
 import { getAllowedOrigins } from "../_core/corsPolicy";
 
-/** Uses only the configured storefront origin and returns to the existing Coming Soon page. */
+/** Uses only the configured storefront origin and returns to the order follow-up page (/pedido/retorno). */
 export function getStockHostedCardReturnUrl(environment: NodeJS.ProcessEnv = process.env): string | null {
   const configured = environment.FRONTEND_URL?.trim();
   if (!configured) return null;
@@ -15,7 +15,9 @@ export function getStockHostedCardReturnUrl(environment: NodeJS.ProcessEnv = pro
       configuredOrigins: environment.CORS_ORIGINS,
     });
     if (url.protocol !== "https:" || !allowedOrigins.some(origin => new URL(origin).origin === url.origin)) return null;
-    return new URL("/em-breve", url.origin).toString();
+    // The storefront order follow-up page. Coming back from the hosted card page proves nothing about the payment:
+    // that page reads the backend state and only a validated provider event confirms an order.
+    return new URL("/pedido/retorno", url.origin).toString();
   } catch {
     return null;
   }
