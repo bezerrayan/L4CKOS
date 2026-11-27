@@ -19,11 +19,15 @@ import camisaFallback from "../images/camisa.png";
 import { getApiErrorDisplay } from "../utils/apiError";
 import { trackStoreEvent } from "../lib/analytics";
 import { appErrorCodeOf, createStockCheckoutClient, stockAttemptStatusLabel, stockLinesFromCart } from "../stock/stockCheckoutClient";
-import { stockCheckoutHttpRequestV1Schema } from "../../../shared/stockCheckoutV1";
+import { stockCheckoutHttpRequestV1Schema, type StockCheckoutItemV1 } from "../../../shared/stockCheckoutV1";
 import { describeStockAttempt, describeStockCheckoutError, isAttemptNotFound } from "../stock/stockAttemptView";
 import { createUserAttemptStorage, isUserAttemptStorageKey } from "../stock/attemptStorage";
 import { listOpenStockAttempts } from "../stock/stockCheckoutClient";
 import { StockAttemptRecovery } from "../components/StockAttemptRecovery";
+import { StockPixInstructions } from "../components/StockPixInstructions";
+import { StockCardContinue } from "../components/StockCardContinue";
+import { cardCheckoutEnabled } from "../config/cardCheckout";
+import { isTrustedHostedInvoiceUrl } from "../stock/hostedInvoice";
 import { authPageUrl } from "../utils/safeNext";
 import { buildShippingQuoteRequest, interpretShippingQuote, sanitizeCep, SHIPPING_UNAVAILABLE_MESSAGE, type ShippingOption, type ShippingQuoteResponse } from "../lib/shippingQuote";
 import { Barcode, ChevronDown, CreditCard, LockKeyhole, Minus, Plus, QrCode, Trash2 } from "lucide-react";
@@ -124,22 +128,36 @@ function PagamentoContent() {
   // Recovery screen only for an empty cart: with items, the same data feeds the status card on the form instead.
   const serverOpenAttempt = isAuthenticated && cart.items.length === 0 && latestAttemptQuery.data && ["reserved", "creating", "pending", "ambiguous"].includes(latestAttemptQuery.data.status) ? latestAttemptQuery.data : null;
   const [stockConfirmation, setStockConfirmation] = useState<{ orderId: string | number | null; amountCents: number } | null>(null);
-  const stockClient = useMemo(() => createStockCheckoutClient({
-    enabled: true,
-    // Attempt IDs are local resume handles; keep browser accounts isolated.
-    storage: attemptStorage,
-    transport: {
-      create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
-      resume: (attemptId, items) => trpcUtils.stockCheckout.resume.fetch({ attemptId, items: [...items] }),
-      // Without a local attempt ID the backend (owner-scoped) is asked before any new attempt is allowed.
-      resumeLatest: items => trpcUtils.stockCheckout.resumeLatest.fetch({ items: [...items] }),
-    },
-  }), [attemptStorage, stockCreate.mutateAsync, trpcUtils]);
+  const stockClient = useMemo(() => {
+    // This Vercel base carries an older AppRouter type; R5 accepts these optional, server-validated cart inputs.
+    type ResumeWithItemsInput = { attemptId: string; items: StockCheckoutItemV1[] };
+    type ResumeLatestWithItemsInput = { items: StockCheckoutItemV1[] };
+    const resumeWithItems = (input: ResumeWithItemsInput) => trpcUtils.stockCheckout.resume.fetch(
+      input as unknown as Parameters<typeof trpcUtils.stockCheckout.resume.fetch>[0],
+    );
+    const resumeLatestWithItems = (input: ResumeLatestWithItemsInput) => trpcUtils.stockCheckout.resumeLatest.fetch(
+      input as unknown as Parameters<typeof trpcUtils.stockCheckout.resumeLatest.fetch>[0],
+    );
+    return createStockCheckoutClient({
+      enabled: true,
+      // Attempt IDs are local resume handles; keep browser accounts isolated.
+      storage: attemptStorage,
+      transport: {
+        create: request => stockCreate.mutateAsync(stockCheckoutHttpRequestV1Schema.parse(request)),
+        resume: (attemptId, items) => resumeWithItems({ attemptId, items: [...items] }),
+        // Without a local attempt ID the backend (owner-scoped) is asked before any new attempt is allowed.
+        resumeLatest: items => resumeLatestWithItems({ items: [...items] }),
+      },
+    });
+  }, [attemptStorage, stockCreate.mutateAsync, trpcUtils]);
   const clearedOrdersRef = useRef<Set<number>>(new Set());
   const lastCepLookupRef = useRef<string | null>(null);
   const loadedSavedAddressRef = useRef(false);
   const checkoutTrackedRef = useRef(false);
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>(DEFAULT_CHECKOUT_METHOD);
+  // New card purchases: closed in the build unless enabled, and closed for the session if the server says so.
+  const [cardUnavailable, setCardUnavailable] = useState(false);
+  const cardAllowed = cardCheckoutEnabled && !cardUnavailable;
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [cpfCnpj, setCpfCnpj] = useState("");
@@ -209,8 +227,8 @@ function PagamentoContent() {
   const catalogBlocksNewAttempt = catalogIssues.length > 0 && !stockCheckoutBlocked;
 
   useEffect(() => {
-    if (hasStockCheckoutItems && !stockCartCompatible && checkoutMethod === "CARD") setCheckoutMethod("PIX");
-  }, [hasStockCheckoutItems, stockCartCompatible, checkoutMethod]);
+    if (hasStockCheckoutItems && (!stockCartCompatible || !cardAllowed) && checkoutMethod === "CARD") setCheckoutMethod("PIX");
+  }, [hasStockCheckoutItems, stockCartCompatible, cardAllowed, checkoutMethod]);
 
   const refreshStockAttempt = async () => {
     if (!isAuthenticated || !stockCheckoutCompatible) return;
@@ -656,6 +674,11 @@ function PagamentoContent() {
           setPaymentError("Pedidos STOCK e pré-vendas aceitam PIX; cartão de crédito está disponível somente para itens STOCK.");
           return;
         }
+        if (checkoutMethod === "CARD" && !cardAllowed) {
+          setCheckoutMethod("PIX");
+          setPaymentError("Pagamento com cartão indisponível no momento. Escolha PIX para finalizar a compra.");
+          return;
+        }
         if (checkoutMethod === "CARD" && !stockCartCompatible) {
           setPaymentError("Cartão está disponível apenas para itens STOCK. Pré-vendas devem ser pagas via PIX neste checkout.");
           return;
@@ -671,9 +694,10 @@ function PagamentoContent() {
           state: addressState.trim(),
         };
         const stockLines = stockLinesFromCart(cart.items);
+        let createdStockCharge: Awaited<ReturnType<typeof stockClient.create>> | null = null;
         if (selectedShipping.id === "local-plano-piloto") {
           // Price and stock stay server-authoritative; this is only a delivery snapshot.
-          await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress }, checkoutMethod);
+          createdStockCharge = await stockClient.create(stockLines, { optionId: "local-plano-piloto", address: stockAddress }, checkoutMethod);
         } else if (selectedShipping.id.startsWith("melhor-envio-")) {
           // Carrier freight: the server re-quotes from ITS catalog and signs the terms; the charge uses only that signed quote.
           const signed = await stockShippingQuote.mutateAsync({
@@ -689,9 +713,15 @@ function PagamentoContent() {
             setPaymentError(`O valor do frete mudou para ${formatPrice(option.priceCents / 100)}. Recalcule o frete para revisar o total antes de finalizar.`);
             return;
           }
-          await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress }, checkoutMethod);
+          createdStockCharge = await stockClient.create(stockLines, { optionId: option.optionId, quoteToken: option.quoteToken, address: stockAddress }, checkoutMethod);
         } else {
           setPaymentError("Esta modalidade de entrega ainda não está disponível para pedidos STOCK.");
+          return;
+        }
+        // Hosted card: the customer pays on the Asaas page (never here). Redirect only to the exact Asaas host of this
+        // build; a redirect proves nothing, the order is confirmed solely by the validated provider event.
+        if (checkoutMethod === "CARD" && createdStockCharge && isTrustedHostedInvoiceUrl(createdStockCharge.checkoutUrl, import.meta.env.VITE_DEPLOY_TARGET)) {
+          window.location.assign(createdStockCharge.checkoutUrl);
           return;
         }
         await refreshStockAttempt();
@@ -747,6 +777,7 @@ function PagamentoContent() {
         setPaymentError(view.message);
         trackStoreEvent("payment_charge_failed", { method: checkoutMethod });
         if (view.needsCartReview) void revalidateCart();
+        if (view.cardUnavailable) { setCardUnavailable(true); setCheckoutMethod("PIX"); }
         if (appErrorCodeOf(error) === "PAYMENT_UNDER_ANALYSIS") setStockUnderAnalysis(true);
         if (view.outcomeUnknown) void refreshStockAttempt();
         return;
@@ -948,7 +979,7 @@ function PagamentoContent() {
                 <button type="button" className={checkoutMethod === "PIX" ? "is-selected" : ""} onClick={() => setCheckoutMethod("PIX")} aria-pressed={checkoutMethod === "PIX"}>
                   <span className="l4-checkout-payment-icon" aria-hidden="true"><QrCode size={18} /></span><span><strong>PIX</strong><small>Confirmação após validação do recebimento</small></span>
                 </button>
-                {stockCartCompatible ? <button type="button" className={checkoutMethod === "CARD" ? "is-selected" : ""} onClick={() => setCheckoutMethod("CARD")} aria-pressed={checkoutMethod === "CARD"}>
+                {stockCartCompatible && cardAllowed ? <button type="button" className={checkoutMethod === "CARD" ? "is-selected" : ""} onClick={() => setCheckoutMethod("CARD")} aria-pressed={checkoutMethod === "CARD"}>
                   <span className="l4-checkout-payment-icon" aria-hidden="true"><CreditCard size={18} /></span><span><strong>Cartão de crédito</strong><small>À vista na página segura da Asaas</small></span>
                 </button> : null}
               </div> : <div className="l4-checkout-payment-methods">
@@ -995,7 +1026,11 @@ function PagamentoContent() {
               <p>{stockView.message}</p>
               {stockPaymentData.orderId ? <p>Pedido #{stockPaymentData.orderId}</p> : null}
               {stockPaymentData.amountCents > 0 ? <p>Total calculado pelo servidor: {formatPrice(stockPaymentData.amountCents / 100)}</p> : null}
-              {stockView.canContinuePayment && stockPaymentData.checkoutUrl ? <a href={stockPaymentData.checkoutUrl} target="_blank" rel="noreferrer">Continuar pagamento</a> : null}
+              {stockView.canContinuePayment
+                ? (stockPaymentData.paymentMethod === "CARD"
+                  ? <StockCardContinue checkoutUrl={stockPaymentData.checkoutUrl} />
+                  : <StockPixInstructions pix={stockPaymentData.pix} checkoutUrl={stockPaymentData.checkoutUrl} />)
+                : null}
               {stockView.canRefresh ? <button type="button" onClick={() => void refreshStockAttempt()}>Atualizar status</button> : null}
             </section> : null}
           </main>

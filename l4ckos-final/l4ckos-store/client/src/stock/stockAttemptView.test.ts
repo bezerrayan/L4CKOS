@@ -140,3 +140,27 @@ describe("describeStockCheckoutError — exclusive drops (stable codes only)", (
     expect(describeStockCheckoutError({ message: "EXCLUSIVE_ACCESS_REQUIRED" }).outcomeUnknown).toBe(true);
   });
 });
+
+describe("hosted card attempts", () => {
+  it("continues a pending card only on the hosted invoice, never with inline PIX data", () => {
+    const withInvoice = describeStockAttempt({ status: "pending", paymentMethod: "CARD", checkoutUrl: "https://www.asaas.com/i/abc" });
+    expect(withInvoice.canContinuePayment).toBe(true);
+    expect(withInvoice.message).toMatch(/página segura da Asaas/);
+    expect(withInvoice.message).toMatch(/não confirma o pedido/);
+    const pixOnly = describeStockAttempt({ status: "pending", paymentMethod: "CARD", checkoutUrl: null, pix: { copyPaste: "00020126" } });
+    expect(pixOnly.canContinuePayment).toBe(false);
+  });
+
+  it("keeps PIX behavior unchanged, including attempts from older servers without a payment method", () => {
+    expect(describeStockAttempt({ status: "pending", pix: { copyPaste: "00020126" } }).canContinuePayment).toBe(true);
+    expect(describeStockAttempt({ status: "pending", paymentMethod: "PIX", checkoutUrl: "https://www.asaas.com/i/x" }).canContinuePayment).toBe(true);
+  });
+
+  it("maps a closed card to a PIX fallback without treating the outcome as unknown", () => {
+    const view = describeStockCheckoutError({ data: { code: "FORBIDDEN", appError: { code: "CARD_CHECKOUT_DISABLED" } } });
+    expect(view).toMatchObject({ cardUnavailable: true, outcomeUnknown: false, needsCartReview: false });
+    expect(view.message).toMatch(/Escolha PIX/);
+    // The generic closed-checkout FORBIDDEN is unchanged and does not trip the card fallback.
+    expect(describeStockCheckoutError({ data: { code: "FORBIDDEN" } }).cardUnavailable).toBeUndefined();
+  });
+});

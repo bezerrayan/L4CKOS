@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
+import { StockPixInstructions } from "./StockPixInstructions";
 import { trpc } from "../lib/trpc";
 import { formatPrice } from "../lib/utils";
 import { describeStockAttempt, isAttemptNotFound } from "../stock/stockAttemptView";
@@ -48,7 +49,7 @@ export function StockAttemptRecovery({ attemptId, storage, onPaid }: Props) {
       <p>{view.message}</p>
       {data.orderId ? <p>Pedido #{data.orderId}</p> : null}
       {data.amountCents > 0 ? <p>Total: {formatPrice(data.amountCents / 100)}</p> : null}
-      {view.canContinuePayment && data.checkoutUrl ? <a href={data.checkoutUrl} target="_blank" rel="noreferrer">Continuar pagamento</a> : null}
+      {view.canContinuePayment ? <StockPixInstructions pix={data.pix} checkoutUrl={data.checkoutUrl} /> : null}
       {view.canRefresh ? <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching}>{query.isFetching ? "Atualizando..." : "Atualizar status"}</button> : null}
       {data.status === "paid" ? <Link to="/meus-pedidos">Ver meus pedidos</Link> : null}
     </section>
