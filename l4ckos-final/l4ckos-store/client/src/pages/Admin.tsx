@@ -45,6 +45,7 @@ import {
   type OrderListFilter,
 } from "../components/admin/orders/AdminOrdersUI";
 import { AdminCustomersPanel } from "../components/admin/customers/AdminCustomersPanel";
+import { AdminAudiencePanel } from "../components/admin/audience/AdminAudiencePanel";
 import { AdminCouponsPanel } from "../components/admin/coupons/AdminCouponsPanel";
 import {
   AuditLogTable,
@@ -68,6 +69,7 @@ type Section =
   | "batches"
   | "overview"
   | "customers"
+  | "audience"
   | "products"
   | "promos"
   | "orders"
@@ -87,6 +89,7 @@ const adminSectionPaths: Record<Section, string> = {
   logistics: "/gestao/logistica",
   products: "/gestao/catalogo/produtos",
   customers: "/gestao/clientes",
+  audience: "/gestao/publico",
   batches: "/gestao/lotes",
   promos: "/gestao/promocoes",
   coupons: "/gestao/cupons",
@@ -104,6 +107,7 @@ function adminSectionFromPath(pathname: string): Section {
   if (pathname.startsWith("/gestao/pedidos")) return "orders";
   if (pathname.startsWith("/gestao/logistica")) return "logistics";
   if (pathname.startsWith("/gestao/clientes")) return "customers";
+  if (pathname.startsWith("/gestao/publico")) return "audience";
   if (pathname.startsWith("/gestao/lotes")) return "batches";
   if (pathname.startsWith("/gestao/promocoes")) return "promos";
   if (pathname.startsWith("/gestao/cupons")) return "coupons";
@@ -412,7 +416,7 @@ export default function Admin() {
   const menuPanelRef = useRef<HTMLElement | null>(null);
   const sectionNav = [
     { heading: "Visão geral", items: [{ key: "overview", label: "Dashboard / KPIs" }] },
-    { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "logistics", label: "Logística" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "batches", label: "Lotes / Pré-venda" }] },
+    { heading: "Operação", items: [{ key: "orders", label: "Pedidos" }, { key: "logistics", label: "Logística" }, { key: "products", label: "Produtos" }, { key: "customers", label: "Clientes" }, { key: "audience", label: "Público" }, { key: "batches", label: "Lotes / Pré-venda" }] },
     { heading: "Comercial", items: [{ key: "promos", label: "Promoções" }, { key: "coupons", label: "Cupons" }, { key: "drops", label: "Drops exclusivos" }, { key: "reviews", label: "Avaliações" }] },
     { heading: "Sistema", items: [{ key: "reports", label: "Relatórios" }, { key: "audit", label: "Auditoria" }, { key: "reconciliation", label: "Conciliação" }, { key: "backup", label: "Backup" }, { key: "settings", label: "Configurações" }] },
   ] as const;
@@ -422,6 +426,7 @@ export default function Admin() {
     logistics: { title: "Logística", subtitle: "Consulte produção, preparação e expedição usando os registros atuais da V6." },
     products: { title: "Produtos", subtitle: "Gerencie catálogo, variantes e disponibilidade." },
     customers: { title: "Clientes", subtitle: "Consulte os cadastros e o relacionamento com a loja." },
+    audience: { title: "Público", subtitle: "Acompanhe os cadastros e gerencie comunicações com opt-in ativo." },
     batches: { title: "Lotes e pré-venda", subtitle: "Acompanhe a capacidade e os prazos de produção." },
     promos: { title: "Promoções", subtitle: "Organize os destaques comerciais da loja." },
     coupons: { title: "Cupons", subtitle: "Gerencie regras promocionais e validade." },
@@ -1085,6 +1090,10 @@ export default function Admin() {
             await setFlagsMutation.mutateAsync({ userId, isBlocked });
           }}
         />
+      )}
+
+      {section === "audience" && (
+        <AdminAudiencePanel onMessage={message => showToast({ message, duration: 3000 })} onConfirm={confirmAdminAction} />
       )}
 
       {section === "products" && (

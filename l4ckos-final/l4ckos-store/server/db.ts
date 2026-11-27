@@ -57,6 +57,7 @@ import { aggregateSalesReport } from "./reports/salesReport";
 import { isPublicProductUnavailable, isRestrictedPublicPurchase, isStagingQaCatalogProduct } from "./database/publicPurchasePolicy";
 import { getSellableVariantIds } from "./database/productVariantAvailability";
 import { buildManagerSyncSnapshot, saoPauloMidnightUtc, type ManagerSyncIdentity } from "./services/managerSyncSnapshot";
+import { filterEligibleMarketingEmails } from "./admin/audiencePolicy";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -419,6 +420,169 @@ export async function getAllWaitlistEmails() {
     .from(waitlistEmails)
     .orderBy(desc(waitlistEmails.id));
   return rows;
+}
+
+export type AdminAudienceSource = "waitlist" | "customers";
+export type AdminAudienceRecord = {
+  id: number;
+  name: string | null;
+  email: string | null;
+  createdAt: Date;
+  eligibleForMarketing: boolean;
+};
+export type AdminSelectedRecipient = { source: AdminAudienceSource; id: number };
+export type MarketingAudience = "waitlist" | "customers" | "both" | "selected" | "allUsers" | "vipUsers" | "custom";
+
+function saoPauloCalendarDay(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day) };
+}
+
+function audienceDateBounds(now = new Date()) {
+  const local = saoPauloCalendarDay(now);
+  const today = `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`;
+  const weekStart = new Date(Date.UTC(local.year, local.month - 1, local.day - 6)).toISOString().slice(0, 10);
+  return { todayStart: saoPauloMidnightUtc(today), weekStart: saoPauloMidnightUtc(weekStart) };
+}
+
+function audienceSearch(source: AdminAudienceSource, search: string) {
+  const term = search.trim().toLowerCase();
+  if (!term) return undefined;
+  if (source === "waitlist") return sql`LOCATE(${term}, LOWER(${waitlistEmails.email})) > 0`;
+  return sql`(LOCATE(${term}, LOWER(${users.email})) > 0 OR LOCATE(${term}, LOWER(${users.name})) > 0)`;
+}
+
+async function eligibleMarketingEmails(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
+  const [optIns, unsubscribes] = await Promise.all([
+    db.select({ email: waitlistEmails.email }).from(waitlistEmails),
+    db.select({ email: emailUnsubscribes.email }).from(emailUnsubscribes),
+  ]);
+  const normalize = (email: unknown) => String(email ?? "").trim().toLowerCase();
+  const optedIn = new Set(optIns.map(item => normalize(item.email)).filter(Boolean));
+  const suppressed = new Set(unsubscribes.map(item => normalize(item.email)).filter(Boolean));
+  return { optedIn, suppressed };
+}
+
+export async function getAdminAudienceSummary() {
+  const db = await getDb();
+  if (!db) return { waitlistTotal: 0, customersTotal: 0, newToday: 0, newLast7Days: 0 };
+  const { todayStart, weekStart } = audienceDateBounds();
+  const countWaitlist = async (from?: Date) => {
+    const query = db.select({ total: sql<number>`COUNT(*)` }).from(waitlistEmails);
+    const rows = from ? await query.where(gte(waitlistEmails.createdAt, from)) : await query;
+    return Number(rows[0]?.total ?? 0);
+  };
+  const countCustomers = async (from?: Date) => {
+    const query = db.select({ total: sql<number>`COUNT(*)` }).from(users).where(eq(users.role, "user"));
+    const rows = from
+      ? await db.select({ total: sql<number>`COUNT(*)` }).from(users).where(and(eq(users.role, "user"), gte(users.createdAt, from)))
+      : await query;
+    return Number(rows[0]?.total ?? 0);
+  };
+  const [waitlistTotal, customersTotal, waitlistToday, customersToday, waitlistWeek, customersWeek] = await Promise.all([
+    countWaitlist(), countCustomers(), countWaitlist(todayStart), countCustomers(todayStart), countWaitlist(weekStart), countCustomers(weekStart),
+  ]);
+  return {
+    waitlistTotal,
+    customersTotal,
+    newToday: waitlistToday + customersToday,
+    newLast7Days: waitlistWeek + customersWeek,
+  };
+}
+
+export async function getAdminAudiencePage(input: {
+  source: AdminAudienceSource;
+  search: string;
+  page: number;
+  pageSize: number;
+}): Promise<{ rows: AdminAudienceRecord[]; total: number }> {
+  const db = await getDb();
+  if (!db) return { rows: [], total: 0 };
+  const search = audienceSearch(input.source, input.search);
+  const where = input.source === "waitlist"
+    ? search
+    : search ? and(eq(users.role, "user"), search) : eq(users.role, "user");
+
+  if (input.source === "waitlist") {
+    const [counts, rows] = await Promise.all([
+      db.select({ total: sql<number>`COUNT(*)` }).from(waitlistEmails).where(search),
+      db.select({ id: waitlistEmails.id, email: waitlistEmails.email, createdAt: waitlistEmails.createdAt })
+        .from(waitlistEmails).where(search).orderBy(desc(waitlistEmails.createdAt), desc(waitlistEmails.id))
+        .limit(input.pageSize).offset((input.page - 1) * input.pageSize),
+    ]);
+    const eligibility = await eligibleMarketingEmails(db);
+    const optInRows = new Set(eligibility.optedIn);
+    return {
+      total: Number(counts[0]?.total ?? 0),
+      rows: rows.map(row => {
+        const email = String(row.email ?? "").trim().toLowerCase();
+        return { id: row.id, name: null, email: row.email, createdAt: row.createdAt, eligibleForMarketing: optInRows.has(email) && !eligibility.suppressed.has(email) };
+      }),
+    };
+  }
+
+  const [counts, rows] = await Promise.all([
+    db.select({ total: sql<number>`COUNT(*)` }).from(users).where(where),
+    db.select({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
+      .from(users).where(where).orderBy(desc(users.createdAt), desc(users.id))
+      .limit(input.pageSize).offset((input.page - 1) * input.pageSize),
+  ]);
+  const eligibility = await eligibleMarketingEmails(db);
+  return {
+    total: Number(counts[0]?.total ?? 0),
+    rows: rows.map(row => {
+      const email = String(row.email ?? "").trim().toLowerCase();
+      return { ...row, eligibleForMarketing: Boolean(email && eligibility.optedIn.has(email) && !eligibility.suppressed.has(email)) };
+    }),
+  };
+}
+
+export async function getAdminAudienceCsvRows(source: AdminAudienceSource, search: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const whereSearch = audienceSearch(source, search);
+  if (source === "waitlist") {
+    return db.select({ email: waitlistEmails.email, createdAt: waitlistEmails.createdAt })
+      .from(waitlistEmails).where(whereSearch).orderBy(desc(waitlistEmails.createdAt), desc(waitlistEmails.id));
+  }
+  const where = whereSearch ? and(eq(users.role, "user"), whereSearch) : eq(users.role, "user");
+  return db.select({ name: users.name, email: users.email, createdAt: users.createdAt })
+    .from(users).where(where).orderBy(desc(users.createdAt), desc(users.id));
+}
+
+export async function getMarketingAudienceEmails(input: {
+  audience: MarketingAudience;
+  customEmails?: string[];
+  selectedRecipients?: AdminSelectedRecipient[];
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const { optedIn, suppressed } = await eligibleMarketingEmails(db);
+  const candidates: unknown[] = [];
+
+  if (["waitlist", "both"].includes(input.audience)) {
+    candidates.push(...(await db.select({ email: waitlistEmails.email }).from(waitlistEmails)).map(item => item.email));
+  }
+  if (["customers", "both", "allUsers", "vipUsers"].includes(input.audience)) {
+    const where = input.audience === "vipUsers" ? and(eq(users.role, "user"), eq(users.isVip, 1)) : eq(users.role, "user");
+    candidates.push(...(await db.select({ email: users.email }).from(users).where(where)).map(item => item.email));
+  }
+  if (input.audience === "custom") candidates.push(...(input.customEmails ?? []));
+  if (input.audience === "selected") {
+    const selected = input.selectedRecipients ?? [];
+    const waitlistIds = [...new Set(selected.filter(item => item.source === "waitlist").map(item => item.id))];
+    const customerIds = [...new Set(selected.filter(item => item.source === "customers").map(item => item.id))];
+    if (waitlistIds.length) candidates.push(...(await db.select({ email: waitlistEmails.email }).from(waitlistEmails).where(inArray(waitlistEmails.id, waitlistIds))).map(item => item.email));
+    if (customerIds.length) candidates.push(...(await db.select({ email: users.email }).from(users).where(and(eq(users.role, "user"), inArray(users.id, customerIds)))).map(item => item.email));
+  }
+
+  return filterEligibleMarketingEmails(candidates, optedIn, suppressed);
 }
 
 export async function isEmailUnsubscribed(email: string) {

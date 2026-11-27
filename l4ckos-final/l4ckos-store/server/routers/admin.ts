@@ -24,6 +24,10 @@ import {
   getDashboardKpis,
   getAllOrders,
   getAllWaitlistEmails,
+  getAdminAudienceSummary,
+  getAdminAudiencePage,
+  getAdminAudienceCsvRows,
+  getMarketingAudienceEmails,
   getOrderById,
   getOrderReservationItems,
   getProductsByIds,
@@ -173,23 +177,21 @@ function csvRow(values: unknown[]) {
   return values.map(csvCell).join(",");
 }
 
-function sanitizeRecipientList(emails: string[]) {
-  return [...new Set(emails.map(item => String(item ?? "").trim().toLowerCase()).filter(Boolean))];
+const audienceSourceSchema = z.enum(["waitlist", "customers"]);
+const selectedRecipientSchema = z.object({
+  source: audienceSourceSchema,
+  id: z.number().int().positive(),
+}).strict();
+const marketingAudienceSchema = z.enum(["waitlist", "customers", "both", "selected"]);
+
+function csvTimestamp(value: Date | string | null | undefined) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
 }
 
-async function getAudienceEmails(audience: "waitlist" | "allUsers" | "vipUsers" | "custom", customEmails: string[] = []) {
-  if (audience === "custom") {
-    return sanitizeRecipientList(customEmails);
-  }
-
-  if (audience === "waitlist") {
-    const waitlist = await getAllWaitlistEmails();
-    return sanitizeRecipientList(waitlist.map(item => item.email));
-  }
-
-  const users = await getUsersWithStats();
-  const filtered = audience === "vipUsers" ? users.filter(user => Boolean(user.isVip)) : users;
-  return sanitizeRecipientList(filtered.map(user => String(user.email ?? "")));
+function wasMarketingDeliverySkipped(result: unknown) {
+  return Boolean(result && typeof result === "object" && "skipped" in result && (result as { skipped?: unknown }).skipped);
 }
 
 type SafeIntegrationStatus = "configured" | "partial" | "missing" | "environment";
@@ -308,6 +310,58 @@ export const adminRouter = router({
       lastSignedIn: user.lastSignedIn,
     }));
   }),
+
+  publicAudienceSummary: adminProcedure.query(async () => getAdminAudienceSummary()),
+
+  publicAudienceList: adminProcedure
+    .input(z.object({
+      source: audienceSourceSchema,
+      search: z.string().trim().max(320).default(""),
+      page: z.number().int().min(1).max(10000).default(1),
+      pageSize: z.number().int().min(1).max(100).default(25),
+    }).strict())
+    .query(async ({ input }) => {
+      const result = await getAdminAudiencePage(input);
+      return {
+        total: result.total,
+        rows: result.rows.map(({ id, name, email, createdAt, eligibleForMarketing }) => ({ id, name, email, createdAt, eligibleForMarketing })),
+      };
+    }),
+
+  publicAudienceCsv: adminProcedure
+    .input(z.object({
+      source: audienceSourceSchema,
+      search: z.string().trim().max(320).default(""),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const rows = await getAdminAudienceCsvRows(input.source, input.search);
+      const csvRows = rows as Array<{ name?: string | null; email: string | null; createdAt: Date | string }>;
+      const content = input.source === "waitlist"
+        ? [csvRow(["email", "createdAt"]), ...csvRows.map(row => csvRow([row.email, csvTimestamp(row.createdAt)]))].join("\r\n")
+        : [csvRow(["name", "email", "createdAt"]), ...csvRows.map(row => csvRow([row.name, row.email, csvTimestamp(row.createdAt)]))].join("\r\n");
+      await createAuditLog({
+        actorUserId: ctx.user.id,
+        action: "audience.export.csv",
+        entity: "audience",
+        entityId: input.source,
+        metadata: { source: input.source, rows: rows.length, searchUsed: Boolean(input.search) },
+      });
+      return {
+        fileName: `l4ckos-publico-${input.source}-${new Date().toISOString().slice(0, 10)}.csv`,
+        csv: content,
+        rows: rows.length,
+      } as const;
+    }),
+
+  marketingAudiencePreview: adminProcedure
+    .input(z.object({
+      audience: marketingAudienceSchema,
+      selectedRecipients: z.array(selectedRecipientSchema).max(500).default([]),
+    }).strict())
+    .query(async ({ input }) => {
+      const recipients = await getMarketingAudienceEmails(input);
+      return { count: recipients.length };
+    }),
 
   userSetRole: adminProcedure
     .input(
@@ -1222,26 +1276,32 @@ export const adminRouter = router({
     .input(
       z.object({
         campaign: z.enum(["drop", "newProducts", "promotion", "crossSell", "loyaltyCoupon"]),
-        audience: z.enum(["waitlist", "allUsers", "vipUsers", "custom"]),
-        customEmails: z.array(z.string().email()).optional().default([]),
-        productIds: z.array(z.number().int().positive()).optional().default([]),
+        audience: z.enum(["waitlist", "customers", "both", "selected", "allUsers", "vipUsers", "custom"]),
+        selectedRecipients: z.array(selectedRecipientSchema).max(500).optional().default([]),
+        customEmails: z.array(z.string().email()).max(500).optional().default([]),
+        productIds: z.array(z.number().int().positive()).max(100).optional().default([]),
         couponCode: z.string().trim().min(3).max(64).optional(),
         couponDescription: z.string().trim().max(255).optional(),
         url: z.string().url().optional(),
         batchSize: z.number().int().min(1).max(100).default(25),
         delayMs: z.number().int().min(100).max(5000).default(500),
+      }).strict().superRefine((value, ctx) => {
+        if (value.campaign === "loyaltyCoupon" && !value.couponCode) {
+          ctx.addIssue({ code: "custom", path: ["couponCode"], message: "Informe o cupom da campanha." });
+        }
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const emails = await getAudienceEmails(input.audience, input.customEmails);
+      const emails = await getMarketingAudienceEmails(input);
       if (emails.length === 0) {
         return {
           success: true,
           total: 0,
           sent: 0,
           failed: 0,
+          skipped: 0,
           failures: [],
-          message: "Nenhum destinatario encontrado para este publico.",
+          message: "Nenhum destinatário com consentimento ativo encontrado para este público.",
         } as const;
       }
 
@@ -1257,8 +1317,9 @@ export const adminRouter = router({
         price: formatCurrency(product.price / 100),
       }));
 
-      const failures: Array<{ email: string; message: string }> = [];
+      const failures: Array<{ message: string }> = [];
       let sent = 0;
+      let skipped = 0;
 
       for (let index = 0; index < emails.length; index += input.batchSize) {
         const batch = emails.slice(index, index + input.batchSize);
@@ -1268,50 +1329,46 @@ export const adminRouter = router({
               email,
               name: "cliente",
             };
+            let result: unknown;
 
             if (input.campaign === "drop") {
-              await sendNewDropAnnouncementEmail({
+              result = await sendNewDropAnnouncementEmail({
                 ...common,
                 dropUrl: input.url,
                 products: normalizedProducts,
               });
             } else if (input.campaign === "newProducts") {
-              await sendNewProductsAnnouncementEmail({
+              result = await sendNewProductsAnnouncementEmail({
                 ...common,
                 productsUrl: input.url,
                 products: normalizedProducts,
               });
             } else if (input.campaign === "promotion") {
-              await sendPromotionEmail({
+              result = await sendPromotionEmail({
                 ...common,
                 promotionUrl: input.url,
-                couponCode: input.couponCode,
+                couponCode: input.couponCode!,
                 couponDescription: input.couponDescription,
               });
             } else if (input.campaign === "crossSell") {
-              await sendCrossSellEmail({
+              result = await sendCrossSellEmail({
                 ...common,
                 collectionUrl: input.url,
                 products: normalizedProducts,
               });
             } else {
-              if (!input.couponCode) {
-                throw new Error("couponCode e obrigatorio para fidelizacao.");
-              }
-              await sendLoyaltyCouponEmail({
+              result = await sendLoyaltyCouponEmail({
                 ...common,
-                couponCode: input.couponCode,
+                couponCode: input.couponCode!,
                 couponDescription: input.couponDescription,
                 shopUrl: input.url,
               });
             }
 
-            sent += 1;
-          } catch (error) {
-            failures.push({
-              email,
-              message: error instanceof Error ? error.message : "Falha desconhecida",
-            });
+            if (wasMarketingDeliverySkipped(result)) skipped += 1;
+            else sent += 1;
+          } catch {
+            failures.push({ message: "Falha ao enviar e-mail." });
           }
 
           await sleep(input.delayMs);
@@ -1324,10 +1381,12 @@ export const adminRouter = router({
         entity: "emailCampaign",
         entityId: input.campaign,
         metadata: {
-          ...input,
+          audience: input.audience,
+          selectedRecipientCount: input.selectedRecipients.length,
           total: emails.length,
           sent,
           failed: failures.length,
+          skipped,
         },
       });
 
@@ -1336,11 +1395,12 @@ export const adminRouter = router({
         total: emails.length,
         sent,
         failed: failures.length,
+        skipped,
         failures,
         message:
           failures.length === 0
-            ? "Disparo concluido com sucesso."
-            : "Disparo concluido com falhas parciais.",
+            ? `Disparo concluído: ${sent} enviado(s), ${skipped} ignorado(s).`
+            : "Disparo concluído com falhas parciais.",
       } as const;
     }),
 
