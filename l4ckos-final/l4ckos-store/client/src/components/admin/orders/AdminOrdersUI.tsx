@@ -199,7 +199,7 @@ export function OrderDetailPanel({
         <DetailInfo label="Rastreio" value={order.trackingCode || "Ainda não informado"} />
         <DetailInfo label="Itens" value={`${itemCount} item(ns)`} />
       </div>
-      <p style={styles.secondaryText}>Total final retornado para o pedido; esta consulta não discrimina produtos, frete ou desconto.</p>
+      <p style={styles.secondaryText}>Total final retornado para o pedido; esta consulta não discrimina produtos ou desconto; o frete contratado aparece em Entrega.</p>
 
       <section style={styles.detailSection}>
         <strong style={styles.detailSubtitle}>Pagamento</strong>
