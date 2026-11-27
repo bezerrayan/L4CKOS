@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import emailRoutes from "../../routes/email.routes";
 import { buildUnsubscribeToken, buildUnsubscribeUrl, verifyUnsubscribeToken, unsubscribeByToken } from "./emailSubscriptions.js";
 import { resolveAnnouncementUrl, resolvePublicApiOrigin } from "./publicUrls";
-import { sendLaunchAnnouncementEmail, sendWaitlistLaunchEmail, sendAbandonedCartReminder1Email, sendNewDropAnnouncementEmail, sendInternalNewSaleAlertEmail, sendInternalLowStockAlertEmail, sendInternalPaymentFailedAlertEmail } from "./emailService.js";
+import { sendLaunchAnnouncementEmail, sendWaitlistLaunchEmail, sendAbandonedCartReminder1Email, sendNewDropAnnouncementEmail, sendReviewRequestEmail, sendInternalNewSaleAlertEmail, sendInternalLowStockAlertEmail, sendInternalPaymentFailedAlertEmail } from "./emailService.js";
 const fixture = vi.hoisted(() => ({ subscriptions: new Map<string, any>(), optIns: new Set<string>(), write: vi.fn(), send: vi.fn(async () => ({ data: { id: "synthetic-provider-id" } })), client: vi.fn() }));
 vi.mock("../../db", () => ({
   isEmailUnsubscribed: vi.fn(async email => fixture.subscriptions.has(email)),
@@ -48,6 +48,7 @@ describe("unsubscribe origin, templates and handler (synthetic / provider mocked
     await sendWaitlistLaunchEmail({ email, couponCode: "TEST", discountPercent: 15, launchUrl: "https://shop.example.invalid/drop" });
     await sendNewDropAnnouncementEmail({ email, dropUrl: "https://shop.example.invalid/drop", products: [] });
     await sendAbandonedCartReminder1Email({ email, name: "Cliente", cartUrl: "https://shop.example.invalid/carrinho", products: [] });
+    await sendReviewRequestEmail({ customerEmail: email, customerName: "Cliente", orderNumber: "1", reviewUrl: "https://shop.example.invalid/review" });
     expect(fixture.send).not.toHaveBeenCalled();
 
     fixture.optIns.add("unsubscribed@example.invalid");
