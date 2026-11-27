@@ -27,6 +27,13 @@ export type AdminOrderView = {
   totalPrice?: number | string | null;
   trackingCode?: string | null;
   createdAt?: Date | string | null;
+  shippingSummary?: {
+    method: "carrier" | "local_scheduled";
+    carrier: string | null;
+    serviceName: string;
+    shippingPriceCents: number;
+    package: { heightCm: number; widthCm: number; lengthCm: number; weightGrams: number } | null;
+  } | null;
   shippingAddress?: {
     recipient?: string | null;
     source?: string | null;
@@ -227,6 +234,21 @@ export function OrderDetailPanel({
 
       <section style={styles.detailSection}>
         <strong style={styles.detailSubtitle}>Entrega</strong>
+        {order.shippingSummary ? (
+          <div className="admin-order-shipping-summary" style={styles.addressCard}>
+            <div style={styles.addressHeader}>
+              <span style={styles.itemName}>{order.shippingSummary.carrier ? `${order.shippingSummary.carrier} · ${order.shippingSummary.serviceName}` : order.shippingSummary.serviceName}</span>
+              <span style={styles.addressHint}>{order.shippingSummary.method === "carrier" ? "Envio por transportadora" : "Entrega local agendada"}</span>
+            </div>
+            <div style={styles.addressLines}>
+              <span style={styles.secondaryText}>Frete cobrado: {formatPrice(order.shippingSummary.shippingPriceCents / 100)}</span>
+              {order.shippingSummary.package ? <span style={styles.secondaryText}>Pacote cotado: {order.shippingSummary.package.lengthCm} × {order.shippingSummary.package.widthCm} × {order.shippingSummary.package.heightCm} cm · {order.shippingSummary.package.weightGrams} g</span> : null}
+              <span style={styles.secondaryText}>Rastreio: {order.trackingCode || "ainda não informado"}</span>
+            </div>
+          </div>
+        ) : (
+          <span style={styles.secondaryText}>Frete contratado não registrado para este pedido.</span>
+        )}
         {order.shippingAddress ? (
           <div style={styles.addressCard}>
             <div style={styles.addressHeader}>

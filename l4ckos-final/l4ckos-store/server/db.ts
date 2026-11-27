@@ -2,6 +2,7 @@ import { batchAcceptsSales, batchHasCapacity, type BatchPreview } from "../share
 import { readShippingSnapshot } from "./database/orderShippingSnapshot";
 import { formatCurrency } from "./utils/email/formatCurrency.js";
 import { createVariantOptionKey, normalizeVariantLabel } from "./database/productVariantIdentity";
+import { summarizeShippingAcceptance, type OrderShippingSummary } from "../shared/orderShippingSummary";
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import type { Pool } from "mysql2/promise";
@@ -2167,6 +2168,7 @@ export async function getOrdersByFilters(filters?: {
       throw error;
     });
   const reservations = (await Promise.all(baseOrders.map(order=>getOrderReservationItems(order.id)))).flat();
+  const shippingSummaryByOrder = await loadOrderShippingSummaries(db, baseOrders.map(order => order.id));
 
   const usersById = new Map(usersRows.map(user => [user.id, user]));
   const itemsByOrder = new Map<number, typeof reservations>();
@@ -2232,8 +2234,31 @@ export async function getOrdersByFilters(filters?: {
       customerEmail: usersById.get(order.userId)?.email || null,
       items: itemsByOrder.get(order.id) ?? [],
       shippingAddress,
+      shippingSummary: shippingSummaryByOrder.get(order.id) ?? null,
     };
   });
+}
+
+/** Read-only: allow-listed freight acceptance per order (carrier, service, price, parcel). Never exposes the audit row itself. */
+async function loadOrderShippingSummaries(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, orderIds: number[]) {
+  const summaries = new Map<number, OrderShippingSummary>();
+  if (orderIds.length === 0) return summaries;
+  const rows = await db
+    .select({ entityId: auditLogs.entityId, metadata: auditLogs.metadata })
+    .from(auditLogs)
+    .where(and(eq(auditLogs.entity, "order"), eq(auditLogs.action, "checkout.shipping_accepted.v1"), inArray(auditLogs.entityId, orderIds.map(String))))
+    .orderBy(desc(auditLogs.id))
+    .catch(error => {
+      if (isMissingDatabaseObjectError(error)) return [];
+      throw error;
+    });
+  for (const row of rows) {
+    const orderId = Number(row.entityId);
+    if (!Number.isSafeInteger(orderId) || summaries.has(orderId)) continue; // newest record wins
+    const summary = summarizeShippingAcceptance(row.metadata);
+    if (summary) summaries.set(orderId, summary);
+  }
+  return summaries;
 }
 
 export async function setOrderAdminData(
