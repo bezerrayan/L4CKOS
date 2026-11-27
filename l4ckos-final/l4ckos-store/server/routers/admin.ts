@@ -1208,6 +1208,7 @@ export const adminRouter = router({
       }
 
       const appBaseUrl = String(process.env.APP_URL || process.env.APP_BASE_URL || process.env.FRONTEND_URL || "https://l4ckos.com.br").replace(/\/$/, "");
+      let skipped = false;
 
       if (input.flow === "paymentNotFinished") {
         if (!input.orderId) {
@@ -1253,11 +1254,11 @@ export const adminRouter = router({
         };
 
         if (input.flow === "abandonedCart1") {
-          await sendAbandonedCartReminder1Email(payload);
+          skipped = wasMarketingDeliverySkipped(await sendAbandonedCartReminder1Email(payload));
         } else if (input.flow === "abandonedCart2") {
-          await sendAbandonedCartReminder2Email(payload);
+          skipped = wasMarketingDeliverySkipped(await sendAbandonedCartReminder2Email(payload));
         } else {
-          await sendAbandonedCartReminder3Email(payload);
+          skipped = wasMarketingDeliverySkipped(await sendAbandonedCartReminder3Email(payload));
         }
       }
 
@@ -1266,10 +1267,14 @@ export const adminRouter = router({
         action: "email.lifecycle.send",
         entity: "email",
         entityId: `${input.flow}:${input.userId}`,
-        metadata: input,
+        metadata: { ...input, skipped },
       });
 
-      return { success: true } as const;
+      return {
+        success: true,
+        skipped,
+        message: skipped ? "Envio ignorado: sem opt-in de marketing ou com descadastro ativo." : "E-mail enviado.",
+      } as const;
     }),
 
   marketingCampaignSend: adminProcedure
@@ -1298,8 +1303,8 @@ export const adminRouter = router({
           success: true,
           total: 0,
           sent: 0,
-          failed: 0,
           skipped: 0,
+          failed: 0,
           failures: [],
           message: "Nenhum destinatário com consentimento ativo encontrado para este público.",
         } as const;
@@ -1424,6 +1429,7 @@ export const adminRouter = router({
           success: true,
           total: 0,
           sent: 0,
+          skipped: 0,
           failed: 0,
           failures: [],
           message: "Nenhum email encontrado na lista de espera.",
@@ -1432,18 +1438,20 @@ export const adminRouter = router({
 
       const failures: Array<{ email: string; message: string }> = [];
       let sent = 0;
+      let skipped = 0;
 
       for (let index = 0; index < uniqueEmails.length; index += input.batchSize) {
         const batch = uniqueEmails.slice(index, index + input.batchSize);
         for (const email of batch) {
           try {
-            await sendWaitlistLaunchEmail({
+            const result = await sendWaitlistLaunchEmail({
               email,
               couponCode: input.couponCode,
               discountPercent: input.discountPercent,
               launchUrl,
             });
-            sent += 1;
+            if (wasMarketingDeliverySkipped(result)) skipped += 1;
+            else sent += 1;
           } catch (error) {
             failures.push({
               email,
@@ -1463,6 +1471,7 @@ export const adminRouter = router({
         metadata: {
           total: uniqueEmails.length,
           sent,
+          skipped,
           failed: failures.length,
           discountPercent: input.discountPercent,
           launchUrl,
@@ -1473,11 +1482,12 @@ export const adminRouter = router({
         success: failures.length === 0,
         total: uniqueEmails.length,
         sent,
+        skipped,
         failed: failures.length,
         failures,
         message:
           failures.length === 0
-            ? "Disparo para a lista de espera concluido com sucesso."
+            ? `Disparo concluído: ${sent} enviado(s), ${skipped} ignorado(s).`
             : "Disparo concluido com falhas parciais.",
       } as const;
     }),

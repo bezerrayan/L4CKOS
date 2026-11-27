@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { resolvePublicApiOrigin } from "./publicUrls";
-import { isEmailUnsubscribed, unsubscribeEmail } from "../../db";
+import { isEmailMarketingAllowed, unsubscribeEmail } from "../../db";
 
 function sanitizeText(value) {
   return String(value ?? "").trim();
@@ -81,7 +81,7 @@ export function buildUnsubscribeUrl(email) {
 export async function ensureMarketingAllowed(email) {
   const normalizedEmail = sanitizeEmail(email);
   if (!normalizedEmail) return false;
-  return !(await isEmailUnsubscribed(normalizedEmail));
+  return isEmailMarketingAllowed(normalizedEmail);
 }
 
 export async function unsubscribeByToken(token, metadata = {}) {

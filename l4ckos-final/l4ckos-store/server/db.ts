@@ -601,6 +601,18 @@ export async function isEmailUnsubscribed(email: string) {
   return rows.length > 0;
 }
 
+export async function isEmailMarketingAllowed(email: string) {
+  const db = await getDb();
+  if (!db) return false;
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  if (!normalizedEmail) return false;
+  const [optIns, unsubscribes] = await Promise.all([
+    db.select({ id: waitlistEmails.id }).from(waitlistEmails).where(eq(waitlistEmails.email, normalizedEmail)).limit(1),
+    db.select({ id: emailUnsubscribes.id }).from(emailUnsubscribes).where(eq(emailUnsubscribes.email, normalizedEmail)).limit(1),
+  ]);
+  return optIns.length > 0 && unsubscribes.length === 0;
+}
+
 export async function unsubscribeEmail(payload: { email: string; reason?: string | null; source?: string | null }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

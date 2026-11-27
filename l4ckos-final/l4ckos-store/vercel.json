@@ -8,5 +8,10 @@
       "source": "/:path*",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "feat/admin-public-audience-20261127": false
+    }
+  }
 }

@@ -4,15 +4,17 @@ import crypto from "node:crypto";
 import emailRoutes from "../../routes/email.routes";
 import { buildUnsubscribeToken, buildUnsubscribeUrl, verifyUnsubscribeToken, unsubscribeByToken } from "./emailSubscriptions.js";
 import { resolveAnnouncementUrl, resolvePublicApiOrigin } from "./publicUrls";
-import { sendLaunchAnnouncementEmail, sendInternalNewSaleAlertEmail, sendInternalLowStockAlertEmail, sendInternalPaymentFailedAlertEmail } from "./emailService.js";
-const fixture = vi.hoisted(() => ({ subscriptions: new Map<string, any>(), write: vi.fn(), send: vi.fn(async () => ({ data: { id: "synthetic-provider-id" } })), client: vi.fn() }));
+import { sendLaunchAnnouncementEmail, sendWaitlistLaunchEmail, sendAbandonedCartReminder1Email, sendNewDropAnnouncementEmail, sendInternalNewSaleAlertEmail, sendInternalLowStockAlertEmail, sendInternalPaymentFailedAlertEmail } from "./emailService.js";
+const fixture = vi.hoisted(() => ({ subscriptions: new Map<string, any>(), optIns: new Set<string>(), write: vi.fn(), send: vi.fn(async () => ({ data: { id: "synthetic-provider-id" } })), client: vi.fn() }));
 vi.mock("../../db", () => ({
   isEmailUnsubscribed: vi.fn(async email => fixture.subscriptions.has(email)),
+  isEmailMarketingAllowed: vi.fn(async email => fixture.optIns.has(email) && !fixture.subscriptions.has(email)),
   unsubscribeEmail: fixture.write.mockImplementation(async ({ email, reason, source }) => fixture.subscriptions.set(email, { reason, source })),
 }));
 vi.mock("./resendClient.js", () => ({ getResendClient: () => { fixture.client(); return { emails: { send: fixture.send } }; } }));
 beforeEach(() => {
   fixture.subscriptions.clear(); vi.clearAllMocks();
+  fixture.optIns.clear(); fixture.optIns.add("synthetic@example.invalid");
   fixture.write.mockImplementation(async ({ email, reason, source }) => fixture.subscriptions.set(email, { reason, source }));
   vi.stubGlobal("React", React);
   for (const name of ["APP_URL", "APP_BASE_URL", "FRONTEND_URL", "ALERTS_NOTIFICATION_EMAIL", "ORDERS_ALERT_EMAIL", "EMAIL_TO_SALES", "EMAIL_TO_FINANCE", "EMAIL_TO_CONTACT"]) vi.stubEnv(name, "");
@@ -40,6 +42,18 @@ describe("unsubscribe origin, templates and handler (synthetic / provider mocked
     await sendLaunchAnnouncementEmail({ email: "synthetic@example.invalid", name: "Synthetic", couponCode: "TEST", discountPercent: 15 });
     const html = fixture.send.mock.calls[0][0].html;
     expect(html).toContain(buildUnsubscribeUrl("synthetic@example.invalid")); expect(html).not.toContain("https://frontend.fixture.invalid/api/email/unsubscribe");
+  });
+  it("blocks the old waitlist, campaign and abandoned-cart send paths without opt-in, and keeps unsubscribe suppression", async () => {
+    const email = "customer-no-opt-in@example.invalid";
+    await sendWaitlistLaunchEmail({ email, couponCode: "TEST", discountPercent: 15, launchUrl: "https://shop.example.invalid/drop" });
+    await sendNewDropAnnouncementEmail({ email, dropUrl: "https://shop.example.invalid/drop", products: [] });
+    await sendAbandonedCartReminder1Email({ email, name: "Cliente", cartUrl: "https://shop.example.invalid/carrinho", products: [] });
+    expect(fixture.send).not.toHaveBeenCalled();
+
+    fixture.optIns.add("unsubscribed@example.invalid");
+    fixture.subscriptions.set("unsubscribed@example.invalid", { reason: "unsubscribe_click" });
+    await sendLaunchAnnouncementEmail({ email: "unsubscribed@example.invalid", couponCode: "TEST", discountPercent: 15, launchUrl: "https://shop.example.invalid/drop" });
+    expect(fixture.send).not.toHaveBeenCalled();
   });
   it.each(["", "http://api.fixture.invalid", "https://user:password@api.fixture.invalid", "https://api.fixture.invalid/subpath", "https://api.fixture.invalid/?host=evil", "https://api.fixture.invalid/#x", "file:///tmp/x"])("rejects unsafe/missing backend %s before provider", async origin => {
     vi.stubEnv("PUBLIC_API_URL", origin); expect(() => resolvePublicApiOrigin()).toThrow();

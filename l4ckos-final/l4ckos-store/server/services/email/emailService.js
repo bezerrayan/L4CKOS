@@ -129,7 +129,7 @@ async function sendMarketingEmail({
 
   const allowed = await ensureMarketingAllowed(normalizedEmail);
   if (!allowed) {
-    return { skipped: true, reason: "unsubscribed" };
+    return { skipped: true, reason: "not_opted_in_or_unsubscribed" };
   }
 
   return sendEmail({
