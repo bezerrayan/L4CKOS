@@ -50,3 +50,13 @@ GRANT SELECT, INSERT         ON `@DB@`.`notificationOutbox`          TO '@USER@'
 -- (auditLogs SELECT, INSERT above already covers ingress provenance and recovery audit rows.)
 -- Account-management / catalogue admin flows (products INSERT/DELETE, productVariants, coupons, promoBanners, favorites, cartItems, profile,
 -- reviews, notifications, backups) are outside this STOCK-path proof and must be inventoried separately before any non-read-only account is created.
+
+-- Order e-mail outbox (delivered / review request). server/db.ts reserveOrderEmailEvent (INSERT + dedupe SELECT inside the order transition),
+-- claimOrderEmailEvent (SELECT + UPDATE), markOrderEmailEventSent/Failed (UPDATE). No DELETE, no DDL.
+GRANT SELECT, INSERT ON `@DB@`.`orderEmailEvents` TO '@USER@'@'%';
+GRANT UPDATE (`status`, `attemptCount`, `processingAt`, `processingToken`, `failedAt`, `lastError`, `providerMessageId`, `scheduledAt`, `sentAt`)
+  ON `@DB@`.`orderEmailEvents` TO '@USER@'@'%';
+-- Marketing / review e-mail guard (isEmailUnsubscribed) and the public unsubscribe link (unsubscribeEmail: INSERT ... ON DUPLICATE KEY UPDATE).
+-- Column-level UPDATE only; no DELETE.
+GRANT SELECT, INSERT ON `@DB@`.`emailUnsubscribes` TO '@USER@'@'%';
+GRANT UPDATE (`reason`, `source`, `createdAt`) ON `@DB@`.`emailUnsubscribes` TO '@USER@'@'%';
